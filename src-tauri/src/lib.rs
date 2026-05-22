@@ -1,4 +1,5 @@
 mod commands;
+mod downloader;
 mod logger;
 
 #[tauri::command]
@@ -16,7 +17,11 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, commands::get_system_info])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            commands::get_system_info,
+            commands::batch_download
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
