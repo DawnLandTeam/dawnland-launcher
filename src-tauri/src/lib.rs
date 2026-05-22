@@ -1,3 +1,4 @@
+mod auth;
 mod commands;
 mod downloader;
 mod logger;
@@ -20,7 +21,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             commands::get_system_info,
-            commands::batch_download
+            commands::batch_download,
+            // Auth commands
+            commands::get_accounts,
+            commands::add_offline_account,
+            commands::remove_account,
+            commands::start_microsoft_login,
+            commands::poll_microsoft_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
