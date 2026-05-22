@@ -18,6 +18,7 @@ pub struct DeviceCodeResponse {
 #[serde(rename_all = "camelCase")]
 pub struct LoginInitResponse {
     pub user_code: String,
+    pub device_code: String,
     pub verification_uri: String,
     pub message: String,
 }
@@ -82,6 +83,7 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
 
     Ok(LoginInitResponse {
         user_code: device_code.user_code,
+        device_code: device_code.device_code,
         verification_uri: device_code.verification_uri,
         message: device_code.message.unwrap_or_else(|| "Please enter the code on the website.".to_string()),
     })
@@ -108,11 +110,14 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
 
         let response = client
             .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+            .header("Content-Type", "application/x-www-form-urlencoded")
             .form(&payload)
             .send()
             .await
-            .map_err(|e| format!("Token request failed: {e}))"))?;
+            .map_err(|e| format!("Token request failed: {e}"))?;
 
+        let raw_text = response.text().await.map_err(|e| format!("Failed to read token response: {e}"))?;
+        
         #[derive(Deserialize)]
         struct TokenResponse {
             access_token: Option<String>,
@@ -121,180 +126,211 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
             error_description: Option<String>,
         }
 
-        let token_resp: TokenResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse token response: {e}"))?;
+        let token_resp: TokenResponse = serde_json::from_str(&raw_text)
+            .map_err(|e| format!("Failed to parse token response: {e}. Raw: {}", raw_text))?;
 
         if let Some(access_token) = token_resp.access_token {
             let refresh_token = token_resp.refresh_token.unwrap_or_default();
+            tracing::info!("Received Microsoft access token");
             return Ok((access_token, refresh_token));
         }
 
-        if let Some(error) = token_resp.error {
+        if let Some(error) = &token_resp.error {
+            // authorization_pending means user hasn't completed auth yet, continue polling
+            if error == "authorization_pending" {
+                tracing::debug!("User hasn't completed auth yet, polling...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                continue;
+            }
+            // authorization_declined means user cancelled
+            if error == "authorization_declined" {
+                return Err("Authorization was declined by the user".to_string());
+            }
+            // expired_token means the flow expired
+            if error == "expired_token" {
+                return Err("Device code flow expired. Please try again.".to_string());
+            }
             return Err(format!("Token error: {} - {}", error, token_resp.error_description.unwrap_or_default()));
         }
 
-        // Wait before next poll.
+        // No access_token and no error - wait and continue
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     }
-}
-
-/// Xbox Live authentication request.
-#[derive(Serialize)]
-struct XboxLiveAuthRequest {
-    Properties: XboxLiveProperties,
-    RelyingParty: &'static str,
-    TokenType: &'static str,
-}
-
-#[derive(Serialize)]
-struct XboxLiveProperties {
-    AuthMethod: &'static str,
-    SiteName: &'static str,
-    RpsTicket: String,
-}
-
-#[derive(Deserialize)]
-struct XboxLiveAuthResponse {
-    Token: Option<String>,
-    #[serde(rename = "DisplayClaims")]
-    DisplayClaims: Option<XboxDisplayClaims>,
-}
-
-#[derive(Deserialize)]
-struct XboxDisplayClaims {
-    xui: Option<Vec<XboxUserClaim>>,
-}
-
-#[derive(Deserialize)]
-struct XboxUserClaim {
-    uhs: Option<String>,
-}
-
-/// XSTS authentication request.
-#[derive(Serialize)]
-struct XSTSAuthRequest {
-    Properties: XSTSProperties,
-    RelyingParty: &'static str,
-}
-
-#[derive(Serialize)]
-struct XSTSProperties {
-    SandboxId: &'static str,
-    UserTokens: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct XSTSAuthResponse {
-    Token: Option<String>,
-    #[serde(rename = "DisplayClaims")]
-    DisplayClaims: Option<XSTSDisplayClaims>,
-    #[serde(rename = "Status")]
-    Status: Option<XSTSStatus>,
-}
-
-#[derive(Deserialize)]
-struct XSTSDisplayClaims {
-    xui: Option<Vec<XSTSUserClaim>>,
-}
-
-#[derive(Deserialize)]
-struct XSTSUserClaim {
-    xid: Option<String>,
-    uhs: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct XSTSStatus {
-    code: Option<String>,
-    message: Option<String>,
 }
 
 /// Exchange Microsoft token for Xbox Live token.
 async fn get_xbox_live_token(ms_token: &str) -> Result<String, String> {
     let client = reqwest::Client::new();
 
+    #[derive(Serialize)]
+    struct XboxLiveAuthRequest {
+        #[serde(rename = "Properties")]
+        properties: XboxLiveProperties,
+        #[serde(rename = "RelyingParty")]
+        relying_party: &'static str,
+        #[serde(rename = "TokenType")]
+        token_type: &'static str,
+    }
+
+    #[derive(Serialize)]
+    struct XboxLiveProperties {
+        #[serde(rename = "AuthMethod")]
+        auth_method: &'static str,
+        #[serde(rename = "SiteName")]
+        site_name: &'static str,
+        #[serde(rename = "RpsTicket")]
+        rps_ticket: String,
+    }
+
     let request = XboxLiveAuthRequest {
-        Properties: XboxLiveProperties {
-            AuthMethod: "RPS",
-            SiteName: "user.auth.xboxlive.com",
-            RpsTicket: format!("d={}", ms_token),
+        properties: XboxLiveProperties {
+            auth_method: "RPS",
+            site_name: "user.auth.xboxlive.com",
+            rps_ticket: format!("d={}", ms_token),
         },
-        RelyingParty: "http://auth.xboxlive.com",
-        TokenType: "JWT",
+        relying_party: "http://auth.xboxlive.com",
+        token_type: "JWT",
     };
 
     let response = client
         .post("https://user.auth.xboxlive.com/user/authenticate")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
         .json(&request)
         .send()
         .await
         .map_err(|e| format!("Xbox Live auth request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("Xbox Live auth failed: {} - {}", status, body));
+    let status = response.status();
+    let raw_text = response.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        tracing::error!("Xbox Live auth failed: {} - {}", status, raw_text);
+        return Err(format!("Xbox Live auth failed: {} - {}", status, raw_text));
     }
 
-    let xbl_resp: XboxLiveAuthResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Xbox Live response: {e}"))?;
+    #[derive(Deserialize)]
+    struct XboxLiveAuthResponse {
+        #[serde(rename = "Token")]
+        token: Option<String>,
+    }
 
-    xbl_resp.Token.ok_or_else(|| "No Xbox Live token in response".to_string())
+    let xbl_resp: XboxLiveAuthResponse = serde_json::from_str(&raw_text)
+        .map_err(|e| format!("Failed to parse Xbox Live response: {e}. Raw: {}", raw_text))?;
+
+    let xbl_token = xbl_resp.token.ok_or_else(|| "No Xbox Live token in response".to_string())?;
+    
+    tracing::info!("Received Xbox Live token");
+    Ok(xbl_token)
 }
 
 /// Exchange Xbox Live token for XSTS token.
 async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
     let client = reqwest::Client::new();
 
-    let request = XSTSAuthRequest {
-        Properties: XSTSProperties {
-            SandboxId: "RETAIL",
-            UserTokens: vec![xbl_token.to_string()],
+    #[derive(Serialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct XstsRequest {
+        pub properties: XstsProperties,
+        pub relying_party: String,
+        pub token_type: String,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct XstsProperties {
+        pub sandbox_id: String,
+        pub user_tokens: Vec<String>,
+    }
+
+    let request = XstsRequest {
+        properties: XstsProperties {
+            sandbox_id: "RETAIL".to_string(),
+            user_tokens: vec![xbl_token.to_string()],
         },
-        RelyingParty: "rp://api.minecraftservices.com/",
+        relying_party: "rp://api.minecraftservices.com/".to_string(),
+        token_type: "JWT".to_string(),
     };
+
+    // Debug: print exact JSON being sent
+    let request_json = serde_json::to_string(&request).unwrap_or_default();
+    tracing::info!("XSTS request JSON: {}", request_json);
 
     let response = client
         .post("https://xsts.auth.xboxlive.com/xsts/authorize")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
         .json(&request)
         .send()
         .await
         .map_err(|e| format!("XSTS auth request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("XSTS auth failed: {} - {}", status, body));
-    }
+    let status = response.status();
+    let raw_text = response.text().await.unwrap_or_default();
 
-    let xsts_resp: XSTSAuthResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse XSTS response: {e}"))?;
+    // Log full response details
+    tracing::info!("XSTS response status: {}, body: {}", status, raw_text);
 
-    // Check for errors (e.g., not an Xbox member).
-    if let Some(status) = xsts_resp.Status {
-        if let Some(code) = status.code {
-            if code != "OK" {
-                return Err(format!("XSTS error: {} - {}", code, status.message.unwrap_or_default()));
+    if !status.is_success() {
+        tracing::error!("XSTS auth failed ({}): body='{}'", status, raw_text);
+        // Try to parse the error as XErr for more details
+        #[derive(Deserialize)]
+        struct XErrResponse {
+            #[serde(rename = "XErr")]
+            xerr: Option<i64>,
+            #[serde(rename = "Message")]
+            message: Option<String>,
+        }
+        
+        if let Ok(xerr_resp) = serde_json::from_str::<XErrResponse>(&raw_text) {
+            if let Some(xerr) = xerr_resp.xerr {
+                let detailed_error = match xerr {
+                    2148916233 => "This account does not have Xbox Live. Please subscribe to Xbox Live.",
+                    2148916235 => "This is a child account without adult approval. Please use an adult account.",
+                    2148916236 => "This account is a child and needs parental verification.",
+                    2148916237 => "This account requires parental consent for Xbox Live.",
+                    _ => xerr_resp.message.as_deref().unwrap_or("Unknown XSTS error"),
+                };
+                return Err(format!("XSTS error ({}): {}", xerr, detailed_error));
             }
         }
+        return Err(format!("XSTS auth failed: {} - {}", status, raw_text));
     }
 
-    let token = xsts_resp.Token.ok_or_else(|| "No XSTS token in response".to_string())?;
+    #[derive(Deserialize)]
+    struct XSTSAuthResponse {
+        #[serde(rename = "Token")]
+        token: Option<String>,
+        #[serde(rename = "DisplayClaims")]
+        display_claims: Option<XSTSDisplayClaims>,
+    }
+
+    #[derive(Deserialize)]
+    struct XSTSDisplayClaims {
+        #[serde(rename = "xui")]
+        xui: Option<Vec<XSTSUserClaim>>,
+    }
+
+    #[derive(Deserialize)]
+    struct XSTSUserClaim {
+        #[serde(rename = "uhs")]
+        uhs: Option<String>,
+    }
+
+    let xsts_resp: XSTSAuthResponse = serde_json::from_str(&raw_text)
+        .map_err(|e| format!("Failed to parse XSTS response: {e}. Raw: {}", raw_text))?;
+
+    let token = xsts_resp.token.ok_or_else(|| "No XSTS token in response".to_string())?;
 
     // Get UHS from display claims.
     let uhs = xsts_resp
-        .DisplayClaims
+        .display_claims
         .and_then(|dc| dc.xui)
         .and_then(|mut xui| xui.pop())
         .and_then(|u| u.uhs)
         .unwrap_or_default();
 
+    tracing::info!("Received XSTS token");
     Ok((token, uhs))
 }
 
@@ -304,37 +340,52 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, Stri
 
     #[derive(Serialize)]
     struct MCAuthRequest {
-        identityToken: String,
+        #[serde(rename = "identityToken")]
+        identity_token: String,
     }
 
     let request = MCAuthRequest {
-        identityToken: format!("XBL3.0 x={};{}", uhs, xsts_token),
+        identity_token: format!("XBL3.0 x={};{}", uhs, xsts_token),
     };
 
     let response = client
         .post("https://api.minecraftservices.com/authentication/login_with_xbox")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
         .json(&request)
         .send()
         .await
         .map_err(|e| format!("Minecraft auth request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("Minecraft auth failed: {} - {}", status, body));
+    let status = response.status();
+    let raw_text = response.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        tracing::error!("Minecraft auth failed: {} - {}", status, raw_text);
+        return Err(format!("Minecraft auth failed: {} - {}", status, raw_text));
     }
 
     #[derive(Deserialize)]
     struct MCAuthResponse {
+        #[serde(rename = "access_token")]
         access_token: Option<String>,
+        #[serde(rename = "error")]
+        error: Option<String>,
+        #[serde(rename = "errorMessage")]
+        error_message: Option<String>,
     }
 
-    let mc_resp: MCAuthResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Minecraft auth response: {e}"))?;
+    let mc_resp: MCAuthResponse = serde_json::from_str(&raw_text)
+        .map_err(|e| format!("Failed to parse Minecraft auth response: {e}. Raw: {}", raw_text))?;
 
-    mc_resp.access_token.ok_or_else(|| "No Minecraft access token in response".to_string())
+    if let Some(error) = mc_resp.error {
+        return Err(format!("Minecraft auth error: {} - {}", error, mc_resp.error_message.unwrap_or_default()));
+    }
+
+    let token = mc_resp.access_token.ok_or_else(|| "No Minecraft access token in response".to_string())?;
+    
+    tracing::info!("Received Minecraft access token");
+    Ok(token)
 }
 
 /// Get Minecraft profile (UUID and username).
@@ -343,34 +394,38 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), Strin
 
     let response = client
         .get("https://api.minecraftservices.com/minecraft/profile")
-        .bearer_auth(mc_token)
+        .header("Authorization", format!("Bearer {}", mc_token))
         .send()
         .await
         .map_err(|e| format!("Minecraft profile request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
+    let status = response.status();
+    let raw_text = response.text().await.unwrap_or_default();
+
+    if !status.is_success() {
         if status.as_u16() == 404 {
-            return Err("Account does not own Minecraft Java Edition".to_string());
+            tracing::error!("Account does not own Minecraft Java Edition");
+            return Err("Account does not own Minecraft Java Edition. Please purchase the game first.".to_string());
         }
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("Minecraft profile request failed: {} - {}", status, body));
+        tracing::error!("Minecraft profile request failed: {} - {}", status, raw_text);
+        return Err(format!("Minecraft profile request failed: {} - {}", status, raw_text));
     }
 
     #[derive(Deserialize)]
     struct MCProfileResponse {
+        #[serde(rename = "id")]
         id: Option<String>,
+        #[serde(rename = "name")]
         name: Option<String>,
     }
 
-    let profile: MCProfileResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Minecraft profile: {e}"))?;
+    let profile: MCProfileResponse = serde_json::from_str(&raw_text)
+        .map_err(|e| format!("Failed to parse Minecraft profile: {e}. Raw: {}", raw_text))?;
 
     let uuid = profile.id.ok_or_else(|| "No UUID in profile response".to_string())?;
     let username = profile.name.ok_or_else(|| "No name in profile response".to_string())?;
 
+    tracing::info!("Received Minecraft profile: {} ({})", username, uuid);
     Ok((uuid, username))
 }
 
