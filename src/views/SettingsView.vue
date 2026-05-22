@@ -13,6 +13,7 @@ interface Account {
 
 interface LoginInitResponse {
   userCode: string;
+  deviceCode: string;
   verificationUri: string;
   message: string;
 }
@@ -73,8 +74,8 @@ async function startMicrosoftLogin(): Promise<void> {
     microsoftLoginData.value = response;
     deviceCode.value = response.userCode;
 
-    // Start polling for token
-    pollMicrosoftToken(response.userCode);
+    // Start polling for token - use the long device_code, not the short user_code
+    pollMicrosoftToken(response.deviceCode);
   } catch (err) {
     loginError.value = typeof err === "string" ? err : String(err);
     isLoggingInMicrosoft.value = false;
