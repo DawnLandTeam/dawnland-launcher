@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
@@ -23,5 +24,8 @@ tracing-appender = "0.2"
 dirs = "6"
 reqwest = { version = "0.12", features = ["stream", "rustls-tls", "json"] }
 futures-util = "0.3"
-tokio = { version = "1", features = ["fs", "io-util", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "sync", "time", "process"] }
 uuid = { version = "1", features = ["v3", "v4", "serde"] }
+zip = "2"
+walkdir = "2"
+which = "7"
