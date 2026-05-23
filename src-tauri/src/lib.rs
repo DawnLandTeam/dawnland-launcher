@@ -1,5 +1,6 @@
 mod auth;
 mod commands;
+mod core;
 mod downloader;
 mod logger;
 
@@ -28,6 +29,10 @@ pub fn run() {
             commands::remove_account,
             commands::start_microsoft_login,
             commands::poll_microsoft_token,
+            // Core/Game commands
+            core::mojang::get_vanilla_versions,
+            core::mojang::install_vanilla_version,
+            core::mojang::fetch_install_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

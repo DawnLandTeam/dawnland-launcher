@@ -1,4 +1,5 @@
 use crate::auth::{self, Account, LoginInitResponse};
+use crate::core::{self, InstallState, VanillaVersion};
 use crate::downloader::{run_batch_download, DownloadTask};
 use std::env::consts;
 use tauri::AppHandle;
