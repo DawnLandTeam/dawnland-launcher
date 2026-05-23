@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 pub mod microsoft;
 
-pub use microsoft::{poll_microsoft_token, start_microsoft_login, LoginInitResponse};
+pub use microsoft::{poll_microsoft_token, refresh_microsoft_token, start_microsoft_login, LoginInitResponse};
 
 /// Account types supported by the launcher.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

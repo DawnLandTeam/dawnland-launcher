@@ -38,11 +38,22 @@ interface InstanceState {
   exitCode?: number;
 }
 
+interface SystemMemoryInfo {
+  totalMb: number;
+  recommendedMaxMb: number;
+}
+
 // State
 const showInstallModal = ref(false);
 const installedInstances = ref<InstalledInstance[]>([]);
 const accounts = ref<Account[]>([]);
 const selectedAccount = ref<string>("");
+
+// System memory for slider
+const systemMemory = ref<SystemMemoryInfo>({
+  totalMb: 8192,
+  recommendedMaxMb: 4096
+});
 
 // Track running state per instance
 const runningInstances = ref<Set<string>>(new Set());
@@ -70,6 +81,7 @@ const crashVersionId = ref("");
 onMounted(async () => {
   await loadInstances();
   await loadAccounts();
+  await loadSystemMemory();
   
   // Listen for game logs
   listen<GameLog>("game-log", (event) => {
@@ -119,6 +131,14 @@ async function loadAccounts() {
     }
   } catch (e) {
     console.error("Failed to load accounts:", e);
+  }
+}
+
+async function loadSystemMemory() {
+  try {
+    systemMemory.value = await invoke<SystemMemoryInfo>("get_system_memory");
+  } catch (e) {
+    console.error("Failed to load system memory:", e);
   }
 }
 
@@ -411,17 +431,24 @@ async function saveSettings() {
 
           <!-- Max Memory -->
           <div class="space-y-2 mt-4">
-            <label class="text-sm font-medium">Max Memory (MB)</label>
+            <div class="flex items-center justify-between">
+              <label class="text-sm font-medium">Max Memory (MB)</label>
+              <span class="text-sm font-mono text-primary">{{ settingsConfig.maxMemory }} MB</span>
+            </div>
             <input
               v-model.number="settingsConfig.maxMemory"
-              type="number"
+              type="range"
               min="512"
-              max="16384"
+              :max="systemMemory.totalMb"
               step="512"
-              class="w-full px-3 py-2 bg-background border rounded-md text-sm"
+              class="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
             />
+            <div class="flex justify-between text-xs text-muted-foreground">
+              <span>512 MB</span>
+              <span>System: {{ systemMemory.totalMb }} MB</span>
+            </div>
             <p class="text-xs text-muted-foreground">
-              Recommended: 4096 (4GB) for 1.20+, 2048 (2GB) for older versions.
+              Recommended: {{ systemMemory.recommendedMaxMb }} MB (1/3 of system RAM)
             </p>
           </div>
 

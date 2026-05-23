@@ -2,6 +2,7 @@ use crate::auth::{self, Account, LoginInitResponse};
 use crate::core::{self, InstallState, VanillaVersion};
 use crate::downloader::{run_batch_download, DownloadTask};
 use std::env::consts;
+use sysinfo::System;
 use tauri::AppHandle;
 
 /// Returns a human-readable OS identifier string.
@@ -15,8 +16,32 @@ pub fn get_system_info() -> Result<String, String> {
         "Operating System: {os} | Architecture: {arch} | Family: {family}"
     );
 
-    tracing::info!("System info requested: {info}");
+    tracing::info!("System info requested: {}", info);
     Ok(info)
+}
+
+/// Get system memory info for memory slider configuration.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemMemoryInfo {
+    pub total_mb: u32,
+    pub recommended_max_mb: u32,
+}
+
+#[tauri::command]
+pub fn get_system_memory() -> Result<SystemMemoryInfo, String> {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    let total_bytes = sys.total_memory();
+    let total_mb = (total_bytes / (1024 * 1024)) as u32;
+    let recommended_max_mb = (total_mb / 3).max(1024).min(16384);
+    
+    tracing::info!("System memory: {} MB, recommended max: {} MB", total_mb, recommended_max_mb);
+    
+    Ok(SystemMemoryInfo {
+        total_mb,
+        recommended_max_mb,
+    })
 }
 
 /// Batch download multiple files concurrently.
@@ -68,4 +93,11 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
 pub async fn poll_microsoft_token(device_code: String) -> Result<Account, String> {
     tracing::info!("Polling Microsoft token with device code");
     auth::poll_microsoft_token(&device_code).await
+}
+
+/// Refresh Microsoft token for an existing account.
+#[tauri::command]
+pub async fn refresh_microsoft_token(account_id: String) -> Result<Account, String> {
+    tracing::info!("Refreshing Microsoft token for account: {}", account_id);
+    auth::refresh_microsoft_token(&account_id).await
 }
