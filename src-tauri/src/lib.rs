@@ -19,6 +19,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             greet,
             commands::get_system_info,
@@ -33,6 +34,10 @@ pub fn run() {
             core::mojang::get_vanilla_versions,
             core::mojang::install_vanilla_version,
             core::mojang::fetch_install_state,
+            core::mojang::get_installed_versions,
+            core::launcher::launch_instance,
+            core::launcher::get_instance_config,
+            core::launcher::save_instance_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
