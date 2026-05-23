@@ -23,6 +23,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             commands::get_system_info,
+            commands::get_system_memory,
             commands::batch_download,
             // Auth commands
             commands::get_accounts,
@@ -30,6 +31,7 @@ pub fn run() {
             commands::remove_account,
             commands::start_microsoft_login,
             commands::poll_microsoft_token,
+            commands::refresh_microsoft_token,
             // Core/Game commands
             core::mojang::get_vanilla_versions,
             core::mojang::install_vanilla_version,

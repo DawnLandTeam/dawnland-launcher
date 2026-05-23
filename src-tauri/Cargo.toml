@@ -29,3 +29,4 @@ uuid = { version = "1", features = ["v3", "v4", "serde"] }
 zip = "2"
 walkdir = "2"
 which = "7"
+sysinfo = "0.32"
