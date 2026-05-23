@@ -14,49 +14,45 @@ const MAX_CONCURRENT: usize = 16;
 const PROGRESS_THROTTLE_MS: u64 = 500;
 
 /// Downloads a single file with progress reporting.
+/// Returns Ok on success, Err with message on failure.
 async fn download_file(
     task: DownloadTask,
     client: &reqwest::Client,
-    app: AppHandle,
-    semaphore: Arc<Semaphore>,
-) {
-    // Acquire semaphore slot.
-    let _permit = semaphore.acquire().await.expect("Semaphore closed");
+    app: &AppHandle,
+) -> Result<(), String> {
+    tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
 
-    tracing::info!("Starting download: {} -> {}", task.url, task.dest_path);
-
-    // Create parent directories if needed.
-    if let Some(parent) = task.dest_path_buf().parent() {
+    // Create parent directories if needed (always try, ignore if exists).
+    let dest_path = task.dest_path_buf();
+    if let Some(parent) = dest_path.parent() {
         if let Err(e) = tokio::fs::create_dir_all(parent).await {
-            let progress = DownloadProgress::failed(task.id, format!("Failed to create directory: {e}"));
-            let _ = app.emit("download-progress", &progress);
-            tracing::error!("Failed to create directory: {e}");
-            return;
+            let err_msg = format!("Failed to create directory: {}", e);
+            tracing::error!("{}: {}", err_msg, parent.display());
+            return Err(err_msg);
         }
     }
 
-    // Make the HTTP request.
+    // Make the HTTP request with timeout.
     let response = match client.get(&task.url).send().await {
         Ok(resp) => resp,
         Err(e) => {
-            let progress = DownloadProgress::failed(task.id, format!("Request failed: {e}"));
-            let _ = app.emit("download-progress", &progress);
-            tracing::error!("Request failed: {e}");
-            return;
+            return Err(format!("Request failed: {}", e));
         }
     };
+
+    // Check HTTP status.
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
+    }
 
     // Get content length.
     let total = response.content_length().unwrap_or(0);
 
     // Create the destination file.
-    let mut file = match File::create(&task.dest_path).await {
+    let mut file = match File::create(&dest_path).await {
         Ok(f) => f,
         Err(e) => {
-            let progress = DownloadProgress::failed(task.id, format!("Failed to create file: {e}"));
-            let _ = app.emit("download-progress", &progress);
-            tracing::error!("Failed to create file: {e}");
-            return;
+            return Err(format!("Failed to create file: {}", e));
         }
     };
 
@@ -70,10 +66,7 @@ async fn download_file(
         match chunk_result {
             Ok(chunk) => {
                 if let Err(e) = file.write_all(&chunk).await {
-                    let progress = DownloadProgress::failed(task.id, format!("Write failed: {e}"));
-                    let _ = app.emit("download-progress", &progress);
-                    tracing::error!("Write failed: {e}");
-                    return;
+                    return Err(format!("Write failed: {}", e));
                 }
 
                 downloaded += chunk.len() as u64;
@@ -90,6 +83,7 @@ async fn download_file(
                         0
                     };
 
+                    // Emit progress (don't fail on emit error).
                     let progress = DownloadProgress::progress(
                         task.id.clone(),
                         downloaded,
@@ -103,26 +97,18 @@ async fn download_file(
                 }
             }
             Err(e) => {
-                let progress = DownloadProgress::failed(task.id, format!("Stream error: {e}"));
-                let _ = app.emit("download-progress", &progress);
-                tracing::error!("Stream error: {e}");
-                return;
+                return Err(format!("Stream error: {}", e));
             }
         }
     }
 
     // Ensure all data is flushed to disk.
     if let Err(e) = file.flush().await {
-        let progress = DownloadProgress::failed(task.id, format!("Flush failed: {e}"));
-        let _ = app.emit("download-progress", &progress);
-        tracing::error!("Flush failed: {e}");
-        return;
+        return Err(format!("Flush failed: {}", e));
     }
 
-    // Emit completion.
-    let progress = DownloadProgress::completed(task.id);
-    let _ = app.emit("download-progress", &progress);
-    tracing::info!("Download completed: {}", task.dest_path);
+    tracing::debug!("Download completed: {}", task.dest_path);
+    Ok(())
 }
 
 /// Run batch download with multiple files concurrently.
@@ -132,34 +118,74 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle) {
         return;
     }
 
+    let total_tasks = tasks.len();
+    tracing::info!("Starting batch download of {} files", total_tasks);
+
+    // Create a single shared HTTP client with connection pooling.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
+        .pool_max_idle_per_host(16)  // Keep connections alive
+        .http2_adaptive_window(true)
         .build()
         .expect("Failed to create HTTP client");
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
 
-    // Spawn download tasks.
-    let mut handles = Vec::with_capacity(tasks.len());
+    // Spawn download tasks with error isolation.
+    let handles: Vec<_> = tasks
+        .into_iter()
+        .map(|task| {
+            let task_id = task.id.clone();
+            let dest_path = task.dest_path.clone(); // Clone for error logging
+            let client = client.clone();
+            let app = app.clone();
+            let semaphore = semaphore.clone();
 
-    for task in tasks {
-        let client = client.clone();
-        let app = app.clone();
-        let semaphore = semaphore.clone();
+            tokio::spawn(async move {
+                // Acquire semaphore slot for concurrency control.
+                let _permit = semaphore.acquire().await.expect("Semaphore closed");
 
-        let handle = tokio::spawn(async move {
-            download_file(task, &client, app, semaphore).await;
-        });
+                tracing::info!("Downloading: {}", dest_path);
+                
+                // Execute download and handle errors gracefully.
+                match download_file(task, &client, &app).await {
+                    Ok(()) => {
+                        // Emit completion.
+                        tracing::info!("Emitting completed for task: {}", task_id);
+                        let progress = DownloadProgress::completed(task_id);
+                        let _ = app.emit("download-progress", &progress);
+                    }
+                    Err(err) => {
+                        // Log error but don't propagate - single failure shouldn't crash queue.
+                        tracing::error!("Download failed: {} - {}", dest_path, err);
+                        
+                        // Emit error progress so frontend knows.
+                        let progress = DownloadProgress::failed(task_id, err);
+                        let _ = app.emit("download-progress", &progress);
+                    }
+                }
+            })
+        })
+        .collect();
 
-        handles.push(handle);
-    }
-
-    // Wait for all downloads to complete.
+    // Wait for all downloads to complete (errors already handled internally).
+    let mut error_count = 0;
     for handle in handles {
         if let Err(e) = handle.await {
-            tracing::error!("Download task panicked: {e}");
+            error_count += 1;
+            tracing::error!("Download task panicked: {}", e);
         }
     }
 
-    tracing::info!("All downloads finished");
+    if error_count > 0 {
+        tracing::warn!("Batch download finished with {} task panics", error_count);
+    } else {
+        tracing::info!("Batch download completed successfully");
+    }
+
+    // Emit final completion event.
+    let _ = app.emit("download-batch-complete", serde_json::json!({
+        "total": total_tasks,
+        "errors": error_count,
+    }));
 }
