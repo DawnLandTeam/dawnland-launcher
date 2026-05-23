@@ -29,6 +29,13 @@ interface InstanceConfig {
   javaPath?: string;
   maxMemory?: number;
   jvmArgsExtra?: string[];
+  windowBehavior?: string;
+}
+
+interface InstanceState {
+  versionId: string;
+  status: "running" | "exited";
+  exitCode?: number;
 }
 
 // State
@@ -36,7 +43,9 @@ const showInstallModal = ref(false);
 const installedInstances = ref<InstalledInstance[]>([]);
 const accounts = ref<Account[]>([]);
 const selectedAccount = ref<string>("");
-const isLaunching = ref(false);
+
+// Track running state per instance
+const runningInstances = ref<Set<string>>(new Set());
 const gameLogs = ref<string[]>([]);
 const showGameLog = ref(false);
 
@@ -47,9 +56,15 @@ const settingsInstanceName = ref("");
 const settingsConfig = ref<InstanceConfig>({
   javaPath: "",
   maxMemory: 4096,
-  jvmArgsExtra: []
+  jvmArgsExtra: [],
+  windowBehavior: "keep"
 });
 const isSavingConfig = ref(false);
+
+// Crash alert state
+const showCrashAlert = ref(false);
+const crashExitCode = ref(0);
+const crashVersionId = ref("");
 
 // Load installed instances on mount
 onMounted(async () => {
@@ -64,9 +79,22 @@ onMounted(async () => {
     }
   });
   
-  listen("game-exit", (event) => {
-    isLaunching.value = false;
-    console.log("Game exited:", event.payload);
+  // Listen for instance state changes
+  listen<InstanceState>("instance-state-changed", (event) => {
+    const { versionId, status, exitCode } = event.payload;
+    
+    if (status === "running") {
+      runningInstances.value.add(versionId);
+    } else if (status === "exited") {
+      runningInstances.value.delete(versionId);
+      
+      // Show crash alert if exit code is non-zero
+      if (exitCode !== 0) {
+        crashVersionId.value = versionId;
+        crashExitCode.value = exitCode ?? -1;
+        showCrashAlert.value = true;
+      }
+    }
   });
 });
 
@@ -100,7 +128,8 @@ async function launchInstance(instanceId: string) {
     return;
   }
   
-  isLaunching.value = true;
+  // Add to running set immediately for UI feedback
+  runningInstances.value.add(instanceId);
   gameLogs.value = [];
   showGameLog.value = true;
   
@@ -109,11 +138,11 @@ async function launchInstance(instanceId: string) {
       versionId: instanceId,
       accountUuid: selectedAccount.value
     });
+    // Don't set isLaunching here - let the event handle it
   } catch (e) {
     console.error("Failed to launch instance:", e);
+    runningInstances.value.delete(instanceId);
     alert(`Failed to launch: ${e}`);
-  } finally {
-    isLaunching.value = false;
   }
 }
 
@@ -128,14 +157,16 @@ async function openSettings(instance: InstalledInstance) {
     settingsConfig.value = {
       javaPath: config.javaPath || "",
       maxMemory: config.maxMemory || 4096,
-      jvmArgsExtra: config.jvmArgsExtra || []
+      jvmArgsExtra: config.jvmArgsExtra || [],
+      windowBehavior: config.windowBehavior || "keep"
     };
   } catch (e) {
     console.error("Failed to load instance config:", e);
     settingsConfig.value = {
       javaPath: "",
       maxMemory: 4096,
-      jvmArgsExtra: []
+      jvmArgsExtra: [],
+      windowBehavior: "keep"
     };
   }
   
@@ -168,7 +199,8 @@ async function saveSettings() {
     const config = {
       javaPath: settingsConfig.value.javaPath || null,
       maxMemory: settingsConfig.value.maxMemory || null,
-      jvmArgsExtra: settingsConfig.value.jvmArgsExtra?.length ? settingsConfig.value.jvmArgsExtra : null
+      jvmArgsExtra: settingsConfig.value.jvmArgsExtra?.length ? settingsConfig.value.jvmArgsExtra : null,
+      windowBehavior: settingsConfig.value.windowBehavior || "keep"
     };
     
     await invoke("save_instance_config", {
@@ -274,17 +306,19 @@ async function saveSettings() {
           <div class="mt-3 flex gap-2">
             <button
               @click="launchInstance(instance.id)"
-              :disabled="isLaunching || !selectedAccount"
+              :disabled="runningInstances.has(instance.id) || !selectedAccount"
               class="flex-1 flex items-center justify-center gap-2 rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              <Loader2 v-if="isLaunching" class="h-4 w-4 animate-spin" />
+              <Loader2 v-if="runningInstances.has(instance.id)" class="h-4 w-4 animate-spin" />
               <Play v-else class="h-4 w-4" />
-              <span>{{ isLaunching ? 'Launching...' : 'Play' }}</span>
+              <span>{{ runningInstances.has(instance.id) ? 'Running...' : 'Play' }}</span>
             </button>
             <button
               @click="openSettings(instance)"
               class="flex items-center justify-center rounded-md border bg-background px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
               title="Settings"
+              :disabled="runningInstances.has(instance.id)"
+              :class="{ 'opacity-50 cursor-not-allowed': runningInstances.has(instance.id) }"
             >
               <Settings class="h-4 w-4" />
             </button>
@@ -401,6 +435,22 @@ async function saveSettings() {
             />
           </div>
 
+          <!-- Window Behavior -->
+          <div class="space-y-2 mt-4">
+            <label class="text-sm font-medium">Window Behavior</label>
+            <select
+              v-model="settingsConfig.windowBehavior"
+              class="w-full px-3 py-2 bg-background border rounded-md text-sm"
+            >
+              <option value="keep">Keep visible (default)</option>
+              <option value="hide">Hide launcher</option>
+              <option value="minimize">Minimize to taskbar</option>
+            </select>
+            <p class="text-xs text-muted-foreground">
+              Choose what happens to the launcher window when the game starts.
+            </p>
+          </div>
+
           <!-- Save Button -->
           <div class="flex justify-end gap-2 mt-6">
             <button
@@ -416,6 +466,52 @@ async function saveSettings() {
             >
               <Save class="h-4 w-4" />
               Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Crash Alert Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showCrashAlert"
+        class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+      >
+        <div 
+          class="absolute inset-0 bg-background/80 backdrop-blur-sm pointer-events-auto"
+          @click="showCrashAlert = false"
+        />
+        <div
+          class="relative z-10 w-full max-w-sm gap-4 border bg-card p-5 shadow-xl rounded-lg pointer-events-auto"
+        >
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-lg text-red-600">Game Crashed!</h3>
+            <button
+              @click="showCrashAlert = false"
+              class="text-muted-foreground hover:text-foreground"
+            >
+              <X class="h-5 w-5" />
+            </button>
+          </div>
+          
+          <p class="text-sm text-foreground mb-2">
+            The game has exited unexpectedly.
+          </p>
+          <p class="text-sm text-muted-foreground mb-4">
+            <strong>Exit Code:</strong> {{ crashExitCode }}<br/>
+            <strong>Version:</strong> {{ crashVersionId }}
+          </p>
+          <p class="text-xs text-muted-foreground">
+            Please check the game console logs for more details about the crash.
+          </p>
+          
+          <div class="flex justify-end gap-2 mt-6">
+            <button
+              @click="showCrashAlert = false"
+              class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+            >
+              OK
             </button>
           </div>
         </div>
