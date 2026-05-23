@@ -6,7 +6,7 @@ use crate::core::mojang::{get_minecraft_base, Library, Rule, VersionMeta};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -101,6 +101,13 @@ pub struct InstanceConfig {
     pub max_memory: Option<u32>,
     /// JVM arguments to append (advanced)
     pub jvm_args_extra: Option<Vec<String>>,
+    /// Window behavior when game starts: "hide" | "minimize" | "keep"
+    #[serde(default = "default_window_behavior")]
+    pub window_behavior: String,
+}
+
+fn default_window_behavior() -> String {
+    "keep".to_string()
 }
 
 // ============ Instance Config Commands ============
@@ -897,6 +904,22 @@ pub async fn launch_instance(
     tracing::debug!("JVM args: {:?}", jvm_args);
     tracing::debug!("Game args: {:?}", game_args);
 
+    // Get the main window for behavior control
+    let window = app.get_webview_window("main")
+        .ok_or("Failed to get main window")?;
+
+    // Determine window behavior after game starts
+    let window_behavior = instance_config.window_behavior.clone();
+    let should_hide = window_behavior == "hide";
+    let should_minimize = window_behavior == "minimize";
+
+    // Apply window behavior before spawning
+    if should_hide {
+        let _ = window.hide();
+    } else if should_minimize {
+        let _ = window.minimize();
+    }
+
     // Spawn the process using the resolved Java executable
     let mut child = Command::new(&java_executable)
         .current_dir(&game_dir)
@@ -908,7 +931,14 @@ pub async fn launch_instance(
         .spawn()
         .map_err(|e| format!("Failed to start JVM: {e}"))?;
 
-    tracing::info!("Minecraft process spawned with PID: {}", child.id().unwrap_or(0));
+    let pid = child.id().unwrap_or(0);
+    tracing::info!("Minecraft process spawned with PID: {}", pid);
+
+    // Emit "running" state to frontend
+    let _ = app.emit("instance-state-changed", serde_json::json!({
+        "versionId": version_id,
+        "status": "running"
+    }));
 
     // Get stdout and stderr
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
@@ -937,15 +967,41 @@ pub async fn launch_instance(
         }
     });
 
-    // Wait for process to exit
-    let status = child.wait().await
-        .map_err(|e| format!("Failed to wait for process: {e}"))?;
+    // Lifecycle Guardian: Async wait for process exit
+    let app_handle_clone = app.clone();
+    let version_id_clone = version_id.clone();
+    let window_clone = window.clone();
+    
+    tokio::spawn(async move {
+        // Wait for process to exit
+        match child.wait().await {
+            Ok(status) => {
+                let exit_code = status.code().unwrap_or(-1);
+                tracing::info!("Game exited with code: {}", exit_code);
 
-    tracing::info!("Minecraft process exited with status: {}", status);
+                // Restore window visibility when game exits
+                let _ = window_clone.show();
 
-    let _ = app.emit("game-exit", serde_json::json!({
-        "code": status.code()
-    }));
+                // Notify frontend game has exited with exit code
+                let _ = app_handle_clone.emit("instance-state-changed", serde_json::json!({
+                    "versionId": version_id_clone,
+                    "status": "exited",
+                    "exitCode": exit_code
+                }));
+            }
+            Err(e) => {
+                tracing::error!("Failed to wait for game process: {}", e);
+                // Restore window on error too
+                let _ = window_clone.show();
+                
+                let _ = app_handle_clone.emit("instance-state-changed", serde_json::json!({
+                    "versionId": version_id_clone,
+                    "status": "exited",
+                    "exitCode": -1
+                }));
+            }
+        }
+    });
 
     Ok(())
 }
