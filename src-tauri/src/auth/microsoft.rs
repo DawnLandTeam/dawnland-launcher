@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use crate::auth::{get_accounts, Account, AccountType};
+use crate::auth::{get_accounts, save_accounts, Account, AccountType};
 
 /// Device code flow response from Microsoft.
 #[derive(Debug, Deserialize)]
@@ -473,4 +473,110 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, String> 
     super::save_accounts(&accounts).await?;
 
     Ok(account)
+}
+
+/// Refresh Microsoft token for a given account.
+/// Returns updated account if successful, Err if refresh fails.
+pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String> {
+    tracing::info!("Refreshing Microsoft token for account: {}", account_id);
+
+    // Load all accounts to find the Microsoft account
+    let mut accounts = get_accounts().await?;
+
+    // Find the account
+    let account_pos = accounts.iter().position(|a| a.id == account_id)
+        .ok_or_else(|| "Account not found".to_string())?;
+
+    let account = &mut accounts[account_pos];
+
+    // Must be a Microsoft account with refresh token
+    if account.account_type != AccountType::Microsoft {
+        return Err("Account is not a Microsoft account".to_string());
+    }
+
+    let refresh_token = account.refresh_token.as_ref()
+        .ok_or_else(|| "No refresh token available for this account".to_string())?;
+
+    // Step 1: Refresh Microsoft access token
+    let client = reqwest::Client::new();
+
+    #[derive(Serialize)]
+    struct RefreshPayload<'a> {
+        client_id: &'a str,
+        refresh_token: &'a str,
+        grant_type: &'a str,
+    }
+
+    let payload = RefreshPayload {
+        client_id: CLIENT_ID,
+        refresh_token,
+        grant_type: "refresh_token",
+    };
+
+    let response = client
+        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Token refresh request failed: {}", e))?;
+
+    let raw_text = response.text().await.map_err(|e| format!("Failed to read refresh response: {e}"))?;
+
+    #[derive(Deserialize)]
+    struct RefreshResponse {
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        error: Option<String>,
+        error_description: Option<String>,
+    }
+
+    let refresh_resp: RefreshResponse = serde_json::from_str(&raw_text)
+        .map_err(|e| format!("Failed to parse refresh response: {e}. Raw: {}", raw_text))?;
+
+    if let Some(error) = &refresh_resp.error {
+        let error_desc = refresh_resp.error_description.clone().unwrap_or_default();
+        tracing::error!("Token refresh failed: {} - {}", error, error_desc);
+        
+        // If refresh token is invalid/expired, user needs to re-authenticate
+        if error == "invalid_grant" || error == "refresh_token_expired" || error == "invalid_request" {
+            return Err("REAUTH_REQUIRED".to_string());
+        }
+        
+        return Err(format!("Token refresh error: {} - {}", error, error_desc));
+    }
+
+    let new_ms_token = refresh_resp.access_token
+        .ok_or_else(|| "No access token in refresh response".to_string())?;
+
+    let new_refresh_token = refresh_resp.refresh_token
+        .unwrap_or_else(|| refresh_token.to_string()); // Use old one if not returned
+
+    tracing::info!("Microsoft token refreshed successfully");
+
+    // Step 2: Get new Xbox Live token
+    let xbl_token = get_xbox_live_token(&new_ms_token).await?;
+    tracing::info!("Xbox Live token refreshed");
+
+    // Step 3: Get new XSTS token
+    let (xsts_token, uhs) = get_xsts_token(&xbl_token).await?;
+    tracing::info!("XSTS token refreshed");
+
+    // Step 4: Get new Minecraft access token
+    let mc_token = get_minecraft_token(&xsts_token, &uhs).await?;
+    tracing::info!("Minecraft access token refreshed");
+
+    // Update account with new tokens and collect the updated account
+    let updated_account = {
+        let account = &mut accounts[account_pos];
+        account.access_token = Some(mc_token.clone());
+        account.refresh_token = Some(new_refresh_token.clone());
+        account.clone()
+    };
+
+    // Save updated accounts
+    save_accounts(&accounts).await?;
+
+    tracing::info!(target: "auth", "Account token refreshed for: {}", account_id);
+    Ok(updated_account)
 }

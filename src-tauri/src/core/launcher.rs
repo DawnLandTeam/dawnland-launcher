@@ -6,6 +6,7 @@ use crate::core::mojang::{get_minecraft_base, Library, Rule, VersionMeta};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use sysinfo::System;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -22,6 +23,25 @@ const LAUNCHER_NAME: &str = "Dawnland";
 const LAUNCHER_VERSION: &str = "1.0.0";
 
 // ============ Helper Functions ============
+
+/// Get system total memory in MB.
+fn get_system_memory_mb() -> u32 {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    let total_bytes = sys.total_memory();
+    // Convert bytes to MB, be conservative (floor)
+    (total_bytes / (1024 * 1024)) as u32
+}
+
+/// Get recommended max memory based on system RAM.
+/// Returns 1/3 of system memory, capped between 1024MB and 8192MB.
+fn get_recommended_max_memory() -> u32 {
+    let system_memory = get_system_memory_mb();
+    let recommended = system_memory / 3;
+    
+    // Clamp to reasonable bounds
+    recommended.max(1024).min(8192)
+}
 
 /// Normalize OS name from Rust to JSON format
 /// Rust: "macos" -> JSON: "osx"
@@ -879,14 +899,19 @@ pub async fn launch_instance(
         }
     }
 
-    // Apply custom max memory if configured
-    if let Some(max_mem) = instance_config.max_memory {
-        // Remove any existing -Xmx flags
-        jvm_args.retain(|arg| !arg.starts_with("-Xmx") && !arg.starts_with("-Xms"));
-        // Add custom memory settings
-        jvm_args.push(format!("-Xmx{}M", max_mem));
-        jvm_args.push(format!("-Xms{}M", max_mem / 2)); // Initial heap = half of max
-    }
+    // Apply custom max memory if configured, otherwise use recommended default
+    let max_mem = instance_config.max_memory
+        .map(|m| m.max(512)) // At least 512MB
+        .unwrap_or_else(get_recommended_max_memory);
+    let min_mem = max_mem / 2;
+
+    // Remove any existing -Xmx/-Xms flags and insert our custom ones at the front
+    jvm_args.retain(|arg| !arg.starts_with("-Xmx") && !arg.starts_with("-Xms"));
+    jvm_args.insert(0, format!("-Xmx{}M", max_mem));
+    jvm_args.insert(0, format!("-Xms{}M", min_mem));
+    
+    tracing::info!("Memory allocation: -Xms{}M -Xmx{}M (system recommended: {}MB)", 
+        min_mem, max_mem, get_recommended_max_memory());
 
     // Apply extra JVM arguments if configured
     if let Some(extra_args) = &instance_config.jvm_args_extra {

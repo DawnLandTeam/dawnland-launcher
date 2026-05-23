@@ -18,6 +18,11 @@ interface LoginInitResponse {
   message: string;
 }
 
+interface SystemMemoryInfo {
+  totalMb: number;
+  recommendedMaxMb: number;
+}
+
 const accounts = ref<Account[]>([]);
 const newUsername = ref("");
 const isAddingOffline = ref(false);
@@ -25,6 +30,10 @@ const isLoggingInMicrosoft = ref(false);
 const microsoftLoginData = ref<LoginInitResponse | null>(null);
 const loginError = ref<string | null>(null);
 const deviceCode = ref("");
+
+// Global settings
+const systemMemory = ref<SystemMemoryInfo>({ totalMb: 8192, recommendedMaxMb: 4096 });
+const defaultMaxMemory = ref(4096);
 
 // Load accounts on mount
 async function loadAccounts(): Promise<void> {
@@ -117,15 +126,51 @@ function cancelMicrosoftLogin(): void {
   isLoggingInMicrosoft.value = false;
 }
 
+async function loadSystemMemory(): Promise<void> {
+  try {
+    systemMemory.value = await invoke<SystemMemoryInfo>("get_system_memory");
+    defaultMaxMemory.value = systemMemory.value.recommendedMaxMb;
+  } catch (err) {
+    console.error("Failed to load system memory:", err);
+  }
+}
+
 onMounted(() => {
   loadAccounts();
+  loadSystemMemory();
 });
 </script>
 
 <template>
   <div class="flex h-full flex-col gap-4">
     <h1 class="text-2xl font-bold">Settings</h1>
-    <p class="text-sm text-neutral-500">Phase 4 — Account Management</p>
+    <p class="text-sm text-neutral-500">Phase 8 — Account Management & Global Settings</p>
+
+    <!-- Global Memory Settings -->
+    <div class="rounded-lg border border-neutral-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 class="mb-3 text-lg font-semibold">Default Memory Settings</h2>
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <label class="text-sm font-medium">Default Max Memory</label>
+          <span class="text-sm font-mono text-primary">{{ defaultMaxMemory }} MB</span>
+        </div>
+        <input
+          v-model.number="defaultMaxMemory"
+          type="range"
+          min="512"
+          :max="systemMemory.totalMb"
+          step="512"
+          class="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+        />
+        <div class="flex justify-between text-xs text-muted-foreground">
+          <span>512 MB</span>
+          <span>System: {{ systemMemory.totalMb }} MB</span>
+        </div>
+        <p class="text-xs text-muted-foreground">
+          This will be used as the default memory for new instances. Recommended: {{ systemMemory.recommendedMaxMb }} MB (1/3 of system RAM)
+        </p>
+      </div>
+    </div>
 
     <!-- Error Display -->
     <div v-if="loginError" class="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400">
