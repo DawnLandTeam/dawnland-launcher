@@ -732,3 +732,40 @@ pub async fn fetch_install_state() -> Result<InstallState, String> {
     let state = get_global_install_state().lock().await;
     Ok(state.clone())
 }
+
+/// Get list of installed versions.
+#[tauri::command]
+pub async fn get_installed_versions() -> Result<Vec<String>, String> {
+    let base_dir = get_minecraft_base();
+    let versions_dir = base_dir.join("versions");
+
+    if !versions_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut versions = Vec::new();
+    
+    let entries = fs::read_dir(&versions_dir)
+        .await
+        .map_err(|e| format!("Failed to read versions directory: {e}"))?;
+
+    let mut dir = tokio::fs::read_dir(&versions_dir).await.map_err(|e| format!("Failed to read versions dir: {e}"))?;
+    
+    while let Some(entry) = dir.next_entry().await.map_err(|e| format!("Failed to read entry: {e}"))? {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(name) = path.file_name() {
+                let name_str = name.to_string_lossy().to_string();
+                // Check if version JSON exists
+                let json_path = path.join(format!("{}.json", name_str));
+                if json_path.exists() {
+                    versions.push(name_str);
+                }
+            }
+        }
+    }
+
+    versions.sort();
+    tracing::info!("Found {} installed versions", versions.len());
+    Ok(versions)
+}
