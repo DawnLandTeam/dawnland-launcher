@@ -285,9 +285,9 @@ function isMsaAccount(account: Account): boolean {
         <!-- Control Panel -->
         <div class="w-full max-w-lg bg-card border rounded-2xl p-6 shadow-sm">
           <!-- Instance Selector -->
-          <div class="space-y-2">
-            <label class="text-sm font-medium">Select Instance</label>
-            <DropdownMenu>
+          <div class="flex items-center gap-3">
+            <label class="text-sm font-medium shrink-0">Select Instance</label>
+            <DropdownMenu class="flex-1">
               <template #trigger>
                 <button class="w-full flex items-center justify-between px-4 py-3 bg-background border rounded-lg hover:border-primary/50 transition-colors">
                   <div v-if="selectedInstance" class="flex items-center gap-2">
@@ -308,9 +308,9 @@ function isMsaAccount(account: Account): boolean {
           </div>
 
           <!-- Account Selector -->
-          <div class="space-y-2 mt-4">
-            <label class="text-sm font-medium">Select Account</label>
-            <DropdownMenu>
+          <div class="flex items-center gap-3 mt-4">
+            <label class="text-sm font-medium shrink-0">Select Account</label>
+            <DropdownMenu class="flex-1">
               <template #trigger>
                 <button class="w-full flex items-center justify-between px-4 py-3 bg-background border rounded-lg hover:border-primary/50 transition-colors">
                   <div v-if="selectedAccountId" class="flex items-center gap-2">
