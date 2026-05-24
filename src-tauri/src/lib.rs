@@ -40,6 +40,14 @@ pub fn run() {
             core::launcher::launch_instance,
             core::launcher::get_instance_config,
             core::launcher::save_instance_config,
+            // Fabric commands
+            core::fabric::get_fabric_loaders,
+            core::fabric::install_fabric_instance,
+            core::fabric::check_vanilla_installed,
+            // Manager commands
+            core::manager::scan_installed_instances,
+            core::manager::get_instance_details,
+            core::manager::delete_instance,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
