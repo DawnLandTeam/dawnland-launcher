@@ -48,6 +48,7 @@ pub fn run() {
             core::manager::scan_installed_instances,
             core::manager::get_instance_details,
             core::manager::delete_instance,
+            core::manager::open_instance_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
