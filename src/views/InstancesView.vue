@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, watch } from "vue";
+import { useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Gamepad2, Plus, Package, Play, Loader2, Settings, FolderOpen, Save, X, MoreHorizontal, Trash2, Folder } from "@lucide/vue";
+import { Gamepad2, Plus, Package, Settings, FolderOpen, Save, X, MoreHorizontal, Trash2, Folder } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
@@ -16,17 +16,6 @@ interface InstanceItem {
   loaderType: string;
 }
 
-interface GameLog {
-  type: string;
-  line: string;
-}
-
-interface Account {
-  id: string;
-  username: string;
-  accountType: string;
-}
-
 interface InstanceConfig {
   javaPath?: string;
   maxMemory?: number;
@@ -34,35 +23,17 @@ interface InstanceConfig {
   windowBehavior?: string;
 }
 
-interface InstanceState {
-  versionId: string;
-  status: "running" | "exited" | "repairing" | "repairing_complete";
-  exitCode?: number;
-  missingCount?: number;
-}
-
 interface SystemMemoryInfo {
   totalMb: number;
   recommendedMaxMb: number;
 }
 
+// Router — deep-link support
+const route = useRoute();
+
 // State
 const showInstallModal = ref(false);
 const installedInstances = ref<InstanceItem[]>([]);
-const accounts = ref<Account[]>([]);
-const selectedAccount = ref<string>("");
-
-// System memory for slider
-const systemMemory = ref<SystemMemoryInfo>({
-  totalMb: 8192,
-  recommendedMaxMb: 4096
-});
-
-// Track running state per instance
-const runningInstances = ref<Set<string>>(new Set());
-const repairingInstances = ref<Set<string>>(new Set());
-const gameLogs = ref<string[]>([]);
-const showGameLog = ref(false);
 
 // Settings modal state
 const showSettingsModal = ref(false);
@@ -72,14 +43,15 @@ const settingsConfig = ref<InstanceConfig>({
   javaPath: "",
   maxMemory: 4096,
   jvmArgsExtra: [],
-  windowBehavior: "keep"
+  windowBehavior: "keep",
 });
 const isSavingConfig = ref(false);
 
-// Crash alert state
-const showCrashAlert = ref(false);
-const crashExitCode = ref(0);
-const crashVersionId = ref("");
+// System memory for slider
+const systemMemory = ref<SystemMemoryInfo>({
+  totalMb: 8192,
+  recommendedMaxMb: 4096,
+});
 
 // Delete confirmation state
 const showDeleteDialog = ref(false);
@@ -87,48 +59,40 @@ const deletingInstanceId = ref("");
 const deletingInstanceName = ref("");
 const isDeletingInstance = ref(false);
 
-// Load installed instances on mount
+// ---------------------------------------------------------------------------
+// Deep-link: route.query.manage → auto-open settings for a specific instance
+// ---------------------------------------------------------------------------
+const openSettingsForInstance = async (instanceId: string) => {
+  // Find the instance in the list so we can display its name
+  const instance = installedInstances.value.find((i) => i.id === instanceId);
+  if (!instance) {
+    console.warn(`Instance "${instanceId}" not found — cannot open settings`);
+    return;
+  }
+  await openSettings(instance);
+};
+
+watch(
+  () => route.query.manage,
+  (newId) => {
+    if (newId && typeof newId === "string") {
+      openSettingsForInstance(newId);
+    }
+  },
+  { immediate: true },
+);
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
 onMounted(async () => {
   await loadInstances();
-  await loadAccounts();
   await loadSystemMemory();
-  
-  // Listen for game logs
-  listen<GameLog>("game-log", (event) => {
-    gameLogs.value.push(event.payload.line);
-    if (gameLogs.value.length > 500) {
-      gameLogs.value = gameLogs.value.slice(-500);
-    }
-  });
-  
-  // Listen for instance state changes
-  listen<InstanceState>("instance-state-changed", (event) => {
-    const { versionId, status, exitCode, missingCount } = event.payload;
-    
-    if (status === "running") {
-      runningInstances.value.add(versionId);
-      repairingInstances.value.delete(versionId);
-    } else if (status === "exited") {
-      runningInstances.value.delete(versionId);
-      repairingInstances.value.delete(versionId);
-      
-      // Show crash alert if exit code is non-zero
-      if (exitCode !== 0) {
-        crashVersionId.value = versionId;
-        crashExitCode.value = exitCode ?? -1;
-        showCrashAlert.value = true;
-      }
-    } else if (status === "repairing") {
-      // Show repairing state in UI
-      repairingInstances.value.add(versionId);
-      console.log(`Repairing ${versionId}: ${missingCount ?? 0} missing files...`);
-    } else if (status === "repairing_complete") {
-      repairingInstances.value.delete(versionId);
-      console.log(`Repair complete for ${versionId}`);
-    }
-  });
 });
 
+// ---------------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------------
 async function loadInstances() {
   try {
     const instances = await invoke<InstanceItem[]>("scan_installed_instances");
@@ -138,20 +102,8 @@ async function loadInstances() {
   }
 }
 
-// Refresh instance list (called after installation)
 async function refreshInstancesList() {
   await loadInstances();
-}
-
-async function loadAccounts() {
-  try {
-    accounts.value = await invoke<Account[]>("get_accounts");
-    if (accounts.value.length > 0) {
-      selectedAccount.value = accounts.value[0].id;
-    }
-  } catch (e) {
-    console.error("Failed to load accounts:", e);
-  }
 }
 
 async function loadSystemMemory() {
@@ -162,43 +114,22 @@ async function loadSystemMemory() {
   }
 }
 
-async function launchInstance(instanceId: string) {
-  if (!selectedAccount.value) {
-    alert("Please select an account first");
-    return;
-  }
-  
-  // Add to running set immediately for UI feedback
-  runningInstances.value.add(instanceId);
-  gameLogs.value = [];
-  showGameLog.value = true;
-  
-  try {
-    await invoke("launch_instance", {
-      versionId: instanceId,
-      accountUuid: selectedAccount.value
-    });
-    // Don't set isLaunching here - let the event handle it
-  } catch (e) {
-    console.error("Failed to launch instance:", e);
-    runningInstances.value.delete(instanceId);
-    alert(`Failed to launch: ${e}`);
-  }
-}
-
+// ---------------------------------------------------------------------------
+// Settings modal
+// ---------------------------------------------------------------------------
 async function openSettings(instance: InstanceItem) {
   settingsInstanceId.value = instance.id;
   settingsInstanceName.value = instance.name;
-  
+
   try {
     const config = await invoke<InstanceConfig>("get_instance_config", {
-      versionId: instance.id
+      versionId: instance.id,
     });
     settingsConfig.value = {
       javaPath: config.javaPath || "",
       maxMemory: config.maxMemory || 4096,
       jvmArgsExtra: config.jvmArgsExtra || [],
-      windowBehavior: config.windowBehavior || "keep"
+      windowBehavior: config.windowBehavior || "keep",
     };
   } catch (e) {
     console.error("Failed to load instance config:", e);
@@ -206,10 +137,10 @@ async function openSettings(instance: InstanceItem) {
       javaPath: "",
       maxMemory: 4096,
       jvmArgsExtra: [],
-      windowBehavior: "keep"
+      windowBehavior: "keep",
     };
   }
-  
+
   showSettingsModal.value = true;
 }
 
@@ -218,12 +149,14 @@ async function browseJavaPath() {
     const selected = await open({
       multiple: false,
       title: "Select Java Executable",
-      filters: [{
-        name: "Executable",
-        extensions: ["exe", "app", ""]
-      }]
+      filters: [
+        {
+          name: "Executable",
+          extensions: ["exe", "app", ""],
+        },
+      ],
     });
-    
+
     if (selected) {
       settingsConfig.value.javaPath = selected as string;
     }
@@ -234,20 +167,22 @@ async function browseJavaPath() {
 
 async function saveSettings() {
   isSavingConfig.value = true;
-  
+
   try {
     const config = {
       javaPath: settingsConfig.value.javaPath || null,
       maxMemory: settingsConfig.value.maxMemory || null,
-      jvmArgsExtra: settingsConfig.value.jvmArgsExtra?.length ? settingsConfig.value.jvmArgsExtra : null,
-      windowBehavior: settingsConfig.value.windowBehavior || "keep"
+      jvmArgsExtra: settingsConfig.value.jvmArgsExtra?.length
+        ? settingsConfig.value.jvmArgsExtra
+        : null,
+      windowBehavior: settingsConfig.value.windowBehavior || "keep",
     };
-    
+
     await invoke("save_instance_config", {
       versionId: settingsInstanceId.value,
-      config
+      config,
     });
-    
+
     showSettingsModal.value = false;
   } catch (e) {
     console.error("Failed to save instance config:", e);
@@ -257,6 +192,9 @@ async function saveSettings() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Instance management actions
+// ---------------------------------------------------------------------------
 async function openInstanceFolder(instanceId: string) {
   try {
     await invoke("open_instance_folder", { versionId: instanceId });
@@ -274,13 +212,12 @@ function confirmDeleteInstance(instance: InstanceItem) {
 
 async function deleteInstance() {
   if (!deletingInstanceId.value) return;
-  
+
   isDeletingInstance.value = true;
-  
+
   try {
     await invoke("delete_instance", { versionId: deletingInstanceId.value });
     showDeleteDialog.value = false;
-    // Refresh the instance list
     await refreshInstancesList();
   } catch (e) {
     console.error("Failed to delete instance:", e);
@@ -289,6 +226,20 @@ async function deleteInstance() {
     isDeletingInstance.value = false;
     deletingInstanceId.value = "";
     deletingInstanceName.value = "";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Loader type badge colour helper
+// ---------------------------------------------------------------------------
+function loaderBadgeClass(loaderType: string): string {
+  switch (loaderType.toLowerCase()) {
+    case "fabric":
+      return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300";
+    case "forge":
+      return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
+    default:
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300";
   }
 }
 </script>
@@ -300,7 +251,9 @@ async function deleteInstance() {
       v-if="installedInstances.length === 0"
       class="flex flex-1 flex-col items-center justify-center gap-4 p-6"
     >
-      <div class="flex h-20 w-20 items-center justify-center rounded-2xl bg-muted">
+      <div
+        class="flex h-20 w-20 items-center justify-center rounded-2xl bg-muted"
+      >
         <Package class="h-10 w-10 text-muted-foreground" />
       </div>
       <div class="text-center space-y-1">
@@ -327,7 +280,10 @@ async function deleteInstance() {
           <div>
             <h1 class="text-2xl font-bold">Game Instances</h1>
             <p class="text-sm text-muted-foreground">
-              {{ installedInstances.length }} instance{{ installedInstances.length !== 1 ? 's' : '' }} installed
+              {{ installedInstances.length }} instance{{
+                installedInstances.length !== 1 ? "s" : ""
+              }}
+              installed
             </p>
           </div>
         </div>
@@ -340,20 +296,6 @@ async function deleteInstance() {
         </button>
       </div>
 
-      <!-- Account Selector -->
-      <div class="flex items-center gap-3">
-        <label class="text-sm font-medium">Account:</label>
-        <select
-          v-model="selectedAccount"
-          class="px-3 py-1.5 bg-background border rounded-md text-sm"
-        >
-          <option value="" disabled>Select account...</option>
-          <option v-for="account in accounts" :key="account.id" :value="account.id">
-            {{ account.username }} ({{ account.accountType }})
-          </option>
-        </select>
-      </div>
-
       <!-- Instance Grid -->
       <div class="grid grid-cols-3 gap-4">
         <div
@@ -361,38 +303,34 @@ async function deleteInstance() {
           :key="instance.id"
           class="group rounded-lg border bg-card p-4 hover:border-primary/50 transition-colors"
         >
+          <!-- Instance info — primary visual focus -->
           <div class="flex items-start justify-between">
-            <div class="space-y-1">
-              <h3 class="font-medium">{{ instance.name }}</h3>
-              <p class="text-xs text-muted-foreground">
-                {{ instance.mcVersion }} · {{ instance.loaderType }}
-              </p>
+            <div class="space-y-1.5 min-w-0">
+              <h3 class="font-semibold truncate">{{ instance.name }}</h3>
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-muted-foreground font-mono">
+                  {{ instance.mcVersion }}
+                </span>
+                <span
+                  class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none"
+                  :class="loaderBadgeClass(instance.loaderType)"
+                >
+                  {{ instance.loaderType }}
+                </span>
+              </div>
             </div>
-            <Gamepad2 class="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+            <Gamepad2
+              class="h-5 w-5 shrink-0 text-muted-foreground group-hover:text-primary transition-colors"
+            />
           </div>
-          
-          <!-- Action Buttons -->
-          <div class="mt-3 flex gap-2">
-            <button
-              @click="launchInstance(instance.id)"
-              :disabled="runningInstances.has(instance.id) || repairingInstances.has(instance.id) || !selectedAccount"
-              class="flex-1 flex items-center justify-center gap-2 rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <Loader2 v-if="runningInstances.has(instance.id) || repairingInstances.has(instance.id)" class="h-4 w-4 animate-spin" />
-              <Play v-else class="h-4 w-4" />
-              <span v-if="repairingInstances.has(instance.id)">Repairing...</span>
-              <span v-else-if="runningInstances.has(instance.id)">Running...</span>
-              <span v-else>Play</span>
-            </button>
-            
-            <!-- Dropdown Menu -->
+
+          <!-- Management actions -->
+          <div class="mt-3 flex justify-end">
             <DropdownMenu>
               <template #trigger>
                 <button
-                  class="flex items-center justify-center rounded-md border bg-background px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
+                  class="flex items-center justify-center rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors"
                   title="More options"
-                  :disabled="runningInstances.has(instance.id)"
-                  :class="{ 'opacity-50 cursor-not-allowed': runningInstances.has(instance.id) }"
                 >
                   <MoreHorizontal class="h-4 w-4" />
                 </button>
@@ -401,11 +339,16 @@ async function deleteInstance() {
                 <Settings class="h-4 w-4" />
                 Settings
               </DropdownMenuItem>
-              <DropdownMenuItem @click="openInstanceFolder(instance.id)">
+              <DropdownMenuItem
+                @click="openInstanceFolder(instance.id)"
+              >
                 <Folder class="h-4 w-4" />
                 Open Folder
               </DropdownMenuItem>
-              <DropdownMenuItem destructive @click="confirmDeleteInstance(instance)">
+              <DropdownMenuItem
+                destructive
+                @click="confirmDeleteInstance(instance)"
+              >
                 <Trash2 class="h-4 w-4" />
                 Delete
               </DropdownMenuItem>
@@ -416,40 +359,10 @@ async function deleteInstance() {
     </div>
 
     <!-- Install Instance Modal -->
-    <InstallInstanceModal 
-      v-model:open="showInstallModal" 
+    <InstallInstanceModal
+      v-model:open="showInstallModal"
       @installed-success="refreshInstancesList"
     />
-
-    <!-- Game Log Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showGameLog"
-        class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
-      >
-        <div 
-          class="absolute inset-0 bg-background/80 backdrop-blur-sm pointer-events-auto"
-          @click="showGameLog = false"
-        />
-        <div
-          class="relative z-10 w-full max-w-3xl h-[70vh] gap-4 border bg-card p-4 shadow-xl rounded-lg flex flex-col pointer-events-auto"
-        >
-          <div class="flex items-center justify-between">
-            <h3 class="font-semibold">Game Output</h3>
-            <button
-              @click="showGameLog = false"
-              class="text-muted-foreground hover:text-foreground"
-            >
-              ✕
-            </button>
-          </div>
-          <div class="flex-1 overflow-auto font-mono text-xs bg-black text-green-400 p-3 rounded">
-            <div v-for="(line, idx) in gameLogs" :key="idx">{{ line }}</div>
-            <div v-if="gameLogs.length === 0" class="text-gray-500">Waiting for game output...</div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
 
     <!-- Instance Settings Modal -->
     <Teleport to="body">
@@ -457,7 +370,7 @@ async function deleteInstance() {
         v-if="showSettingsModal"
         class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
       >
-        <div 
+        <div
           class="absolute inset-0 bg-background/80 backdrop-blur-sm pointer-events-auto"
           @click="showSettingsModal = false"
         />
@@ -467,7 +380,9 @@ async function deleteInstance() {
           <div class="flex items-center justify-between mb-4">
             <div>
               <h3 class="font-semibold text-lg">Instance Settings</h3>
-              <p class="text-sm text-muted-foreground">{{ settingsInstanceName }}</p>
+              <p class="text-sm text-muted-foreground">
+                {{ settingsInstanceName }}
+              </p>
             </div>
             <button
               @click="showSettingsModal = false"
@@ -496,7 +411,8 @@ async function deleteInstance() {
               </button>
             </div>
             <p class="text-xs text-muted-foreground">
-              MC 1.20.5+ requires Java 21. Leave empty to use system default "java".
+              MC 1.20.5+ requires Java 21. Leave empty to use system default
+              "java".
             </p>
           </div>
 
@@ -504,7 +420,9 @@ async function deleteInstance() {
           <div class="space-y-2 mt-4">
             <div class="flex items-center justify-between">
               <label class="text-sm font-medium">Max Memory (MB)</label>
-              <span class="text-sm font-mono text-primary">{{ settingsConfig.maxMemory }} MB</span>
+              <span class="text-sm font-mono text-primary"
+                >{{ settingsConfig.maxMemory }} MB</span
+              >
             </div>
             <input
               v-model.number="settingsConfig.maxMemory"
@@ -519,13 +437,16 @@ async function deleteInstance() {
               <span>System: {{ systemMemory.totalMb }} MB</span>
             </div>
             <p class="text-xs text-muted-foreground">
-              Recommended: {{ systemMemory.recommendedMaxMb }} MB (1/3 of system RAM)
+              Recommended: {{ systemMemory.recommendedMaxMb }} MB (1/3 of
+              system RAM)
             </p>
           </div>
 
           <!-- Extra JVM Args -->
           <div class="space-y-2 mt-4">
-            <label class="text-sm font-medium">Extra JVM Arguments (advanced)</label>
+            <label class="text-sm font-medium"
+              >Extra JVM Arguments (advanced)</label
+            >
             <textarea
               v-model="settingsConfig.jvmArgsExtra"
               placeholder="-XX:+UseG1GC&#10;-XX:+ParallelGCThreads=4"
@@ -570,58 +491,17 @@ async function deleteInstance() {
       </div>
     </Teleport>
 
-    <!-- Crash Alert Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showCrashAlert"
-        class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
-      >
-        <div 
-          class="absolute inset-0 bg-background/80 backdrop-blur-sm pointer-events-auto"
-          @click="showCrashAlert = false"
-        />
-        <div
-          class="relative z-10 w-full max-w-sm gap-4 border bg-card p-5 shadow-xl rounded-lg pointer-events-auto"
-        >
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-lg text-red-600">Game Crashed!</h3>
-            <button
-              @click="showCrashAlert = false"
-              class="text-muted-foreground hover:text-foreground"
-            >
-              <X class="h-5 w-5" />
-            </button>
-          </div>
-          
-          <p class="text-sm text-foreground mb-2">
-            The game has exited unexpectedly.
-          </p>
-          <p class="text-sm text-muted-foreground mb-4">
-            <strong>Exit Code:</strong> {{ crashExitCode }}<br/>
-            <strong>Version:</strong> {{ crashVersionId }}
-          </p>
-          <p class="text-xs text-muted-foreground">
-            Please check the game console logs for more details about the crash.
-          </p>
-          
-          <div class="flex justify-end gap-2 mt-6">
-            <button
-              @click="showCrashAlert = false"
-              class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
     <!-- Delete Confirmation Dialog -->
-    <AlertDialog :open="showDeleteDialog" @update:open="showDeleteDialog = $event">
+    <AlertDialog
+      :open="showDeleteDialog"
+      @update:open="showDeleteDialog = $event"
+    >
       <AlertDialogTitle>Delete Instance?</AlertDialogTitle>
       <AlertDialogDescription class="mt-2">
-        Are you sure you want to delete <strong>{{ deletingInstanceName }}</strong>?
-        This will remove all instance data including saves, mods, and resource packs.
+        Are you sure you want to delete
+        <strong>{{ deletingInstanceName }}</strong
+        >? This will remove all instance data including saves, mods, and
+        resource packs.
         <span class="text-red-600 font-medium">This action cannot be undone.</span>
       </AlertDialogDescription>
       <div class="flex justify-end gap-2 mt-6">
