@@ -182,6 +182,26 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
     })
 }
 
+/// Open the instance folder in the system file manager.
+#[tauri::command]
+pub async fn open_instance_folder(version_id: String) -> Result<(), String> {
+    let base_dir = get_minecraft_base();
+    let instance_dir = base_dir.join("versions").join(&version_id);
+
+    // Ensure directory exists — create it if missing so the user sees an empty folder
+    if !instance_dir.exists() {
+        tokio::fs::create_dir_all(&instance_dir)
+            .await
+            .map_err(|e| format!("Failed to create instance directory: {}", e))?;
+    }
+
+    // Open in system file manager (Explorer / Finder / xdg-open)
+    open::that(&instance_dir).map_err(|e| format!("Failed to open folder: {}", e))?;
+
+    tracing::info!("Opened instance folder: {}", instance_dir.display());
+    Ok(())
+}
+
 /// Delete an instance (removes version directory).
 #[tauri::command]
 pub async fn delete_instance(version_id: String) -> Result<(), String> {
