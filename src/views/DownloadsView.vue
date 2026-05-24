@@ -167,7 +167,7 @@ onUnmounted(() => {
         class="rounded-lg border border-neutral-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"
       >
         <div class="mb-2 flex items-center justify-between">
-          <span class="font-medium text-neutral-900 dark:text-zinc-100">
+          <span class="font-medium text-neutral-900 dark:text-white">
             {{ task.url }}
           </span>
           <span

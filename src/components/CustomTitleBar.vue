@@ -60,7 +60,7 @@ checkMaximized();
     </div>
 
     <!-- Right: Window controls - enable pointer events for button clicks -->
-    <div class="flex items-center pointer-events-auto region-no-drag">
+    <div class="flex items-center pointer-events-auto">
       <button
         class="inline-flex h-8 w-10 items-center justify-center transition-colors hover:bg-neutral-700 hover:text-neutral-200"
         style="color: #a3a3a3;"

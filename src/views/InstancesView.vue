@@ -379,7 +379,7 @@ function loaderBadgeClass(loaderType: string): string {
         >
           <div class="flex items-center justify-between mb-4">
             <div>
-              <h3 class="font-semibold text-lg">Instance Settings</h3>
+              <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">Instance Settings</h3>
               <p class="text-sm text-muted-foreground">
                 {{ settingsInstanceName }}
               </p>
@@ -400,7 +400,7 @@ function loaderBadgeClass(loaderType: string): string {
                 v-model="settingsConfig.javaPath"
                 type="text"
                 placeholder="Leave empty for system default"
-                class="flex-1 px-3 py-2 bg-white dark:bg-zinc-800 border rounded-md text-sm"
+                class="flex-1 px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
               />
               <button
                 @click="browseJavaPath"
@@ -450,7 +450,7 @@ function loaderBadgeClass(loaderType: string): string {
             <textarea
               v-model="settingsConfig.jvmArgsExtra"
               placeholder="-XX:+UseG1GC&#10;-XX:+ParallelGCThreads=4"
-              class="w-full px-3 py-2 bg-background border rounded-md text-sm font-mono h-20 resize-none"
+              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm font-mono text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 h-20 resize-none"
             />
           </div>
 
@@ -459,7 +459,7 @@ function loaderBadgeClass(loaderType: string): string {
             <label class="text-sm font-medium">Window Behavior</label>
             <select
               v-model="settingsConfig.windowBehavior"
-              class="w-full px-3 py-2 bg-background border rounded-md text-sm"
+              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
             >
               <option value="keep">Keep visible (default)</option>
               <option value="hide">Hide launcher</option>

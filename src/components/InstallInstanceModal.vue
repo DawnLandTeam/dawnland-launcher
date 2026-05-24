@@ -412,7 +412,7 @@ onUnmounted(() => {
 
     <!-- Step 1: Base Minecraft Version -->
     <div v-if="currentStep === 1" class="space-y-4">
-      <div class="flex items-center gap-2 text-lg font-medium">
+      <div class="flex items-center gap-2 text-lg font-medium text-neutral-900 dark:text-white">
         <Box class="w-5 h-5" />
         Select Base Minecraft Version
       </div>
@@ -437,7 +437,7 @@ onUnmounted(() => {
         <select
           v-model="selectedVersion"
           :disabled="isLoadingVersions || isInstalling"
-          class="w-full px-3 py-2 bg-background border rounded-md text-sm disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-ring"
+          class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
         >
           <option value="" disabled>Select a version...</option>
 
@@ -492,7 +492,7 @@ onUnmounted(() => {
 
     <!-- Step 2: Optional Mod Loader -->
     <div v-if="currentStep === 2" class="space-y-4">
-      <div class="flex items-center gap-2 text-lg font-medium">
+      <div class="flex items-center gap-2 text-lg font-medium text-neutral-900 dark:text-white">
         <Puzzle class="w-5 h-5" />
         Install Mod Loader (Optional)
       </div>
@@ -535,7 +535,7 @@ onUnmounted(() => {
         <select
           v-model="selectedFabricLoader"
           :disabled="isLoadingFabric || !selectedVersion"
-          class="w-full px-3 py-2 bg-background border rounded-md text-sm disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-ring"
+          class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
         >
           <option value="" disabled>Select a loader version...</option>
           <optgroup v-if="stableFabricLoaders.length" label="Stable">
@@ -619,7 +619,7 @@ onUnmounted(() => {
             v-model="customInstanceName"
             type="text"
             placeholder="e.g., Fabric-1.20.1"
-            class="w-full px-3 py-2 bg-background border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
           />
           <p class="text-xs text-muted-foreground">
             This name will be used for the instance folder and version ID.
