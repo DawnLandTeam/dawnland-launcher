@@ -23,6 +23,18 @@ async function close(): Promise<void> {
   await appWindow.close();
 }
 
+// Start dragging using Tauri API - dual insurance with data-tauri-drag-region
+async function startDrag(e: MouseEvent): Promise<void> {
+  console.log("Mouse down detected on Header!"); // Debug log
+  if (e.button === 0) {
+    try {
+      await appWindow.startDragging();
+    } catch (error) {
+      console.error("Drag error:", error);
+    }
+  }
+}
+
 // Listen for resize events to update maximized state
 appWindow.onResized(async () => {
   await checkMaximized();
@@ -34,20 +46,21 @@ checkMaximized();
 
 <template>
   <header
-    class="flex h-8 shrink-0 select-none items-center justify-between px-3"
-    style="background-color: #171717; position: relative; z-index: 9999;"
+    class="region-drag flex h-8 shrink-0 select-none items-center justify-between px-3 w-full"
+    style="background-color: #171717; position: relative; z-index: 99999;"
     data-tauri-drag-region
+    @mousedown="startDrag"
   >
-    <!-- Left: App title -->
+    <!-- Left: App title - prevent events to allow drag on parent -->
     <div
-      class="text-xs font-medium"
+      class="text-xs font-medium pointer-events-none select-none"
       style="color: #a3a3a3;"
     >
       Dawnland Launcher
     </div>
 
-    <!-- Right: Window controls (no drag region to prevent interference) -->
-    <div class="flex items-center">
+    <!-- Right: Window controls - enable pointer events for button clicks -->
+    <div class="flex items-center pointer-events-auto region-no-drag">
       <button
         class="inline-flex h-8 w-10 items-center justify-center transition-colors hover:bg-neutral-700 hover:text-neutral-200"
         style="color: #a3a3a3;"

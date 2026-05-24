@@ -27,3 +27,13 @@ body {
 .animate-marquee {
   animation: marquee 30s linear infinite;
 }
+
+/* Native drag region for Tauri - tells OS this is the title bar */
+.region-drag {
+  -webkit-app-region: drag;
+}
+
+/* Disable drag on interactive elements */
+.region-no-drag {
+  -webkit-app-region: no-drag;
+}
