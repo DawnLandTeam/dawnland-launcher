@@ -11,6 +11,9 @@ import {
   Gamepad2,
   User,
   ChevronDown,
+  Package,
+  MonitorCheck,
+  WifiOff,
 } from "@lucide/vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
@@ -26,7 +29,7 @@ interface InstanceItem {
 interface Account {
   id: string;
   username: string;
-  accountType: string;
+  type: string; // 'msa' or 'offline'
 }
 
 interface GameLog {
@@ -232,6 +235,11 @@ function loaderBadgeClass(loaderType: string): string {
       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300";
   }
 }
+
+// Account type helper: returns true for Microsoft account (premium)
+function isMsaAccount(account: Account): boolean {
+  return account.type === "msa";
+}
 </script>
 
 <template>
@@ -282,24 +290,18 @@ function loaderBadgeClass(loaderType: string): string {
             <DropdownMenu>
               <template #trigger>
                 <button class="w-full flex items-center justify-between px-4 py-3 bg-background border rounded-lg hover:border-primary/50 transition-colors">
-                  <div v-if="selectedInstance" class="flex items-center gap-3">
-                    <Gamepad2 class="h-5 w-5 text-primary" />
-                    <div class="text-left">
-                      <div class="font-medium">{{ selectedInstance.name }}</div>
-                      <div class="text-xs text-muted-foreground">{{ selectedInstance.mcVersion }} · {{ formatLoaderType(selectedInstance.loaderType) }}</div>
-                    </div>
+                  <div v-if="selectedInstance" class="flex items-center gap-2">
+                    <Package class="h-5 w-5 text-primary" />
+                    <span class="font-medium truncate">{{ selectedInstance.name }}</span>
                   </div>
                   <span v-else class="text-muted-foreground">Select an instance...</span>
-                  <ChevronDown class="h-5 w-5 text-muted-foreground" />
+                  <ChevronDown class="h-5 w-5 text-muted-foreground shrink-0" />
                 </button>
               </template>
               <div class="max-h-60 overflow-y-auto bg-background">
                 <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="selectedInstanceId = instance.id" class="flex items-center gap-3">
-                  <Gamepad2 class="h-4 w-4" />
-                  <div class="flex-1">
-                    <div class="font-medium">{{ instance.name }}</div>
-                    <div class="text-xs text-muted-foreground">{{ instance.mcVersion }} · {{ formatLoaderType(instance.loaderType) }}</div>
-                  </div>
+                  <Package class="h-4 w-4" />
+                  <span class="truncate">{{ instance.name }}</span>
                 </DropdownMenuItem>
               </div>
             </DropdownMenu>
@@ -311,28 +313,19 @@ function loaderBadgeClass(loaderType: string): string {
             <DropdownMenu>
               <template #trigger>
                 <button class="w-full flex items-center justify-between px-4 py-3 bg-background border rounded-lg hover:border-primary/50 transition-colors">
-                  <div v-if="selectedAccountId" class="flex items-center gap-3">
-                    <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold">
-                      {{ accounts.find((a) => a.id === selectedAccountId)?.username.charAt(0).toUpperCase() || "?" }}
-                    </div>
-                    <div class="text-left">
-                      <div class="font-medium">{{ accounts.find((a) => a.id === selectedAccountId)?.username }}</div>
-                      <div class="text-xs text-muted-foreground">{{ accounts.find((a) => a.id === selectedAccountId)?.accountType }}</div>
-                    </div>
+                  <div v-if="selectedAccountId" class="flex items-center gap-2">
+                    <component :is="isMsaAccount(accounts.find((a) => a.id === selectedAccountId)!) ? MonitorCheck : WifiOff" :class="isMsaAccount(accounts.find((a) => a.id === selectedAccountId)!) ? 'h-5 w-5 text-green-500' : 'h-5 w-5 text-muted-foreground'" />
+                    <span class="font-medium truncate">{{ accounts.find((a) => a.id === selectedAccountId)?.username }}</span>
                   </div>
                   <span v-else class="text-muted-foreground">Select an account...</span>
-                  <ChevronDown class="h-5 w-5 text-muted-foreground" />
+                  <ChevronDown class="h-5 w-5 text-muted-foreground shrink-0" />
                 </button>
               </template>
               <div class="bg-background">
                 <DropdownMenuItem v-for="account in accounts" :key="account.id" @click="selectedAccountId = account.id" class="flex items-center gap-3">
-                  <div class="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">
-                    {{ account.username.charAt(0).toUpperCase() }}
-                  </div>
-                  <div class="flex-1">
-                    <div class="font-medium">{{ account.username }}</div>
-                    <div class="text-xs text-muted-foreground">{{ account.accountType }}</div>
-                  </div>
+                  <MonitorCheck v-if="isMsaAccount(account)" class="h-4 w-4 text-green-500" />
+                  <WifiOff v-else class="h-4 w-4 text-muted-foreground" />
+                  <span class="truncate">{{ account.username }}</span>
                 </DropdownMenuItem>
                 <div class="border-t my-1"></div>
                 <DropdownMenuItem @click="addOfflineAccount" class="flex items-center gap-3">
