@@ -33,39 +33,43 @@ checkMaximized();
 </script>
 
 <template>
-  <div
-    class="flex h-8 shrink-0 select-none items-center justify-between bg-neutral-900/80 px-3"
+  <header
+    class="flex h-8 shrink-0 select-none items-center justify-between px-3"
+    style="background-color: #171717; position: relative; z-index: 9999;"
     data-tauri-drag-region
   >
     <!-- Left: App title -->
     <div
-      class="text-xs font-medium text-neutral-400"
-      data-tauri-drag-region
+      class="text-xs font-medium"
+      style="color: #a3a3a3;"
     >
       Dawnland Launcher
     </div>
 
-    <!-- Right: Window controls -->
+    <!-- Right: Window controls (no drag region to prevent interference) -->
     <div class="flex items-center">
       <button
-        class="inline-flex h-8 w-10 items-center justify-center text-neutral-400 transition-colors hover:bg-neutral-700 hover:text-neutral-200"
+        class="inline-flex h-8 w-10 items-center justify-center transition-colors hover:bg-neutral-700 hover:text-neutral-200"
+        style="color: #a3a3a3;"
         @click="minimize"
       >
         <Minus :size="14" />
       </button>
       <button
-        class="inline-flex h-8 w-10 items-center justify-center text-neutral-400 transition-colors hover:bg-neutral-700 hover:text-neutral-200"
+        class="inline-flex h-8 w-10 items-center justify-center transition-colors hover:bg-neutral-700 hover:text-neutral-200"
+        style="color: #a3a3a3;"
         @click="toggleMaximize"
       >
         <Copy v-if="isMaximized" :size="12" />
         <Square v-else :size="12" />
       </button>
       <button
-        class="inline-flex h-8 w-10 items-center justify-center text-neutral-400 transition-colors hover:bg-red-600 hover:text-white"
+        class="inline-flex h-8 w-10 items-center justify-center transition-colors hover:bg-red-600 hover:text-white"
+        style="color: #a3a3a3;"
         @click="close"
       >
         <X :size="14" />
       </button>
     </div>
-  </div>
+  </header>
 </template>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute } from "vue-router";
 import { useDark, useToggle } from "@vueuse/core";
-import { Gamepad2, Library, Server, Download, Settings, Sun, Moon } from "@lucide/vue";
+import { Gamepad2, Library, Server, Settings, Sun, Moon } from "@lucide/vue";
 
 const route = useRoute();
 const isDark = useDark();
@@ -11,7 +11,6 @@ const navItems = [
   { name: "home", path: "/", label: "Home", icon: Gamepad2 },
   { name: "instances", path: "/instances", label: "Instances", icon: Library },
   { name: "servers", path: "/servers", label: "Servers", icon: Server },
-  { name: "downloads", path: "/downloads", label: "Downloads", icon: Download },
   { name: "settings", path: "/settings", label: "Settings", icon: Settings },
 ];
 </script>

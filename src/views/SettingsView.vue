@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { User, Trash2, Plus, UserPlus, Loader2 } from "@lucide/vue";
+import { User, Trash2, Plus, UserPlus, Loader2, X, WifiOff } from "@lucide/vue";
 
 interface Account {
   id: string;
@@ -23,6 +23,8 @@ interface SystemMemoryInfo {
   recommendedMaxMb: number;
 }
 
+type AccountType = "offline" | "microsoft";
+
 const accounts = ref<Account[]>([]);
 const newUsername = ref("");
 const isAddingOffline = ref(false);
@@ -30,6 +32,10 @@ const isLoggingInMicrosoft = ref(false);
 const microsoftLoginData = ref<LoginInitResponse | null>(null);
 const loginError = ref<string | null>(null);
 const deviceCode = ref("");
+
+// Modal state
+const showAddAccountModal = ref(false);
+const selectedAccountType = ref<AccountType>("offline");
 
 // Global settings
 const systemMemory = ref<SystemMemoryInfo>({ totalMb: 8192, recommendedMaxMb: 4096 });
@@ -44,6 +50,25 @@ async function loadAccounts(): Promise<void> {
   }
 }
 
+// Open add account modal
+function openAddAccountModal(): void {
+  showAddAccountModal.value = true;
+  selectedAccountType.value = "offline";
+  newUsername.value = "";
+  loginError.value = null;
+  microsoftLoginData.value = null;
+  isLoggingInMicrosoft.value = false;
+}
+
+// Close add account modal
+function closeAddAccountModal(): void {
+  showAddAccountModal.value = false;
+  newUsername.value = "";
+  loginError.value = null;
+  microsoftLoginData.value = null;
+  isLoggingInMicrosoft.value = false;
+}
+
 // Add offline account
 async function addOfflineAccount(): Promise<void> {
   if (!newUsername.value.trim()) return;
@@ -55,6 +80,7 @@ async function addOfflineAccount(): Promise<void> {
     await invoke("add_offline_account", { username: newUsername.value.trim() });
     newUsername.value = "";
     await loadAccounts();
+    closeAddAccountModal();
   } catch (err) {
     loginError.value = typeof err === "string" ? err : String(err);
   } finally {
@@ -98,6 +124,7 @@ async function pollMicrosoftToken(code: string): Promise<void> {
     accounts.value.push(account);
     microsoftLoginData.value = null;
     isLoggingInMicrosoft.value = false;
+    closeAddAccountModal();
   } catch (err) {
     const errorMsg = typeof err === "string" ? err : String(err);
     // Check if it's a pending error (user hasn't entered code yet)
@@ -142,13 +169,15 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex h-full flex-col gap-4">
-    <h1 class="text-2xl font-bold">Settings</h1>
-    <p class="text-sm text-neutral-500">Phase 8 — Account Management & Global Settings</p>
+  <div class="flex h-full flex-col p-6 gap-6 overflow-y-auto">
+    <div>
+      <h1 class="text-2xl font-bold">Settings</h1>
+      <p class="text-sm text-neutral-500 mt-1">Manage accounts and global settings</p>
+    </div>
 
     <!-- Global Memory Settings -->
-    <div class="rounded-lg border border-neutral-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 class="mb-3 text-lg font-semibold">Default Memory Settings</h2>
+    <div class="rounded-lg border border-neutral-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 class="mb-4 text-lg font-semibold">Default Memory Settings</h2>
       <div class="space-y-3">
         <div class="flex items-center justify-between">
           <label class="text-sm font-medium">Default Max Memory</label>
@@ -177,86 +206,20 @@ onMounted(() => {
       {{ loginError }}
     </div>
 
-    <!-- Add Offline Account -->
-    <div class="rounded-lg border border-neutral-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 class="mb-3 text-lg font-semibold">Add Offline Account</h2>
-      <div class="flex gap-2">
-        <input
-          v-model="newUsername"
-          type="text"
-          placeholder="Enter username..."
-          class="flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800"
-          @keyup.enter="addOfflineAccount"
-        />
-        <button
-          class="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="isAddingOffline || !newUsername.trim()"
-          @click="addOfflineAccount"
-        >
-          <Plus v-if="!isAddingOffline" :size="16" />
-          <Loader2 v-else :size="16" class="animate-spin" />
-          Add
-        </button>
-      </div>
-    </div>
-
-    <!-- Microsoft Login -->
-    <div class="rounded-lg border border-neutral-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 class="mb-3 text-lg font-semibold">Microsoft Account</h2>
-
-      <!-- Not logging in -->
-      <div v-if="!isLoggingInMicrosoft && !microsoftLoginData">
-        <button
-          class="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
-          @click="startMicrosoftLogin"
-        >
-          <UserPlus :size="16" />
-          Login with Microsoft
-        </button>
-      </div>
-
-      <!-- Logging in - show device code -->
-      <div v-else-if="microsoftLoginData" class="flex flex-col gap-3">
-        <p class="text-sm text-neutral-600 dark:text-zinc-400">
-          {{ microsoftLoginData.message }}
-        </p>
-        <div class="flex items-center gap-2">
-          <span class="text-2xl font-mono font-bold tracking-wider text-indigo-600 dark:text-indigo-400">
-            {{ microsoftLoginData.userCode }}
-          </span>
-          <button
-            class="rounded p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-zinc-800"
-            title="Copy code"
-            @click="copyCode"
-          >
-            <User :size="16" />
-          </button>
-        </div>
-        <a
-          :href="microsoftLoginData.verificationUri"
-          target="_blank"
-          class="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
-        >
-          Open verification page →
-        </a>
-        <button
-          class="w-fit rounded-lg bg-neutral-200 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
-          @click="cancelMicrosoftLogin"
-        >
-          Cancel
-        </button>
-      </div>
-
-      <!-- Waiting for poll -->
-      <div v-else class="flex items-center gap-2 text-sm text-neutral-500">
-        <Loader2 :size="16" class="animate-spin" />
-        Preparing login...
-      </div>
+    <!-- Account List Header -->
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-semibold">Accounts ({{ accounts.length }})</h2>
+      <button
+        class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        @click="openAddAccountModal"
+      >
+        <Plus :size="16" />
+        Add Account
+      </button>
     </div>
 
     <!-- Account List -->
     <div class="flex flex-1 flex-col gap-3 overflow-y-auto">
-      <h2 class="text-lg font-semibold">Accounts ({{ accounts.length }})</h2>
       <div
         v-for="account in accounts"
         :key="account.id"
@@ -291,5 +254,133 @@ onMounted(() => {
         No accounts added yet
       </p>
     </div>
+
+    <!-- Add Account Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showAddAccountModal"
+        class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+      >
+        <div
+          class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
+          @click="closeAddAccountModal"
+        />
+        <div class="relative z-10 w-full max-w-md gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg pointer-events-auto">
+          <!-- Header -->
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold">Add Account</h3>
+            <button
+              class="rounded p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-zinc-800"
+              @click="closeAddAccountModal"
+            >
+              <X :size="20" />
+            </button>
+          </div>
+
+          <!-- Account Type Selection -->
+          <div class="space-y-3">
+            <label class="text-sm font-medium">Account Type</label>
+            <div class="flex gap-3">
+              <button
+                class="flex-1 flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors"
+                :class="selectedAccountType === 'offline' ? 'border-primary bg-primary/10' : 'border-neutral-200 dark:border-zinc-700 hover:border-primary/50'"
+                @click="selectedAccountType = 'offline'"
+              >
+                <WifiOff :size="24" class="text-neutral-600 dark:text-zinc-400" />
+                <span class="text-sm font-medium">Offline</span>
+                <span class="text-xs text-neutral-500">Play without account</span>
+              </button>
+              <button
+                class="flex-1 flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors"
+                :class="selectedAccountType === 'microsoft' ? 'border-primary bg-primary/10' : 'border-neutral-200 dark:border-zinc-700 hover:border-primary/50'"
+                @click="selectedAccountType = 'microsoft'"
+              >
+                <UserPlus :size="24" class="text-emerald-600 dark:text-emerald-400" />
+                <span class="text-sm font-medium">Microsoft</span>
+                <span class="text-xs text-neutral-500">Play online</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Offline Account Form -->
+          <div v-if="selectedAccountType === 'offline'" class="mt-4 space-y-3">
+            <label class="text-sm font-medium">Username</label>
+            <input
+              v-model="newUsername"
+              type="text"
+              placeholder="Enter username..."
+              class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800"
+              @keyup.enter="addOfflineAccount"
+            />
+            <button
+              class="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="isAddingOffline || !newUsername.trim()"
+              @click="addOfflineAccount"
+            >
+              <Loader2 v-if="isAddingOffline" :size="16" class="animate-spin" />
+              <Plus v-else :size="16" />
+              {{ isAddingOffline ? 'Adding...' : 'Add Account' }}
+            </button>
+          </div>
+
+          <!-- Microsoft Login Form -->
+          <div v-else-if="selectedAccountType === 'microsoft'" class="mt-4 space-y-3">
+            <!-- Not logging in -->
+            <div v-if="!isLoggingInMicrosoft && !microsoftLoginData">
+              <button
+                class="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+                @click="startMicrosoftLogin"
+              >
+                <UserPlus :size="16" />
+                Login with Microsoft
+              </button>
+            </div>
+
+            <!-- Logging in - show device code -->
+            <div v-else-if="microsoftLoginData" class="space-y-3">
+              <p class="text-sm text-neutral-600 dark:text-zinc-400">
+                {{ microsoftLoginData.message }}
+              </p>
+              <div class="flex items-center gap-2">
+                <span class="text-2xl font-mono font-bold tracking-wider text-indigo-600 dark:text-indigo-400">
+                  {{ microsoftLoginData.userCode }}
+                </span>
+                <button
+                  class="rounded p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-zinc-800"
+                  title="Copy code"
+                  @click="copyCode"
+                >
+                  <User :size="16" />
+                </button>
+              </div>
+              <a
+                :href="microsoftLoginData.verificationUri"
+                target="_blank"
+                class="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
+              >
+                Open verification page →
+              </a>
+              <button
+                class="w-full rounded-lg bg-neutral-200 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                @click="cancelMicrosoftLogin"
+              >
+                Cancel
+              </button>
+            </div>
+
+            <!-- Waiting for poll -->
+            <div v-else class="flex items-center justify-center gap-2 py-4 text-sm text-neutral-500">
+              <Loader2 :size="16" class="animate-spin" />
+              Preparing login...
+            </div>
+          </div>
+
+          <!-- Error Display -->
+          <div v-if="loginError" class="mt-3 rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400">
+            {{ loginError }}
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
