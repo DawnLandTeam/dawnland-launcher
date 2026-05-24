@@ -371,11 +371,11 @@ function loaderBadgeClass(loaderType: string): string {
         class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
       >
         <div
-          class="absolute inset-0 bg-background/80 backdrop-blur-sm pointer-events-auto"
+          class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
           @click="showSettingsModal = false"
         />
         <div
-          class="relative z-10 w-full max-w-md gap-4 border bg-card p-5 shadow-xl rounded-lg pointer-events-auto"
+          class="relative z-10 w-full max-w-md gap-4 border bg-white dark:bg-zinc-900 p-5 shadow-xl rounded-lg pointer-events-auto"
         >
           <div class="flex items-center justify-between mb-4">
             <div>
@@ -400,7 +400,7 @@ function loaderBadgeClass(loaderType: string): string {
                 v-model="settingsConfig.javaPath"
                 type="text"
                 placeholder="Leave empty for system default"
-                class="flex-1 px-3 py-2 bg-background border rounded-md text-sm"
+                class="flex-1 px-3 py-2 bg-white dark:bg-zinc-800 border rounded-md text-sm"
               />
               <button
                 @click="browseJavaPath"

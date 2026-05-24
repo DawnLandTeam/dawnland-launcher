@@ -19,15 +19,15 @@ function close() {
   <Teleport to="body">
     <Transition name="dialog">
       <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-        <!-- Light backdrop (allows clicks to pass through to background) -->
+        <!-- Frosted glass backdrop -->
         <div 
-          class="absolute inset-0 bg-background/80 backdrop-blur-sm pointer-events-auto"
+          class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
           @click="close"
         />
         
-        <!-- Content (re-enables pointer events) -->
+        <!-- Content with solid background -->
         <div
-          class="relative z-10 w-full max-w-2xl gap-4 border bg-card p-6 shadow-xl rounded-lg max-h-[85vh] overflow-y-auto pointer-events-auto"
+          class="relative z-10 w-full max-w-2xl gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg max-h-[85vh] overflow-y-auto pointer-events-auto"
           :class="props.class"
         >
           <slot />
