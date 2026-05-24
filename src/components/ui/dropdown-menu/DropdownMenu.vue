@@ -36,7 +36,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDocClick));
     <Transition name="dropdown">
       <div
         v-if="open"
-        class="absolute right-0 z-50 mt-1 min-w-[10rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+        class="absolute right-0 z-50 mt-1 min-w-[10rem] overflow-hidden rounded-md border bg-white dark:bg-zinc-900 p-1 text-foreground shadow-md"
       >
         <slot />
       </div>
