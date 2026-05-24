@@ -9,7 +9,6 @@ import {
   Settings,
   X,
   Gamepad2,
-  User,
   ChevronDown,
   Package,
   MonitorCheck,
@@ -29,7 +28,7 @@ interface InstanceItem {
 interface Account {
   id: string;
   username: string;
-  type: string; // 'msa' or 'offline'
+  accountType: string; // 'microsoft' or 'offline'
 }
 
 interface GameLog {
@@ -104,6 +103,11 @@ const isLaunching = computed(() => {
 onMounted(async () => {
   await loadInstances();
   await loadAccounts();
+
+  // Listen for accounts changes from other pages (e.g., AccountsView)
+  listen("accounts-updated", async () => {
+    await loadAccounts();
+  });
 
   // Listen for game logs
   listen<GameLog>("game-log", (event) => {
@@ -198,19 +202,6 @@ function openInstanceSettings() {
   });
 }
 
-async function addOfflineAccount() {
-  const username = prompt("Enter player name:");
-  if (!username || username.trim() === "") return;
-
-  try {
-    await invoke("add_offline_account", { username: username.trim() });
-    await loadAccounts();
-  } catch (e) {
-    console.error("Failed to add offline account:", e);
-    alert(`Failed to add account: ${e}`);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // UI helpers
 // ---------------------------------------------------------------------------
@@ -238,7 +229,7 @@ function loaderBadgeClass(loaderType: string): string {
 
 // Account type helper: returns true for Microsoft account (premium)
 function isMsaAccount(account: Account): boolean {
-  return account.type === "msa";
+  return account.accountType === "microsoft";
 }
 </script>
 
@@ -326,11 +317,6 @@ function isMsaAccount(account: Account): boolean {
                   <MonitorCheck v-if="isMsaAccount(account)" class="h-4 w-4 text-green-500" />
                   <WifiOff v-else class="h-4 w-4 text-muted-foreground" />
                   <span class="truncate">{{ account.username }}</span>
-                </DropdownMenuItem>
-                <div class="border-t my-1"></div>
-                <DropdownMenuItem @click="addOfflineAccount" class="flex items-center gap-3">
-                  <User class="h-4 w-4" />
-                  Add Offline Account
                 </DropdownMenuItem>
               </div>
             </DropdownMenu>

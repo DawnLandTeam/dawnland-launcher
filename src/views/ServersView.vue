@@ -192,14 +192,14 @@ function loaderBadgeClass(loaderType: string): string {
           v-model="searchQuery"
           type="text"
           placeholder="Search servers..."
-          class="w-full pl-10 pr-4 py-2 bg-background border rounded-md text-sm"
+          class="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
         />
       </div>
       
       <!-- MC Version Filter -->
       <select
         v-model="filterMcVersion"
-        class="px-3 py-2 bg-background border rounded-md text-sm"
+        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
       >
         <option value="">All Versions</option>
         <option v-for="version in mcVersions" :key="version" :value="version">
@@ -210,7 +210,7 @@ function loaderBadgeClass(loaderType: string): string {
       <!-- Loader Type Filter -->
       <select
         v-model="filterLoaderType"
-        class="px-3 py-2 bg-background border rounded-md text-sm"
+        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
       >
         <option value="">All Loaders</option>
         <option v-for="loader in loaderTypes" :key="loader" :value="loader">
@@ -221,7 +221,7 @@ function loaderBadgeClass(loaderType: string): string {
       <!-- Online Mode Filter -->
       <select
         v-model="filterOnlineMode"
-        class="px-3 py-2 bg-background border rounded-md text-sm"
+        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
       >
         <option value="">All Modes</option>
         <option value="online">Online Mode</option>
@@ -295,7 +295,7 @@ function loaderBadgeClass(loaderType: string): string {
       <!-- Empty State -->
       <div v-if="filteredServers.length === 0" class="col-span-full flex flex-col items-center justify-center py-12 text-center">
         <Server class="h-12 w-12 text-muted-foreground mb-4" />
-        <h3 class="text-lg font-semibold mb-2">No servers found</h3>
+        <h3 class="text-lg font-semibold text-neutral-900 dark:text-white mb-2">No servers found</h3>
         <p class="text-sm text-muted-foreground">Try adjusting your filters or publish your own server!</p>
       </div>
     </div>
@@ -306,8 +306,8 @@ function loaderBadgeClass(loaderType: string): string {
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="showPublishDialog = false"></div>
         <div class="relative z-10 w-full max-w-lg gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg pointer-events-auto">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-lg">Publish Your Server</h3>
-            <button @click="showPublishDialog = false" class="text-muted-foreground hover:text-foreground">
+            <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">Publish Your Server</h3>
+            <button @click="showPublishDialog = false" class="text-muted-foreground hover:text-foreground text-lg">
               ✕
             </button>
           </div>
@@ -316,18 +316,18 @@ function loaderBadgeClass(loaderType: string): string {
             <!-- Server Name -->
             <div class="space-y-1">
               <label class="text-sm font-medium">Server Name</label>
-              <input v-model="newServer.name" type="text" placeholder="My Awesome Server" class="w-full px-3 py-2 bg-background border rounded-md text-sm" />
+              <input v-model="newServer.name" type="text" placeholder="My Awesome Server" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
             </div>
 
             <!-- IP and Port -->
             <div class="flex gap-2">
               <div class="flex-1 space-y-1">
                 <label class="text-sm font-medium">IP Address</label>
-                <input v-model="newServer.ip" type="text" placeholder="play.myserver.net" class="w-full px-3 py-2 bg-background border rounded-md text-sm" />
+                <input v-model="newServer.ip" type="text" placeholder="play.myserver.net" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
               </div>
               <div class="w-24 space-y-1">
                 <label class="text-sm font-medium">Port</label>
-                <input v-model="newServer.port" type="text" placeholder="25565" class="w-full px-3 py-2 bg-background border rounded-md text-sm" />
+                <input v-model="newServer.port" type="text" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
               </div>
             </div>
 
@@ -335,7 +335,7 @@ function loaderBadgeClass(loaderType: string): string {
             <div class="flex gap-2">
               <div class="flex-1 space-y-1">
                 <label class="text-sm font-medium">Minecraft Version</label>
-                <select v-model="newServer.mcVersion" class="w-full px-3 py-2 bg-background border rounded-md text-sm">
+                <select v-model="newServer.mcVersion" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
                   <option value="">Select version...</option>
                   <option value="1.20.4">1.20.4</option>
                   <option value="1.20.1">1.20.1</option>
@@ -345,7 +345,7 @@ function loaderBadgeClass(loaderType: string): string {
               </div>
               <div class="flex-1 space-y-1">
                 <label class="text-sm font-medium">Loader Type</label>
-                <select v-model="newServer.loaderType" class="w-full px-3 py-2 bg-background border rounded-md text-sm">
+                <select v-model="newServer.loaderType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
                   <option value="Vanilla">Vanilla</option>
                   <option value="Fabric">Fabric</option>
                   <option value="Forge">Forge</option>
@@ -363,7 +363,7 @@ function loaderBadgeClass(loaderType: string): string {
             <!-- Description -->
             <div class="space-y-1">
               <label class="text-sm font-medium">Description</label>
-              <textarea v-model="newServer.description" placeholder="Describe your server..." class="w-full px-3 py-2 bg-background border rounded-md text-sm h-20 resize-none"></textarea>
+              <textarea v-model="newServer.description" placeholder="Describe your server..." class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 h-20 resize-none"></textarea>
             </div>
           </div>
 
