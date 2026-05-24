@@ -3,8 +3,10 @@ import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Gamepad2, Plus, Package, Play, Loader2, Settings, FolderOpen, Save, X } from "@lucide/vue";
+import { Gamepad2, Plus, Package, Play, Loader2, Settings, FolderOpen, Save, X, MoreHorizontal, Trash2, Folder } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
+import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
+import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 
 // Types
 interface InstanceItem {
@@ -78,6 +80,12 @@ const isSavingConfig = ref(false);
 const showCrashAlert = ref(false);
 const crashExitCode = ref(0);
 const crashVersionId = ref("");
+
+// Delete confirmation state
+const showDeleteDialog = ref(false);
+const deletingInstanceId = ref("");
+const deletingInstanceName = ref("");
+const isDeletingInstance = ref(false);
 
 // Load installed instances on mount
 onMounted(async () => {
@@ -248,6 +256,41 @@ async function saveSettings() {
     isSavingConfig.value = false;
   }
 }
+
+async function openInstanceFolder(instanceId: string) {
+  try {
+    await invoke("open_instance_folder", { versionId: instanceId });
+  } catch (e) {
+    console.error("Failed to open instance folder:", e);
+    alert(`Failed to open folder: ${e}`);
+  }
+}
+
+function confirmDeleteInstance(instance: InstanceItem) {
+  deletingInstanceId.value = instance.id;
+  deletingInstanceName.value = instance.name;
+  showDeleteDialog.value = true;
+}
+
+async function deleteInstance() {
+  if (!deletingInstanceId.value) return;
+  
+  isDeletingInstance.value = true;
+  
+  try {
+    await invoke("delete_instance", { versionId: deletingInstanceId.value });
+    showDeleteDialog.value = false;
+    // Refresh the instance list
+    await refreshInstancesList();
+  } catch (e) {
+    console.error("Failed to delete instance:", e);
+    alert(`Failed to delete: ${e}`);
+  } finally {
+    isDeletingInstance.value = false;
+    deletingInstanceId.value = "";
+    deletingInstanceName.value = "";
+  }
+}
 </script>
 
 <template>
@@ -341,15 +384,32 @@ async function saveSettings() {
               <span v-else-if="runningInstances.has(instance.id)">Running...</span>
               <span v-else>Play</span>
             </button>
-            <button
-              @click="openSettings(instance)"
-              class="flex items-center justify-center rounded-md border bg-background px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
-              title="Settings"
-              :disabled="runningInstances.has(instance.id)"
-              :class="{ 'opacity-50 cursor-not-allowed': runningInstances.has(instance.id) }"
-            >
-              <Settings class="h-4 w-4" />
-            </button>
+            
+            <!-- Dropdown Menu -->
+            <DropdownMenu>
+              <template #trigger>
+                <button
+                  class="flex items-center justify-center rounded-md border bg-background px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
+                  title="More options"
+                  :disabled="runningInstances.has(instance.id)"
+                  :class="{ 'opacity-50 cursor-not-allowed': runningInstances.has(instance.id) }"
+                >
+                  <MoreHorizontal class="h-4 w-4" />
+                </button>
+              </template>
+              <DropdownMenuItem @click="openSettings(instance)">
+                <Settings class="h-4 w-4" />
+                Settings
+              </DropdownMenuItem>
+              <DropdownMenuItem @click="openInstanceFolder(instance.id)">
+                <Folder class="h-4 w-4" />
+                Open Folder
+              </DropdownMenuItem>
+              <DropdownMenuItem destructive @click="confirmDeleteInstance(instance)">
+                <Trash2 class="h-4 w-4" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenu>
           </div>
         </div>
       </div>
@@ -555,5 +615,33 @@ async function saveSettings() {
         </div>
       </div>
     </Teleport>
+
+    <!-- Delete Confirmation Dialog -->
+    <AlertDialog :open="showDeleteDialog" @update:open="showDeleteDialog = $event">
+      <AlertDialogTitle>Delete Instance?</AlertDialogTitle>
+      <AlertDialogDescription class="mt-2">
+        Are you sure you want to delete <strong>{{ deletingInstanceName }}</strong>?
+        This will remove all instance data including saves, mods, and resource packs.
+        <span class="text-red-600 font-medium">This action cannot be undone.</span>
+      </AlertDialogDescription>
+      <div class="flex justify-end gap-2 mt-6">
+        <button
+          @click="showDeleteDialog = false"
+          class="px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
+          :disabled="isDeletingInstance"
+        >
+          Cancel
+        </button>
+        <button
+          @click="deleteInstance"
+          :disabled="isDeletingInstance"
+          class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+        >
+          <Trash2 v-if="isDeletingInstance" class="h-4 w-4 animate-spin" />
+          <Trash2 v-else class="h-4 w-4" />
+          Delete
+        </button>
+      </div>
+    </AlertDialog>
   </div>
 </template>
