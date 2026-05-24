@@ -189,7 +189,7 @@ onMounted(() => {
           min="512"
           :max="systemMemory.totalMb"
           step="512"
-          class="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+          class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-800 accent-blue-500"
         />
         <div class="flex justify-between text-xs text-muted-foreground">
           <span>512 MB</span>
