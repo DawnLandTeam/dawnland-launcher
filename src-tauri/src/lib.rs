@@ -49,6 +49,10 @@ pub fn run() {
             core::manager::get_instance_details,
             core::manager::delete_instance,
             core::manager::open_instance_folder,
+            // Java commands
+            core::java::scan_local_javas,
+            core::java::download_java,
+            core::java::get_recommended_java,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
