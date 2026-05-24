@@ -2,7 +2,8 @@
 //! Handles JVM process spawning, natives extraction, and classpath construction.
 
 use crate::auth::Account;
-use crate::core::mojang::{get_minecraft_base, Library, Rule, VersionMeta};
+use crate::core::mojang::{get_minecraft_base, maven_name_to_path, Library, Rule, VersionMeta};
+use crate::downloader::{DownloadTask, run_batch_download};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -378,7 +379,6 @@ async fn extract_jar(
     // Use blocking file operations since zip crate needs std::io::Read
     tokio::task::spawn_blocking(move || {
         use std::fs::File;
-        use std::io::Read;
 
         let file = File::open(&jar_path_owned)
             .map_err(|e| format!("Failed to open JAR: {e}"))?;
@@ -440,10 +440,14 @@ async fn extract_jar(
 // ============ Classpath Builder ============
 
 /// Build the classpath from libraries and client.jar.
+/// For Fabric/Forge with inheritsFrom, uses the parent version's jar.
 pub fn build_classpath(
     version_id: &str,
+    version_meta: &VersionMeta,
     libraries: &[Library],
 ) -> Result<Vec<PathBuf>, String> {
+    use crate::core::mojang::maven_name_to_path;
+    
     let base_dir = get_minecraft_base();
     let mut classpath = Vec::new();
 
@@ -457,7 +461,7 @@ pub fn build_classpath(
             continue;
         }
 
-        // Get the artifact path
+        // Try standard Mojang format first
         if let Some(downloads) = &lib.downloads {
             if let Some(artifact) = &downloads.artifact {
                 if let Some(path) = &artifact.path {
@@ -467,25 +471,139 @@ pub fn build_classpath(
                     } else {
                         tracing::warn!("Library not found: {:?}", lib_path);
                     }
+                    continue; // Done with this library
+                }
+            }
+        }
+        
+        // Fallback: use Maven coordinates (Fabric/Forge style)
+        if let Some(name) = &lib.name {
+            if let Some(maven_path) = maven_name_to_path(name) {
+                let lib_path = base_dir.join("libraries").join(&maven_path);
+                if lib_path.exists() {
+                    classpath.push(lib_path);
+                    tracing::debug!("Added library via Maven coords: {}", name);
+                } else {
+                    tracing::warn!("Library not found (Maven): {:?}", lib_path);
                 }
             }
         }
     }
 
     // Add client.jar
+    // For Fabric/Forge with inheritsFrom, use the parent version's jar
+    let jar_version = version_meta.inherits_from.as_deref().unwrap_or(version_id);
     let client_jar = base_dir
         .join("versions")
-        .join(version_id)
-        .join(format!("{}.jar", version_id));
+        .join(jar_version)
+        .join(format!("{}.jar", jar_version));
     
     if client_jar.exists() {
         classpath.push(client_jar);
     } else {
-        return Err(format!("client.jar not found at {:?}", client_jar));
+        return Err(format!("client.jar not found at {:?} (version: {})", client_jar, jar_version));
     }
 
     tracing::info!("Built classpath with {} entries", classpath.len());
     Ok(classpath)
+}
+
+/// Pre-flight check: verify merged libraries and client.jar exist.
+/// Returns a vector of (local_path, download_url) for missing files.
+pub async fn verify_and_collect_missing_files(
+    libraries: &[Library],
+    client_jar_version: &str,
+) -> Result<Vec<DownloadTask>, String> {
+    use crate::core::mojang::get_library_download_info_from_json;
+    
+    let base_dir = get_minecraft_base();
+    let mut missing_tasks: Vec<DownloadTask> = Vec::new();
+
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+
+    for lib in libraries {
+        // Skip libraries not applicable to current platform
+        if !should_use_library(lib, os, arch) {
+            continue;
+        }
+
+        // Try standard Mojang format first
+        if let Some(downloads) = &lib.downloads {
+            if let Some(artifact) = &downloads.artifact {
+                if let Some(path) = &artifact.path {
+                    let lib_path = base_dir.join("libraries").join(path);
+                    if !lib_path.exists() {
+                        let url = artifact.url.clone().unwrap_or_default();
+                        if !url.is_empty() {
+                            tracing::info!("Missing library (Mojang): {:?} - will download from {}", lib_path, url);
+                            missing_tasks.push(DownloadTask::new(
+                                url,
+                                lib_path.to_string_lossy().to_string(),
+                                artifact.sha1.clone(),
+                            ));
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+        
+        // Fallback: use Maven coordinates (Fabric/Forge style)
+        if let Some(name) = &lib.name {
+            if let Some(maven_path) = maven_name_to_path(name) {
+                let lib_path = base_dir.join("libraries").join(&maven_path);
+                if !lib_path.exists() {
+                    // Get download URL from lib.url or default
+                    let base_url = lib.url.as_deref().unwrap_or("https://libraries.minecraft.net/");
+                    let download_url = format!("{}{}", base_url, maven_path);
+                    tracing::info!("Missing library (Maven): {:?} - will download from {}", lib_path, download_url);
+                    missing_tasks.push(DownloadTask::new(
+                        download_url,
+                        lib_path.to_string_lossy().to_string(),
+                        None, // SHA1 not available for Maven coords
+                    ));
+                }
+            }
+        }
+    }
+
+    // Check client.jar
+    let client_jar = base_dir
+        .join("versions")
+        .join(client_jar_version)
+        .join(format!("{}.jar", client_jar_version));
+    
+    if !client_jar.exists() {
+        // Need to download client.jar - fetch from version JSON or use known URL pattern
+        let version_json_path = base_dir
+            .join("versions")
+            .join(client_jar_version)
+            .join(format!("{}.json", client_jar_version));
+        
+        if version_json_path.exists() {
+            let content = tokio::fs::read_to_string(&version_json_path).await
+                .map_err(|e| format!("Failed to read version JSON: {}", e))?;
+            let version_meta: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|e| format!("Failed to parse version JSON: {}", e))?;
+            
+            if let Some(downloads) = version_meta.get("downloads") {
+                if let Some(client) = downloads.get("client") {
+                    if let Some(url) = client.get("url").and_then(|u| u.as_str()) {
+                        tracing::info!("Missing client.jar: {:?} - will download from {}", client_jar, url);
+                        missing_tasks.push(DownloadTask::new(
+                            url.to_string(),
+                            client_jar.to_string_lossy().to_string(),
+                            client.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!("Pre-flight check: {} missing files to download", missing_tasks.len());
+    Ok(missing_tasks)
 }
 
 // ============ Argument Parsing ============
@@ -774,7 +892,11 @@ pub async fn launch_instance(
     tracing::info!("Launching instance {} with account {}", version_id, account_uuid);
 
     let base_dir = get_minecraft_base();
-    let game_dir = base_dir.clone();
+    
+    // Version isolation: Use instance-specific directory for game data (saves, resourcepacks, options.txt)
+    // This ensures each instance has its own isolated game directory
+    let instance_dir = base_dir.join("versions").join(&version_id);
+    let game_dir = instance_dir.clone();
     let assets_dir = base_dir.join("assets");
 
     // Load account
@@ -795,8 +917,125 @@ pub async fn launch_instance(
         .await
         .map_err(|e| format!("Failed to read version JSON: {e}"))?;
     
-    let version_meta: VersionMeta = serde_json::from_str(&version_json_content)
+    let mut version_meta: VersionMeta = serde_json::from_str(&version_json_content)
         .map_err(|e| format!("Failed to parse version JSON: {e}"))?;
+
+    // Handle inheritsFrom (used by Fabric, Forge, etc.)
+    // If the version has inheritsFrom, we need to load the parent version's data
+    if let Some(ref parent_version) = version_meta.inherits_from {
+        tracing::info!("Version {} inherits from {}, loading parent...", version_id, parent_version);
+        
+        let parent_json_path = base_dir
+            .join("versions")
+            .join(parent_version)
+            .join(format!("{}.json", parent_version));
+        
+        let parent_content = fs::read_to_string(&parent_json_path)
+            .await
+            .map_err(|e| format!("Failed to read parent version JSON: {}", e))?;
+        
+        let mut parent_meta: VersionMeta = serde_json::from_str(&parent_content)
+            .map_err(|e| format!("Failed to parse parent version JSON: {e}"))?;
+        
+        // Merge parent data into version_meta
+        // Use parent's data if current version doesn't have it
+        if version_meta.main_class.is_none() {
+            version_meta.main_class = parent_meta.main_class;
+        }
+        if version_meta.minecraft_arguments.is_none() {
+            version_meta.minecraft_arguments = parent_meta.minecraft_arguments;
+        }
+        
+// Deep merge arguments: parent first, then child appends
+        if let Some(parent_args) = parent_meta.arguments.take() {
+            if let Some(child_args) = version_meta.arguments.take() {
+                // Both have arguments - deep merge
+                let mut merged = parent_args;
+                
+                // Merge game args: parent first, then child
+                // Use merged.game since merged now holds parent_args
+                if let Some(parent_game) = merged.game.take() {
+                    let mut game_list = parent_game.clone();
+                    if let Some(child_game) = child_args.game {
+                        // Extend game args - child appends after parent
+                        match (game_list.clone(), child_game) {
+                            (serde_json::Value::Array(mut parent_arr), serde_json::Value::Array(child_arr)) => {
+                                parent_arr.extend(child_arr);
+                                game_list = serde_json::Value::Array(parent_arr);
+                            }
+                            (serde_json::Value::Array(mut parent_arr), other) => {
+                                parent_arr.push(other);
+                                game_list = serde_json::Value::Array(parent_arr);
+                            }
+                            (other, serde_json::Value::Array(child_arr)) => {
+                                let mut combined = vec![other];
+                                combined.extend(child_arr);
+                                game_list = serde_json::Value::Array(combined);
+                            }
+                            _ => {}
+                        }
+                    }
+                    merged.game = Some(game_list);
+                } else if let Some(child_game) = child_args.game {
+                    merged.game = Some(child_game);
+                }
+                
+                // Merge JVM args: parent first, then child
+                // Use merged.jvm since merged now holds parent_args
+                if let Some(parent_jvm) = merged.jvm.take() {
+                    let mut jvm_list = parent_jvm.clone();
+                    if let Some(child_jvm) = child_args.jvm {
+                        match (jvm_list.clone(), child_jvm) {
+                            (serde_json::Value::Array(mut parent_arr), serde_json::Value::Array(child_arr)) => {
+                                parent_arr.extend(child_arr);
+                                jvm_list = serde_json::Value::Array(parent_arr);
+                            }
+                            (serde_json::Value::Array(mut parent_arr), other) => {
+                                parent_arr.push(other);
+                                jvm_list = serde_json::Value::Array(parent_arr);
+                            }
+                            (other, serde_json::Value::Array(child_arr)) => {
+                                let mut combined = vec![other];
+                                combined.extend(child_arr);
+                                jvm_list = serde_json::Value::Array(combined);
+                            }
+                            _ => {}
+                        }
+                    }
+                    merged.jvm = Some(jvm_list);
+                } else if let Some(child_jvm) = child_args.jvm {
+                    merged.jvm = Some(child_jvm);
+                }
+                
+                version_meta.arguments = Some(merged);
+            } else {
+                // Child has no arguments, use parent's
+                version_meta.arguments = Some(parent_args);
+            }
+        } else if version_meta.arguments.is_none() {
+            // Neither has arguments
+            version_meta.arguments = parent_meta.arguments;
+        }
+        
+        if version_meta.assets.is_none() {
+            version_meta.assets = parent_meta.assets;
+        }
+        if version_meta.asset_index.is_none() {
+            version_meta.asset_index = parent_meta.asset_index;
+        }
+        if version_meta.downloads.is_none() {
+            version_meta.downloads = parent_meta.downloads;
+        }
+        
+        // Merge libraries: parent libraries + current libraries
+        let mut merged_libs = parent_meta.libraries.unwrap_or_default();
+        if let Some(current_libs) = version_meta.libraries.take() {
+            merged_libs.extend(current_libs);
+        }
+        version_meta.libraries = Some(merged_libs);
+        
+        tracing::info!("Successfully merged parent version {} into {}", parent_version, version_id);
+    }
 
     // Get main class
     let main_class = version_meta
@@ -807,11 +1046,42 @@ pub async fn launch_instance(
     // Get libraries
     let libraries = version_meta.libraries.as_deref().unwrap_or(&[]);
 
+    // ========== Pre-flight Check: Verify and Auto-repair Missing Files ==========
+    let jar_version = version_meta.inherits_from.as_deref().unwrap_or(&version_id);
+    
+    let missing_files = verify_and_collect_missing_files(libraries, jar_version).await?;
+    
+    if !missing_files.is_empty() {
+        tracing::info!("Detected {} missing libraries. Starting auto-repair...", missing_files.len());
+        
+        // Notify frontend: entering repairing state
+        let _ = app.emit("instance-state-changed", serde_json::json!({
+            "versionId": version_id,
+            "status": "repairing",
+            "missingCount": missing_files.len()
+        }));
+
+        // Download missing files
+        let app_for_download = app.clone();
+        run_batch_download(missing_files, app_for_download).await;
+
+        // Notify frontend: repairing complete
+        let _ = app.emit("instance-state-changed", serde_json::json!({
+            "versionId": version_id,
+            "status": "repairing_complete"
+        }));
+        
+        tracing::info!("Auto-repair complete. Proceeding with launch...");
+    }
+
     // Extract natives
     let natives_dir = extract_natives(&version_id, libraries).await?;
+    tracing::info!("Natives extracted to: {:?}", natives_dir);
 
     // Build classpath
-    let classpath = build_classpath(&version_id, libraries)?;
+    tracing::info!("Building classpath for version: {}", version_id);
+    let classpath = build_classpath(&version_id, &version_meta, libraries)?;
+    tracing::info!("Classpath built with {} entries", classpath.len());
 
     // Create launch config
     let config = LaunchConfig {
@@ -926,7 +1196,7 @@ pub async fn launch_instance(
     let game_args = parse_game_arguments(&version_meta, &config)?;
 
     tracing::info!("Starting Minecraft with main class: {}", main_class);
-    tracing::debug!("JVM args: {:?}", jvm_args);
+    tracing::info!("Full JVM args: {:?}", jvm_args);
     tracing::debug!("Game args: {:?}", game_args);
 
     // Get the main window for behavior control
@@ -946,6 +1216,12 @@ pub async fn launch_instance(
     }
 
     // Spawn the process using the resolved Java executable
+    tracing::info!("Spawning process: {} with main class: {}", java_executable, main_class);
+    tracing::info!("Game directory: {:?}", game_dir);
+    tracing::info!("JVM args count: {}", jvm_args.len());
+    tracing::info!("Game args count: {}", game_args.len());
+    tracing::info!("Classpath entries: {}", classpath.len());
+    
     let mut child = Command::new(&java_executable)
         .current_dir(&game_dir)
         .args(&jvm_args)

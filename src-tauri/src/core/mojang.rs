@@ -134,6 +134,9 @@ pub struct VanillaVersion {
 #[serde(rename_all = "camelCase")]
 pub struct VersionMeta {
     pub id: String,
+    // Inherits from another version (used by Fabric, Forge, etc.)
+    #[serde(rename = "inheritsFrom")]
+    pub inherits_from: Option<String>,
     // Time fields - optional as some old versions may lack them
     pub time: Option<String>,
     pub release_time: Option<String>,
@@ -188,6 +191,7 @@ pub struct DownloadInfo {
 pub struct Library {
     pub downloads: Option<LibraryDownloads>,
     pub name: Option<String>, // Some libraries may not have a name
+    pub url: Option<String>,  // Fabric/Forge use Maven coordinates - base URL
     pub rules: Option<Vec<Rule>>,
     pub extract: Option<ExtractRule>,
     pub natives: Option<std::collections::HashMap<String, String>>,
@@ -243,6 +247,60 @@ pub struct Arguments {
 #[serde(rename_all = "camelCase")]
 pub struct AssetIndexMeta {
     pub objects: Option<std::collections::HashMap<String, AssetObject>>,
+}
+
+// ============ Maven Coordinate Parser ============
+
+/// Convert Maven coordinate to local file path
+/// Example: "net.fabricmc:fabric-loader:0.14.22" -> "net/fabricmc/fabric-loader/0.14.22/fabric-loader-0.14.22.jar"
+pub fn maven_name_to_path(name: &str) -> Option<String> {
+    let parts: Vec<&str> = name.split(':').collect();
+    if parts.len() >= 3 {
+        let group = parts[0].replace('.', "/");
+        let artifact = parts[1];
+        let version = parts[2];
+        let classifier = if parts.len() == 4 {
+            format!("-{}", parts[3])
+        } else {
+            String::new()
+        };
+        
+        Some(format!(
+            "{}/{}/{}/{}-{}{}.jar",
+            group, artifact, version, artifact, version, classifier
+        ))
+    } else {
+        None
+    }
+}
+
+/// Get download URL for a library using Maven coordinates (from JSON value)
+pub fn get_library_download_info_from_json(lib: &serde_json::Value) -> Option<(String, String)> {
+    // Get the library name
+    let name = lib.get("name")?.as_str()?;
+    
+    // Try standard downloads.artifact first
+    if let Some(downloads) = lib.get("downloads") {
+        if let Some(artifact) = downloads.get("artifact") {
+            if let Some(url) = artifact.get("url").and_then(|u| u.as_str()) {
+                if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
+                    return Some((url.to_string(), path.to_string()));
+                }
+            }
+        }
+    }
+    
+    // Fallback to Maven coordinate format (Fabric/Forge style)
+    let path = maven_name_to_path(name)?;
+    
+    // Determine base URL from lib.url or use default
+    let base_url = lib.get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("https://libraries.minecraft.net/");
+    
+    let download_url = format!("{}{}", base_url, path);
+    
+    Some((download_url, format!("libraries/{}", path)))
 }
 
 #[derive(Debug, Deserialize)]

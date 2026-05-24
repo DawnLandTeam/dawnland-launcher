@@ -7,11 +7,11 @@ import { Gamepad2, Plus, Package, Play, Loader2, Settings, FolderOpen, Save, X }
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
 
 // Types
-interface InstalledInstance {
+interface InstanceItem {
   id: string;
   name: string;
-  version: string;
-  lastPlayed?: string;
+  mcVersion: string;
+  loaderType: string;
 }
 
 interface GameLog {
@@ -34,8 +34,9 @@ interface InstanceConfig {
 
 interface InstanceState {
   versionId: string;
-  status: "running" | "exited";
+  status: "running" | "exited" | "repairing" | "repairing_complete";
   exitCode?: number;
+  missingCount?: number;
 }
 
 interface SystemMemoryInfo {
@@ -45,7 +46,7 @@ interface SystemMemoryInfo {
 
 // State
 const showInstallModal = ref(false);
-const installedInstances = ref<InstalledInstance[]>([]);
+const installedInstances = ref<InstanceItem[]>([]);
 const accounts = ref<Account[]>([]);
 const selectedAccount = ref<string>("");
 
@@ -57,6 +58,7 @@ const systemMemory = ref<SystemMemoryInfo>({
 
 // Track running state per instance
 const runningInstances = ref<Set<string>>(new Set());
+const repairingInstances = ref<Set<string>>(new Set());
 const gameLogs = ref<string[]>([]);
 const showGameLog = ref(false);
 
@@ -93,12 +95,14 @@ onMounted(async () => {
   
   // Listen for instance state changes
   listen<InstanceState>("instance-state-changed", (event) => {
-    const { versionId, status, exitCode } = event.payload;
+    const { versionId, status, exitCode, missingCount } = event.payload;
     
     if (status === "running") {
       runningInstances.value.add(versionId);
+      repairingInstances.value.delete(versionId);
     } else if (status === "exited") {
       runningInstances.value.delete(versionId);
+      repairingInstances.value.delete(versionId);
       
       // Show crash alert if exit code is non-zero
       if (exitCode !== 0) {
@@ -106,21 +110,29 @@ onMounted(async () => {
         crashExitCode.value = exitCode ?? -1;
         showCrashAlert.value = true;
       }
+    } else if (status === "repairing") {
+      // Show repairing state in UI
+      repairingInstances.value.add(versionId);
+      console.log(`Repairing ${versionId}: ${missingCount ?? 0} missing files...`);
+    } else if (status === "repairing_complete") {
+      repairingInstances.value.delete(versionId);
+      console.log(`Repair complete for ${versionId}`);
     }
   });
 });
 
 async function loadInstances() {
   try {
-    const versions = await invoke<string[]>("get_installed_versions");
-    installedInstances.value = versions.map(id => ({
-      id,
-      name: id,
-      version: id
-    }));
+    const instances = await invoke<InstanceItem[]>("scan_installed_instances");
+    installedInstances.value = instances;
   } catch (e) {
     console.error("Failed to load instances:", e);
   }
+}
+
+// Refresh instance list (called after installation)
+async function refreshInstancesList() {
+  await loadInstances();
 }
 
 async function loadAccounts() {
@@ -166,7 +178,7 @@ async function launchInstance(instanceId: string) {
   }
 }
 
-async function openSettings(instance: InstalledInstance) {
+async function openSettings(instance: InstanceItem) {
   settingsInstanceId.value = instance.id;
   settingsInstanceName.value = instance.name;
   
@@ -310,28 +322,24 @@ async function saveSettings() {
             <div class="space-y-1">
               <h3 class="font-medium">{{ instance.name }}</h3>
               <p class="text-xs text-muted-foreground">
-                {{ instance.version }}
+                {{ instance.mcVersion }} · {{ instance.loaderType }}
               </p>
             </div>
             <Gamepad2 class="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
           </div>
-          <p
-            v-if="instance.lastPlayed"
-            class="mt-2 text-xs text-muted-foreground"
-          >
-            Last played: {{ instance.lastPlayed }}
-          </p>
           
           <!-- Action Buttons -->
           <div class="mt-3 flex gap-2">
             <button
               @click="launchInstance(instance.id)"
-              :disabled="runningInstances.has(instance.id) || !selectedAccount"
+              :disabled="runningInstances.has(instance.id) || repairingInstances.has(instance.id) || !selectedAccount"
               class="flex-1 flex items-center justify-center gap-2 rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              <Loader2 v-if="runningInstances.has(instance.id)" class="h-4 w-4 animate-spin" />
+              <Loader2 v-if="runningInstances.has(instance.id) || repairingInstances.has(instance.id)" class="h-4 w-4 animate-spin" />
               <Play v-else class="h-4 w-4" />
-              <span>{{ runningInstances.has(instance.id) ? 'Running...' : 'Play' }}</span>
+              <span v-if="repairingInstances.has(instance.id)">Repairing...</span>
+              <span v-else-if="runningInstances.has(instance.id)">Running...</span>
+              <span v-else>Play</span>
             </button>
             <button
               @click="openSettings(instance)"
@@ -348,7 +356,10 @@ async function saveSettings() {
     </div>
 
     <!-- Install Instance Modal -->
-    <InstallInstanceModal v-model:open="showInstallModal" />
+    <InstallInstanceModal 
+      v-model:open="showInstallModal" 
+      @installed-success="refreshInstancesList"
+    />
 
     <!-- Game Log Modal -->
     <Teleport to="body">
