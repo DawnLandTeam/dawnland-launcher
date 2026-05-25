@@ -224,3 +224,277 @@ pub async fn delete_instance(version_id: String) -> Result<(), String> {
     tracing::info!("Deleted instance: {}", version_id);
     Ok(())
 }
+
+// ============================================================================
+// Local Mod Management
+// ============================================================================
+
+/// Represents a local mod file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalModItem {
+    /// Filename of the mod
+    pub filename: String,
+    /// Whether the mod is enabled (not .jar.disabled)
+    pub enabled: bool,
+    /// File size in bytes
+    pub size: u64,
+}
+
+/// Get list of installed mods for a specific instance
+#[tauri::command]
+pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>, String> {
+    tracing::info!("Getting installed mods for instance: {}", version_id);
+
+    let base_dir = get_minecraft_base();
+    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
+
+    if !mods_dir.exists() {
+        tracing::info!("Mods directory does not exist for {}", version_id);
+        return Ok(Vec::new());
+    }
+
+    let mut mods = Vec::new();
+
+    let mut entries = tokio::fs::read_dir(&mods_dir)
+        .await
+        .map_err(|e| format!("Failed to read mods directory: {}", e))?;
+
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| format!("Failed to read directory entry: {}", e))?
+    {
+        let path = entry.path();
+        
+        // Only process .jar files (enabled mods)
+        if path.extension().and_then(|s| s.to_str()) == Some("jar") {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let metadata = tokio::fs::metadata(&path).await.map_err(|e| e.to_string())?;
+            
+            mods.push(LocalModItem {
+                filename: filename.clone(),
+                enabled: true,
+                size: metadata.len(),
+            });
+        }
+    }
+
+    // Also check for disabled mods (.jar.disabled)
+    let disabled_dir = base_dir.join("versions").join(&version_id).join("mods").join("disabled");
+    if disabled_dir.exists() {
+        let mut entries = tokio::fs::read_dir(&disabled_dir)
+            .await
+            .map_err(|e| format!("Failed to read disabled mods directory: {}", e))?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| format!("Failed to read directory entry: {}", e))?
+        {
+            let path = entry.path();
+            
+            if path.extension().and_then(|s| s.to_str()) == Some("jar") {
+                let filename = entry.file_name().to_string_lossy().to_string();
+                let metadata = tokio::fs::metadata(&path).await.map_err(|e| e.to_string())?;
+                
+                // Remove .disabled extension for display
+                let display_name = filename.trim_end_matches(".disabled");
+                
+                mods.push(LocalModItem {
+                    filename: display_name.to_string(),
+                    enabled: false,
+                    size: metadata.len(),
+                });
+            }
+        }
+    }
+
+    // Sort by filename
+    mods.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+    tracing::info!("Found {} mods for instance {}", mods.len(), version_id);
+    Ok(mods)
+}
+
+/// Toggle mod enabled/disabled status
+#[tauri::command]
+pub async fn toggle_mod_status(
+    version_id: String,
+    filename: String,
+    enable: bool,
+) -> Result<(), String> {
+    tracing::info!(
+        "Toggling mod {} for instance {} to enabled={}",
+        filename,
+        version_id,
+        enable
+    );
+
+    let base_dir = get_minecraft_base();
+    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
+    let disabled_dir = mods_dir.join("disabled");
+
+    // Determine source and destination paths
+    let (src_dir, dst_dir) = if enable {
+        // Moving from disabled to enabled
+        (&disabled_dir, &mods_dir)
+    } else {
+        // Moving from enabled to disabled
+        (&mods_dir, &disabled_dir)
+    };
+
+    let src_file = src_dir.join(&filename);
+    let dst_file = dst_dir.join(&filename);
+
+    // If enabling, also check the main mods folder (might not be in disabled folder)
+    let alt_src_file = if enable {
+        mods_dir.join(&filename)
+    } else {
+        src_file.clone()
+    };
+
+    // Check if source exists
+    let actual_src = if src_file.exists() {
+        src_file
+    } else if alt_src_file.exists() {
+        alt_src_file
+    } else {
+        return Err(format!("Mod file not found: {}", filename));
+    };
+
+    // Ensure destination directory exists
+    if !dst_dir.exists() {
+        tokio::fs::create_dir_all(&dst_dir)
+            .await
+            .map_err(|e| format!("Failed to create disabled directory: {}", e))?;
+    }
+
+    // Check if destination already exists
+    if dst_file.exists() {
+        return Err(format!("Mod already exists in target location: {}", filename));
+    }
+
+    // Rename/move the file
+    tokio::fs::rename(&actual_src, &dst_dir.join(&filename))
+        .await
+        .map_err(|e| format!("Failed to move mod file: {}", e))?;
+
+    tracing::info!(
+        "Toggled mod {} to enabled={} for instance {}",
+        filename,
+        enable,
+        version_id
+    );
+    Ok(())
+}
+
+/// Delete a local mod file
+#[tauri::command]
+pub async fn delete_local_mod(version_id: String, filename: String) -> Result<(), String> {
+    tracing::info!(
+        "Deleting mod {} from instance {}",
+        filename,
+        version_id
+    );
+
+    let base_dir = get_minecraft_base();
+    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
+
+    // Check in main mods directory
+    let mod_file = mods_dir.join(&filename);
+    
+    // Check in disabled directory
+    let disabled_file = mods_dir.join("disabled").join(&filename);
+
+    let file_to_delete = if mod_file.exists() {
+        mod_file
+    } else if disabled_file.exists() {
+        disabled_file
+    } else {
+        return Err(format!("Mod file not found: {}", filename));
+    };
+
+    tokio::fs::remove_file(&file_to_delete)
+        .await
+        .map_err(|e| format!("Failed to delete mod file: {}", e))?;
+
+    tracing::info!("Deleted mod {} from instance {}", filename, version_id);
+    Ok(())
+}
+
+/// Install a mod to a specific instance (download + save)
+#[tauri::command]
+pub async fn install_mod_to_instance(
+    version_id: String,
+    mod_source: String,     // "modrinth" or "curseforge"
+    project_id: String,
+    file_id: String,
+    download_url: String,
+) -> Result<String, String> {
+    tracing::info!(
+        "Installing mod {} from {} to instance {}",
+        project_id,
+        mod_source,
+        version_id
+    );
+
+    let base_dir = get_minecraft_base();
+    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
+
+    // Ensure mods directory exists
+    if !mods_dir.exists() {
+        tokio::fs::create_dir_all(&mods_dir)
+            .await
+            .map_err(|e| format!("Failed to create mods directory: {}", e))?;
+    }
+
+    // Download the mod file
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&download_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download mod: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+
+    // Extract filename from URL or use project_id
+    let url_filename = download_url
+        .split('/')
+        .last()
+        .unwrap_or_default()
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    
+    let filename = if url_filename.is_empty() || !url_filename.ends_with(".jar") {
+        format!("{}.jar", project_id)
+    } else {
+        url_filename
+    };
+
+    let target_path = mods_dir.join(&filename);
+
+    // Save the file
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read download content: {}", e))?;
+
+    tokio::fs::write(&target_path, &bytes)
+        .await
+        .map_err(|e| format!("Failed to save mod file: {}", e))?;
+
+    tracing::info!(
+        "Installed mod {} to instance {} (file: {})",
+        project_id,
+        version_id,
+        filename
+    );
+
+    Ok(filename)
+}

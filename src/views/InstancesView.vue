@@ -3,8 +3,9 @@ import { ref, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Gamepad2, Plus, Package, Settings, FolderOpen, Save, X, MoreHorizontal, Trash2, Folder } from "@lucide/vue";
+import { Gamepad2, Plus, Package, Settings, FolderOpen, Save, X, MoreHorizontal, Trash2, Folder, Puzzle } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
+import InstanceModsModal from "../components/InstanceModsModal.vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 
@@ -58,6 +59,10 @@ const showDeleteDialog = ref(false);
 const deletingInstanceId = ref("");
 const deletingInstanceName = ref("");
 const isDeletingInstance = ref(false);
+
+// Mods modal state
+const showModsModal = ref(false);
+const modsInstance = ref<InstanceItem | null>(null);
 
 // ---------------------------------------------------------------------------
 // Deep-link: route.query.manage → auto-open settings for a specific instance
@@ -142,6 +147,11 @@ async function openSettings(instance: InstanceItem) {
   }
 
   showSettingsModal.value = true;
+}
+
+function openMods(instance: InstanceItem) {
+  modsInstance.value = instance;
+  showModsModal.value = true;
 }
 
 async function browseJavaPath() {
@@ -346,6 +356,12 @@ function loaderBadgeClass(loaderType: string): string {
                 Open Folder
               </DropdownMenuItem>
               <DropdownMenuItem
+                @click="openMods(instance)"
+              >
+                <Puzzle class="h-4 w-4" />
+                Manage Mods
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 destructive
                 @click="confirmDeleteInstance(instance)"
               >
@@ -362,6 +378,12 @@ function loaderBadgeClass(loaderType: string): string {
     <InstallInstanceModal
       v-model:open="showInstallModal"
       @installed-success="refreshInstancesList"
+    />
+
+    <!-- Instance Mods Modal -->
+    <InstanceModsModal
+      v-model:open="showModsModal"
+      :instance="modsInstance"
     />
 
     <!-- Instance Settings Modal -->
