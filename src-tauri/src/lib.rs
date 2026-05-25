@@ -49,10 +49,24 @@ pub fn run() {
             core::manager::get_instance_details,
             core::manager::delete_instance,
             core::manager::open_instance_folder,
+            // Local mod management commands
+            core::manager::get_installed_mods,
+            core::manager::toggle_mod_status,
+            core::manager::delete_local_mod,
+            core::manager::install_mod_to_instance,
             // Java commands
             core::java::scan_local_javas,
             core::java::download_java,
             core::java::get_recommended_java,
+            // CurseForge commands
+            core::curseforge::search_curseforge,
+            core::curseforge::get_cf_mod_download_url,
+            core::curseforge::get_cf_mod_details,
+            // Modrinth commands
+            core::modrinth::search_modrinth,
+            core::modrinth::get_modrinth_mod_download_url,
+            core::modrinth::get_modrinth_mod_details,
+            core::modrinth::get_modrinth_mod_versions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
