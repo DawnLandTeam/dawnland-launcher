@@ -93,6 +93,8 @@ fn parse_version_json(content: &str, id: &str) -> (String, String) {
             let loader_type = if let Some(main_class) = json.get("mainClass").and_then(|v| v.as_str()) {
                 if main_class.contains("fabricmc") || main_class.contains("fabric") {
                     "Fabric"
+                } else if main_class.contains("neoforge") {
+                    "NeoForge"
                 } else if main_class.contains("forge") {
                     "Forge"
                 } else {
@@ -100,6 +102,8 @@ fn parse_version_json(content: &str, id: &str) -> (String, String) {
                 }
             } else if id.to_lowercase().contains("fabric") {
                 "Fabric"
+            } else if id.to_lowercase().contains("neoforge") {
+                "NeoForge"
             } else if id.to_lowercase().contains("forge") {
                 "Forge"
             } else {
@@ -125,6 +129,8 @@ fn parse_version_json(content: &str, id: &str) -> (String, String) {
             let mc_version = extract_mc_version_from_id(id).unwrap_or_else(|| "Unknown".to_string());
             let loader_type = if id.to_lowercase().contains("fabric") {
                 "Fabric"
+            } else if id.to_lowercase().contains("neoforge") {
+                "NeoForge"
             } else if id.to_lowercase().contains("forge") {
                 "Forge"
             } else {
@@ -143,7 +149,8 @@ fn extract_mc_version_from_id(id: &str) -> Option<String> {
     
     for part in parts {
         // Check if it looks like a version (starts with digit, contains dots)
-        if part.starts_with(|c: char| c.is_ascii_digit()) && part.contains('.') {
+        // Ensure it starts with "1." to filter out Forge/NeoForge version numbers like 26.1.2 or 47.1.0
+        if part.starts_with("1.") && part.contains('.') {
             // Basic validation: should have at least major.minor
             let dots = part.matches('.').count();
             if dots >= 1 && dots <= 3 {

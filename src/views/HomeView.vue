@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, computed, onActivated } from "vue";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -140,6 +140,11 @@ onMounted(async () => {
       repairingInstances.value.delete(versionId);
     }
   });
+});
+
+onActivated(() => {
+  // Refresh instances when returning to HomeView
+  loadInstances();
 });
 
 // ---------------------------------------------------------------------------

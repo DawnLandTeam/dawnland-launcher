@@ -125,10 +125,17 @@ pub struct InstanceConfig {
     /// Window behavior when game starts: "hide" | "minimize" | "keep"
     #[serde(default = "default_window_behavior")]
     pub window_behavior: String,
+    /// Whether to show the game log window automatically on launch
+    #[serde(default = "default_show_game_log")]
+    pub show_game_log: bool,
 }
 
 fn default_window_behavior() -> String {
     "keep".to_string()
+}
+
+fn default_show_game_log() -> bool {
+    false
 }
 
 // ============ Instance Config Commands ============
@@ -451,6 +458,9 @@ pub fn build_classpath(
     let base_dir = get_minecraft_base();
     let mut classpath = Vec::new();
 
+    // Track if we found the patched client JAR
+    let mut found_patched = false;
+
     // Add all applicable libraries
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
@@ -467,7 +477,14 @@ pub fn build_classpath(
                 if let Some(path) = &artifact.path {
                     let lib_path = base_dir.join("libraries").join(path);
                     if lib_path.exists() {
-                        classpath.push(lib_path);
+                        classpath.push(lib_path.clone());
+                        
+                        // Check if this is the patched client JAR
+                        let path_str = path.to_string();
+                        if path_str.contains("client") && path_str.contains("patched") {
+                            tracing::debug!("Found patched client JAR: {:?}", lib_path);
+                            found_patched = true;
+                        }
                     } else {
                         tracing::warn!("Library not found: {:?}", lib_path);
                     }
@@ -478,6 +495,23 @@ pub fn build_classpath(
         
         // Fallback: use Maven coordinates (Fabric/Forge style)
         if let Some(name) = &lib.name {
+            // Check for patched client JAR via Maven coordinates
+            // Format: "net.minecraft:client:1.20.1:patched"
+            if name.contains("net.minecraft") && name.contains("client") && name.contains("patched") {
+                if let Some(maven_path) = maven_name_to_path(name) {
+                    let lib_path = base_dir.join("libraries").join(&maven_path);
+                    if lib_path.exists() {
+                        classpath.push(lib_path.clone());
+                        tracing::debug!("Found patched client JAR via Maven: {:?}", lib_path);
+                        found_patched = true;
+                        continue;
+                    } else {
+                        tracing::warn!("Patched client JAR not found via Maven: {:?}", lib_path);
+                    }
+                }
+            }
+            
+            // Regular library fallback
             if let Some(maven_path) = maven_name_to_path(name) {
                 let lib_path = base_dir.join("libraries").join(&maven_path);
                 if lib_path.exists() {
@@ -501,10 +535,43 @@ pub fn build_classpath(
     if client_jar.exists() {
         classpath.push(client_jar);
     } else {
-        return Err(format!("client.jar not found at {:?} (version: {})", client_jar, jar_version));
+        // Try to find patched client JAR in libraries directory as fallback
+        let mc_version = jar_version;
+        let possible_patched_paths = [
+            base_dir.join("libraries").join("net/minecraft/client").join(mc_version).join(format!("client-{}-patched.jar", mc_version)),
+            base_dir.join("libraries").join("net/minecraft/client").join(mc_version).join(format!("client-{}-20230612.114412-patched.jar", mc_version)),
+        ];
+        
+        let mut found_alternative = false;
+        for patched_path in &possible_patched_paths {
+            if patched_path.exists() {
+                classpath.push(patched_path.clone());
+                tracing::info!("Using patched client JAR from libraries: {:?}", patched_path);
+                found_alternative = true;
+                break;
+            }
+        }
+        
+        if !found_alternative {
+            return Err(format!("client.jar not found at {:?} (version: {})", client_jar, jar_version));
+        }
+    }
+
+    if !found_patched {
+        // Log warning if patched JAR wasn't found - this could cause Forge to fail
+        tracing::warn!("Patched client JAR not found in classpath! Forge may fail to launch.");
     }
 
     tracing::info!("Built classpath with {} entries", classpath.len());
+    
+    // Log classpath entries for debugging
+    for (i, entry) in classpath.iter().enumerate() {
+        let name = entry.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+        if name.contains("patched") || name.contains("client") {
+            tracing::debug!("Classpath[{}]: {:?}", i, entry);
+        }
+    }
+    
     Ok(classpath)
 }
 
@@ -641,6 +708,8 @@ pub fn parse_jvm_arguments(
         .collect::<Vec<_>>()
         .join(CLASSPATH_SEPARATOR);
 
+    let libraries_dir = get_minecraft_base().join("libraries").to_string_lossy().to_string();
+
     for arg in &mut args {
         *arg = arg
             .replace("${auth_player_name}", &config.account.username)
@@ -655,7 +724,11 @@ pub fn parse_jvm_arguments(
             .replace("${natives_directory}", &natives_dir)
             .replace("${launcher_name}", LAUNCHER_NAME)
             .replace("${launcher_version}", LAUNCHER_VERSION)
-            .replace("${classpath}", &classpath_str);
+            .replace("${classpath}", &classpath_str)
+            .replace("${library_directory}", &libraries_dir)
+            .replace("${classpath_separator}", CLASSPATH_SEPARATOR)
+            .replace("${ignore_list}", "")
+            .replace("${ignoreList}", "");
     }
 
     // Add default JVM args if not present
@@ -697,6 +770,7 @@ pub fn parse_game_arguments(
     // Apply template substitutions
     let game_dir = config.game_directory.to_string_lossy().to_string();
     let assets_dir = config.assets_directory.to_string_lossy().to_string();
+    let libraries_dir = get_minecraft_base().join("libraries").to_string_lossy().to_string();
 
     for arg in &mut args {
         *arg = arg
@@ -710,7 +784,11 @@ pub fn parse_game_arguments(
             .replace("${user_type}", if config.account.account_type == crate::auth::AccountType::Microsoft { "msa" } else { "mojang" })
             .replace("${version_type}", version_meta.version_type.as_deref().unwrap_or("release"))
             .replace("${launcher_name}", LAUNCHER_NAME)
-            .replace("${launcher_version}", LAUNCHER_VERSION);
+            .replace("${launcher_version}", LAUNCHER_VERSION)
+            .replace("${library_directory}", &libraries_dir)
+            .replace("${classpath_separator}", CLASSPATH_SEPARATOR)
+            .replace("${ignore_list}", "")
+            .replace("${ignoreList}", "");
     }
 
     tracing::debug!("Parsed game args: {:?}", args);
