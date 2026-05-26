@@ -2,6 +2,7 @@
 //! Provides commands for fetching available Fabric loaders and installing Fabric instances.
 
 use crate::core::mojang::get_minecraft_base;
+use crate::core::utils::compare_versions;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -38,27 +39,6 @@ pub struct FabricLoaderList {
 const FABRIC_META_BASE: &str = "https://meta.fabricmc.net/v2";
 
 // ============ Tauri Commands ============
-
-/// Compare two version strings numerically (segment by segment)
-/// e.g., "0.9.1" < "0.10.1" < "0.19.1"
-fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let a_parts: Vec<u32> = a.split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    let b_parts: Vec<u32> = b.split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    
-    for (a_part, b_part) in a_parts.iter().zip(b_parts.iter()) {
-        match a_part.cmp(b_part) {
-            std::cmp::Ordering::Equal => continue,
-            other => return other,
-        }
-    }
-    
-    // If all compared parts are equal, shorter version comes first
-    a_parts.len().cmp(&b_parts.len())
-}
 
 /// Get available Fabric Loader versions for a given Minecraft version.
 /// Returns stable versions first, then unstable versions.
@@ -384,6 +364,7 @@ pub async fn install_fabric_instance(
         max_memory: None,
         jvm_args_extra: None,
         window_behavior: "keep".to_string(),
+        show_game_log: false,
     };
 
     let config_path = version_dir.join("dlml.json");

@@ -823,7 +823,9 @@ pub async fn get_installed_versions() -> Result<Vec<String>, String> {
         }
     }
 
-    versions.sort();
+    use crate::core::utils::compare_versions;
+    // Sort descending (newest versions first)
+    versions.sort_by(|a, b| compare_versions(b, a));
     tracing::info!("Found {} installed versions", versions.len());
     Ok(versions)
 }

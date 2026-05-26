@@ -27,6 +27,10 @@ interface DownloadProgress {
 const systemMemory = ref<SystemMemoryInfo>({ totalMb: 8192, recommendedMaxMb: 4096 });
 const defaultMaxMemory = ref(4096);
 
+// API Keys
+const curseforgeApiKey = ref("");
+const isSavingApiKey = ref(false);
+
 // Java management state
 const installedJavas = ref<JavaInfo[]>([]);
 const isScanningJava = ref(false);
@@ -40,6 +44,27 @@ async function loadSystemMemory(): Promise<void> {
     defaultMaxMemory.value = systemMemory.value.recommendedMaxMb;
   } catch (err) {
     console.error("Failed to load system memory:", err);
+  }
+}
+
+async function loadApiKeys(): Promise<void> {
+  try {
+    curseforgeApiKey.value = await invoke<string>("get_custom_curseforge_key");
+  } catch (err) {
+    console.error("Failed to load API keys:", err);
+  }
+}
+
+async function saveApiKey(): Promise<void> {
+  isSavingApiKey.value = true;
+  try {
+    await invoke("set_custom_curseforge_key", { key: curseforgeApiKey.value });
+    // Success feedback could be added here
+  } catch (err) {
+    console.error("Failed to save API key:", err);
+    alert(`Failed to save API key: ${err}`);
+  } finally {
+    isSavingApiKey.value = false;
   }
 }
 
@@ -85,6 +110,7 @@ async function downloadJava(majorVersion: number): Promise<void> {
 
 onMounted(() => {
   loadSystemMemory();
+  loadApiKeys();
   scanLocalJavas();
 });
 </script>
@@ -119,6 +145,35 @@ onMounted(() => {
         <p class="text-xs text-muted-foreground">
           This will be used as the default memory for new instances. Recommended: {{ systemMemory.recommendedMaxMb }} MB (1/3 of system RAM)
         </p>
+      </div>
+    </div>
+
+    <!-- API Keys -->
+    <div class="rounded-lg border border-neutral-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <h2 class="mb-4 text-lg font-semibold">API Keys</h2>
+      <div class="space-y-4">
+        <div>
+          <label class="text-sm font-medium block mb-1">CurseForge API Key</label>
+          <div class="flex gap-2">
+            <input
+              v-model="curseforgeApiKey"
+              type="password"
+              placeholder="$2a$10$..."
+              class="flex-1 rounded-md border border-neutral-300 bg-transparent px-3 py-1.5 text-sm placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700"
+            />
+            <button
+              class="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              :disabled="isSavingApiKey"
+              @click="saveApiKey"
+            >
+              <Loader2 v-if="isSavingApiKey" :size="14" class="animate-spin inline-block mr-1" />
+              Save
+            </button>
+          </div>
+          <p class="text-xs text-muted-foreground mt-1">
+            Required for searching and downloading mods from CurseForge. You can get one from the <a href="https://console.curseforge.com/" target="_blank" class="text-primary hover:underline">CurseForge Console</a>.
+          </p>
+        </div>
       </div>
     </div>
 

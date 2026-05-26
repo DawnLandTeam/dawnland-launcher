@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, onMounted, watch, onActivated } from "vue";
 import { useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Gamepad2, Plus, Package, Settings, FolderOpen, Save, X, MoreHorizontal, Trash2, Folder, Puzzle } from "@lucide/vue";
+import { Gamepad2, Plus, Package, Settings, FolderOpen, Save, MoreHorizontal, Trash2, Folder, Puzzle } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
 import InstanceModsModal from "../components/InstanceModsModal.vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
+import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 
 // Types
@@ -22,6 +23,7 @@ interface InstanceConfig {
   maxMemory?: number;
   jvmArgsExtra?: string[];
   windowBehavior?: string;
+  showGameLog?: boolean;
 }
 
 interface SystemMemoryInfo {
@@ -45,6 +47,7 @@ const settingsConfig = ref<InstanceConfig>({
   maxMemory: 4096,
   jvmArgsExtra: [],
   windowBehavior: "keep",
+  showGameLog: true,
 });
 const isSavingConfig = ref(false);
 
@@ -92,6 +95,10 @@ watch(
 // ---------------------------------------------------------------------------
 onMounted(async () => {
   await loadInstances();
+});
+
+onActivated(async () => {
+  await loadInstances();
   await loadSystemMemory();
 });
 
@@ -135,6 +142,7 @@ async function openSettings(instance: InstanceItem) {
       maxMemory: config.maxMemory || 4096,
       jvmArgsExtra: config.jvmArgsExtra || [],
       windowBehavior: config.windowBehavior || "keep",
+      showGameLog: config.showGameLog !== false,
     };
   } catch (e) {
     console.error("Failed to load instance config:", e);
@@ -143,6 +151,7 @@ async function openSettings(instance: InstanceItem) {
       maxMemory: 4096,
       jvmArgsExtra: [],
       windowBehavior: "keep",
+      showGameLog: true,
     };
   }
 
@@ -186,6 +195,7 @@ async function saveSettings() {
         ? settingsConfig.value.jvmArgsExtra
         : null,
       windowBehavior: settingsConfig.value.windowBehavior || "keep",
+      showGameLog: settingsConfig.value.showGameLog,
     };
 
     await invoke("save_instance_config", {
@@ -387,32 +397,11 @@ function loaderBadgeClass(loaderType: string): string {
     />
 
     <!-- Instance Settings Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showSettingsModal"
-        class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
-      >
-        <div
-          class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
-          @click="showSettingsModal = false"
-        />
-        <div
-          class="relative z-10 w-full max-w-md gap-4 border bg-white dark:bg-zinc-900 p-5 shadow-xl rounded-lg pointer-events-auto"
-        >
-          <div class="flex items-center justify-between mb-4">
-            <div>
-              <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">Instance Settings</h3>
-              <p class="text-sm text-muted-foreground">
-                {{ settingsInstanceName }}
-              </p>
-            </div>
-            <button
-              @click="showSettingsModal = false"
-              class="text-muted-foreground hover:text-foreground"
-            >
-              <X class="h-5 w-5" />
-            </button>
-          </div>
+    <DialogContent :open="showSettingsModal" @update:open="showSettingsModal = $event" class="max-w-md">
+        <DialogTitle>Instance Settings</DialogTitle>
+        <DialogDescription>
+          {{ settingsInstanceName }}
+        </DialogDescription>
 
           <!-- Java Path -->
           <div class="space-y-2">
@@ -492,6 +481,22 @@ function loaderBadgeClass(loaderType: string): string {
             </p>
           </div>
 
+          <!-- Show Game Log -->
+          <div class="flex items-center gap-3 mt-4 p-4 border rounded-lg">
+            <input
+              type="checkbox"
+              id="showGameLog"
+              v-model="settingsConfig.showGameLog"
+              class="w-5 h-5 rounded border-gray-300 text-primary focus:ring-primary"
+            />
+            <label for="showGameLog" class="flex-1">
+              <span class="font-medium">Show Game Log on Launch</span>
+              <p class="text-sm text-muted-foreground">
+                Enable to automatically show the console log window when starting the instance.
+              </p>
+            </label>
+          </div>
+
           <!-- Save Button -->
           <div class="flex justify-end gap-2 mt-6">
             <button
@@ -509,9 +514,7 @@ function loaderBadgeClass(loaderType: string): string {
               Save
             </button>
           </div>
-        </div>
-      </div>
-    </Teleport>
+      </DialogContent>
 
     <!-- Delete Confirmation Dialog -->
     <AlertDialog

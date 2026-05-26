@@ -44,6 +44,10 @@ pub fn run() {
             core::fabric::get_fabric_loaders,
             core::fabric::install_fabric_instance,
             core::fabric::check_vanilla_installed,
+            // Forge commands
+            core::forge::get_forge_loaders,
+            core::forge::get_neoforge_loaders,
+            core::forge::install_forge_instance,
             // Manager commands
             core::manager::scan_installed_instances,
             core::manager::get_instance_details,
@@ -60,11 +64,13 @@ pub fn run() {
             core::java::get_recommended_java,
             // CurseForge commands
             core::curseforge::search_curseforge,
-            core::curseforge::get_cf_mod_download_url,
+            core::curseforge::get_cf_mod_files,
             core::curseforge::get_cf_mod_details,
+            core::curseforge::get_custom_curseforge_key,
+            core::curseforge::set_custom_curseforge_key,
             // Modrinth commands
             core::modrinth::search_modrinth,
-            core::modrinth::get_modrinth_mod_download_url,
+            core::modrinth::get_modrinth_mod_files,
             core::modrinth::get_modrinth_mod_details,
             core::modrinth::get_modrinth_mod_versions,
         ])
