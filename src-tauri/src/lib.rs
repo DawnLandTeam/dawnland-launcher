@@ -66,8 +66,6 @@ pub fn run() {
             core::curseforge::search_curseforge,
             core::curseforge::get_cf_mod_files,
             core::curseforge::get_cf_mod_details,
-            core::curseforge::get_custom_curseforge_key,
-            core::curseforge::set_custom_curseforge_key,
             // Modrinth commands
             core::modrinth::search_modrinth,
             core::modrinth::get_modrinth_mod_files,

@@ -6,37 +6,9 @@ use super::modrinth::{UnifiedModProject, UnifiedModFile};
 /// In production, this should be loaded from environment or config file
 const CURSEFORGE_API_BASE: &str = "https://api.curseforge.com/v1";
 
-/// Get the CurseForge API key. First checks for a custom key in ~/.dawnland/curseforge_api_key.txt
-/// If not found, falls back to the default key (which may be rate-limited or disabled).
+/// Get the CurseForge API key. Uses a default key (which may be rate-limited or disabled).
 pub fn get_curseforge_api_key() -> String {
-    let key_path = crate::core::mojang::get_minecraft_base().join("curseforge_api_key.txt");
-    if let Ok(key) = std::fs::read_to_string(key_path) {
-        let trimmed = key.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-    // Default fallback key (might be invalid or rate-limited)
     "***REMOVED***".to_string()
-}
-
-#[tauri::command]
-pub async fn get_custom_curseforge_key() -> Result<String, String> {
-    let key_path = crate::core::mojang::get_minecraft_base().join("curseforge_api_key.txt");
-    if let Ok(key) = tokio::fs::read_to_string(key_path).await {
-        Ok(key.trim().to_string())
-    } else {
-        Ok(String::new())
-    }
-}
-
-#[tauri::command]
-pub async fn set_custom_curseforge_key(key: String) -> Result<(), String> {
-    let key_path = crate::core::mojang::get_minecraft_base().join("curseforge_api_key.txt");
-    tokio::fs::write(&key_path, key.trim())
-        .await
-        .map_err(|e| format!("Failed to save CurseForge API key: {}", e))?;
-    Ok(())
 }
 
 /// Game ID for Minecraft on CurseForge
