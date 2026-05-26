@@ -252,13 +252,12 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
 
     let extension = if cfg!(target_os = "windows") { "zip" } else { "tar.gz" };
 
-    // Construct Adoptium API URL
     let url = format!(
         "https://api.adoptium.net/v3/binary/latest/{}/ga/{}/{}/jdk/hotspot/normal/eclipse",
         major_version, os, arch
     );
 
-    tracing::info!("Download URL: {}", url);
+    tracing::info!("Resolving Download URL: {}", url);
 
     // Create runtimes directory
     let base_dir = get_minecraft_base();
@@ -267,8 +266,36 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
         .await
         .map_err(|e| format!("Failed to create runtimes directory: {}", e))?;
 
-    // Download the file
-    let response = reqwest::get(&url)
+    // Create a client that does NOT follow redirects automatically
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let redirect_res = client.get(&url).send().await
+        .map_err(|e| format!("Failed to resolve Adoptium API: {}", e))?;
+
+    let mut final_url = url.clone();
+    
+    // If it's a redirect, get the Location header
+    if redirect_res.status().is_redirection() {
+        if let Some(loc) = redirect_res.headers().get(reqwest::header::LOCATION) {
+            if let Ok(loc_str) = loc.to_str() {
+                // Apply ghproxy to GitHub release URLs for better connectivity in China
+                final_url = loc_str.replace("github.com", "mirror.ghproxy.com/github.com");
+                tracing::info!("Redirected and proxied to: {}", final_url);
+            }
+        }
+    } else if redirect_res.status().is_success() {
+        tracing::info!("No redirect needed.");
+    } else {
+        return Err(format!("Adoptium API returned error: {}", redirect_res.status()));
+    }
+
+    // Download the file from the final URL
+    let download_client = reqwest::Client::new();
+    let response = download_client.get(&final_url)
+        .send()
         .await
         .map_err(|e| format!("Failed to download Java: {}", e))?;
 
@@ -381,4 +408,30 @@ pub fn get_recommended_java(mc_version: &str) -> u32 {
     }
     // Default to Java 8 for older versions
     8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_major_version() {
+        assert_eq!(extract_major_version("java version \"1.8.0_392\""), 8);
+        assert_eq!(extract_major_version("openjdk version \"17.0.2\""), 17);
+        assert_eq!(extract_major_version("openjdk version \"21.0.2\""), 21);
+    }
+
+    #[test]
+    fn test_extract_version_string() {
+        assert_eq!(extract_version_string("java version \"1.8.0_392\""), "1.8.0_392");
+        assert_eq!(extract_version_string("openjdk version \"17.0.2\""), "17.0.2");
+    }
+
+    #[test]
+    fn test_get_recommended_java() {
+        assert_eq!(get_recommended_java("1.20.5"), 21);
+        assert_eq!(get_recommended_java("1.19.4"), 17);
+        assert_eq!(get_recommended_java("1.16.5"), 8);
+        assert_eq!(get_recommended_java("1.7.10"), 8);
+    }
 }

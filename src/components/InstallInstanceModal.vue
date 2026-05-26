@@ -34,6 +34,21 @@ interface DownloadProgress {
   error?: string;
 }
 
+interface FabricLoaderList {
+  stable: string[];
+  unstable: string[];
+}
+
+interface LoaderVersion {
+  version: string;
+  mcVersion: string;
+  installerUrl: string;
+}
+
+interface LoaderVersionList {
+  versions: LoaderVersion[];
+}
+
 // Props & Emits - Using explicit props for compatibility
 const props = defineProps<{
   open: boolean;
@@ -49,16 +64,25 @@ const currentStep = ref<number>(1); // 1: Base version, 2: Mod loader (optional)
 const versions = ref<VanillaVersion[]>([]);
 const selectedVersion = ref<string>("");
 const installModLoader = ref<boolean>(false);
+const selectedLoaderType = ref<"fabric" | "forge" | "neoforge">("fabric");
 const stableFabricLoaders = ref<string[]>([]);
 const unstableFabricLoaders = ref<string[]>([]);
 const selectedFabricLoader = ref<string>("");
+const forgeLoaders = ref<LoaderVersion[]>([]);
+const selectedForgeLoader = ref<string>("");
+const neoForgeLoaders = ref<LoaderVersion[]>([]);
+const selectedNeoForgeLoader = ref<string>("");
+const isLoadingFabric = ref(false);
+const isLoadingForge = ref(false);
+const isLoadingNeoForge = ref(false);
 const customInstanceName = ref<string>("");
 const isLoadingVersions = ref(false);
-const isLoadingFabric = ref(false);
 const isInstalling = ref(false);
 const installProgress = ref<InstallProgress | null>(null);
 const downloadProgress = ref<Map<string, DownloadProgress>>(new Map());
 const error = ref<string | null>(null);
+// Track if we have more installation steps after current one
+const hasMoreSteps = ref<boolean>(false);
 
 // Event unlisteners
 const unlisteners: UnlistenFn[] = [];
@@ -98,7 +122,15 @@ const canProceedToStep2 = computed(() => {
 
 const canProceedToStep3 = computed(() => {
   if (!installModLoader.value) return true;
-  return selectedFabricLoader.value !== "";
+  
+  if (selectedLoaderType.value === "fabric") {
+    return selectedFabricLoader.value !== "";
+  } else if (selectedLoaderType.value === "forge") {
+    return selectedForgeLoader.value !== "";
+  } else if (selectedLoaderType.value === "neoforge") {
+    return selectedNeoForgeLoader.value !== "";
+  }
+  return false;
 });
 
 const downloadProgressPercent = computed(() => {
@@ -114,8 +146,14 @@ const downloadProgressPercent = computed(() => {
 function generateInstanceName(): string {
   if (!selectedVersion.value) return "";
   
-  if (installModLoader.value && selectedFabricLoader.value) {
-    return `Fabric-${selectedVersion.value}-${selectedFabricLoader.value}`;
+  if (installModLoader.value) {
+    if (selectedLoaderType.value === "fabric" && selectedFabricLoader.value) {
+      return `Fabric-${selectedVersion.value}-${selectedFabricLoader.value}`;
+    } else if (selectedLoaderType.value === "forge" && selectedForgeLoader.value) {
+      return `Forge-${selectedVersion.value}-${selectedForgeLoader.value}`;
+    } else if (selectedLoaderType.value === "neoforge" && selectedNeoForgeLoader.value) {
+      return `NeoForge-${selectedVersion.value}-${selectedNeoForgeLoader.value}`;
+    }
   }
   return selectedVersion.value;
 }
@@ -123,17 +161,24 @@ function generateInstanceName(): string {
 // When dialog opens, load versions if not yet loaded
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
-    // Reset state
+    // Reset ALL state - critical for proper reopen
     currentStep.value = 1;
     selectedVersion.value = "";
     installModLoader.value = false;
+    selectedLoaderType.value = "fabric";
     stableFabricLoaders.value = [];
     unstableFabricLoaders.value = [];
     selectedFabricLoader.value = "";
+    forgeLoaders.value = [];
+    selectedForgeLoader.value = "";
+    neoForgeLoaders.value = [];
+    selectedNeoForgeLoader.value = "";
     customInstanceName.value = "";
     error.value = null;
     installProgress.value = null;
     downloadProgress.value.clear();
+    isInstalling.value = false;  // Reset installation state too
+    hasMoreSteps.value = false;  // Reset steps tracking
     
     // Load versions
     if (versions.value.length === 0) {
@@ -142,12 +187,14 @@ watch(() => props.open, (isOpen) => {
   }
 });
 
-// Watch for mod loader toggle to load fabric loaders
-watch(installModLoader, async (enabled) => {
-  if (enabled && selectedVersion.value && stableFabricLoaders.value.length === 0 && unstableFabricLoaders.value.length === 0) {
-    await loadFabricLoaders();
+// Prevent closing dialog during installation
+function handleOpenChange(open: boolean) {
+  // If trying to close during installation, prevent it
+  if (!open && isInstalling.value) {
+    return; // Prevent closing
   }
-});
+  emit('update:open', open);
+}
 
 // Watch version changes to reset mod loader if version changes
 watch(selectedVersion, () => {
@@ -155,18 +202,27 @@ watch(selectedVersion, () => {
   stableFabricLoaders.value = [];
   unstableFabricLoaders.value = [];
   selectedFabricLoader.value = "";
+  forgeLoaders.value = [];
+  selectedForgeLoader.value = "";
+  neoForgeLoaders.value = [];
+  selectedNeoForgeLoader.value = "";
   customInstanceName.value = "";
 });
 
-// Combined watch: load Fabric loaders when either version OR mod loader toggle changes
-// This ensures the list refreshes when switching versions with toggle already enabled
-watch([selectedVersion, installModLoader], async () => {
+// Watch loader type changes to reload appropriate loaders
+watch([selectedVersion, installModLoader, selectedLoaderType], async () => {
   const newVersion = selectedVersion.value;
   const newLoaderEnabled = installModLoader.value;
+  const loaderType = selectedLoaderType.value;
   
   if (newLoaderEnabled && newVersion) {
-    // Version or toggle changed - reload Fabric loaders
-    await loadFabricLoaders();
+    if (loaderType === "fabric") {
+      await loadFabricLoaders();
+    } else if (loaderType === "forge") {
+      await loadForgeLoaders();
+    } else if (loaderType === "neoforge") {
+      await loadNeoForgeLoaders();
+    }
   }
 });
 
@@ -201,11 +257,6 @@ async function loadFabricLoaders(): Promise<void> {
   selectedFabricLoader.value = "";
 
   try {
-    interface FabricLoaderList {
-      stable: string[];
-      unstable: string[];
-    }
-    
     const loaders = await invoke<FabricLoaderList>("get_fabric_loaders", {
       mcVersion: selectedVersion.value,
     });
@@ -228,6 +279,70 @@ async function loadFabricLoaders(): Promise<void> {
     console.error("Failed to load Fabric loaders:", err);
   } finally {
     isLoadingFabric.value = false;
+  }
+}
+
+// Load Forge loaders for selected Minecraft version
+async function loadForgeLoaders(): Promise<void> {
+  if (!selectedVersion.value) return;
+  
+  isLoadingForge.value = true;
+  error.value = null;
+  forgeLoaders.value = [];
+  selectedForgeLoader.value = "";
+
+  try {
+    const loaders = await invoke<LoaderVersionList>("get_forge_loaders", {
+      mcVersion: selectedVersion.value,
+    });
+    
+    forgeLoaders.value = loaders.versions;
+    
+    // Auto-select first version
+    if (loaders.versions.length > 0) {
+      selectedForgeLoader.value = loaders.versions[0].version;
+    }
+    
+    if (selectedForgeLoader.value) {
+      customInstanceName.value = generateInstanceName();
+    }
+  } catch (err) {
+    error.value = typeof err === "string" ? err : String(err);
+    console.error("Failed to load Forge loaders:", err);
+  } finally {
+    isLoadingForge.value = false;
+  }
+}
+
+// Load NeoForge loaders for selected Minecraft version
+async function loadNeoForgeLoaders(): Promise<void> {
+  if (!selectedVersion.value) return;
+  
+  isLoadingNeoForge.value = true;
+  error.value = null;
+  neoForgeLoaders.value = [];
+  selectedNeoForgeLoader.value = "";
+
+  try {
+    const loaders = await invoke<LoaderVersionList>("get_neoforge_loaders", {
+      mcVersion: selectedVersion.value,
+    });
+    
+    neoForgeLoaders.value = loaders.versions;
+    
+    // Auto-select first version
+    if (loaders.versions.length > 0) {
+      selectedNeoForgeLoader.value = loaders.versions[0].version;
+    }
+    
+    if (selectedNeoForgeLoader.value) {
+      customInstanceName.value = generateInstanceName();
+    }
+  } catch (err) {
+    error.value = typeof err === "string" ? err : String(err);
+    console.error("Failed to load NeoForge loaders:", err);
+  } finally {
+    isLoadingNeoForge.value = false;
   }
 }
 
@@ -275,6 +390,10 @@ async function installVersion(): Promise<void> {
   installProgress.value = { phase: "resolving_version" };
   downloadProgress.value.clear();
 
+  // Determine if there are more steps after vanilla
+  // (if mod loader is selected, we have more steps after vanilla completes)
+  hasMoreSteps.value = installModLoader.value;
+
   try {
     // Step 1: Install base vanilla version
     await invoke("install_vanilla_version", {
@@ -282,8 +401,17 @@ async function installVersion(): Promise<void> {
       versionJsonUrl: version.url,
     });
 
-    // Step 2: If mod loader is selected, install Fabric on top
-    if (installModLoader.value && selectedFabricLoader.value) {
+    // Vanilla is done, but we may still have mod loader to install
+    // Update hasMoreSteps: if we have mod loader, we still have more steps
+    // But the "complete" event from vanilla should NOT finish the whole process
+    
+    // Step 2: If mod loader is selected, install the appropriate loader on top
+    // Note: Don't set isInstalling = false here, let the final "complete" event do it
+    if (installModLoader.value) {
+      // Clear the hasMoreSteps flag since we're about to do the final step
+      // The next "complete" event should finish everything
+      hasMoreSteps.value = false;
+      
       // Update progress
       installProgress.value = {
         ...installProgress.value,
@@ -291,12 +419,29 @@ async function installVersion(): Promise<void> {
         versionId: customInstanceName.value,
       };
 
-      await invoke("install_fabric_instance", {
-        mcVersion: selectedVersion.value,
-        loaderVersion: selectedFabricLoader.value,
-        customInstanceName: customInstanceName.value,
-      });
+      if (selectedLoaderType.value === "fabric" && selectedFabricLoader.value) {
+        await invoke("install_fabric_instance", {
+          mcVersion: selectedVersion.value,
+          loaderVersion: selectedFabricLoader.value,
+          customInstanceName: customInstanceName.value,
+        });
+      } else if (selectedLoaderType.value === "forge" && selectedForgeLoader.value) {
+        await invoke("install_forge_instance", {
+          mcVersion: selectedVersion.value,
+          loaderVersion: selectedForgeLoader.value,
+          loaderType: "forge",
+          customInstanceName: customInstanceName.value,
+        });
+      } else if (selectedLoaderType.value === "neoforge" && selectedNeoForgeLoader.value) {
+        await invoke("install_forge_instance", {
+          mcVersion: selectedVersion.value,
+          loaderVersion: selectedNeoForgeLoader.value,
+          loaderType: "neoforge",
+          customInstanceName: customInstanceName.value,
+        });
+      }
     }
+    // Note: isInstalling will be set to false when "complete" event is received
   } catch (err) {
     error.value = typeof err === "string" ? err : String(err);
     isInstalling.value = false;
@@ -325,9 +470,12 @@ function formatSpeed(bytesPerSec: number): string {
 
 // Handle installation complete
 function handleInstallationComplete() {
-  isInstalling.value = false;
-  // Emit success event to refresh parent list
-  emit("installed-success");
+  // Only finish if there are no more steps (e.g., vanilla done but Forge still pending)
+  if (!hasMoreSteps.value) {
+    isInstalling.value = false;
+    // Emit success event to refresh parent list
+    emit("installed-success");
+  }
 }
 
 // Register event listeners once on mount
@@ -374,7 +522,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <DialogContent :open="props.open" @update:open="(val) => emit('update:open', val)" class="max-w-2xl">
+  <DialogContent :open="props.open" @update:open="handleOpenChange" class="max-w-2xl">
     <DialogTitle>Install New Instance</DialogTitle>
     <DialogDescription>
       Progressive installation wizard
@@ -507,15 +655,58 @@ onUnmounted(() => {
           class="w-5 h-5 rounded border-gray-300 text-primary focus:ring-primary"
         />
         <label for="installModLoader" class="flex-1">
-          <span class="font-medium">Install Fabric Mod Loader</span>
+          <span class="font-medium">Install Mod Loader</span>
           <p class="text-sm text-muted-foreground">
-            Enable this to install Fabric loader on top of the base version
+            Enable this to install a mod loader on top of the base version
           </p>
         </label>
       </div>
 
-      <!-- Fabric Loader Selector (only when toggled) -->
+      <!-- Loader Type Selector (only when toggled) -->
       <div v-if="installModLoader" class="space-y-3 animate-in fade-in slide-in-from-top-2">
+        <label class="text-sm font-medium">Mod Loader Type</label>
+        <div class="flex gap-2">
+          <button
+            @click="selectedLoaderType = 'fabric'; loadFabricLoaders()"
+            :disabled="isInstalling"
+            :class="[
+              'flex-1 py-2 px-3 rounded-md text-sm font-medium border transition-colors',
+              selectedLoaderType === 'fabric' 
+                ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300' 
+                : 'bg-white dark:bg-zinc-800 border-neutral-300 dark:border-zinc-700 text-neutral-600 dark:text-neutral-400 hover:bg-muted'
+            ]"
+          >
+            Fabric
+          </button>
+          <button
+            @click="selectedLoaderType = 'forge'; loadForgeLoaders()"
+            :disabled="isInstalling"
+            :class="[
+              'flex-1 py-2 px-3 rounded-md text-sm font-medium border transition-colors',
+              selectedLoaderType === 'forge' 
+                ? 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300' 
+                : 'bg-white dark:bg-zinc-800 border-neutral-300 dark:border-zinc-700 text-neutral-600 dark:text-neutral-400 hover:bg-muted'
+            ]"
+          >
+            Forge
+          </button>
+          <button
+            @click="selectedLoaderType = 'neoforge'; loadNeoForgeLoaders()"
+            :disabled="isInstalling"
+            :class="[
+              'flex-1 py-2 px-3 rounded-md text-sm font-medium border transition-colors',
+              selectedLoaderType === 'neoforge' 
+                ? 'bg-green-100 dark:bg-green-900/30 border-green-300 dark:border-green-700 text-green-700 dark:text-green-300' 
+                : 'bg-white dark:bg-zinc-800 border-neutral-300 dark:border-zinc-700 text-neutral-600 dark:text-neutral-400 hover:bg-muted'
+            ]"
+          >
+            NeoForge
+          </button>
+        </div>
+      </div>
+
+      <!-- Fabric Loader Selector -->
+      <div v-if="installModLoader && selectedLoaderType === 'fabric'" class="space-y-3 animate-in fade-in slide-in-from-top-2">
         <div class="flex items-center justify-between">
           <label class="text-sm font-medium">Fabric Loader Version</label>
           <button
@@ -563,6 +754,82 @@ onUnmounted(() => {
         </p>
       </div>
 
+      <!-- Forge Loader Selector -->
+      <div v-if="installModLoader && selectedLoaderType === 'forge'" class="space-y-3 animate-in fade-in slide-in-from-top-2">
+        <div class="flex items-center justify-between">
+          <label class="text-sm font-medium">Forge Version</label>
+          <button
+            @click="loadForgeLoaders"
+            :disabled="isLoadingForge || !selectedVersion"
+            class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw
+              v-if="isLoadingForge"
+              class="w-3.5 h-3.5 animate-spin"
+            />
+            <RefreshCw v-else class="w-3.5 h-3.5" />
+            Refresh
+          </button>
+        </div>
+
+        <select
+          v-model="selectedForgeLoader"
+          :disabled="isLoadingForge || !selectedVersion"
+          class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
+        >
+          <option value="" disabled>Select a Forge version...</option>
+          <option
+            v-for="loader in forgeLoaders"
+            :key="loader.version"
+            :value="loader.version"
+          >
+            {{ loader.version }}
+          </option>
+        </select>
+
+        <p v-if="forgeLoaders.length > 0" class="text-xs text-muted-foreground">
+          Available versions: {{ forgeLoaders.length }}
+        </p>
+      </div>
+
+      <!-- NeoForge Loader Selector -->
+      <div v-if="installModLoader && selectedLoaderType === 'neoforge'" class="space-y-3 animate-in fade-in slide-in-from-top-2">
+        <div class="flex items-center justify-between">
+          <label class="text-sm font-medium">NeoForge Version</label>
+          <button
+            @click="loadNeoForgeLoaders"
+            :disabled="isLoadingNeoForge || !selectedVersion"
+            class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw
+              v-if="isLoadingNeoForge"
+              class="w-3.5 h-3.5 animate-spin"
+            />
+            <RefreshCw v-else class="w-3.5 h-3.5" />
+            Refresh
+          </button>
+        </div>
+
+        <select
+          v-model="selectedNeoForgeLoader"
+          :disabled="isLoadingNeoForge || !selectedVersion"
+          class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
+        >
+          <option value="" disabled>Select a NeoForge version...</option>
+          <option
+            v-for="loader in neoForgeLoaders"
+            :key="loader.version"
+            :value="loader.version"
+          >
+            {{ loader.version }}
+          </option>
+        </select>
+
+        <p v-if="neoForgeLoaders.length > 0" class="text-xs text-muted-foreground">
+          Available versions: {{ neoForgeLoaders.length }}
+        </p>
+      </div>
+
       <div class="flex justify-between">
         <button
           @click="goBackToStep1"
@@ -592,7 +859,11 @@ onUnmounted(() => {
         </div>
         <div v-if="installModLoader" class="flex justify-between text-sm">
           <span class="text-muted-foreground">Mod Loader:</span>
-          <span class="font-medium">Fabric {{ selectedFabricLoader }}</span>
+          <span class="font-medium">
+            <template v-if="selectedLoaderType === 'fabric'">Fabric {{ selectedFabricLoader }}</template>
+            <template v-else-if="selectedLoaderType === 'forge'">Forge {{ selectedForgeLoader }}</template>
+            <template v-else-if="selectedLoaderType === 'neoforge'">NeoForge {{ selectedNeoForgeLoader }}</template>
+          </span>
         </div>
         <div class="flex justify-between text-sm">
           <span class="text-muted-foreground">Instance Name:</span>
@@ -609,7 +880,11 @@ onUnmounted(() => {
           </div>
           <div v-if="installModLoader" class="flex justify-between text-sm">
             <span class="text-muted-foreground">Mod Loader:</span>
-            <span class="font-medium">Fabric {{ selectedFabricLoader }}</span>
+            <span class="font-medium">
+              <template v-if="selectedLoaderType === 'fabric'">Fabric {{ selectedFabricLoader }}</template>
+              <template v-else-if="selectedLoaderType === 'forge'">Forge {{ selectedForgeLoader }}</template>
+              <template v-else-if="selectedLoaderType === 'neoforge'">NeoForge {{ selectedNeoForgeLoader }}</template>
+            </span>
           </div>
         </div>
 

@@ -1,5 +1,6 @@
 use crate::downloader::{DownloadProgress, DownloadTask};
 use futures_util::StreamExt;
+use sha1::{Digest, Sha1};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::fs::File;
@@ -13,8 +14,34 @@ const MAX_CONCURRENT: usize = 16;
 /// Minimum time between progress emissions (milliseconds).
 const PROGRESS_THROTTLE_MS: u64 = 500;
 
+/// Compute SHA-1 hash of a file
+fn compute_sha1_sync(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open file for hashing: {}", e))?;
+    
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = Sha1::new();
+    let mut buffer = [0u8; 8192];
+    
+    loop {
+        let bytes_read = reader.read(&mut buffer)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    
+    // Finalize and get the hash as hex string
+    let result = hasher.finalize();
+    Ok(format!("{:x}", result))
+}
+
 /// Downloads a single file with progress reporting.
 /// Returns Ok on success, Err with message on failure.
+/// If file already exists and matches expected SHA-1 hash, skips download.
 async fn download_file(
     task: DownloadTask,
     client: &reqwest::Client,
@@ -29,6 +56,43 @@ async fn download_file(
             let err_msg = format!("Failed to create directory: {}", e);
             tracing::error!("{}: {}", err_msg, parent.display());
             return Err(err_msg);
+        }
+    }
+
+    // Check if file already exists and verify integrity with hash
+    if dest_path.exists() {
+        if let Some(expected_hash) = &task.hash {
+            // Hash is available - compute existing file's hash for verification
+            let dest_path_clone = dest_path.clone();
+            let existing_hash = tokio::task::spawn_blocking(move || {
+                compute_sha1_sync(&dest_path_clone)
+            }).await
+            .map_err(|e| format!("Task join error: {}", e))?;
+            
+            match existing_hash {
+                Ok(actual_hash) => {
+                    if actual_hash == *expected_hash {
+                        tracing::debug!("File exists and hash matches, skipping: {}", task.dest_path);
+                        let progress = DownloadProgress::completed(task.id.clone());
+                        let _ = app.emit("download-progress", &progress);
+                        return Ok(());
+                    } else {
+                        tracing::debug!("File exists but hash mismatch, re-downloading: {} (expected: {}, got: {})", 
+                            task.dest_path, expected_hash, actual_hash);
+                        // Hash mismatch - delete the corrupted file and re-download
+                        tokio::fs::remove_file(&dest_path).await
+                            .map_err(|e| format!("Failed to remove corrupted file: {}", e))?;
+                    }
+                }
+                Err(e) => {
+                    // Failed to compute hash - delete and re-download
+                    tracing::warn!("Failed to compute hash for existing file: {}, re-downloading", e);
+                    let _ = tokio::fs::remove_file(&dest_path).await;
+                }
+            }
+        } else {
+            // No hash available - for safety, download anyway since we can't verify
+            tracing::debug!("File exists but no hash available, re-downloading: {}", task.dest_path);
         }
     }
 

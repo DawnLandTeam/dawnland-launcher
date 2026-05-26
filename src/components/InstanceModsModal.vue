@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { Package, Search, Download, Trash2, ToggleLeft, ToggleRight, Loader2, X } from "@lucide/vue";
+import { Package, Search, Download, Trash2, ToggleLeft, ToggleRight, Loader2 } from "@lucide/vue";
+import { DialogContent, DialogTitle, DialogDescription } from "./ui/dialog";
 
 // Types
 interface InstanceItem {
@@ -31,6 +32,15 @@ interface UnifiedModProject {
   file_id: string | null;
 }
 
+interface UnifiedModFile {
+  id: string;
+  filename: string;
+  version_number: string;
+  download_url: string;
+  release_type: string;
+  date: string;
+}
+
 // Props
 const props = defineProps<{
   open: boolean;
@@ -51,6 +61,13 @@ const searchQuery = ref("");
 const error = ref<string | null>(null);
 const installingMod = ref<string | null>(null);
 const selectedSource = ref<"modrinth" | "curseforge">("modrinth");
+
+// Version Selection State
+const selectedModForVersionSelection = ref<UnifiedModProject | null>(null);
+const availableModFiles = ref<UnifiedModFile[]>([]);
+const isLoadingModFiles = ref(false);
+const selectedModFileId = ref<string>("");
+const isConfirmingInstall = ref(false);
 
 // Source badges
 const sourceBadges = {
@@ -166,42 +183,68 @@ async function searchMods() {
   }
 }
 
-// Install mod
-async function installMod(mod: UnifiedModProject) {
+// Fetch available mod files for selection
+async function fetchModFilesForSelection(mod: UnifiedModProject) {
   if (!props.instance) return;
   
   installingMod.value = mod.project_id;
+  selectedModForVersionSelection.value = mod;
+  isLoadingModFiles.value = true;
+  availableModFiles.value = [];
+  selectedModFileId.value = "";
   error.value = null;
   
   try {
-    // Get download URL
     const command = mod.source === "modrinth"
-      ? "get_modrinth_mod_download_url"
-      : "get_cf_mod_download_url";
+      ? "get_modrinth_mod_files"
+      : "get_cf_mod_files";
     
-    const [downloadUrl, fileId] = await invoke<[string, string]>(command, {
+    availableModFiles.value = await invoke<UnifiedModFile[]>(command, {
       projectId: mod.project_id,
       mcVersion: props.instance.mcVersion,
       loader: props.instance.loaderType.toLowerCase(),
     });
     
+    if (availableModFiles.value.length > 0) {
+      selectedModFileId.value = availableModFiles.value[0].id;
+    }
+  } catch (err) {
+    error.value = typeof err === "string" ? err : String(err);
+    selectedModForVersionSelection.value = null;
+  } finally {
+    isLoadingModFiles.value = false;
+    installingMod.value = null;
+  }
+}
+
+// Confirm install selected version
+async function confirmInstallMod() {
+  const mod = selectedModForVersionSelection.value;
+  const file = availableModFiles.value.find(f => f.id === selectedModFileId.value);
+  if (!mod || !file || !props.instance) return;
+  
+  isConfirmingInstall.value = true;
+  error.value = null;
+  
+  try {
     // Install to instance
     await invoke("install_mod_to_instance", {
       versionId: props.instance.id,
       modSource: mod.source,
       projectId: mod.project_id,
-      fileId,
-      downloadUrl,
+      fileId: file.id,
+      downloadUrl: file.download_url,
     });
     
     // Show success and switch to local tab
     alert(`Mod "${mod.title}" installed successfully!`);
+    selectedModForVersionSelection.value = null;
     activeTab.value = "local";
     await loadLocalMods();
   } catch (err) {
     error.value = typeof err === "string" ? err : String(err);
   } finally {
-    installingMod.value = null;
+    isConfirmingInstall.value = false;
   }
 }
 
@@ -231,25 +274,14 @@ function getLoaderBadgeClass(loader: string): string {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-      <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="emit('update:open', false)" />
-      
-      <div class="relative z-10 w-full max-w-4xl gap-4 border bg-white dark:bg-zinc-900 p-0 shadow-xl rounded-lg pointer-events-auto max-h-[85vh] overflow-hidden flex flex-col">
-        <!-- Header -->
-        <div class="flex items-center justify-between p-4 border-b">
-          <div>
-            <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">
-              Manage Mods
-            </h3>
-            <p class="text-sm text-muted-foreground">
-              {{ instance?.name }} ({{ instance?.mcVersion }} - {{ instance?.loaderType }})
-            </p>
-          </div>
-          <button @click="emit('update:open', false)" class="text-muted-foreground hover:text-foreground">
-            <X class="h-5 w-5" />
-          </button>
-        </div>
+  <DialogContent :open="open" @update:open="emit('update:open', $event)" class="max-w-4xl max-h-[85vh] p-0 flex flex-col gap-0 overflow-hidden">
+      <!-- Header -->
+      <div class="p-4 border-b shrink-0 pr-10">
+        <DialogTitle>Manage Mods</DialogTitle>
+        <DialogDescription>
+          {{ instance?.name }} ({{ instance?.mcVersion }} - {{ instance?.loaderType }})
+        </DialogDescription>
+      </div>
         
         <!-- Tabs -->
         <div class="flex border-b">
@@ -450,7 +482,7 @@ function getLoaderBadgeClass(loader: string): string {
                 </div>
                 
                 <button
-                  @click="installMod(mod)"
+                  @click="fetchModFilesForSelection(mod)"
                   :disabled="installingMod === mod.project_id"
                   class="shrink-0 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
                 >
@@ -465,8 +497,56 @@ function getLoaderBadgeClass(loader: string): string {
               <p class="text-sm text-muted-foreground">Enter a search term to find mods</p>
             </div>
           </div>
-        </div>
+      </div>
+  </DialogContent>
+  
+  <!-- Version Selection Sub-Modal -->
+  <DialogContent :open="!!selectedModForVersionSelection" @update:open="!$event && (selectedModForVersionSelection = null)" class="max-w-md p-6">
+    <DialogTitle>Select Version</DialogTitle>
+    <DialogDescription>
+      Choose which file of <span class="font-semibold text-neutral-900 dark:text-white">{{ selectedModForVersionSelection?.title }}</span> to install.
+    </DialogDescription>
+    
+    <div v-if="isLoadingModFiles" class="flex justify-center py-8">
+      <Loader2 class="h-6 w-6 animate-spin text-primary" />
+    </div>
+    
+    <div v-else-if="availableModFiles.length === 0" class="py-8 text-center text-red-500 text-sm">
+      No compatible files found for your game version and loader.
+    </div>
+    
+    <div v-else class="space-y-4 mt-4">
+      <div class="space-y-2">
+        <label class="text-sm font-medium text-neutral-900 dark:text-neutral-100">Compatible Files</label>
+        <select 
+          v-model="selectedModFileId" 
+          class="w-full p-2 border border-neutral-300 dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-800 text-sm text-neutral-900 dark:text-white outline-none focus:ring-2 focus:ring-primary/50"
+        >
+          <option v-for="file in availableModFiles" :key="file.id" :value="file.id">
+            {{ file.filename }} ({{ file.release_type }}) - {{ new Date(file.date).toLocaleDateString() }}
+          </option>
+        </select>
+        <p class="text-xs text-muted-foreground mt-1 text-right">
+          Sorted by newest first
+        </p>
+      </div>
+      
+      <div class="flex justify-end gap-2 pt-4 border-t">
+        <button 
+          @click="selectedModForVersionSelection = null" 
+          class="px-4 py-2 border rounded-md text-sm font-medium hover:bg-muted transition-colors"
+        >
+          Cancel
+        </button>
+        <button 
+          @click="confirmInstallMod" 
+          :disabled="!selectedModFileId || isConfirmingInstall" 
+          class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors flex items-center gap-2"
+        >
+          <Loader2 v-if="isConfirmingInstall" class="h-4 w-4 animate-spin" />
+          Download
+        </button>
       </div>
     </div>
-  </Teleport>
+  </DialogContent>
 </template>

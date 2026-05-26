@@ -31,6 +31,17 @@ pub struct UnifiedModProject {
     pub file_id: Option<String>,
 }
 
+/// Unified mod version file representing a downloadable mod file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedModFile {
+    pub id: String,
+    pub filename: String,
+    pub version_number: String,
+    pub download_url: String,
+    pub release_type: String, // "release", "beta", "alpha"
+    pub date: String,
+}
+
 // ============================================================================
 // Modrinth API Response Types
 // ============================================================================
@@ -88,6 +99,8 @@ struct ModrinthVersion {
     game_versions: Vec<String>,
     #[serde(default)]
     loaders: Vec<String>,
+    version_type: String, // "release", "beta", "alpha"
+    date_published: String,
     files: Vec<ModrinthFile>,
 }
 
@@ -203,15 +216,15 @@ pub async fn search_modrinth(
     Ok(projects)
 }
 
-/// Get mod download URL from Modrinth
+/// Get all compatible mod files from Modrinth
 #[tauri::command]
-pub async fn get_modrinth_mod_download_url(
+pub async fn get_modrinth_mod_files(
     project_id: String,
     mc_version: String,
     loader: String,
-) -> Result<(String, String), String> {
+) -> Result<Vec<UnifiedModFile>, String> {
     tracing::info!(
-        "Getting Modrinth download URL: project_id={}, mc_version={}, loader={}",
+        "Getting Modrinth mod files: project_id={}, mc_version={}, loader={}",
         project_id,
         mc_version,
         loader
@@ -219,6 +232,7 @@ pub async fn get_modrinth_mod_download_url(
 
     // Get all versions for this project
     let versions_url = format!("{}/project/{}/version", MODRINTH_BASE_URL, project_id);
+    tracing::info!("Fetching Modrinth files from URL: {}", versions_url);
 
     let client = reqwest::Client::new();
     let response = client
@@ -239,12 +253,12 @@ pub async fn get_modrinth_mod_download_url(
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    // Sort by version number (descending)
+    // Sort by date_published (descending)
     let mut sorted_versions = versions;
-    sorted_versions.sort_by(|a, b| b.version_number.cmp(&a.version_number));
+    sorted_versions.sort_by(|a, b| b.date_published.cmp(&a.date_published));
 
-    // Find the latest compatible version
     let target_loader = loader.to_lowercase();
+    let mut compatible_files = Vec::new();
 
     for version in sorted_versions {
         // Check game version compatibility
@@ -262,17 +276,24 @@ pub async fn get_modrinth_mod_download_url(
         if has_mc_version && has_loader {
             // Get the primary file (first one or primary file)
             if let Some(file) = version.files.first() {
-                tracing::info!(
-                    "Found compatible version: id={}, version={}",
-                    version.id,
-                    version.version_number
-                );
-                return Ok((file.url.clone(), version.id));
+                compatible_files.push(UnifiedModFile {
+                    id: version.id.clone(),
+                    filename: file.filename.clone(),
+                    version_number: version.version_number.clone(),
+                    download_url: file.url.clone(),
+                    release_type: version.version_type.clone(),
+                    date: version.date_published.clone(),
+                });
             }
         }
     }
 
-    Err("No compatible version found".to_string())
+    if compatible_files.is_empty() {
+        tracing::error!("No compatible version found for project_id={}, target_version={}, target_loader={}", project_id, mc_version, target_loader);
+        return Err("No compatible version found".to_string());
+    }
+
+    Ok(compatible_files)
 }
 
 /// Get detailed information about a specific mod from Modrinth
