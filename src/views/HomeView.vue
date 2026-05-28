@@ -209,6 +209,8 @@ function formatLoaderType(loaderType: string): string {
       return "Fabric";
     case "forge":
       return "Forge";
+    case "neoforge":
+      return "NeoForge";
     default:
       return "Vanilla";
   }
@@ -220,6 +222,8 @@ function loaderBadgeClass(loaderType: string): string {
       return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300";
     case "forge":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
+    case "neoforge":
+      return "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300";
     default:
       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300";
   }
@@ -237,11 +241,11 @@ function isMsaAccount(account: Account): boolean {
     <div class="w-full overflow-hidden bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 py-2">
       <div class="whitespace-nowrap animate-marquee">
         <span class="inline-block px-8 text-white font-medium">
-          Welcome to Dawnland Launcher v1.0.0 · New: Auto Java Management · 
-          Welcome to Dawnland Launcher v1.0.0 · New: Auto Java Management · 
-          Welcome to Dawnland Launcher v1.0.0 · New: Auto Java Management · 
-          Welcome to Dawnland Launcher v1.0.0 · New: Auto Java Management · 
-          Welcome to Dawnland Launcher v1.0.0 · New: Auto Java Management
+          {{ $t('home.marquee') }} · 
+          {{ $t('home.marquee') }} · 
+          {{ $t('home.marquee') }} · 
+          {{ $t('home.marquee') }} · 
+          {{ $t('home.marquee') }}
         </span>
       </div>
     </div>
@@ -350,14 +354,14 @@ function isMsaAccount(account: Account): boolean {
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="showGameLog = false"></div>
         <div class="relative z-10 w-full max-w-3xl h-[70vh] gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg flex flex-col pointer-events-auto">
           <div class="flex items-center justify-between">
-            <h3 class="font-semibold">Game Output</h3>
+            <h3 class="font-semibold">{{ $t('home.gameOutput') }}</h3>
             <button @click="showGameLog = false" class="text-muted-foreground hover:text-foreground">
               <X class="h-5 w-5" />
             </button>
           </div>
           <div class="flex-1 overflow-auto font-mono text-xs bg-black text-green-400 p-3 rounded">
             <div v-for="(line, idx) in gameLogs" :key="idx">{{ line }}</div>
-            <div v-if="gameLogs.length === 0" class="text-gray-500">Waiting for game output...</div>
+            <div v-if="gameLogs.length === 0" class="text-gray-500">{{ $t('home.waitingOutput') }}</div>
           </div>
         </div>
       </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Download, Loader2, Check, AlertCircle, RefreshCw, Box, Puzzle } from "@lucide/vue";
@@ -58,6 +59,8 @@ const emit = defineEmits<{
   (e: "update:open", value: boolean): void;
   (e: "installed-success"): void;
 }>();
+
+const { t } = useI18n();
 
 // State
 const currentStep = ref<number>(1); // 1: Base version, 2: Mod loader (optional), 3: Name & Install
@@ -451,14 +454,25 @@ async function installVersion(): Promise<void> {
 // Format phase label
 function formatPhase(phase: string): string {
   const labels: Record<string, string> = {
-    resolving_version: "Fetching version metadata...",
-    resolving_libraries: "Filtering libraries for your system...",
-    resolving_assets: "Preparing game assets...",
-    downloading: "Downloading files...",
-    complete: "Installation complete!",
-    error: "Installation failed",
+    resolving_version: t("install.fetchingVersion"),
+    resolving_libraries: t("install.filteringLibraries"),
+    resolving_assets: t("install.preparingAssets"),
+    downloading: t("install.downloadingFiles"),
+    complete: t("install.installComplete"),
+    error: t("install.installFailed"),
   };
   return labels[phase] || phase;
+}
+
+// Format backend progress file strings
+function formatCurrentFile(file: string): string {
+  const backendMessages: Record<string, string> = {
+    "Fetching Minecraft version manifest...": t("install.status.fetchingManifest"),
+    "Installing base Minecraft...": t("install.status.installingBase"),
+    "Downloading Forge installer...": t("install.status.downloadingForge"),
+    "Running Forge processors (this may take a while)...": t("install.status.runningProcessors"),
+  };
+  return backendMessages[file] || file;
 }
 
 // Format speed for display
@@ -523,9 +537,9 @@ onUnmounted(() => {
 
 <template>
   <DialogContent :open="props.open" @update:open="handleOpenChange" class="max-w-2xl">
-    <DialogTitle>Install New Instance</DialogTitle>
+    <DialogTitle>{{ t("install.title") }}</DialogTitle>
     <DialogDescription>
-      Progressive installation wizard
+      {{ t("install.subtitle") }}
     </DialogDescription>
 
     <!-- Step Indicator -->
@@ -562,12 +576,12 @@ onUnmounted(() => {
     <div v-if="currentStep === 1" class="space-y-4">
       <div class="flex items-center gap-2 text-lg font-medium text-neutral-900 dark:text-white">
         <Box class="w-5 h-5" />
-        Select Base Minecraft Version
+        {{ t("install.step1Title") }}
       </div>
       
       <div class="space-y-3">
         <div class="flex items-center justify-between">
-          <label class="text-sm font-medium">Minecraft Version</label>
+          <label class="text-sm font-medium">{{ t("install.mcVersion") }}</label>
           <button
             @click="loadVersions"
             :disabled="isLoadingVersions"
@@ -577,9 +591,7 @@ onUnmounted(() => {
               v-if="isLoadingVersions"
               class="w-3.5 h-3.5 animate-spin"
             />
-            <RefreshCw v-else class="w-3.5 h-3.5" />
-            Refresh
-          </button>
+            <RefreshCw v-else class="w-3.5 h-3.5" /> {{ t("install.refresh") }} </button>
         </div>
 
         <select
@@ -587,9 +599,9 @@ onUnmounted(() => {
           :disabled="isLoadingVersions || isInstalling"
           class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
         >
-          <option value="" disabled>Select a version...</option>
+          <option value="" disabled>{{ t("install.selectVersion") }}</option>
 
-          <optgroup v-if="releaseVersions.length" label="Releases">
+          <optgroup v-if="releaseVersions.length" :label="t('install.releases')">
             <option
               v-for="v in releaseVersions"
               :key="v.id"
@@ -599,7 +611,7 @@ onUnmounted(() => {
             </option>
           </optgroup>
 
-          <optgroup v-if="snapshotVersions.length" label="Snapshots">
+          <optgroup v-if="snapshotVersions.length" :label="t('install.snapshots')">
             <option
               v-for="v in snapshotVersions"
               :key="v.id"
@@ -611,7 +623,7 @@ onUnmounted(() => {
 
           <optgroup
             v-if="versions.length > releaseVersions.length + snapshotVersions.length"
-            label="Other"
+            :label="t('install.other')"
           >
             <option
               v-for="v in sortedVersions.filter(
@@ -632,7 +644,7 @@ onUnmounted(() => {
           :disabled="!canProceedToStep2"
           class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
         >
-          Next
+          {{ t("install.next") }}
           <span class="text-lg">→</span>
         </button>
       </div>
@@ -642,7 +654,7 @@ onUnmounted(() => {
     <div v-if="currentStep === 2" class="space-y-4">
       <div class="flex items-center gap-2 text-lg font-medium text-neutral-900 dark:text-white">
         <Puzzle class="w-5 h-5" />
-        Install Mod Loader (Optional)
+        {{ t("install.step2Title") }}
       </div>
 
       <!-- Toggle for mod loader -->
@@ -655,16 +667,16 @@ onUnmounted(() => {
           class="w-5 h-5 rounded border-gray-300 text-primary focus:ring-primary"
         />
         <label for="installModLoader" class="flex-1">
-          <span class="font-medium">Install Mod Loader</span>
+          <span class="font-medium">{{ t("install.installModLoader") }}</span>
           <p class="text-sm text-muted-foreground">
-            Enable this to install a mod loader on top of the base version
+            {{ t("install.installModLoaderDesc") }}
           </p>
         </label>
       </div>
 
       <!-- Loader Type Selector (only when toggled) -->
       <div v-if="installModLoader" class="space-y-3 animate-in fade-in slide-in-from-top-2">
-        <label class="text-sm font-medium">Mod Loader Type</label>
+        <label class="text-sm font-medium">{{ t("install.modLoaderType") }}</label>
         <div class="flex gap-2">
           <button
             @click="selectedLoaderType = 'fabric'; loadFabricLoaders()"
@@ -708,7 +720,7 @@ onUnmounted(() => {
       <!-- Fabric Loader Selector -->
       <div v-if="installModLoader && selectedLoaderType === 'fabric'" class="space-y-3 animate-in fade-in slide-in-from-top-2">
         <div class="flex items-center justify-between">
-          <label class="text-sm font-medium">Fabric Loader Version</label>
+          <label class="text-sm font-medium">{{ t("install.fabricLoader") }}</label>
           <button
             @click="loadFabricLoaders"
             :disabled="isLoadingFabric || !selectedVersion"
@@ -718,9 +730,7 @@ onUnmounted(() => {
               v-if="isLoadingFabric"
               class="w-3.5 h-3.5 animate-spin"
             />
-            <RefreshCw v-else class="w-3.5 h-3.5" />
-            Refresh
-          </button>
+            <RefreshCw v-else class="w-3.5 h-3.5" /> {{ t("install.refresh") }} </button>
         </div>
 
         <select
@@ -728,8 +738,8 @@ onUnmounted(() => {
           :disabled="isLoadingFabric || !selectedVersion"
           class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
         >
-          <option value="" disabled>Select a loader version...</option>
-          <optgroup v-if="stableFabricLoaders.length" label="Stable">
+          <option value="" disabled>{{ t("install.selectLoader") }}</option>
+          <optgroup v-if="stableFabricLoaders.length" :label="t('install.stable')">
             <option
               v-for="loader in stableFabricLoaders"
               :key="loader"
@@ -738,7 +748,7 @@ onUnmounted(() => {
               {{ loader }}
             </option>
           </optgroup>
-          <optgroup v-if="unstableFabricLoaders.length" label="Unstable (Testing)">
+          <optgroup v-if="unstableFabricLoaders.length" :label="t('install.unstable')">
             <option
               v-for="loader in unstableFabricLoaders"
               :key="loader"
@@ -750,14 +760,14 @@ onUnmounted(() => {
         </select>
 
         <p v-if="stableFabricLoaders.length > 0 || unstableFabricLoaders.length > 0" class="text-xs text-muted-foreground">
-          Latest: {{ latestFabricLoader }}
+          {{ t("install.latest") }}: {{ latestFabricLoader }}
         </p>
       </div>
 
       <!-- Forge Loader Selector -->
       <div v-if="installModLoader && selectedLoaderType === 'forge'" class="space-y-3 animate-in fade-in slide-in-from-top-2">
         <div class="flex items-center justify-between">
-          <label class="text-sm font-medium">Forge Version</label>
+          <label class="text-sm font-medium">{{ t("install.forgeVersion") }}</label>
           <button
             @click="loadForgeLoaders"
             :disabled="isLoadingForge || !selectedVersion"
@@ -767,9 +777,7 @@ onUnmounted(() => {
               v-if="isLoadingForge"
               class="w-3.5 h-3.5 animate-spin"
             />
-            <RefreshCw v-else class="w-3.5 h-3.5" />
-            Refresh
-          </button>
+            <RefreshCw v-else class="w-3.5 h-3.5" /> {{ t("install.refresh") }} </button>
         </div>
 
         <select
@@ -777,7 +785,7 @@ onUnmounted(() => {
           :disabled="isLoadingForge || !selectedVersion"
           class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
         >
-          <option value="" disabled>Select a Forge version...</option>
+          <option value="" disabled>{{ t("install.selectForge") }}</option>
           <option
             v-for="loader in forgeLoaders"
             :key="loader.version"
@@ -788,14 +796,14 @@ onUnmounted(() => {
         </select>
 
         <p v-if="forgeLoaders.length > 0" class="text-xs text-muted-foreground">
-          Available versions: {{ forgeLoaders.length }}
+          {{ t("install.availableVersions") }}: {{ forgeLoaders.length }}
         </p>
       </div>
 
       <!-- NeoForge Loader Selector -->
       <div v-if="installModLoader && selectedLoaderType === 'neoforge'" class="space-y-3 animate-in fade-in slide-in-from-top-2">
         <div class="flex items-center justify-between">
-          <label class="text-sm font-medium">NeoForge Version</label>
+          <label class="text-sm font-medium">{{ t("install.neoforgeVersion") }}</label>
           <button
             @click="loadNeoForgeLoaders"
             :disabled="isLoadingNeoForge || !selectedVersion"
@@ -805,9 +813,7 @@ onUnmounted(() => {
               v-if="isLoadingNeoForge"
               class="w-3.5 h-3.5 animate-spin"
             />
-            <RefreshCw v-else class="w-3.5 h-3.5" />
-            Refresh
-          </button>
+            <RefreshCw v-else class="w-3.5 h-3.5" /> {{ t("install.refresh") }} </button>
         </div>
 
         <select
@@ -815,7 +821,7 @@ onUnmounted(() => {
           :disabled="isLoadingNeoForge || !selectedVersion"
           class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
         >
-          <option value="" disabled>Select a NeoForge version...</option>
+          <option value="" disabled>{{ t("install.selectNeoforge") }}</option>
           <option
             v-for="loader in neoForgeLoaders"
             :key="loader.version"
@@ -826,7 +832,7 @@ onUnmounted(() => {
         </select>
 
         <p v-if="neoForgeLoaders.length > 0" class="text-xs text-muted-foreground">
-          Available versions: {{ neoForgeLoaders.length }}
+          {{ t("install.availableVersions") }}: {{ neoForgeLoaders.length }}
         </p>
       </div>
 
@@ -836,14 +842,14 @@ onUnmounted(() => {
           :disabled="isInstalling"
           class="px-4 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
         >
-          ← Back
+          ← {{ t("install.back") }}
         </button>
         <button
           @click="goToStep3"
           :disabled="!canProceedToStep3"
           class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
         >
-          Next
+          {{ t("install.next") }}
           <span class="text-lg">→</span>
         </button>
       </div>
@@ -854,11 +860,11 @@ onUnmounted(() => {
       <!-- Show summary when installing OR when installation is complete -->
       <div v-if="isInstalling" class="p-4 bg-muted/30 rounded-lg space-y-2">
         <div class="flex justify-between text-sm">
-          <span class="text-muted-foreground">Base Version:</span>
+          <span class="text-muted-foreground">{{ t("install.baseVersion") }}:</span>
           <span class="font-medium">{{ selectedVersion }}</span>
         </div>
         <div v-if="installModLoader" class="flex justify-between text-sm">
-          <span class="text-muted-foreground">Mod Loader:</span>
+          <span class="text-muted-foreground">{{ t("install.modLoader") }}:</span>
           <span class="font-medium">
             <template v-if="selectedLoaderType === 'fabric'">Fabric {{ selectedFabricLoader }}</template>
             <template v-else-if="selectedLoaderType === 'forge'">Forge {{ selectedForgeLoader }}</template>
@@ -866,7 +872,7 @@ onUnmounted(() => {
           </span>
         </div>
         <div class="flex justify-between text-sm">
-          <span class="text-muted-foreground">Instance Name:</span>
+          <span class="text-muted-foreground">{{ t("install.instanceName") }}:</span>
           <span class="font-medium">{{ customInstanceName }}</span>
         </div>
       </div>
@@ -875,11 +881,11 @@ onUnmounted(() => {
       <template v-else>
         <div class="p-4 bg-muted/30 rounded-lg space-y-2">
           <div class="flex justify-between text-sm">
-            <span class="text-muted-foreground">Base Version:</span>
+            <span class="text-muted-foreground">{{ t("install.baseVersion") }}:</span>
             <span class="font-medium">{{ selectedVersion }}</span>
           </div>
           <div v-if="installModLoader" class="flex justify-between text-sm">
-            <span class="text-muted-foreground">Mod Loader:</span>
+            <span class="text-muted-foreground">{{ t("install.modLoader") }}:</span>
             <span class="font-medium">
               <template v-if="selectedLoaderType === 'fabric'">Fabric {{ selectedFabricLoader }}</template>
               <template v-else-if="selectedLoaderType === 'forge'">Forge {{ selectedForgeLoader }}</template>
@@ -889,16 +895,15 @@ onUnmounted(() => {
         </div>
 
         <div class="space-y-3">
-          <label class="text-sm font-medium">Instance Name</label>
+          <label class="text-sm font-medium">{{ t("install.instanceName") }}</label>
           <input
             v-model="customInstanceName"
             type="text"
-            placeholder="e.g., Fabric-1.20.1"
+            :placeholder="t('install.instanceNamePlaceholder')"
             class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
           />
           <p class="text-xs text-muted-foreground">
-            This name will be used for the instance folder and version ID.
-            Each instance has isolated saves, resourcepacks, and options.txt.
+            {{ t("install.instanceNameDesc") }}
           </p>
         </div>
 
@@ -910,7 +915,9 @@ onUnmounted(() => {
             class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
           >
             <Download class="w-4 h-4" />
-            <span>Install Instance</span>
+            <span>
+            {{ t("install.installInstance") }}
+          </span>
           </button>
         </div>
 
@@ -920,7 +927,7 @@ onUnmounted(() => {
             @click="goBackToStep2"
             class="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
-            ← Back
+            ← {{ t("install.back") }}
           </button>
         </div>
       </template>
@@ -950,7 +957,7 @@ onUnmounted(() => {
         <div class="flex justify-between text-xs text-muted-foreground">
           <span>
             {{ installProgress.completedTasks || 0 }} /
-            {{ installProgress.totalTasks }} files
+            {{ installProgress.totalTasks }} {{ t("install.files") }}
           </span>
           <span>{{ downloadProgressPercent }}%</span>
         </div>
@@ -967,7 +974,7 @@ onUnmounted(() => {
         v-if="installProgress.currentFile"
         class="text-xs text-muted-foreground truncate"
       >
-        Current: {{ installProgress.currentFile }}
+        {{ t("install.current") }}: {{ formatCurrentFile(installProgress.currentFile) }}
       </div>
 
       <!-- Error -->
@@ -992,13 +999,13 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Active Downloads -->
+    <!-- {{ t("install.activeDownloads") }} -->
     <div
       v-if="downloadProgress.size > 0"
       class="rounded-lg border bg-muted/30 p-3 space-y-2"
     >
       <h4 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-        Active Downloads
+        {{ t("install.activeDownloads") }}
       </h4>
       <div class="space-y-1.5 max-h-32 overflow-y-auto">
         <div

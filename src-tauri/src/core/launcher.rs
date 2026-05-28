@@ -979,11 +979,28 @@ pub async fn launch_instance(
 
     // Load account
     let accounts = crate::auth::load_accounts().await?;
-    let account = accounts
+    let mut account = accounts
         .iter()
         .find(|a| a.id == account_uuid)
         .ok_or_else(|| "Account not found".to_string())?
         .clone();
+
+    // Auto-refresh Microsoft token before launch
+    if account.account_type == crate::auth::AccountType::Microsoft {
+        tracing::info!("Auto-refreshing Microsoft token before launch...");
+        match crate::auth::refresh_microsoft_token(&account.id).await {
+            Ok(updated_account) => {
+                account = updated_account;
+                tracing::info!("Successfully refreshed Microsoft token");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to refresh Microsoft token: {}. Will try launching with existing token.", e);
+                if e == "REAUTH_REQUIRED" {
+                    return Err("Your Microsoft login session has expired. Please log out and log in again.".to_string());
+                }
+            }
+        }
+    }
 
     // Load version metadata
     let version_json_path = base_dir
