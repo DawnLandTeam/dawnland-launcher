@@ -1177,10 +1177,28 @@ pub async fn launch_instance(
     // Load instance configuration (for custom Java path)
     let instance_config = get_instance_config(version_id.clone()).await?;
 
-    // Determine Java executable path: instance config > system default
+    // Determine Java executable path: instance config > recommended matching java > system default
     let java_executable = match &instance_config.java_path {
         Some(path) if !path.is_empty() => path.clone(),
-        _ => find_java().ok_or("Java not found. Please ensure Java is installed and in PATH.")?,
+        _ => {
+            let mc_version = version_meta.inherits_from.as_ref().unwrap_or(&version_meta.id);
+            let recommended_major = crate::core::java::get_recommended_java(mc_version);
+            tracing::info!("Recommended Java major version for MC {}: {}", mc_version, recommended_major);
+            
+            // Try to find a scanned Java that matches the recommended version, or a newer one
+            let local_javas = crate::core::java::scan_local_javas().await.unwrap_or_default();
+            
+            let matched_java = local_javas.iter().find(|j| j.major_version == recommended_major)
+                .or_else(|| local_javas.iter().find(|j| j.major_version > recommended_major));
+
+            if let Some(j) = matched_java {
+                tracing::info!("Found compatible Java: {} (Version {})", j.path, j.major_version);
+                j.path.clone()
+            } else {
+                tracing::warn!("Could not find compatible Java >= {}, falling back to system default", recommended_major);
+                find_java().ok_or("Java not found. Please ensure Java is installed and in PATH.")?
+            }
+        }
     };
 
     tracing::info!("Using Java executable: {}", java_executable);
@@ -1214,16 +1232,26 @@ pub async fn launch_instance(
         Ok(output) => {
             let stderr_output = String::from_utf8_lossy(&output.stderr);
             return Err(format!(
-                "Java executable '{}' failed to run.\nError: {}\nMC 1.20.5+ requires Java 21.",
+                "Java executable '{}' failed to run.\nError: {}",
                 java_executable, stderr_output
             ));
         }
         Err(e) => {
             return Err(format!(
-                "Failed to execute Java at '{}': {}\nPlease ensure Java is installed and the path is valid. Minecraft 1.20.5+ requires Java 21.",
+                "Failed to execute Java at '{}': {}\nPlease ensure Java is installed and the path is valid.",
                 java_executable, e
             ));
         }
+    }
+
+    // Validate Java version compatibility
+    let mc_version_for_check = version_meta.inherits_from.as_ref().unwrap_or(&version_meta.id);
+    let required_java = crate::core::java::get_recommended_java(mc_version_for_check);
+    if java_major_version < required_java {
+        return Err(format!(
+            "Minecraft {} requires Java {} or newer, but the selected Java version is Java {}.\n\nPlease install the correct Java version in Settings > Java Management.",
+            mc_version_for_check, required_java, java_major_version
+        ));
     }
 
     // Parse JVM args
