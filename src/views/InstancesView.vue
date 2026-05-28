@@ -2,8 +2,7 @@
 import { ref, onMounted, watch, onActivated } from "vue";
 import { useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
-import { Gamepad2, Plus, Package, Settings, FolderOpen, Save, MoreHorizontal, Trash2, Folder, Puzzle } from "@lucide/vue";
+import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
 import InstanceModsModal from "../components/InstanceModsModal.vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
@@ -300,12 +299,9 @@ function loaderBadgeClass(loaderType: string): string {
         <div class="flex items-center gap-3">
           <Gamepad2 class="h-7 w-7 text-primary" />
           <div>
-            <h1 class="text-2xl font-bold">Game Instances</h1>
+            <h1 class="text-2xl font-bold">{{ $t('instances.title') }}</h1>
             <p class="text-sm text-muted-foreground">
-              {{ installedInstances.length }} instance{{
-                installedInstances.length !== 1 ? "s" : ""
-              }}
-              installed
+              {{ $t('instances.installedCount', { count: installedInstances.length }, installedInstances.length) }}
             </p>
           </div>
         </div>
@@ -314,7 +310,7 @@ function loaderBadgeClass(loaderType: string): string {
           class="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           <Plus class="h-4 w-4" />
-          New Instance
+          {{ $t('instances.add') }}
         </button>
       </div>
 
@@ -359,7 +355,7 @@ function loaderBadgeClass(loaderType: string): string {
               </template>
               <DropdownMenuItem @click="openSettings(instance)">
                 <Settings class="h-4 w-4" />
-                Settings
+                {{ $t('instances.settings') }}
               </DropdownMenuItem>
               <DropdownMenuItem
                 @click="openInstanceFolder(instance.id)"
@@ -371,14 +367,14 @@ function loaderBadgeClass(loaderType: string): string {
                 @click="openMods(instance)"
               >
                 <Puzzle class="h-4 w-4" />
-                Manage Mods
+                {{ $t('instances.mods') }}
               </DropdownMenuItem>
               <DropdownMenuItem
                 destructive
                 @click="confirmDeleteInstance(instance)"
               >
                 <Trash2 class="h-4 w-4" />
-                Delete
+                {{ $t('instances.delete') }}
               </DropdownMenuItem>
             </DropdownMenu>
           </div>

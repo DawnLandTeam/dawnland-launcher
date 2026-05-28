@@ -3,7 +3,8 @@ import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package } from "@lucide/vue";
+import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages } from "@lucide/vue";
+import { useI18n } from "vue-i18n";
 
 interface SystemMemoryInfo {
   totalMb: number;
@@ -186,13 +187,20 @@ onMounted(() => {
   loadJavaDownloadPath();
   scanLocalJavas();
 });
+
+const { locale } = useI18n();
+
+function changeLanguage(lang: string) {
+  locale.value = lang;
+  localStorage.setItem('language', lang);
+}
 </script>
 
 <template>
   <div class="flex h-full flex-col p-6 gap-6 overflow-y-auto">
     <div>
-      <h1 class="text-2xl font-bold">Settings</h1>
-      <p class="text-sm text-neutral-500 mt-1">Manage application settings</p>
+      <h1 class="text-2xl font-bold">{{ $t('settings.title') }}</h1>
+      <p class="text-sm text-neutral-500 mt-1">{{ $t('settings.desc') }}</p>
     </div>
 
     <!-- Tabs Navigation -->
@@ -202,32 +210,51 @@ onMounted(() => {
         :class="activeTab === 'general' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'general'"
       >
-        General
+        {{ $t('settings.tabs.general') }}
       </button>
       <button
         class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
         :class="activeTab === 'java' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'java'"
       >
-        Java Management
+        {{ $t('settings.tabs.java') }}
       </button>
       <button
         class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
         :class="activeTab === 'about' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'about'"
       >
-        About
+        {{ $t('settings.tabs.about') }}
       </button>
     </div>
 
     <!-- General Settings Tab -->
     <div v-if="activeTab === 'general'" class="space-y-6">
+      <!-- Language Settings -->
+      <div class="rounded-lg border border-neutral-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900 flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-semibold flex items-center gap-2">
+            <Languages :size="20" class="text-primary" />
+            {{ $t('settings.general.languageTitle') }}
+          </h2>
+          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.languageDesc') }}</p>
+        </div>
+        <select 
+          :value="locale"
+          @change="changeLanguage(($event.target as HTMLSelectElement).value)"
+          class="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700 min-w-[120px]"
+        >
+          <option value="en">English</option>
+          <option value="zh-CN">简体中文</option>
+        </select>
+      </div>
+
       <!-- Global Memory Settings -->
       <div class="rounded-lg border border-neutral-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-        <h2 class="mb-4 text-lg font-semibold">Default Memory Settings</h2>
+        <h2 class="mb-4 text-lg font-semibold">{{ $t('settings.general.memoryTitle') }}</h2>
         <div class="space-y-3">
           <div class="flex items-center justify-between">
-            <label class="text-sm font-medium">Default Max Memory</label>
+            <label class="text-sm font-medium">{{ $t('settings.general.maxMemory') }}</label>
             <span class="text-sm font-mono text-primary">{{ defaultMaxMemory }} MB</span>
           </div>
           <input
@@ -240,10 +267,10 @@ onMounted(() => {
           />
           <div class="flex justify-between text-xs text-muted-foreground">
             <span>512 MB</span>
-            <span>System: {{ systemMemory.totalMb }} MB</span>
+            <span>{{ $t('settings.general.system') }}: {{ systemMemory.totalMb }} MB</span>
           </div>
           <p class="text-xs text-muted-foreground">
-            This will be used as the default memory for new instances. Recommended: {{ systemMemory.recommendedMaxMb }} MB (1/3 of system RAM)
+            {{ $t('settings.general.recommended', { recommended: systemMemory.recommendedMaxMb }) }}
           </p>
         </div>
       </div>
@@ -252,36 +279,36 @@ onMounted(() => {
     <!-- Java Management Tab -->
     <div v-if="activeTab === 'java'" class="space-y-6">
       <div class="rounded-lg border border-neutral-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold">Java Management</h2>
-        <div class="flex gap-2">
-          <button
-            class="flex items-center gap-2 rounded-lg bg-secondary px-3 py-1.5 text-sm font-medium hover:bg-secondary/80 disabled:opacity-50"
-            :disabled="isFullDiskScanning"
-            @click="scanFullDisk"
-          >
-            <Loader2 v-if="isFullDiskScanning" :size="14" class="animate-spin" />
-            <Search v-else :size="14" />
-            {{ isFullDiskScanning ? 'Scanning...' : 'Full Scan' }}
-          </button>
-          <button
-            class="flex items-center gap-2 rounded-lg bg-secondary px-3 py-1.5 text-sm font-medium hover:bg-secondary/80"
-            @click="addManualJava"
-          >
-            <Plus :size="14" />
-            Add Local
-          </button>
-          <button
-            class="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            :disabled="isScanningJava"
-            @click="scanLocalJavas"
-          >
-            <Loader2 v-if="isScanningJava" :size="14" class="animate-spin" />
-            <Coffee v-else :size="14" />
-            {{ isScanningJava ? 'Scanning...' : 'Refresh' }}
-          </button>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold">{{ $t('settings.java.title') }}</h2>
+          <div class="flex gap-2">
+            <button
+              class="flex items-center gap-2 rounded-lg bg-secondary px-3 py-1.5 text-sm font-medium hover:bg-secondary/80 disabled:opacity-50"
+              :disabled="isFullDiskScanning"
+              @click="scanFullDisk"
+            >
+              <Loader2 v-if="isFullDiskScanning" :size="14" class="animate-spin" />
+              <Search v-else :size="14" />
+              {{ isFullDiskScanning ? $t('settings.java.scanning') : $t('settings.java.fullScan') }}
+            </button>
+            <button
+              class="flex items-center gap-2 rounded-lg bg-secondary px-3 py-1.5 text-sm font-medium hover:bg-secondary/80"
+              @click="addManualJava"
+            >
+              <Plus :size="14" />
+              {{ $t('settings.java.addLocal') }}
+            </button>
+            <button
+              class="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              :disabled="isScanningJava"
+              @click="scanLocalJavas"
+            >
+              <Loader2 v-if="isScanningJava" :size="14" class="animate-spin" />
+              <Coffee v-else :size="14" />
+              {{ isScanningJava ? $t('settings.java.scanning') : $t('settings.java.refresh') }}
+            </button>
+          </div>
         </div>
-      </div>
 
       <!-- Scan Progress -->
       <div v-if="isFullDiskScanning" class="mb-4 text-xs text-muted-foreground flex items-center gap-2">
@@ -291,13 +318,13 @@ onMounted(() => {
 
       <!-- Custom Download Path -->
       <div class="mb-4 space-y-1">
-        <label class="text-sm font-medium">Custom Download Location</label>
+        <label class="text-sm font-medium">{{ $t('settings.java.customPath') }}</label>
         <div class="flex gap-2">
           <input
             v-model="customJavaDownloadPath"
             type="text"
             readonly
-            placeholder="Default (.dawnland/runtimes)"
+            :placeholder="$t('settings.java.defaultPath')"
             class="flex-1 rounded-md border border-neutral-300 bg-neutral-50 px-3 py-1.5 text-sm text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800/50"
           />
           <button
@@ -318,7 +345,7 @@ onMounted(() => {
 
       <!-- Download Java Section -->
       <div class="mb-4 p-3 bg-muted/30 rounded-lg">
-        <p class="text-sm text-muted-foreground mb-3">Download Java from Adoptium:</p>
+        <p class="text-sm text-muted-foreground mb-3">{{ $t('settings.java.download') }}</p>
         <div class="flex items-center gap-2">
           <select 
             v-model="selectedJavaVersion"
@@ -333,13 +360,13 @@ onMounted(() => {
           >
             <Loader2 v-if="isDownloadingJava" :size="14" class="animate-spin" />
             <Download v-else :size="14" />
-            Download
+            {{ $t('settings.java.downloadBtn') }}
           </button>
         </div>
         <!-- Download progress -->
         <div v-if="isDownloadingJava" class="mt-3">
           <div class="flex items-center justify-between text-sm mb-1">
-            <span>Downloading Java {{ downloadingVersion }}...</span>
+            <span>{{ $t('settings.java.downloading', { version: downloadingVersion }) }}</span>
             <span>{{ javaDownloadProgress }}%</span>
           </div>
           <div class="w-full h-2 bg-gray-200 rounded-full dark:bg-zinc-700">
@@ -353,9 +380,9 @@ onMounted(() => {
 
       <!-- Installed Java List -->
       <div class="space-y-2">
-        <p class="text-sm font-medium">Installed Java ({{ installedJavas.length }})</p>
+        <p class="text-sm font-medium">{{ $t('settings.java.installed') }} ({{ installedJavas.length }})</p>
         <div v-if="installedJavas.length === 0" class="text-sm text-muted-foreground py-2">
-          No Java installations found. Click a version above to download.
+          {{ $t('settings.java.noInstalled') }}
         </div>
         <div
           v-for="java in installedJavas"
@@ -392,36 +419,36 @@ onMounted(() => {
           <Package :size="40" />
         </div>
         <h2 class="text-2xl font-bold">Dawnland Launcher</h2>
-        <p class="text-sm text-muted-foreground mt-1 mb-6">A modern, lightweight Minecraft launcher built with Rust & Tauri</p>
+        <p class="text-sm text-muted-foreground mt-1 mb-6">{{ $t('settings.about.desc') }}</p>
         
         <div class="grid grid-cols-2 gap-4 w-full max-w-md text-left">
           <div class="p-4 rounded-lg bg-neutral-50 dark:bg-zinc-800/50 border border-neutral-100 dark:border-zinc-800">
-            <h3 class="text-xs font-semibold text-muted-foreground uppercase mb-1">Version</h3>
+            <h3 class="text-xs font-semibold text-muted-foreground uppercase mb-1">{{ $t('settings.about.version') }}</h3>
             <p class="font-mono text-sm">v0.1.0-alpha</p>
           </div>
           <div class="p-4 rounded-lg bg-neutral-50 dark:bg-zinc-800/50 border border-neutral-100 dark:border-zinc-800">
-            <h3 class="text-xs font-semibold text-muted-foreground uppercase mb-1">Architecture</h3>
+            <h3 class="text-xs font-semibold text-muted-foreground uppercase mb-1">{{ $t('settings.about.arch') }}</h3>
             <p class="text-sm">Tauri v2 + Vue 3</p>
           </div>
         </div>
 
         <div class="mt-8 pt-6 border-t border-neutral-200 dark:border-zinc-800 w-full flex flex-col gap-3 max-w-md">
           <a href="https://github.com/yourusername/dawnland-launcher" target="_blank" class="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors group">
-            <span class="text-sm font-medium">Source Code & GitHub</span>
+            <span class="text-sm font-medium">{{ $t('settings.about.github') }}</span>
             <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">Visit Repository &rarr;</span>
           </a>
           <a href="https://github.com/yourusername/dawnland-launcher/issues" target="_blank" class="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors group">
-            <span class="text-sm font-medium">Report a Bug</span>
+            <span class="text-sm font-medium">{{ $t('settings.about.reportBug') }}</span>
             <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">Submit Issue &rarr;</span>
           </a>
           <a href="https://github.com/yourusername/dawnland-launcher/issues/new" target="_blank" class="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors group">
-            <span class="text-sm font-medium">Feature Request</span>
+            <span class="text-sm font-medium">{{ $t('settings.about.featureReq') }}</span>
             <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">Suggest Feature &rarr;</span>
           </a>
         </div>
         
         <p class="text-xs text-muted-foreground mt-8">
-          Made with ❤️ by Dawnland Team. Not an official Minecraft product.
+          {{ $t('settings.about.footer') }}
         </p>
       </div>
     </div>

@@ -1,19 +1,23 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { useDark, useToggle } from "@vueuse/core";
 import { Gamepad2, Library, Server, Users, Settings, Sun, Moon } from "@lucide/vue";
 
+import { useI18n } from "vue-i18n";
+
 const route = useRoute();
 const isDark = useDark();
 const toggleDark = useToggle(isDark);
+const { t } = useI18n();
 
-const navItems = [
-  { name: "home", path: "/", label: "Home", icon: Gamepad2 },
-  { name: "instances", path: "/instances", label: "Instances", icon: Library },
-  { name: "servers", path: "/servers", label: "Servers", icon: Server },
-  { name: "accounts", path: "/accounts", label: "Accounts", icon: Users },
-  { name: "settings", path: "/settings", label: "Settings", icon: Settings },
-];
+const navItems = computed(() => [
+  { name: "home", path: "/", label: t("sidebar.home"), icon: Gamepad2 },
+  { name: "instances", path: "/instances", label: t("sidebar.instances"), icon: Library },
+  { name: "servers", path: "/servers", label: t("sidebar.servers"), icon: Server },
+  { name: "accounts", path: "/accounts", label: t("sidebar.accounts"), icon: Users },
+  { name: "settings", path: "/settings", label: t("sidebar.settings"), icon: Settings },
+]);
 </script>
 
 <template>
