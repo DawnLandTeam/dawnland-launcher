@@ -17,7 +17,10 @@
     "selectAccountPlaceholder": "Select an account...",
     "configure": "Configure",
     "play": "Play",
-    "launching": "Launching..."
+    "launching": "Launching...",
+    "gameOutput": "Game Output",
+    "waitingOutput": "Waiting for game output...",
+    "marquee": "Welcome to Dawnland Launcher v1.0.0 · New: Auto Java Management"
   },
   "instances": {
     "title": "Instances",
@@ -27,10 +30,22 @@
     "mods": "Mods",
     "delete": "Delete",
     "search": "Search instances...",
-    "installedCount": "{count} instance installed | {count} instances installed"
+    "installedCount": "{count} instance installed | {count} instances installed",
+    "subtitle": "Manage your installed Minecraft environments",
+    "sort": {
+      "name": "Name",
+      "latest": "Latest",
+      "oldest": "Oldest"
+    },
+    "empty": {
+      "title": "No instances found",
+      "desc": "Click the + button to install a new Minecraft instance.",
+      "search": "Try adjusting your search query."
+    },
+    "manage": "Manage"
   },
   "servers": {
-    "title": "Server Browser",
+    "title": "Servers",
     "available": "{count} server available | {count} servers available",
     "publish": "Publish Server",
     "searchPlaceholder": "Search servers...",
@@ -39,7 +54,7 @@
     "allModes": "All Modes",
     "onlineMode": "Online Mode",
     "offlineMode": "Offline Mode",
-    "players": "{online} / {max} players",
+    "players": "Players",
     "join": "Join",
     "noServers": "No servers found",
     "noServersDesc": "Try adjusting your filters or publish your own server!",
@@ -53,7 +68,11 @@
     "description": "Description",
     "cancel": "Cancel",
     "submit": "Submit for Review",
-    "selectVersion": "Select version..."
+    "selectVersion": "Select version...",
+    "subtitle": "Find and join Minecraft servers",
+    "add": "Add Server",
+    "online": "Online",
+    "offline": "Offline"
   },
   "accounts": {
     "title": "Account Management",
@@ -120,5 +139,104 @@
       "featureReq": "Feature Request",
       "footer": "Made with ❤️ by Dawnland Team. Not an official Minecraft product."
     }
+  },
+  "install": {
+    "title": "Install New Instance",
+    "subtitle": "Progressive installation wizard",
+    "step1": "1",
+    "step2": "2",
+    "step3": "3",
+    "step1Title": "Select Base Minecraft Version",
+    "mcVersion": "Minecraft Version",
+    "refresh": "Refresh",
+    "selectVersion": "Select a version...",
+    "releases": "Releases",
+    "snapshots": "Snapshots",
+    "other": "Other",
+    "next": "Next",
+    "back": "Back",
+    "step2Title": "Install Mod Loader (Optional)",
+    "installModLoader": "Install Mod Loader",
+    "installModLoaderDesc": "Enable this to install a mod loader on top of the base version",
+    "modLoaderType": "Mod Loader Type",
+    "fabricLoader": "Fabric Loader Version",
+    "selectLoader": "Select a loader version...",
+    "stable": "Stable",
+    "unstable": "Unstable (Testing)",
+    "latest": "Latest",
+    "forgeVersion": "Forge Version",
+    "selectForge": "Select a Forge version...",
+    "availableVersions": "Available versions",
+    "neoforgeVersion": "NeoForge Version",
+    "selectNeoforge": "Select a NeoForge version...",
+    "baseVersion": "Base Version",
+    "modLoader": "Mod Loader",
+    "instanceName": "Instance Name",
+    "instanceNamePlaceholder": "e.g., Fabric-1.20.1",
+    "instanceNameDesc": "This name will be used for the instance folder and version ID. Each instance has isolated saves, resourcepacks, and options.txt.",
+    "installInstance": "Install Instance",
+    "fetchingVersion": "Fetching version metadata...",
+    "filteringLibraries": "Filtering libraries for your system...",
+    "preparingAssets": "Preparing game assets...",
+    "downloadingFiles": "Downloading files...",
+    "installComplete": "Installation complete!",
+    "installFailed": "Installation failed",
+    "files": "files",
+    "current": "Current",
+    "instanceInstalled": "Instance {versionId} installed successfully!",
+    "activeDownloads": "Active Downloads",
+    "status": {
+      "fetchingManifest": "Fetching Minecraft version manifest...",
+      "installingBase": "Installing base Minecraft...",
+      "downloadingForge": "Downloading Forge installer...",
+      "runningProcessors": "Running Forge processors (this may take a while)..."
+    }
+  },
+  "mods": {
+    "title": "Discover Mods",
+    "subtitle": "Find and install mods from Modrinth",
+    "search": "Search for mods...",
+    "sort": {
+      "relevance": "Relevance",
+      "downloads": "Downloads",
+      "newest": "Newest",
+      "updated": "Updated"
+    },
+    "loading": "Loading mods...",
+    "empty": "No mods found",
+    "downloads": "Downloads",
+    "install": "Install",
+    "installed": "Installed",
+    "selectInstance": "Select Instance",
+    "categories": "Categories"
+  },
+  "downloads": {
+    "title": "Downloads",
+    "subtitle": "Manage your active and completed downloads",
+    "taskId": "Task ID",
+    "progress": "Progress",
+    "speed": "Speed",
+    "status": "Status",
+    "empty": "No active downloads"
+  },
+  "instanceMods": {
+    "title": "Manage Mods",
+    "enable": "Enable",
+    "disable": "Disable",
+    "delete": "Delete",
+    "empty": "No mods installed yet"
+  },
+  "crash": {
+    "title": "Game Crashed",
+    "warning": "The game crashed unexpectedly",
+    "exitCode": "Exit code",
+    "viewLog": "View Log",
+    "copy": "Copy",
+    "close": "Close"
+  },
+  "titlebar": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "close": "Close"
   }
 }
