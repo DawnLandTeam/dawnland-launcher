@@ -4,6 +4,42 @@
 use crate::core::mojang::get_minecraft_base;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::fs;
+use tauri::{AppHandle, Emitter};
+
+/// Configuration for user-defined Java paths and download settings.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaSettings {
+    pub manual_paths: Vec<String>,
+    pub custom_download_path: Option<String>,
+}
+
+fn get_java_config_path() -> PathBuf {
+    get_minecraft_base().join("java_config.json")
+}
+
+pub async fn load_java_config() -> JavaSettings {
+    let config_path = get_java_config_path();
+    if config_path.exists() {
+        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+            if let Ok(config) = serde_json::from_str(&content) {
+                return config;
+            }
+        }
+    }
+    JavaSettings::default()
+}
+
+pub async fn save_java_config(config: &JavaSettings) -> Result<(), String> {
+    let config_path = get_java_config_path();
+    let content = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize Java config: {}", e))?;
+    tokio::fs::write(&config_path, content)
+        .await
+        .map_err(|e| format!("Failed to write Java config: {}", e))?;
+    Ok(())
+}
 
 /// Represents a discovered Java installation on the system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +64,8 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
 
     let mut javas = Vec::new();
 
+    let config = load_java_config().await;
+
     // 1. Check JAVA_HOME
     if let Ok(java_home) = std::env::var("JAVA_HOME") {
         let java_path = PathBuf::from(&java_home).join("bin").join("java.exe");
@@ -39,8 +77,31 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
         }
     }
 
-    // 2. Scan common installation directories based on OS
-    let search_paths = get_java_search_paths();
+    // 2. Check manual paths
+    for path in &config.manual_paths {
+        let java_path = PathBuf::from(path);
+        if java_path.exists() {
+            // Check if we already have this Java
+            let path_str = java_path.to_string_lossy().to_string();
+            if !javas.iter().any(|j: &JavaInfo| j.path == path_str) {
+                if let Some(java_info) = probe_java(&java_path).await {
+                    tracing::info!("Found manual Java at: {}", path);
+                    javas.push(java_info);
+                }
+            }
+        }
+    }
+
+    // 3. Scan common installation directories based on OS + launcher runtimes
+    let mut search_paths = get_java_search_paths();
+    
+    // Add default launcher runtimes dir
+    search_paths.push(get_minecraft_base().join("runtimes"));
+    
+    // Add custom download path if set
+    if let Some(custom_path) = &config.custom_download_path {
+        search_paths.push(PathBuf::from(custom_path));
+    }
 
     for base_path in search_paths {
         if base_path.exists() {
@@ -259,9 +320,13 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
 
     tracing::info!("Resolving Download URL: {}", url);
 
-    // Create runtimes directory
-    let base_dir = get_minecraft_base();
-    let runtimes_dir = base_dir.join("runtimes");
+    // Resolve runtimes directory
+    let config = load_java_config().await;
+    let runtimes_dir = config
+        .custom_download_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| get_minecraft_base().join("runtimes"));
+
     tokio::fs::create_dir_all(&runtimes_dir)
         .await
         .map_err(|e| format!("Failed to create runtimes directory: {}", e))?;
@@ -394,21 +459,178 @@ pub fn get_recommended_java(mc_version: &str) -> u32 {
     let version_parts: Vec<&str> = mc_version.split('.').collect();
     if version_parts.len() >= 2 {
         let major: u32 = version_parts[1].parse().unwrap_or(0);
+        let minor: u32 = if version_parts.len() >= 3 { version_parts[2].parse().unwrap_or(0) } else { 0 };
         
-        if major >= 20 {
-            // 1.20.x - Java 21 recommended
+        if major > 20 || (major == 20 && minor >= 5) {
+            // 1.20.5+ requires Java 21
             return 21;
         } else if major >= 17 {
-            // 1.17.x - 1.19.x - Java 17 recommended
+            // 1.17.x - 1.20.4 requires Java 17
             return 17;
         } else if major >= 8 {
-            // 1.8.x - 1.16.x - Java 8 or 11 recommended
+            // 1.8.x - 1.16.x requires Java 8
             return 8;
         }
     }
     // Default to Java 8 for older versions
     8
 }
+
+#[tauri::command]
+pub async fn add_manual_java(path: String) -> Result<JavaInfo, String> {
+    let java_path = PathBuf::from(&path);
+    if !java_path.exists() {
+        return Err("Java path does not exist".to_string());
+    }
+
+    let mut java_info = probe_java(&java_path).await
+        .ok_or_else(|| "Failed to probe Java. Is this a valid Java executable?".to_string())?;
+
+    let mut config = load_java_config().await;
+    // Don't add duplicate
+    if !config.manual_paths.contains(&java_info.path) {
+        config.manual_paths.push(java_info.path.clone());
+        save_java_config(&config).await?;
+    }
+
+    Ok(java_info)
+}
+
+#[tauri::command]
+pub async fn remove_java(path: String) -> Result<(), String> {
+    let mut config = load_java_config().await;
+    
+    // Check if it's in manual paths
+    if let Some(pos) = config.manual_paths.iter().position(|p| p == &path) {
+        config.manual_paths.remove(pos);
+        save_java_config(&config).await?;
+        tracing::info!("Removed manual Java path: {}", path);
+        return Ok(());
+    }
+
+    // Check if it's a downloaded Java in runtimes or custom download path
+    let is_managed = {
+        let runtimes_dir = get_minecraft_base().join("runtimes").to_string_lossy().to_string();
+        let custom_dir = config.custom_download_path.as_deref().unwrap_or(&runtimes_dir);
+        path.starts_with(&runtimes_dir) || path.starts_with(custom_dir)
+    };
+
+    if is_managed {
+        let java_path = PathBuf::from(&path);
+        // We want to delete the whole jdk directory, not just java.exe
+        // Usually it's in `jdk-17/bin/java.exe`, so we go up 2 levels
+        if let Some(bin_dir) = java_path.parent() {
+            if let Some(jdk_dir) = bin_dir.parent() {
+                if jdk_dir.exists() {
+                    tokio::fs::remove_dir_all(jdk_dir).await
+                        .map_err(|e| format!("Failed to delete Java directory: {}", e))?;
+                    tracing::info!("Deleted managed Java at: {}", jdk_dir.display());
+                    return Ok(());
+                }
+            }
+        }
+        return Err("Could not determine JDK root directory for deletion".to_string());
+    }
+
+    Err("Cannot remove this Java. It is neither manually added nor managed by the launcher.".to_string())
+}
+
+#[tauri::command]
+pub async fn get_java_download_path() -> Result<Option<String>, String> {
+    let config = load_java_config().await;
+    Ok(config.custom_download_path)
+}
+
+#[tauri::command]
+pub async fn set_java_download_path(path: Option<String>) -> Result<(), String> {
+    let mut config = load_java_config().await;
+    config.custom_download_path = path;
+    save_java_config(&config).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
+    tracing::info!("Starting full disk scan for Java...");
+    
+    // Spawn blocking so we don't hang the async executor
+    tokio::task::spawn_blocking(move || {
+        let drives = if cfg!(target_os = "windows") {
+            vec!["C:\\", "D:\\", "E:\\", "F:\\"]
+        } else {
+            vec!["/"]
+        };
+
+        let mut found_paths = Vec::new();
+
+        for drive in drives {
+            let root = PathBuf::from(drive);
+            if !root.exists() { continue; }
+
+            // Limit depth to 5 to avoid infinite/long loops in deeply nested dirs,
+            // and filter out some obvious system directories that are huge and won't contain user-installed Java.
+            let walker = walkdir::WalkDir::new(&root)
+                .max_depth(5)
+                .into_iter()
+                .filter_entry(|e| {
+                    let name = e.file_name().to_string_lossy().to_lowercase();
+                    // Skip common heavy directories that likely don't have Java
+                    !name.contains("windows") && 
+                    !name.contains("system32") && 
+                    !name.contains("node_modules") &&
+                    !name.contains(".git")
+                });
+
+            for entry in walker.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(file_name) = path.file_name() {
+                        let name_str = file_name.to_string_lossy().to_lowercase();
+                        if name_str == "java.exe" || name_str == "java" {
+                            // Let the UI know we are scanning
+                            let _ = app.emit("java-scan-progress", serde_json::json!({
+                                "status": "scanning",
+                                "currentPath": path.to_string_lossy()
+                            }));
+                            
+                            found_paths.push(path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add discovered paths to config
+        // Since we are in a blocking thread, we can block_on to run async functions
+        let runtime = tokio::runtime::Handle::current();
+        runtime.block_on(async {
+            let mut config = load_java_config().await;
+            let mut updated = false;
+            
+            for path in found_paths {
+                if !config.manual_paths.contains(&path) {
+                    // Quick probe
+                    let java_path = PathBuf::from(&path);
+                    if let Some(_info) = probe_java(&java_path).await {
+                        config.manual_paths.push(path);
+                        updated = true;
+                    }
+                }
+            }
+            
+            if updated {
+                let _ = save_java_config(&config).await;
+            }
+        });
+
+        let _ = app.emit("java-scan-progress", serde_json::json!({
+            "status": "complete"
+        }));
+    });
+
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {
