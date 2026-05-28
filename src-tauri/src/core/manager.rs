@@ -68,7 +68,7 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                         instances.push(InstanceItem {
                             id: id.clone(),
                             name: id.clone(),
-                            mc_version: "Unknown".to_string(),
+                            mc_version: extract_mc_version_from_id(&id).unwrap_or_else(|| id.clone()),
                             loader_type: "Unknown".to_string(),
                         });
                     }
@@ -89,23 +89,25 @@ fn parse_version_json(content: &str, id: &str) -> (String, String) {
     // Try to parse as JSON
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(json) => {
-            // Determine loader type based on mainClass or id
-            let loader_type = if let Some(main_class) = json.get("mainClass").and_then(|v| v.as_str()) {
-                if main_class.contains("fabricmc") || main_class.contains("fabric") {
+            // Determine loader type based on id first, then mainClass
+            let id_lower = id.to_lowercase();
+            let loader_type = if id_lower.contains("neoforge") {
+                "NeoForge"
+            } else if id_lower.contains("forge") {
+                "Forge"
+            } else if id_lower.contains("fabric") {
+                "Fabric"
+            } else if let Some(main_class) = json.get("mainClass").and_then(|v| v.as_str()) {
+                let mc_lower = main_class.to_lowercase();
+                if mc_lower.contains("fabric") {
                     "Fabric"
-                } else if main_class.contains("neoforge") {
+                } else if mc_lower.contains("neoforge") {
                     "NeoForge"
-                } else if main_class.contains("forge") {
+                } else if mc_lower.contains("forge") || mc_lower.contains("fml") || mc_lower.contains("bootstraplauncher") {
                     "Forge"
                 } else {
                     "Vanilla"
                 }
-            } else if id.to_lowercase().contains("fabric") {
-                "Fabric"
-            } else if id.to_lowercase().contains("neoforge") {
-                "NeoForge"
-            } else if id.to_lowercase().contains("forge") {
-                "Forge"
             } else {
                 "Vanilla"
             };
@@ -117,16 +119,21 @@ fn parse_version_json(content: &str, id: &str) -> (String, String) {
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .or_else(|| {
-                    // Try to extract from id (e.g., "1.20.1" from "1.20.1" or "Fabric-1.20.1-0.15.11")
-                    extract_mc_version_from_id(id)
+                    json.get("clientVersion").and_then(|v| v.as_str()).map(String::from)
                 })
-                .unwrap_or_else(|| "Unknown".to_string());
+                .or_else(|| {
+                    json.get("id").and_then(|v| v.as_str()).map(String::from)
+                })
+                .unwrap_or_else(|| {
+                    // Fallback to folder name if nothing else works
+                    extract_mc_version_from_id(id).unwrap_or_else(|| id.to_string())
+                });
 
             (mc_version, loader_type.to_string())
         }
         Err(_) => {
             // Fallback: extract from id
-            let mc_version = extract_mc_version_from_id(id).unwrap_or_else(|| "Unknown".to_string());
+            let mc_version = extract_mc_version_from_id(id).unwrap_or_else(|| id.to_string());
             let loader_type = if id.to_lowercase().contains("fabric") {
                 "Fabric"
             } else if id.to_lowercase().contains("neoforge") {

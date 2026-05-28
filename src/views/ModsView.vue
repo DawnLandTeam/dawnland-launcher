@@ -171,7 +171,7 @@ function getLoaderBadgeClass(loader: string): string {
     case "forge":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
     case "neoforge":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
+      return "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300";
     default:
       return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
   }
@@ -284,7 +284,7 @@ function getLoaderBadgeClass(loader: string): string {
       <!-- No Results -->
       <div v-else-if="searchQuery && searchResults.length === 0 && !error" class="flex flex-col items-center justify-center py-12">
         <Package class="h-12 w-12 text-muted-foreground mb-4" />
-        <h3 class="text-lg font-semibold mb-2">No mods found</h3>
+        <h3 class="text-lg font-semibold mb-2">{{ $t('mods.empty') }}</h3>
         <p class="text-sm text-muted-foreground">Try a different search term or filters</p>
       </div>
 

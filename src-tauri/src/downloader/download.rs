@@ -73,8 +73,6 @@ async fn download_file(
                 Ok(actual_hash) => {
                     if actual_hash == *expected_hash {
                         tracing::debug!("File exists and hash matches, skipping: {}", task.dest_path);
-                        let progress = DownloadProgress::completed(task.id.clone());
-                        let _ = app.emit("download-progress", &progress);
                         return Ok(());
                     } else {
                         tracing::debug!("File exists but hash mismatch, re-downloading: {} (expected: {}, got: {})", 

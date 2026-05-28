@@ -267,7 +267,7 @@ function getLoaderBadgeClass(loader: string): string {
   switch (loader.toLowerCase()) {
     case "fabric": return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300";
     case "forge": return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
-    case "neoforge": return "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
+    case "neoforge": return "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300";
     default: return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
   }
 }
@@ -277,7 +277,7 @@ function getLoaderBadgeClass(loader: string): string {
   <DialogContent :open="open" @update:open="emit('update:open', $event)" class="max-w-4xl max-h-[85vh] p-0 flex flex-col gap-0 overflow-hidden">
       <!-- Header -->
       <div class="p-4 border-b shrink-0 pr-10">
-        <DialogTitle>Manage Mods</DialogTitle>
+        <DialogTitle>{{ $t('instanceMods.title') }}</DialogTitle>
         <DialogDescription>
           {{ instance?.name }} ({{ instance?.mcVersion }} - {{ instance?.loaderType }})
         </DialogDescription>
