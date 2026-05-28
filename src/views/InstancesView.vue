@@ -31,6 +31,14 @@ interface SystemMemoryInfo {
   recommendedMaxMb: number;
 }
 
+interface JavaInfo {
+  path: string;
+  majorVersion: number;
+  versionString: string;
+  vendor: string;
+  is64Bit: boolean;
+}
+
 // Router — deep-link support
 const route = useRoute();
 
@@ -47,7 +55,7 @@ const settingsConfig = ref<InstanceConfig>({
   maxMemory: 4096,
   jvmArgsExtra: [],
   windowBehavior: "keep",
-  showGameLog: true,
+  showGameLog: false,
 });
 const isSavingConfig = ref(false);
 
@@ -56,6 +64,9 @@ const systemMemory = ref<SystemMemoryInfo>({
   totalMb: 8192,
   recommendedMaxMb: 4096,
 });
+
+// Installed Javas
+const installedJavas = ref<JavaInfo[]>([]);
 
 // Delete confirmation state
 const showDeleteDialog = ref(false);
@@ -95,11 +106,13 @@ watch(
 // ---------------------------------------------------------------------------
 onMounted(async () => {
   await loadInstances();
+  await loadJavas();
 });
 
 onActivated(async () => {
   await loadInstances();
   await loadSystemMemory();
+  await loadJavas();
 });
 
 // ---------------------------------------------------------------------------
@@ -126,6 +139,14 @@ async function loadSystemMemory() {
   }
 }
 
+async function loadJavas() {
+  try {
+    installedJavas.value = await invoke<JavaInfo[]>("scan_local_javas");
+  } catch (e) {
+    console.error("Failed to load installed Javas:", e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Settings modal
 // ---------------------------------------------------------------------------
@@ -142,7 +163,7 @@ async function openSettings(instance: InstanceItem) {
       maxMemory: config.maxMemory || 4096,
       jvmArgsExtra: config.jvmArgsExtra || [],
       windowBehavior: config.windowBehavior || "keep",
-      showGameLog: config.showGameLog !== false,
+      showGameLog: config.showGameLog === true,
     };
   } catch (e) {
     console.error("Failed to load instance config:", e);
@@ -151,7 +172,7 @@ async function openSettings(instance: InstanceItem) {
       maxMemory: 4096,
       jvmArgsExtra: [],
       windowBehavior: "keep",
-      showGameLog: true,
+      showGameLog: false,
     };
   }
 
@@ -163,26 +184,7 @@ function openMods(instance: InstanceItem) {
   showModsModal.value = true;
 }
 
-async function browseJavaPath() {
-  try {
-    const selected = await open({
-      multiple: false,
-      title: "Select Java Executable",
-      filters: [
-        {
-          name: "Executable",
-          extensions: ["exe", "app", ""],
-        },
-      ],
-    });
-
-    if (selected) {
-      settingsConfig.value.javaPath = selected as string;
-    }
-  } catch (e) {
-    console.error("Failed to open file dialog:", e);
-  }
-}
+// Remove browseJavaPath since we are using select now
 
 async function saveSettings() {
   isSavingConfig.value = true;
@@ -405,25 +407,18 @@ function loaderBadgeClass(loaderType: string): string {
 
           <!-- Java Path -->
           <div class="space-y-2">
-            <label class="text-sm font-medium">Java Executable Path</label>
-            <div class="flex gap-2">
-              <input
-                v-model="settingsConfig.javaPath"
-                type="text"
-                placeholder="Leave empty for system default"
-                class="flex-1 px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
-              />
-              <button
-                @click="browseJavaPath"
-                class="flex items-center gap-1 px-3 py-2 border rounded-md text-sm hover:bg-muted transition-colors"
-                title="Browse"
-              >
-                <FolderOpen class="h-4 w-4" />
-              </button>
-            </div>
+            <label class="text-sm font-medium">Java Version</label>
+            <select
+              v-model="settingsConfig.javaPath"
+              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
+            >
+              <option value="">Default (Auto-detect)</option>
+              <option v-for="java in installedJavas" :key="java.path" :value="java.path">
+                Java {{ java.majorVersion }} ({{ java.vendor }}) - {{ java.versionString }}
+              </option>
+            </select>
             <p class="text-xs text-muted-foreground">
-              MC 1.20.5+ requires Java 21. Leave empty to use system default
-              "java".
+              MC 1.20.5+ requires Java 21. Leave Default to use the system default Java or recommended version. If your desired Java is not listed, you can add it in Settings > Java Management.
             </p>
           </div>
 

@@ -62,6 +62,11 @@ pub fn run() {
             core::java::scan_local_javas,
             core::java::download_java,
             core::java::get_recommended_java,
+            core::java::add_manual_java,
+            core::java::remove_java,
+            core::java::get_java_download_path,
+            core::java::set_java_download_path,
+            core::java::scan_full_disk,
             // CurseForge commands
             core::curseforge::search_curseforge,
             core::curseforge::get_cf_mod_files,
