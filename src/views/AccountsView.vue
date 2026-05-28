@@ -194,19 +194,19 @@ onMounted(() => {
   <div class="flex h-full flex-col p-6 gap-6 overflow-y-auto">
     <!-- Header -->
     <div>
-      <h1 class="text-2xl font-bold">Account Management</h1>
-      <p class="text-sm text-neutral-500 mt-1">Manage your Microsoft and offline accounts</p>
+      <h1 class="text-2xl font-bold">{{ $t('accounts.title') }}</h1>
+      <p class="text-sm text-neutral-500 mt-1">{{ $t('accounts.desc') }}</p>
     </div>
 
     <!-- Accounts Grid Header -->
     <div class="flex items-center justify-between">
-      <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">Saved Accounts ({{ accounts.length }})</h2>
+      <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.saved', { count: accounts.length }) }}</h2>
       <button
         class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         @click="selectedAccountType = 'offline'; openAddAccountModal()"
       >
         <Plus :size="16" />
-        Add Account
+        {{ $t('accounts.add') }}
       </button>
     </div>
 
@@ -216,8 +216,8 @@ onMounted(() => {
         <div class="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
           <User :size="32" class="text-muted-foreground" />
         </div>
-        <p class="text-lg font-medium text-neutral-900 dark:text-white">No accounts yet</p>
-        <p class="text-sm text-muted-foreground">Add a Microsoft or offline account to get started</p>
+        <p class="text-lg font-medium text-neutral-900 dark:text-white">{{ $t('accounts.noAccounts') }}</p>
+        <p class="text-sm text-muted-foreground">{{ $t('accounts.noAccountsDesc') }}</p>
       </div>
 
       <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -235,7 +235,7 @@ onMounted(() => {
             class="absolute -top-2.5 -right-2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-green-500 to-emerald-500 px-2.5 py-1 text-xs font-bold text-white shadow-lg shadow-green-500/30"
           >
             <Check :size="11" stroke-width="3" />
-            ACTIVE
+            {{ $t('accounts.active') }}
           </div>
 
           <!-- Account Info -->
@@ -254,7 +254,7 @@ onMounted(() => {
                 <MonitorCheck v-if="isMsaAccount(account)" :size="14" class="text-green-500" />
                 <WifiOff v-else :size="14" class="text-muted-foreground" />
                 <span class="text-xs" :class="isMsaAccount(account) ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'">
-                  {{ isMsaAccount(account) ? 'Microsoft' : 'Offline' }}
+                  {{ isMsaAccount(account) ? $t('accounts.microsoft') : $t('accounts.offline') }}
                 </span>
               </div>
             </div>
@@ -268,7 +268,7 @@ onMounted(() => {
               @click="setActiveAccount(account.id)"
             >
               <Check :size="14" />
-              Set Active
+              {{ $t('accounts.setActive') }}
             </button>
             <button
               class="flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-600 hover:bg-red-100 dark:border-red-900/30 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 transition-colors"
@@ -294,7 +294,7 @@ onMounted(() => {
         <div class="relative z-10 w-full max-w-md gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg pointer-events-auto">
           <!-- Header -->
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-semibold text-neutral-900 dark:text-white">Add Account</h3>
+            <h3 class="text-lg font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.add') }}</h3>
             <button
               class="rounded p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-zinc-800"
               @click="closeAddAccountModal"
@@ -305,7 +305,7 @@ onMounted(() => {
 
           <!-- Account Type Selection -->
           <div class="space-y-3">
-            <label class="text-sm font-medium">Account Type</label>
+            <label class="text-sm font-medium">{{ $t('accounts.type') }}</label>
             <div class="flex gap-3">
               <button
                 class="flex-1 flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all"
@@ -315,8 +315,8 @@ onMounted(() => {
                 @click="selectedAccountType = 'offline'"
               >
                 <WifiOff :size="24" :class="selectedAccountType === 'offline' ? 'text-blue-600 dark:text-blue-400' : 'text-neutral-500'" />
-                <span class="text-sm font-medium" :class="selectedAccountType === 'offline' ? 'text-blue-700 dark:text-blue-300' : ''">Offline</span>
-                <span class="text-xs text-neutral-500">Play without account</span>
+                <span class="text-sm font-medium" :class="selectedAccountType === 'offline' ? 'text-blue-700 dark:text-blue-300' : ''">{{ $t('accounts.offline') }}</span>
+                <span class="text-xs text-neutral-500">{{ $t('accounts.playWithout') }}</span>
               </button>
               <button
                 class="flex-1 flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all"
@@ -326,19 +326,19 @@ onMounted(() => {
                 @click="selectedAccountType = 'microsoft'"
               >
                 <UserPlus :size="24" :class="selectedAccountType === 'microsoft' ? 'text-green-600 dark:text-green-400' : 'text-neutral-500'" />
-                <span class="text-sm font-medium" :class="selectedAccountType === 'microsoft' ? 'text-green-700 dark:text-green-300' : ''">Microsoft</span>
-                <span class="text-xs text-neutral-500">Play online</span>
+                <span class="text-sm font-medium" :class="selectedAccountType === 'microsoft' ? 'text-green-700 dark:text-green-300' : ''">{{ $t('accounts.microsoft') }}</span>
+                <span class="text-xs text-neutral-500">{{ $t('accounts.playOnline') }}</span>
               </button>
             </div>
           </div>
 
           <!-- Offline Account Form -->
           <div v-if="selectedAccountType === 'offline'" class="mt-4 space-y-3">
-            <label class="text-sm font-medium">Username</label>
+            <label class="text-sm font-medium">{{ $t('accounts.username') }}</label>
             <input
               v-model="newUsername"
               type="text"
-              placeholder="Enter username..."
+              :placeholder="$t('accounts.enterUsername')"
               class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
               @keyup.enter="addOfflineAccount"
             />
@@ -349,7 +349,7 @@ onMounted(() => {
             >
               <Loader2 v-if="isAddingOffline" :size="16" class="animate-spin" />
               <Plus v-else :size="16" />
-              {{ isAddingOffline ? 'Adding...' : 'Add Account' }}
+              {{ isAddingOffline ? $t('accounts.adding') : $t('accounts.add') }}
             </button>
           </div>
 
@@ -362,7 +362,7 @@ onMounted(() => {
                 @click="startMicrosoftLogin"
               >
                 <UserPlus :size="16" />
-                Login with Microsoft
+                {{ $t('accounts.loginWithMs') }}
               </button>
             </div>
 
@@ -388,20 +388,20 @@ onMounted(() => {
                 target="_blank"
                 class="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
               >
-                Open verification page →
+                {{ $t('accounts.openVerify') }}
               </a>
               <button
                 class="w-full rounded-lg bg-neutral-200 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
                 @click="cancelMicrosoftLogin"
               >
-                Cancel
+                {{ $t('accounts.cancel') }}
               </button>
             </div>
 
             <!-- Waiting for poll -->
             <div v-else class="flex items-center justify-center gap-2 py-4 text-sm text-neutral-500">
               <Loader2 :size="16" class="animate-spin" />
-              Preparing login...
+              {{ $t('accounts.preparing') }}
             </div>
           </div>
 
@@ -429,26 +429,25 @@ onMounted(() => {
               <AlertCircle :size="20" class="text-red-600 dark:text-red-400" />
             </div>
             <div>
-              <h3 class="font-semibold text-neutral-900 dark:text-white">Delete Account?</h3>
-              <p class="text-sm text-muted-foreground">This action cannot be undone</p>
+              <h3 class="font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.deleteTitle') }}</h3>
+              <p class="text-sm text-muted-foreground">{{ $t('accounts.deleteUndone') }}</p>
             </div>
           </div>
-          <p class="text-sm mb-4">
-            Are you sure you want to delete account <strong>{{ deletingAccountName }}</strong>?
+          <p class="text-sm mb-4" v-html="$t('accounts.deleteConfirm', { name: deletingAccountName })">
           </p>
           <div class="flex justify-end gap-2">
             <button
               class="px-4 py-2 text-sm font-medium border rounded-lg hover:bg-muted transition-colors"
               @click="showDeleteDialog = false"
             >
-              Cancel
+              {{ $t('accounts.cancel') }}
             </button>
             <button
               class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
               @click="removeAccount"
             >
               <Trash2 :size="14" />
-              Delete
+              {{ $t('accounts.delete') }}
             </button>
           </div>
         </div>
