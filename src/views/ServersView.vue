@@ -168,9 +168,9 @@ function loaderBadgeClass(loaderType: string): string {
       <div class="flex items-center gap-3">
         <Server class="h-7 w-7 text-primary" />
         <div>
-          <h1 class="text-2xl font-bold">Server Browser</h1>
+          <h1 class="text-2xl font-bold">{{ $t('servers.title') }}</h1>
           <p class="text-sm text-muted-foreground">
-            {{ filteredServers.length }} server{{ filteredServers.length !== 1 ? 's' : '' }} available
+            {{ $t('servers.available', { count: filteredServers.length }, filteredServers.length) }}
           </p>
         </div>
       </div>
@@ -179,7 +179,7 @@ function loaderBadgeClass(loaderType: string): string {
         class="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
       >
         <Plus class="h-4 w-4" />
-        Publish Server
+        {{ $t('servers.publish') }}
       </button>
     </div>
 
@@ -191,7 +191,7 @@ function loaderBadgeClass(loaderType: string): string {
         <input
           v-model="searchQuery"
           type="text"
-          placeholder="Search servers..."
+          :placeholder="$t('servers.searchPlaceholder')"
           class="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
         />
       </div>
@@ -201,7 +201,7 @@ function loaderBadgeClass(loaderType: string): string {
         v-model="filterMcVersion"
         class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
       >
-        <option value="">All Versions</option>
+        <option value="">{{ $t('servers.allVersions') }}</option>
         <option v-for="version in mcVersions" :key="version" :value="version">
           {{ version }}
         </option>
@@ -212,7 +212,7 @@ function loaderBadgeClass(loaderType: string): string {
         v-model="filterLoaderType"
         class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
       >
-        <option value="">All Loaders</option>
+        <option value="">{{ $t('servers.allLoaders') }}</option>
         <option v-for="loader in loaderTypes" :key="loader" :value="loader">
           {{ loader }}
         </option>
@@ -223,9 +223,9 @@ function loaderBadgeClass(loaderType: string): string {
         v-model="filterOnlineMode"
         class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
       >
-        <option value="">All Modes</option>
-        <option value="online">Online Mode</option>
-        <option value="offline">Offline Mode</option>
+        <option value="">{{ $t('servers.allModes') }}</option>
+        <option value="online">{{ $t('servers.onlineMode') }}</option>
+        <option value="offline">{{ $t('servers.offlineMode') }}</option>
       </select>
     </div>
 
@@ -262,14 +262,14 @@ function loaderBadgeClass(loaderType: string): string {
             class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
             :class="server.onlineMode ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'"
           >
-            {{ server.onlineMode ? 'Online' : 'Offline' }}
+            {{ server.onlineMode ? $t('servers.onlineMode') : $t('servers.offlineMode') }}
           </span>
         </div>
 
         <!-- Player Count -->
         <div class="flex items-center gap-1 text-sm text-muted-foreground mb-3">
           <Users class="h-4 w-4" />
-          <span>{{ server.onlinePlayers }} / {{ server.maxPlayers }} players</span>
+          <span>{{ $t('servers.players', { online: server.onlinePlayers, max: server.maxPlayers }) }}</span>
         </div>
 
         <!-- IP and Actions -->
@@ -287,7 +287,7 @@ function loaderBadgeClass(loaderType: string): string {
           </div>
           <button class="flex items-center gap-1 text-sm text-primary hover:underline">
             <ExternalLink class="h-4 w-4" />
-            Join
+            {{ $t('servers.join') }}
           </button>
         </div>
       </div>
@@ -295,8 +295,8 @@ function loaderBadgeClass(loaderType: string): string {
       <!-- Empty State -->
       <div v-if="filteredServers.length === 0" class="col-span-full flex flex-col items-center justify-center py-12 text-center">
         <Server class="h-12 w-12 text-muted-foreground mb-4" />
-        <h3 class="text-lg font-semibold text-neutral-900 dark:text-white mb-2">No servers found</h3>
-        <p class="text-sm text-muted-foreground">Try adjusting your filters or publish your own server!</p>
+        <h3 class="text-lg font-semibold text-neutral-900 dark:text-white mb-2">{{ $t('servers.noServers') }}</h3>
+        <p class="text-sm text-muted-foreground">{{ $t('servers.noServersDesc') }}</p>
       </div>
     </div>
 
@@ -306,7 +306,7 @@ function loaderBadgeClass(loaderType: string): string {
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="showPublishDialog = false"></div>
         <div class="relative z-10 w-full max-w-lg gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg pointer-events-auto">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">Publish Your Server</h3>
+            <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">{{ $t('servers.publishTitle') }}</h3>
             <button @click="showPublishDialog = false" class="text-muted-foreground hover:text-foreground text-lg">
               ✕
             </button>
@@ -315,18 +315,18 @@ function loaderBadgeClass(loaderType: string): string {
           <div class="space-y-4">
             <!-- Server Name -->
             <div class="space-y-1">
-              <label class="text-sm font-medium">Server Name</label>
+              <label class="text-sm font-medium">{{ $t('servers.serverName') }}</label>
               <input v-model="newServer.name" type="text" placeholder="My Awesome Server" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
             </div>
 
             <!-- IP and Port -->
             <div class="flex gap-2">
               <div class="flex-1 space-y-1">
-                <label class="text-sm font-medium">IP Address</label>
+                <label class="text-sm font-medium">{{ $t('servers.ipAddress') }}</label>
                 <input v-model="newServer.ip" type="text" placeholder="play.myserver.net" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
               </div>
               <div class="w-24 space-y-1">
-                <label class="text-sm font-medium">Port</label>
+                <label class="text-sm font-medium">{{ $t('servers.port') }}</label>
                 <input v-model="newServer.port" type="text" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
               </div>
             </div>
@@ -334,9 +334,9 @@ function loaderBadgeClass(loaderType: string): string {
             <!-- Version and Loader -->
             <div class="flex gap-2">
               <div class="flex-1 space-y-1">
-                <label class="text-sm font-medium">Minecraft Version</label>
+                <label class="text-sm font-medium">{{ $t('servers.mcVersion') }}</label>
                 <select v-model="newServer.mcVersion" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
-                  <option value="">Select version...</option>
+                  <option value="">{{ $t('servers.selectVersion') }}</option>
                   <option value="1.20.4">1.20.4</option>
                   <option value="1.20.1">1.20.1</option>
                   <option value="1.19.4">1.19.4</option>
@@ -344,7 +344,7 @@ function loaderBadgeClass(loaderType: string): string {
                 </select>
               </div>
               <div class="flex-1 space-y-1">
-                <label class="text-sm font-medium">Loader Type</label>
+                <label class="text-sm font-medium">{{ $t('servers.loaderType') }}</label>
                 <select v-model="newServer.loaderType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
                   <option value="Vanilla">Vanilla</option>
                   <option value="Fabric">Fabric</option>
@@ -357,22 +357,22 @@ function loaderBadgeClass(loaderType: string): string {
             <!-- Online Mode -->
             <div class="flex items-center gap-2">
               <input v-model="newServer.onlineMode" type="checkbox" id="onlineMode" class="rounded" />
-              <label for="onlineMode" class="text-sm font-medium">Require Online Mode (正版验证)</label>
+              <label for="onlineMode" class="text-sm font-medium">{{ $t('servers.requireOnline') }}</label>
             </div>
 
             <!-- Description -->
             <div class="space-y-1">
-              <label class="text-sm font-medium">Description</label>
+              <label class="text-sm font-medium">{{ $t('servers.description') }}</label>
               <textarea v-model="newServer.description" placeholder="Describe your server..." class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 h-20 resize-none"></textarea>
             </div>
           </div>
 
           <div class="flex justify-end gap-2 mt-6">
             <button @click="showPublishDialog = false" class="px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted transition-colors">
-              Cancel
+              {{ $t('servers.cancel') }}
             </button>
             <button @click="submitServer" class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors">
-              Submit for Review
+              {{ $t('servers.submit') }}
             </button>
           </div>
         </div>

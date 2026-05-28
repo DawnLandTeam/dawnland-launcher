@@ -82,13 +82,6 @@ const canLaunch = computed(() => {
   );
 });
 
-const launchButtonText = computed(() => {
-  const instanceId = selectedInstanceId.value;
-  if (repairingInstances.value.has(instanceId)) return "Repairing...";
-  if (runningInstances.value.has(instanceId)) return "Running...";
-  return "Launch";
-});
-
 const isLaunching = computed(() => {
   const instanceId = selectedInstanceId.value;
   return (
@@ -261,12 +254,12 @@ function isMsaAccount(account: Account): boolean {
           <Gamepad2 class="h-12 w-12 text-muted-foreground" />
         </div>
         <div class="text-center space-y-2">
-          <h2 class="text-2xl font-bold">Welcome to Dawnland</h2>
-          <p class="text-muted-foreground">Install your first Minecraft instance to get started.</p>
+          <h2 class="text-2xl font-bold">{{ $t('home.welcome') }}</h2>
+          <p class="text-muted-foreground">{{ $t('home.noInstances') }}</p>
         </div>
         <router-link to="/instances" class="flex items-center gap-2 rounded-md bg-primary px-6 py-3 text-base font-semibold text-primary-foreground hover:bg-primary/90 transition-colors">
           <Play class="h-5 w-5" />
-          Install Instance
+          {{ $t('home.installInstance') }}
         </router-link>
       </div>
 
@@ -275,14 +268,14 @@ function isMsaAccount(account: Account): boolean {
         <!-- Header -->
         <div class="text-center space-y-2 mb-8">
           <h1 class="text-5xl font-extrabold tracking-tight">Dawnland</h1>
-          <p class="text-xl text-muted-foreground">Minecraft Launcher</p>
+          <p class="text-xl text-muted-foreground">{{ $t('home.subtitle') }}</p>
         </div>
 
         <!-- Control Panel -->
         <div class="w-full max-w-lg bg-card border rounded-2xl p-6 shadow-sm">
           <!-- Instance Selector -->
           <div class="flex items-center gap-3">
-            <label class="text-sm font-medium shrink-0">Select Instance</label>
+            <label class="text-sm font-medium shrink-0">{{ $t('home.selectInstance') }}</label>
             <DropdownMenu class="flex-1">
               <template #trigger>
                 <button class="w-full flex items-center justify-between px-4 py-3 bg-background border rounded-lg hover:border-primary/50 transition-colors">
@@ -290,7 +283,7 @@ function isMsaAccount(account: Account): boolean {
                     <Package class="h-5 w-5 text-primary" />
                     <span class="font-medium truncate">{{ selectedInstance.name }}</span>
                   </div>
-                  <span v-else class="text-muted-foreground">Select an instance...</span>
+                  <span v-else class="text-muted-foreground">{{ $t('home.selectInstancePlaceholder') }}</span>
                   <ChevronDown class="h-5 w-5 text-muted-foreground shrink-0" />
                 </button>
               </template>
@@ -305,7 +298,7 @@ function isMsaAccount(account: Account): boolean {
 
           <!-- Account Selector -->
           <div class="flex items-center gap-3 mt-4">
-            <label class="text-sm font-medium shrink-0">Select Account</label>
+            <label class="text-sm font-medium shrink-0">{{ $t('home.selectAccount') }}</label>
             <DropdownMenu class="flex-1">
               <template #trigger>
                 <button class="w-full flex items-center justify-between px-4 py-3 bg-background border rounded-lg hover:border-primary/50 transition-colors">
@@ -313,7 +306,7 @@ function isMsaAccount(account: Account): boolean {
                     <component :is="isMsaAccount(accounts.find((a) => a.id === selectedAccountId)!) ? MonitorCheck : WifiOff" :class="isMsaAccount(accounts.find((a) => a.id === selectedAccountId)!) ? 'h-5 w-5 text-green-500' : 'h-5 w-5 text-muted-foreground'" />
                     <span class="font-medium truncate">{{ accounts.find((a) => a.id === selectedAccountId)?.username }}</span>
                   </div>
-                  <span v-else class="text-muted-foreground">Select an account...</span>
+                  <span v-else class="text-muted-foreground">{{ $t('home.selectAccountPlaceholder') }}</span>
                   <ChevronDown class="h-5 w-5 text-muted-foreground shrink-0" />
                 </button>
               </template>
@@ -331,12 +324,12 @@ function isMsaAccount(account: Account): boolean {
           <div class="flex items-center justify-center gap-4 mt-6">
             <button @click="openInstanceSettings" :disabled="!selectedInstanceId" class="flex items-center gap-2 px-4 py-2.5 border rounded-lg hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors" title="Configure instance">
               <Settings class="h-5 w-5" />
-              Configure
+              {{ $t('home.configure') }}
             </button>
             <button @click="launchInstance" :disabled="!canLaunch" class="flex items-center gap-3 rounded-xl bg-green-600 px-10 py-4 text-xl font-bold text-white shadow-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95">
               <Loader2 v-if="isLaunching" class="h-6 w-6 animate-spin" />
               <Play v-else class="h-6 w-6" />
-              {{ launchButtonText }}
+              {{ isLaunching ? $t('home.launching') : $t('home.play') }}
             </button>
           </div>
 
