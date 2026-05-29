@@ -61,6 +61,7 @@ pub fn run() {
             core::manager::install_mod_to_instance,
             // Java commands
             core::java::scan_local_javas,
+            core::java::clear_java_cache,
             core::java::download_java,
             core::java::get_recommended_java,
             core::java::add_manual_java,
