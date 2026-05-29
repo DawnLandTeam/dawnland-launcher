@@ -3,6 +3,7 @@ mod commands;
 mod core;
 mod downloader;
 mod logger;
+mod models;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -76,6 +77,19 @@ pub fn run() {
             core::modrinth::get_modrinth_mod_files,
             core::modrinth::get_modrinth_mod_details,
             core::modrinth::get_modrinth_mod_versions,
+            // Server commands (proxies to Go web backend)
+            core::server::get_servers,
+            core::server::get_server,
+            core::server::create_server,
+            core::server::update_server,
+            core::server::delete_server,
+            core::server::get_pending_servers,
+            core::server::approve_server,
+            core::server::reject_server,
+            core::server::upload_pack_file,
+            core::server::download_pack_file,
+            core::server::install_server_modpack,
+            core::server::get_filter_options,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
