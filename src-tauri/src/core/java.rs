@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::fs;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
+
+static CACHED_JAVAS: Mutex<Option<Vec<JavaInfo>>> = Mutex::const_new(None);
 
 /// Configuration for user-defined Java paths and download settings.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -60,6 +63,15 @@ pub struct JavaInfo {
 /// Scan all locally installed Java versions.
 #[tauri::command]
 pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
+
+    // Check cache first
+    {
+        let cache = CACHED_JAVAS.lock().await;
+        if let Some(javas) = cache.as_ref() {
+            return Ok(javas.clone());
+        }
+    }
+
     tracing::info!("Scanning local Java installations...");
 
     let mut javas = Vec::new();
@@ -137,7 +149,10 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
     }
 
     // Sort by major version descending
-    javas.sort_by(|a, b| b.major_version.cmp(&a.major_version));
+        javas.sort_by(|a, b| b.major_version.cmp(&a.major_version));
+    
+    // Update cache
+    *CACHED_JAVAS.lock().await = Some(javas.clone());
 
     tracing::info!("Found {} Java installations", javas.len());
     Ok(javas)
@@ -478,6 +493,7 @@ pub fn get_recommended_java(mc_version: &str) -> u32 {
 
 #[tauri::command]
 pub async fn add_manual_java(path: String) -> Result<JavaInfo, String> {
+    *CACHED_JAVAS.lock().await = None;
     let java_path = PathBuf::from(&path);
     if !java_path.exists() {
         return Err("Java path does not exist".to_string());
@@ -498,6 +514,7 @@ pub async fn add_manual_java(path: String) -> Result<JavaInfo, String> {
 
 #[tauri::command]
 pub async fn remove_java(path: String) -> Result<(), String> {
+    *CACHED_JAVAS.lock().await = None;
     let mut config = load_java_config().await;
     
     // Check if it's in manual paths
@@ -551,6 +568,7 @@ pub async fn set_java_download_path(path: Option<String>) -> Result<(), String> 
 
 #[tauri::command]
 pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
+    *CACHED_JAVAS.lock().await = None;
     tracing::info!("Starting full disk scan for Java...");
     
     // Spawn blocking so we don't hang the async executor
@@ -656,4 +674,10 @@ mod tests {
         assert_eq!(get_recommended_java("1.16.5"), 8);
         assert_eq!(get_recommended_java("1.7.10"), 8);
     }
+}
+
+#[tauri::command]
+pub async fn clear_java_cache() -> Result<(), String> {
+    *CACHED_JAVAS.lock().await = None;
+    Ok(())
 }

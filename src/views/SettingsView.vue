@@ -301,7 +301,7 @@ function changeLanguage(lang: string) {
             <button
               class="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               :disabled="isScanningJava"
-              @click="scanLocalJavas"
+              @click="async () => { await invoke('clear_java_cache'); await scanLocalJavas(); }"
             >
               <Loader2 v-if="isScanningJava" :size="14" class="animate-spin" />
               <Coffee v-else :size="14" />
