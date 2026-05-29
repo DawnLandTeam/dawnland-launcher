@@ -72,7 +72,76 @@
     "subtitle": "Find and join Minecraft servers",
     "add": "Add Server",
     "online": "Online",
-    "offline": "Offline"
+    "offline": "Offline",
+    "filters": {
+      "allTypes": "All Types",
+      "allAuth": "All Auth"
+    },
+    "types": {
+      "vanilla": "Vanilla",
+      "modded": "Modded",
+      "custom": "Custom Client"
+    },
+    "auth": {
+      "microsoft": "Microsoft Account",
+      "offline": "Offline (Cracked)",
+      "microsoftShort": "Microsoft",
+      "offlineShort": "Offline"
+    },
+    "actions": {
+      "installClient": "Install client with modpack",
+      "install": "Install",
+      "copyIp": "Copy IP"
+    },
+    "publishDialog": {
+      "stepOf": "Step {step} of {total}:",
+      "steps": {
+        "basicInfo": "Basic Info",
+        "versionType": "Version & Type",
+        "modpack": "Modpack (Optional)",
+        "review": "Review & Submit"
+      },
+      "serverName": "Server Name",
+      "serverNamePlaceholder": "My Awesome Server",
+      "ipAddress": "IP Address",
+      "ipPlaceholder": "play.myserver.net",
+      "port": "Port",
+      "mcVersion": "Minecraft Version",
+      "searchVersions": "Search versions...",
+      "noVersions": "No versions found",
+      "serverType": "Server Type",
+      "typeVanilla": "Vanilla (Original)",
+      "typeModded": "Mod Server (requires modpack)",
+      "typeCustom": "Custom Client (requires modpack)",
+      "descVanilla": "Standard Minecraft server without mods",
+      "descModded": "Players can download and install a modpack to join",
+      "modpackZip": "Modpack ZIP File",
+      "selectZip": "Select modpack ZIP file...",
+      "uploadDesc": "Upload a CurseForge modpack ZIP file. Players can install this with one click.",
+      "uploading": "Uploading modpack...",
+      "noModpackReq": "This is a Vanilla server, so no modpack is required.",
+      "skipStep": "You can skip this step.",
+      "reviewTitle": "Review Your Server",
+      "name": "Name:",
+      "address": "Address:",
+      "version": "Version:",
+      "type": "Type:",
+      "modpack": "Modpack:",
+      "adminEmail": "Admin Email",
+      "emailPlaceholder": "admin@example.com",
+      "emailDesc": "Required for server management.",
+      "back": "Back",
+      "next": "Next",
+      "submitting": "Submitting...",
+      "submit": "Submit Server"
+    },
+    "messages": {
+      "submitted": "Server submitted for review! It will be visible after approval.",
+      "enterInstanceName": "Enter a name for the new instance:",
+      "installSuccess": "Modpack installed successfully to:\n{path}",
+      "installFailed": "Failed to install modpack: {error}",
+      "noModpack": "This server does not have a modpack available"
+    }
   },
   "accounts": {
     "title": "Account Management",
