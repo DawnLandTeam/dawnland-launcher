@@ -1,126 +1,351 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
-import { Server, Users, Gamepad2, Plus, Search, ExternalLink, Copy, Check } from "@lucide/vue";
+import { ref, computed, onMounted, onUnmounted, onActivated, watch } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+import { Server, Gamepad2, Plus, Search, ExternalLink, Copy, Check, Loader2, Download, Package, ChevronDown } from "@lucide/vue";
 
-// Types
+// Types matching the Rust Server model
 interface ServerInfo {
-  id: string;
+  id: number;
   name: string;
-  description: string;
   ip: string;
   port: number;
-  mcVersion: string;
+  motd: string;
+  version: string;
   loaderType: string;
-  onlineMode: boolean;
-  onlinePlayers: number;
-  maxPlayers: number;
-  logoUrl?: string;
+  serverType: string;        // "vanilla", "modded", "custom"
+  authType: string;          // "offline", "online"
+  packFileName: string | null;
+  packFileSize: number | null;
+  iconUrl: string;
+  email: string;
+  isActive: boolean;
 }
 
-// Mock server data
-const servers = ref<ServerInfo[]>([
-  {
-    id: "1",
-    name: "CraftLife Survival",
-    description: "A vanilla+ survival server with custom biomes and economy",
-    ip: "play.craftlife.net",
-    port: 25565,
-    mcVersion: "1.20.4",
-    loaderType: "Fabric",
-    onlineMode: true,
-    onlinePlayers: 128,
-    maxPlayers: 500,
-  },
-  {
-    id: "2",
-    name: "PixelCraft factions",
-    description: "Raid, build, and conquer in our intense factions server",
-    ip: "mc.pixelcraft.net",
-    port: 25565,
-    mcVersion: "1.20.1",
-    loaderType: "Fabric",
-    onlineMode: false,
-    onlinePlayers: 256,
-    maxPlayers: 1000,
-  },
-  {
-    id: "3",
-    name: "SkyBlock Pro",
-    description: "Custom skyblock experience with 100+ quests",
-    ip: "skyblock.pro",
-    port: 25565,
-    mcVersion: "1.19.4",
-    loaderType: "Paper",
-    onlineMode: true,
-    onlinePlayers: 89,
-    maxPlayers: 200,
-  },
-]);
+interface CreateServerInput {
+  name: string;
+  ip: string;
+  port: number;
+  motd: string;
+  version: string;
+  loaderType: string;
+  serverType: string;
+  iconUrl: string;
+  email: string;
+}
+
+// Vanilla version from Mojang API
+interface VanillaVersion {
+  id: string;
+  versionType: string;
+  url: string;
+}
+
+// Extended type to handle API variations
+interface VanillaVersionExtended extends VanillaVersion {
+  type?: string;
+}
+
+// Filter options response
+interface FilterOptions {
+  versions: string[];
+  serverTypes: string[];
+  authTypes: string[];
+}
+
+// API response with pagination
+interface ServerListResponse {
+  data: ServerInfo[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+// State
+const servers = ref<ServerInfo[]>([]);
+const isLoading = ref(false);
+const isLoadingMore = ref(false);
+const error = ref<string | null>(null);
+const currentPage = ref(1);
+const totalPages = ref(1);
+const hasMore = computed(() => currentPage.value < totalPages.value);
+
+// Minecraft versions
+const mcVersions = ref<VanillaVersion[]>([]);
+const mcVersionsLoading = ref(false);
+const mcVersionsError = ref<string | null>(null);
+const showVersionDropdown = ref(false);
+const versionSearchQuery = ref("");
+
+// Filter version dropdown (separate state)
+const showFilterVersionDropdown = ref(false);
+const filterVersionSearchQuery = ref("");
+
+// Filter options (from API)
+const filterOptions = ref<FilterOptions>({
+  versions: [],
+  serverTypes: [],
+  authTypes: [],
+});
+const filterOptionsLoading = ref(false);
 
 // Filter state
 const searchQuery = ref("");
 const filterMcVersion = ref<string>("");
-const filterLoaderType = ref<string>("");
-const filterOnlineMode = ref<string>("");
+const filterServerType = ref<string>("");
+const filterAuthType = ref<string>("");
+
+// Re-fetch servers when filters change
+async function applyFilters() {
+  currentPage.value = 1;
+  await fetchServers();
+}
+
+// Watch for filter changes
+watch(searchQuery, () => {
+  applyFilters();
+});
+watch(filterMcVersion, () => {
+  applyFilters();
+});
+watch(filterServerType, () => {
+  applyFilters();
+});
+watch(filterAuthType, () => {
+  applyFilters();
+});
 
 // Dialog state
 const showPublishDialog = ref(false);
-const newServer = ref({
-  name: "",
-  ip: "",
-  port: "25565",
-  mcVersion: "",
-  loaderType: "Vanilla",
-  onlineMode: true,
-  description: "",
-});
+const publishStep = ref(1);
+const totalSteps = 4;
+const isSubmitting = ref(false);
 
-// Copy notification
-const copiedServerId = ref<string | null>(null);
-
-// Filtered servers
-const filteredServers = computed(() => {
-  return servers.value.filter((server) => {
-    // Search filter
-    if (searchQuery.value) {
-      const query = searchQuery.value.toLowerCase();
-      if (
-        !server.name.toLowerCase().includes(query) &&
-        !server.description.toLowerCase().includes(query) &&
-        !server.ip.toLowerCase().includes(query)
-      ) {
-        return false;
-      }
-    }
-    // MC Version filter
-    if (filterMcVersion.value && server.mcVersion !== filterMcVersion.value) {
-      return false;
-    }
-    // Loader type filter
-    if (filterLoaderType.value && server.loaderType !== filterLoaderType.value) {
-      return false;
-    }
-    // Online mode filter
-    if (filterOnlineMode.value === "online" && !server.onlineMode) {
-      return false;
-    }
-    if (filterOnlineMode.value === "offline" && server.onlineMode) {
-      return false;
+// Step validation
+const canGoToStep = (step: number): boolean => {
+  if (step === 1) {
+    return newServer.value.name.trim() !== "" && newServer.value.ip.trim() !== "";
+  }
+  if (step === 2) {
+    return newServer.value.version !== "";
+  }
+  if (step === 3) {
+    // If server type needs pack file, check if file is selected
+    if (needsPackFile(newServer.value.serverType)) {
+      return selectedPackFile.value !== null;
     }
     return true;
+  }
+  return true;
+};
+
+const newServer = ref<CreateServerInput>({
+  name: "",
+  ip: "",
+  port: 25565,
+  motd: "",
+  version: "",
+  loaderType: "",
+  serverType: "vanilla",
+  iconUrl: "",
+  email: "",
+});
+
+// Pack file upload state
+const selectedPackFile = ref<string | null>(null);
+const selectedPackFileName = ref<string>("");
+const isUploadingPack = ref(false);
+
+// Install modpack state
+const installingServerId = ref<number | null>(null);
+
+// Copy notification
+const copiedServerId = ref<number | null>(null);
+
+// Check if server needs a pack file (modded or custom)
+function needsPackFile(serverType: string): boolean {
+  return serverType === "modded" || serverType === "custom";
+}
+
+// Handle pack file selection
+async function selectPackFile() {
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: "Modpack", extensions: ["zip"] }],
   });
+  
+  if (selected) {
+    selectedPackFile.value = selected as string;
+    // Extract filename from path
+    const parts = (selected as string).split(/[/\\]/);
+    selectedPackFileName.value = parts[parts.length - 1];
+  }
+}
+
+// Fetch Minecraft versions from Mojang API
+async function fetchMcVersions() {
+  if (mcVersions.value.length > 0) return; // Already loaded
+  
+  mcVersionsLoading.value = true;
+  mcVersionsError.value = null;
+  try {
+    const versions = await invoke<VanillaVersion[]>("get_vanilla_versions");
+    mcVersions.value = versions;
+  } catch (e) {
+    mcVersionsError.value = e instanceof Error ? e.message : String(e);
+    console.error("Failed to fetch MC versions:", e);
+  } finally {
+    mcVersionsLoading.value = false;
+  }
+}
+
+// Fetch filter options from API
+async function fetchFilterOptions() {
+  filterOptionsLoading.value = true;
+  try {
+    const options = await invoke<FilterOptions>("get_filter_options");
+    filterOptions.value = options;
+  } catch (e) {
+    console.error("Failed to fetch filter options:", e);
+  } finally {
+    filterOptionsLoading.value = false;
+  }
+}
+
+// Grouped versions for filter dropdown (release first, then snapshot, old_beta, old_alpha)
+const groupedVersions = computed(() => {
+  const query = filterVersionSearchQuery.value.toLowerCase();
+  const allVersions = mcVersions.value as VanillaVersionExtended[];
+  const filtered = (allVersions || []).filter(v => 
+    v.id.toLowerCase().includes(query)
+  );
+  
+  const release: VanillaVersionExtended[] = [];
+  const snapshot: VanillaVersionExtended[] = [];
+  const old_beta: VanillaVersionExtended[] = [];
+  const old_alpha: VanillaVersionExtended[] = [];
+  
+  for (const v of filtered) {
+    const type = v.versionType || v.type || '';
+    switch (type) {
+      case 'release':
+        release.push(v);
+        break;
+      case 'snapshot':
+        snapshot.push(v);
+        break;
+      case 'old_beta':
+        old_beta.push(v);
+        break;
+      case 'old_alpha':
+        old_alpha.push(v);
+        break;
+      default:
+        // Default to release for unknown types
+        release.push(v);
+        break;
+    }
+  }
+  
+  return { release, snapshot, old_beta, old_alpha };
 });
 
-// Unique versions and loaders for filters
-const mcVersions = computed(() => {
-  const versions = new Set(servers.value.map((s) => s.mcVersion));
-  return Array.from(versions).sort();
+// Select a version from dropdown
+function selectVersion(version: VanillaVersion) {
+  newServer.value.version = version.id;
+  versionSearchQuery.value = version.id;
+  showVersionDropdown.value = false;
+}
+
+// Fetch servers from Rust backend
+async function fetchServers() {
+  isLoading.value = true;
+  error.value = null;
+  try {
+    const response = await invoke<ServerListResponse>("get_servers", {
+      page: 1,
+      pageSize: 20,
+      search: searchQuery.value,
+      version: filterMcVersion.value,
+      serverType: filterServerType.value,
+      authType: filterAuthType.value,
+    });
+    servers.value = response.data;
+    currentPage.value = response.page;
+    totalPages.value = response.totalPages;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+    console.error("Failed to fetch servers:", e);
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+// Load more servers (infinite scroll)
+async function loadMoreServers() {
+  if (!hasMore.value || isLoadingMore.value) return;
+
+  isLoadingMore.value = true;
+  try {
+    const nextPage = currentPage.value + 1;
+    const response = await invoke<ServerListResponse>("get_servers", {
+      page: nextPage,
+      pageSize: 20,
+      search: searchQuery.value,
+      version: filterMcVersion.value,
+      serverType: filterServerType.value,
+      authType: filterAuthType.value,
+    });
+    servers.value.push(...response.data);
+    currentPage.value = response.page;
+    totalPages.value = response.totalPages;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+    console.error("Failed to load more servers:", e);
+  } finally {
+    isLoadingMore.value = false;
+  }
+}
+
+// Infinite scroll handler
+function handleScroll(event: Event) {
+  const target = event.target as HTMLElement;
+  const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+  if (scrollBottom < 200) {
+    loadMoreServers();
+  }
+}
+
+// Initial load
+onMounted(() => {
+  fetchServers();
+  fetchFilterOptions();
+  // Close version dropdown when clicking outside
+  document.addEventListener("click", handleClickOutside);
 });
 
-const loaderTypes = computed(() => {
-  const loaders = new Set(servers.value.map((s) => s.loaderType));
-  return Array.from(loaders).sort();
+// Refresh when coming back to this view (keep-alive reactivation)
+onActivated(() => {
+  fetchFilterOptions();
 });
+
+onUnmounted(() => {
+  document.removeEventListener("click", handleClickOutside);
+});
+
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (!target.closest(".version-dropdown")) {
+    showVersionDropdown.value = false;
+  }
+  if (!target.closest(".filter-version-dropdown")) {
+    showFilterVersionDropdown.value = false;
+  }
+}
+
+// Server list is now filtered by the backend, no client-side filtering needed
+const filteredServers = computed(() => servers.value);
 
 // Functions
 function copyIp(server: ServerInfo) {
@@ -131,34 +356,99 @@ function copyIp(server: ServerInfo) {
   }, 2000);
 }
 
-function submitServer() {
-  // Mock submission - in production this would call an API
-  alert(`Server "${newServer.value.name}" submitted for review!`);
-  showPublishDialog.value = false;
-  // Reset form
+async function submitServer() {
+  isSubmitting.value = true;
+  error.value = null;
+  
+  try {
+    // Create the server first
+    const server = await invoke<ServerInfo>("create_server", { input: newServer.value });
+    publishStep.value = 4;
+    
+    // If pack file is selected and server type needs it, upload the pack file
+    if (selectedPackFile.value && needsPackFile(newServer.value.serverType)) {
+      isUploadingPack.value = true;
+      try {
+        await invoke("upload_pack_file", {
+          serverId: String(server.id),
+          filePath: selectedPackFile.value,
+        });
+      } catch (uploadError) {
+        console.error("Failed to upload pack file:", uploadError);
+      } finally {
+        isUploadingPack.value = false;
+      }
+    }
+    
+    // Refresh server list
+    await fetchServers();
+    showPublishDialog.value = false;
+    alert("Server submitted for review! It will be visible after approval.");
+    // Reset form
+    resetPublishForm();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+    console.error("Failed to create server:", e);
+  } finally {
+    isSubmitting.value = false;
+  }
+}
+
+function resetPublishForm() {
   newServer.value = {
     name: "",
     ip: "",
-    port: "25565",
-    mcVersion: "",
-    loaderType: "Vanilla",
-    onlineMode: true,
-    description: "",
+    port: 25565,
+    motd: "",
+    version: "",
+    loaderType: "",
+    serverType: "vanilla",
+    iconUrl: "",
+    email: "",
   };
+  selectedPackFile.value = null;
+  selectedPackFileName.value = "";
+  publishStep.value = 1;
 }
 
-function loaderBadgeClass(loaderType: string): string {
-  switch (loaderType.toLowerCase()) {
-    case "fabric":
-      return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300";
-    case "forge":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
-    case "paper":
-      return "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300";
-    case "neoforge":
-      return "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300";
-    default:
-      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300";
+function openPublishDialog() {
+  resetPublishForm();
+  showPublishDialog.value = true;
+}
+
+function closePublishDialog() {
+  showPublishDialog.value = false;
+  resetPublishForm();
+}
+
+// Install modpack from server
+async function installModpack(server: ServerInfo) {
+  if (!server.packFileName) {
+    alert("This server does not have a modpack available");
+    return;
+  }
+  
+  installingServerId.value = server.id;
+  
+  try {
+    // Prompt for instance name
+    const instanceName = prompt("Enter a name for the new instance:", server.name);
+    if (!instanceName) {
+      return; // User cancelled
+    }
+    
+    const instancePath = await invoke<string>("install_server_modpack", {
+      serverId: String(server.id),
+      instanceName: instanceName,
+    });
+    
+    alert(`Modpack installed successfully to:\n${instancePath}`);
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+    console.error("Failed to install modpack:", e);
+    alert("Failed to install modpack: " + (e instanceof Error ? e.message : String(e)));
+  } finally {
+    installingServerId.value = null;
   }
 }
 </script>
@@ -177,7 +467,7 @@ function loaderBadgeClass(loaderType: string): string {
         </div>
       </div>
       <button
-        @click="showPublishDialog = true"
+        @click="openPublishDialog"
         class="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
       >
         <Plus class="h-4 w-4" />
@@ -185,7 +475,17 @@ function loaderBadgeClass(loaderType: string): string {
       </button>
     </div>
 
-    <!-- Filters -->
+    <!-- Error display -->
+    <div v-if="error" class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+      <p class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>
+    </div>
+
+    <!-- Loading state -->
+    <div v-if="isLoading && servers.length === 0" class="flex items-center justify-center py-12">
+      <Loader2 class="h-8 w-8 animate-spin text-primary" />
+    </div>
+
+    <!-- Filters - always visible, even while loading more -->
     <div class="flex flex-wrap gap-3 mb-6 p-4 bg-card rounded-lg border">
       <!-- Search -->
       <div class="relative flex-1 min-w-[200px]">
@@ -198,41 +498,42 @@ function loaderBadgeClass(loaderType: string): string {
         />
       </div>
       
-      <!-- MC Version Filter -->
+      <!-- MC Version Filter (Dynamic from API) -->
       <select
         v-model="filterMcVersion"
-        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
+        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white min-w-[120px]"
       >
         <option value="">{{ $t('servers.allVersions') }}</option>
-        <option v-for="version in mcVersions" :key="version" :value="version">
+        <option v-for="version in filterOptions.versions" :key="version" :value="version">
           {{ version }}
         </option>
       </select>
 
-      <!-- Loader Type Filter -->
+      <!-- Server Type Filter (Dynamic from API) -->
       <select
-        v-model="filterLoaderType"
-        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
+        v-model="filterServerType"
+        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white min-w-[120px]"
       >
-        <option value="">{{ $t('servers.allLoaders') }}</option>
-        <option v-for="loader in loaderTypes" :key="loader" :value="loader">
-          {{ loader }}
+        <option value="">All Types</option>
+        <option v-for="type in filterOptions.serverTypes" :key="type" :value="type">
+          {{ type === 'vanilla' ? 'Vanilla' : type === 'modded' ? 'Modded' : type === 'custom' ? 'Custom' : type }}
         </option>
       </select>
 
-      <!-- Online Mode Filter -->
+      <!-- Auth Type Filter (Dynamic from API) -->
       <select
-        v-model="filterOnlineMode"
-        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
+        v-model="filterAuthType"
+        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white min-w-[140px]"
       >
-        <option value="">{{ $t('servers.allModes') }}</option>
-        <option value="online">{{ $t('servers.onlineMode') }}</option>
-        <option value="offline">{{ $t('servers.offlineMode') }}</option>
+        <option value="">All Auth</option>
+        <option v-for="auth in filterOptions.authTypes" :key="auth" :value="auth">
+          {{ auth === 'microsoft' ? 'Microsoft Account' : auth === 'offline' ? 'Offline (Cracked)' : auth }}
+        </option>
       </select>
     </div>
 
     <!-- Server Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto">
+    <div v-if="servers.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto" @scroll="handleScroll">
       <div
         v-for="server in filteredServers"
         :key="server.id"
@@ -245,33 +546,34 @@ function loaderBadgeClass(loaderType: string): string {
           </div>
           <div class="flex-1 min-w-0">
             <h3 class="font-semibold truncate">{{ server.name }}</h3>
-            <p class="text-xs text-muted-foreground line-clamp-2">{{ server.description }}</p>
+            <p class="text-xs text-muted-foreground line-clamp-2">{{ server.motd }}</p>
           </div>
         </div>
 
         <!-- Server Info -->
         <div class="flex flex-wrap gap-2 mb-3">
           <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-zinc-100 dark:bg-zinc-800">
-            {{ server.mcVersion }}
+            {{ server.version }}
           </span>
+          <!-- Server Type Badge -->
           <span
             class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-            :class="loaderBadgeClass(server.loaderType)"
+            :class="{
+              'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300': server.serverType === 'vanilla',
+              'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300': server.serverType === 'modded',
+              'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300': server.serverType === 'custom'
+            }"
           >
-            {{ server.loaderType }}
+            {{ server.serverType === 'vanilla' ? 'Vanilla' : server.serverType === 'modded' ? 'Modded' : 'Custom Client' }}
           </span>
+          <!-- Auth Type Badge -->
           <span
+            v-if="server.authType"
             class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-            :class="server.onlineMode ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'"
+            :class="server.authType === 'microsoft' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'"
           >
-            {{ server.onlineMode ? $t('servers.onlineMode') : $t('servers.offlineMode') }}
+            {{ server.authType === 'microsoft' ? 'Microsoft' : 'Offline' }}
           </span>
-        </div>
-
-        <!-- Player Count -->
-        <div class="flex items-center gap-1 text-sm text-muted-foreground mb-3">
-          <Users class="h-4 w-4" />
-          <span>{{ $t('servers.players', { online: server.onlinePlayers, max: server.maxPlayers }) }}</span>
         </div>
 
         <!-- IP and Actions -->
@@ -287,10 +589,24 @@ function loaderBadgeClass(loaderType: string): string {
               <Copy v-else class="h-4 w-4 text-muted-foreground" />
             </button>
           </div>
-          <button class="flex items-center gap-1 text-sm text-primary hover:underline">
-            <ExternalLink class="h-4 w-4" />
-            {{ $t('servers.join') }}
-          </button>
+          <div class="flex items-center gap-2">
+            <!-- Install Client button (only for modded/custom servers with pack) -->
+            <button
+              v-if="server.packFileName && server.isActive"
+              @click="installModpack(server)"
+              :disabled="installingServerId === server.id"
+              class="flex items-center gap-1 text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400 disabled:opacity-50"
+              title="Install client with modpack"
+            >
+              <Loader2 v-if="installingServerId === server.id" class="h-4 w-4 animate-spin" />
+              <Download v-else class="h-4 w-4" />
+              Install
+            </button>
+            <button class="flex items-center gap-1 text-sm text-primary hover:underline">
+              <ExternalLink class="h-4 w-4" />
+              {{ $t('servers.join') }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -305,76 +621,277 @@ function loaderBadgeClass(loaderType: string): string {
     <!-- Publish Server Dialog -->
     <Teleport to="body">
       <div v-if="showPublishDialog" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="showPublishDialog = false"></div>
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="closePublishDialog"></div>
         <div class="relative z-10 w-full max-w-lg gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg pointer-events-auto">
+          <!-- Header with Progress -->
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">{{ $t('servers.publishTitle') }}</h3>
-            <button @click="showPublishDialog = false" class="text-muted-foreground hover:text-foreground text-lg">
+            <button @click="closePublishDialog" class="text-muted-foreground hover:text-foreground text-lg">
               ✕
             </button>
           </div>
-
-          <div class="space-y-4">
-            <!-- Server Name -->
-            <div class="space-y-1">
-              <label class="text-sm font-medium">{{ $t('servers.serverName') }}</label>
-              <input v-model="newServer.name" type="text" placeholder="My Awesome Server" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
-            </div>
-
-            <!-- IP and Port -->
-            <div class="flex gap-2">
-              <div class="flex-1 space-y-1">
-                <label class="text-sm font-medium">{{ $t('servers.ipAddress') }}</label>
-                <input v-model="newServer.ip" type="text" placeholder="play.myserver.net" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+          
+          <!-- Progress Steps -->
+          <div class="flex items-center justify-between mb-6">
+            <div v-for="step in totalSteps" :key="step" class="flex items-center flex-1">
+              <div 
+                class="flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium transition-colors"
+                :class="{
+                  'bg-primary text-primary-foreground': publishStep >= step,
+                  'bg-muted text-muted-foreground': publishStep < step
+                }"
+              >
+                <Check v-if="publishStep > step" class="h-4 w-4" />
+                <span v-else>{{ step }}</span>
               </div>
-              <div class="w-24 space-y-1">
-                <label class="text-sm font-medium">{{ $t('servers.port') }}</label>
-                <input v-model="newServer.port" type="text" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
-              </div>
-            </div>
-
-            <!-- Version and Loader -->
-            <div class="flex gap-2">
-              <div class="flex-1 space-y-1">
-                <label class="text-sm font-medium">{{ $t('servers.mcVersion') }}</label>
-                <select v-model="newServer.mcVersion" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
-                  <option value="">{{ $t('servers.selectVersion') }}</option>
-                  <option value="1.20.4">1.20.4</option>
-                  <option value="1.20.1">1.20.1</option>
-                  <option value="1.19.4">1.19.4</option>
-                  <option value="1.18.2">1.18.2</option>
-                </select>
-              </div>
-              <div class="flex-1 space-y-1">
-                <label class="text-sm font-medium">{{ $t('servers.loaderType') }}</label>
-                <select v-model="newServer.loaderType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
-                  <option value="Vanilla">Vanilla</option>
-                  <option value="Fabric">Fabric</option>
-                  <option value="Forge">Forge</option>
-                  <option value="Paper">Paper</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- Online Mode -->
-            <div class="flex items-center gap-2">
-              <input v-model="newServer.onlineMode" type="checkbox" id="onlineMode" class="rounded" />
-              <label for="onlineMode" class="text-sm font-medium">{{ $t('servers.requireOnline') }}</label>
-            </div>
-
-            <!-- Description -->
-            <div class="space-y-1">
-              <label class="text-sm font-medium">{{ $t('servers.description') }}</label>
-              <textarea v-model="newServer.description" placeholder="Describe your server..." class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 h-20 resize-none"></textarea>
+              <div v-if="step < totalSteps" class="flex-1 h-0.5 mx-2" :class="publishStep > step ? 'bg-primary' : 'bg-muted'"></div>
             </div>
           </div>
+          
+          <p class="text-xs text-muted-foreground mb-4">
+            Step {{ publishStep }} of {{ totalSteps }}: 
+            {{ publishStep === 1 ? 'Basic Info' : publishStep === 2 ? 'Version & Type' : publishStep === 3 ? 'Modpack (Optional)' : 'Review & Submit' }}
+          </p>
 
-          <div class="flex justify-end gap-2 mt-6">
-            <button @click="showPublishDialog = false" class="px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted transition-colors">
-              {{ $t('servers.cancel') }}
+          <div class="space-y-4">
+            <!-- Step 1: Basic Info -->
+            <template v-if="publishStep === 1">
+              <div class="space-y-1">
+                <label class="text-sm font-medium">Server Name <span class="text-red-500">*</span></label>
+                <input v-model="newServer.name" type="text" placeholder="My Awesome Server" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+              </div>
+              <div class="flex gap-2">
+                <div class="flex-1 space-y-1">
+                  <label class="text-sm font-medium">IP Address <span class="text-red-500">*</span></label>
+                  <input v-model="newServer.ip" type="text" placeholder="play.myserver.net" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                </div>
+                <div class="w-24 space-y-1">
+                  <label class="text-sm font-medium">Port</label>
+                  <input v-model.number="newServer.port" type="number" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                </div>
+              </div>
+            </template>
+
+            <!-- Step 2: Version & Type -->
+            <template v-if="publishStep === 2">
+              <!-- Minecraft Version (Searchable Combobox with Groups) -->
+              <div class="space-y-1">
+                <label class="text-sm font-medium">Minecraft Version <span class="text-red-500">*</span></label>
+                <div class="relative version-dropdown">
+                  <div 
+                    class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white cursor-pointer flex items-center justify-between"
+                    @click="showVersionDropdown = !showVersionDropdown; fetchMcVersions(); versionSearchQuery = ''"
+                  >
+                    <span :class="newServer.version ? 'text-neutral-900 dark:text-white' : 'text-neutral-400'">
+                      {{ newServer.version || ($t('servers.selectVersion') as string) }}
+                    </span>
+                    <ChevronDown class="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  
+                  <!-- Dropdown -->
+                  <div v-if="showVersionDropdown" class="absolute z-20 w-full mt-1 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md shadow-lg max-h-80 overflow-hidden">
+                    <!-- Search Input -->
+                    <div class="p-2 border-b border-neutral-200 dark:border-zinc-700">
+                      <div class="relative">
+                        <Search class="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <input 
+                          v-model="versionSearchQuery"
+                          type="text"
+                          placeholder="Search versions..."
+                          class="w-full pl-8 pr-3 py-1.5 text-sm bg-neutral-100 dark:bg-zinc-700 border-0 rounded text-neutral-900 dark:text-white placeholder:text-neutral-400"
+                          @click.stop
+                          autofocus
+                        />
+                      </div>
+                    </div>
+                    
+                    <!-- Loading State -->
+                    <div v-if="mcVersionsLoading" class="p-4 text-center">
+                      <Loader2 class="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
+                    </div>
+                    
+                    <!-- Error State -->
+                    <div v-else-if="mcVersionsError" class="p-4 text-center text-red-500 text-sm">
+                      {{ mcVersionsError }}
+                    </div>
+                    
+                    <!-- Version List (Grouped by Type) -->
+                    <div v-else class="max-h-64 overflow-y-auto">
+                      <!-- Release Versions -->
+                      <template v-if="groupedVersions.release.length > 0">
+                        <div class="px-3 py-1.5 text-xs font-semibold bg-muted text-muted-foreground">Release</div>
+                        <div
+                          v-for="v in groupedVersions.release"
+                          :key="v.id"
+                          class="px-3 py-2 cursor-pointer hover:bg-muted flex items-center justify-between"
+                          :class="newServer.version === v.id ? 'bg-primary/10' : ''"
+                          @click="selectVersion(v)"
+                        >
+                          <span class="text-neutral-900 dark:text-white">{{ v.id }}</span>
+                        </div>
+                      </template>
+                      
+                      <!-- Snapshot Versions -->
+                      <template v-if="groupedVersions.snapshot.length > 0">
+                        <div class="px-3 py-1.5 text-xs font-semibold bg-muted text-muted-foreground">Snapshot</div>
+                        <div
+                          v-for="v in groupedVersions.snapshot"
+                          :key="v.id"
+                          class="px-3 py-2 cursor-pointer hover:bg-muted flex items-center justify-between"
+                          :class="newServer.version === v.id ? 'bg-primary/10' : ''"
+                          @click="selectVersion(v)"
+                        >
+                          <span class="text-neutral-900 dark:text-white">{{ v.id }}</span>
+                        </div>
+                      </template>
+                      
+                      <!-- Old Beta Versions -->
+                      <template v-if="groupedVersions.old_beta.length > 0">
+                        <div class="px-3 py-1.5 text-xs font-semibold bg-muted text-muted-foreground">Old Beta</div>
+                        <div
+                          v-for="v in groupedVersions.old_beta"
+                          :key="v.id"
+                          class="px-3 py-2 cursor-pointer hover:bg-muted flex items-center justify-between"
+                          :class="newServer.version === v.id ? 'bg-primary/10' : ''"
+                          @click="selectVersion(v)"
+                        >
+                          <span class="text-neutral-900 dark:text-white">{{ v.id }}</span>
+                        </div>
+                      </template>
+                      
+                      <!-- Old Alpha Versions -->
+                      <template v-if="groupedVersions.old_alpha.length > 0">
+                        <div class="px-3 py-1.5 text-xs font-semibold bg-muted text-muted-foreground">Old Alpha</div>
+                        <div
+                          v-for="v in groupedVersions.old_alpha"
+                          :key="v.id"
+                          class="px-3 py-2 cursor-pointer hover:bg-muted flex items-center justify-between"
+                          :class="newServer.version === v.id ? 'bg-primary/10' : ''"
+                          @click="selectVersion(v)"
+                        >
+                          <span class="text-neutral-900 dark:text-white">{{ v.id }}</span>
+                        </div>
+                      </template>
+                      
+                      <div v-if="(groupedVersions.release.length + groupedVersions.snapshot.length + groupedVersions.old_beta.length + groupedVersions.old_alpha.length) === 0 && versionSearchQuery" class="p-4 text-center text-muted-foreground text-sm">
+                        No versions found
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="space-y-1">
+                <label class="text-sm font-medium">Server Type</label>
+                <select v-model="newServer.serverType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
+                  <option value="vanilla">Vanilla (Original)</option>
+                  <option value="modded">Mod Server (requires modpack)</option>
+                  <option value="custom">Custom Client (requires modpack)</option>
+                </select>
+                <p class="text-xs text-muted-foreground">
+                  {{ newServer.serverType === 'vanilla' ? 'Standard Minecraft server without mods' : 'Players can download and install a modpack to join' }}
+                </p>
+              </div>
+            </template>
+
+            <!-- Step 3: Modpack (Optional) -->
+            <template v-if="publishStep === 3">
+              <template v-if="needsPackFile(newServer.serverType)">
+                <div class="space-y-2">
+                  <label class="text-sm font-medium">Modpack ZIP File <span class="text-red-500">*</span></label>
+                  <div class="flex items-center gap-2">
+                    <button
+                      @click="selectPackFile"
+                      class="flex-1 px-3 py-2 text-sm border border-neutral-300 dark:border-zinc-700 rounded-md hover:bg-muted transition-colors text-left text-neutral-900 dark:text-white truncate"
+                    >
+                      {{ selectedPackFileName || "Select modpack ZIP file..." }}
+                    </button>
+                  </div>
+                  <p class="text-xs text-muted-foreground">Upload a CurseForge modpack ZIP file. Players can install this with one click.</p>
+                  <p v-if="isUploadingPack" class="text-xs text-blue-600 dark:text-blue-400">
+                    <Loader2 class="h-3 w-3 animate-spin inline mr-1" />
+                    Uploading modpack...
+                  </p>
+                </div>
+              </template>
+              <template v-else>
+                <div class="py-8 text-center">
+                  <Package class="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+                  <p class="text-muted-foreground">This is a Vanilla server, so no modpack is required.</p>
+                  <p class="text-xs text-muted-foreground mt-2">You can skip this step.</p>
+                </div>
+              </template>
+            </template>
+
+            <!-- Step 4: Review & Submit -->
+            <template v-if="publishStep === 4">
+              <div class="space-y-3 py-2">
+                <h4 class="font-medium text-neutral-900 dark:text-white">Review Your Server</h4>
+                <div class="bg-muted rounded-md p-3 space-y-2 text-sm">
+                  <div class="flex justify-between">
+                    <span class="text-muted-foreground">Name:</span>
+                    <span class="font-medium">{{ newServer.name }}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-muted-foreground">Address:</span>
+                    <span>{{ newServer.ip }}:{{ newServer.port }}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-muted-foreground">Version:</span>
+                    <span>{{ newServer.version }}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-muted-foreground">Type:</span>
+                    <span class="capitalize">{{ newServer.serverType }}</span>
+                  </div>
+                  <div v-if="selectedPackFileName" class="flex justify-between">
+                    <span class="text-muted-foreground">Modpack:</span>
+                    <span>{{ selectedPackFileName }}</span>
+                  </div>
+                </div>
+                
+                <!-- Admin Email -->
+                <div class="space-y-1 pt-2 border-t">
+                  <label class="text-sm font-medium">Admin Email <span class="text-red-500">*</span></label>
+                  <input v-model="newServer.email" type="email" placeholder="admin@example.com" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <p class="text-xs text-muted-foreground">Required for server management.</p>
+                </div>
+                
+                <!-- Error display -->
+                <div v-if="error" class="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+                  <p class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Navigation Buttons -->
+          <div class="flex justify-between gap-2 mt-6">
+            <button 
+              v-if="publishStep > 1" 
+              @click="publishStep--"
+              class="px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
+            >
+              Back
             </button>
-            <button @click="submitServer" class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors">
-              {{ $t('servers.submit') }}
+            <div v-else></div>
+            
+            <button 
+              v-if="publishStep < 4" 
+              @click="publishStep++"
+              :disabled="!canGoToStep(publishStep)"
+              class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              Next
+            </button>
+            <button 
+              v-else
+              @click="submitServer" 
+              :disabled="isSubmitting || isUploadingPack || !newServer.email"
+              class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              <Loader2 v-if="isSubmitting || isUploadingPack" class="h-4 w-4 animate-spin inline mr-2" />
+              {{ isUploadingPack ? 'Submitting...' : 'Submit Server' }}
             </button>
           </div>
         </div>
