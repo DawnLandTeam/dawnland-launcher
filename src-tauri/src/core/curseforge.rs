@@ -1,15 +1,16 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::modrinth::{UnifiedModProject, UnifiedModFile};
 
-/// CurseForge API configuration
-/// In production, this should be loaded from environment or config file
-const CURSEFORGE_API_BASE: &str = "https://api.curseforge.com/v1";
-
-/// Get the CurseForge API key. Uses a default key (which may be rate-limited or disabled).
-pub fn get_curseforge_api_key() -> String {
-    "***REMOVED***".to_string()
+/// Get the web backend URL from environment or use default.
+fn get_web_backend_url() -> String {
+    option_env!("WEB_BACKEND_URL")
+        .unwrap_or("http://localhost:8080")
+        .to_string()
 }
+
+/// CurseForge API path prefix on the web backend.
+const CURSEFORGE_PROXY_PATH: &str = "/api/curseforge";
 
 /// Game ID for Minecraft on CurseForge
 const CF_GAME_ID_MINECRAFT: i32 = 432;
@@ -94,7 +95,17 @@ pub struct CfFilesResponse {
 // API Functions
 // ============================================================================
 
-/// Search CurseForge mods
+/// Build the full URL to the web backend proxy.
+fn build_proxy_url(path: &str, query: Option<&str>) -> String {
+    let backend_url = get_web_backend_url();
+    let base = format!("{}{}", backend_url, CURSEFORGE_PROXY_PATH);
+    match query {
+        Some(q) => format!("{}{}?{}", base, path, q),
+        None => format!("{}{}", base, path),
+    }
+}
+
+/// Search CurseForge mods via the web backend proxy.
 #[tauri::command]
 pub async fn search_curseforge(
     query: String,
@@ -102,7 +113,7 @@ pub async fn search_curseforge(
     loader: String,
 ) -> Result<Vec<UnifiedModProject>, String> {
     tracing::info!(
-        "Searching CurseForge: query={}, mc_version={}, loader={}",
+        "Searching CurseForge via proxy: query={}, mc_version={}, loader={}",
         query,
         mc_version,
         loader
@@ -110,10 +121,9 @@ pub async fn search_curseforge(
 
     let mod_loader_type = CfModLoader::from_str(&loader) as i32;
 
-    // Build the search URL - force sortField=2 (Popularity) and sortOrder=desc
-    let search_url = format!(
-        "{}/mods/search?gameId={}&classId={}&searchFilter={}&gameVersion={}&modLoaderType={}&sortField=2&sortOrder=desc",
-        CURSEFORGE_API_BASE,
+    // Build query string for the proxy
+    let query_string = format!(
+        "gameId={}&classId={}&searchFilter={}&gameVersion={}&modLoaderType={}&sortField=2&sortOrder=desc",
         CF_GAME_ID_MINECRAFT,
         CF_CLASS_ID_MODS,
         urlencoding::encode(&query),
@@ -121,12 +131,12 @@ pub async fn search_curseforge(
         mod_loader_type
     );
 
-    tracing::info!("Searching CurseForge URL: {}", search_url);
+    let proxy_url = build_proxy_url("/mods/search", Some(&query_string));
+    tracing::info!("Proxy URL: {}", proxy_url);
 
     let client = reqwest::Client::new();
     let response = client
-        .get(&search_url)
-        .header("x-api-key", &get_curseforge_api_key())
+        .get(&proxy_url)
         .header("Accept", "application/json")
         .send()
         .await
@@ -139,7 +149,6 @@ pub async fn search_curseforge(
         return Err(format!("CurseForge API error: {}", status));
     }
 
-    // First get raw text so we can log it on failure
     let raw_text = response.text().await.map_err(|e| e.to_string())?;
 
     let search_result: CfSearchResponse = match serde_json::from_str(&raw_text) {
@@ -195,7 +204,7 @@ pub async fn search_curseforge(
     Ok(projects)
 }
 
-/// Get all compatible mod files from CurseForge
+/// Get all compatible mod files from CurseForge via the web backend proxy.
 #[tauri::command]
 pub async fn get_cf_mod_files(
     project_id: String,
@@ -203,15 +212,11 @@ pub async fn get_cf_mod_files(
     loader: String,
 ) -> Result<Vec<UnifiedModFile>, String> {
     tracing::info!(
-        "Getting CF mod files: project_id={}, mc_version={}, loader={}",
+        "Getting CF mod files via proxy: project_id={}, mc_version={}, loader={}",
         project_id,
         mc_version,
         loader
     );
-
-    let mod_id: i64 = project_id
-        .parse()
-        .map_err(|_| "Invalid project ID")?;
 
     let target_loader = loader.to_lowercase();
     let cf_loader_type = match target_loader.as_str() {
@@ -221,18 +226,22 @@ pub async fn get_cf_mod_files(
         _ => 0,
     };
 
-    // Fetch files for this mod, passing gameVersion and modLoaderType to filter API-side (bypasses pagination limit for old files)
-    let files_url = if cf_loader_type != 0 {
-        format!("{}/mods/{}/files?gameVersion={}&modLoaderType={}", CURSEFORGE_API_BASE, mod_id, mc_version, cf_loader_type)
+    // Build query string
+    let query_string = if cf_loader_type != 0 {
+        format!("gameVersion={}&modLoaderType={}", mc_version, cf_loader_type)
     } else {
-        format!("{}/mods/{}/files?gameVersion={}", CURSEFORGE_API_BASE, mod_id, mc_version)
+        format!("gameVersion={}", mc_version)
     };
-    tracing::info!("Fetching CF files from URL: {}", files_url);
+
+    let proxy_url = build_proxy_url(
+        &format!("/mods/{}/files", project_id),
+        Some(&query_string),
+    );
+    tracing::info!("Proxy URL: {}", proxy_url);
 
     let client = reqwest::Client::new();
     let response = client
-        .get(&files_url)
-        .header("x-api-key", &get_curseforge_api_key())
+        .get(&proxy_url)
         .header("Accept", "application/json")
         .send()
         .await
@@ -248,10 +257,6 @@ pub async fn get_cf_mod_files(
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    let target_loader = loader.to_lowercase();
-
-    tracing::info!("Looking for compatible file for project_id={}, target_version='{}', target_loader='{}'", project_id, mc_version, target_loader);
-
     // Sort by file ID descending (higher ID = newer)
     let mut sorted_files = files_result.data;
     sorted_files.sort_by(|a, b| b.id.cmp(&a.id));
@@ -259,55 +264,51 @@ pub async fn get_cf_mod_files(
     let mut compatible_files = Vec::new();
 
     for file in sorted_files {
-        // Since we pass gameVersion and modLoaderType to the CurseForge API,
-        // the API guarantees that the returned files are compatible.
-        // We don't need to manually filter game_versions or loaders (especially since the 'loaders' field may be empty/None).
-        if true {
-            if let Some(download_url) = file.download_url {
-                let release_str = match file.release_type {
-                    1 => "Release",
-                    2 => "Beta",
-                    3 => "Alpha",
-                    _ => "Unknown",
-                };
+        if let Some(download_url) = file.download_url {
+            let release_str = match file.release_type {
+                1 => "Release",
+                2 => "Beta",
+                3 => "Alpha",
+                _ => "Unknown",
+            };
 
-                compatible_files.push(UnifiedModFile {
-                    id: file.id.to_string(),
-                    filename: file.display_name.clone(),
-                    version_number: "".to_string(), // CurseForge files usually don't have a structured version string like Modrinth
-                    download_url,
-                    release_type: release_str.to_string(),
-                    date: file.file_date.clone(),
-                });
-            } else {
-                tracing::warn!("File {} matched but missing download_url!", file.id);
-            }
+            compatible_files.push(UnifiedModFile {
+                id: file.id.to_string(),
+                filename: file.display_name.clone(),
+                version_number: "".to_string(),
+                download_url,
+                release_type: release_str.to_string(),
+                date: file.file_date.clone(),
+            });
+        } else {
+            tracing::warn!("File {} matched but missing download_url!", file.id);
         }
     }
 
     if compatible_files.is_empty() {
-        tracing::error!("No compatible file found for project_id={}, target_version={}, target_loader={}", project_id, mc_version, target_loader);
+        tracing::error!(
+            "No compatible file found for project_id={}, target_version={}, target_loader={}",
+            project_id,
+            mc_version,
+            target_loader
+        );
         return Err("No compatible file found".to_string());
     }
 
     Ok(compatible_files)
 }
 
-/// Get detailed information about a specific mod
+/// Get detailed information about a specific mod via the web backend proxy.
 #[tauri::command]
 pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject, String> {
-    tracing::info!("Getting CF mod details: project_id={}", project_id);
+    tracing::info!("Getting CF mod details via proxy: project_id={}", project_id);
 
-    let mod_id: i64 = project_id
-        .parse()
-        .map_err(|_| "Invalid project ID")?;
-
-    let mod_url = format!("{}/mods/{}", CURSEFORGE_API_BASE, mod_id);
+    let proxy_url = build_proxy_url(&format!("/mods/{}", project_id), None);
+    tracing::info!("Proxy URL: {}", proxy_url);
 
     let client = reqwest::Client::new();
     let response = client
-        .get(&mod_url)
-        .header("x-api-key", &get_curseforge_api_key())
+        .get(&proxy_url)
         .header("Accept", "application/json")
         .send()
         .await
