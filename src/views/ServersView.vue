@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onActivated, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Server, Gamepad2, Plus, Search, ExternalLink, Copy, Check, Loader2, Download, Package, ChevronDown } from "@lucide/vue";
@@ -34,7 +35,7 @@ interface CreateServerInput {
   email: string;
 }
 
-// Vanilla version from Mojang API
+// {{ $t('servers.types.vanilla') }} version from Mojang API
 interface VanillaVersion {
   id: string;
   versionType: string;
@@ -63,6 +64,7 @@ interface ServerListResponse {
 }
 
 // State
+const { t } = useI18n();
 const servers = ref<ServerInfo[]>([]);
 const isLoading = ref(false);
 const isLoadingMore = ref(false);
@@ -383,7 +385,7 @@ async function submitServer() {
     // Refresh server list
     await fetchServers();
     showPublishDialog.value = false;
-    alert("Server submitted for review! It will be visible after approval.");
+    alert(t('servers.messages.submitted'));
     // Reset form
     resetPublishForm();
   } catch (e) {
@@ -424,7 +426,7 @@ function closePublishDialog() {
 // Install modpack from server
 async function installModpack(server: ServerInfo) {
   if (!server.packFileName) {
-    alert("This server does not have a modpack available");
+    alert(t('servers.messages.noModpack'));
     return;
   }
   
@@ -432,7 +434,7 @@ async function installModpack(server: ServerInfo) {
   
   try {
     // Prompt for instance name
-    const instanceName = prompt("Enter a name for the new instance:", server.name);
+    const instanceName = prompt(t('servers.messages.enterInstanceName'), server.name);
     if (!instanceName) {
       return; // User cancelled
     }
@@ -442,11 +444,11 @@ async function installModpack(server: ServerInfo) {
       instanceName: instanceName,
     });
     
-    alert(`Modpack installed successfully to:\n${instancePath}`);
+    alert(t('servers.messages.installSuccess').replace('{path}', instancePath));
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
     console.error("Failed to install modpack:", e);
-    alert("Failed to install modpack: " + (e instanceof Error ? e.message : String(e)));
+    alert(t('servers.messages.installFailed').replace('{error}', e instanceof Error ? e.message : String(e)));
   } finally {
     installingServerId.value = null;
   }
@@ -514,9 +516,9 @@ async function installModpack(server: ServerInfo) {
         v-model="filterServerType"
         class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white min-w-[120px]"
       >
-        <option value="">All Types</option>
+        <option value="">{{ $t('servers.filters.allTypes') }}</option>
         <option v-for="type in filterOptions.serverTypes" :key="type" :value="type">
-          {{ type === 'vanilla' ? 'Vanilla' : type === 'modded' ? 'Modded' : type === 'custom' ? 'Custom' : type }}
+          {{ type === 'vanilla' ? $t('servers.types.vanilla') : type === 'modded' ? $t('servers.types.modded') : type === 'custom' ? $t('servers.types.custom') : type }}
         </option>
       </select>
 
@@ -525,9 +527,9 @@ async function installModpack(server: ServerInfo) {
         v-model="filterAuthType"
         class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white min-w-[140px]"
       >
-        <option value="">All Auth</option>
+        <option value="">{{ $t('servers.filters.allAuth') }}</option>
         <option v-for="auth in filterOptions.authTypes" :key="auth" :value="auth">
-          {{ auth === 'microsoft' ? 'Microsoft Account' : auth === 'offline' ? 'Offline (Cracked)' : auth }}
+          {{ auth === 'microsoft' ? $t('servers.auth.microsoft') : auth === 'offline' ? $t('servers.auth.offline') : auth }}
         </option>
       </select>
     </div>
@@ -564,7 +566,7 @@ async function installModpack(server: ServerInfo) {
               'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300': server.serverType === 'custom'
             }"
           >
-            {{ server.serverType === 'vanilla' ? 'Vanilla' : server.serverType === 'modded' ? 'Modded' : 'Custom Client' }}
+            {{ server.serverType === 'vanilla' ? $t('servers.types.vanilla') : server.serverType === 'modded' ? $t('servers.types.modded') : $t('servers.types.custom') }}
           </span>
           <!-- Auth Type Badge -->
           <span
@@ -572,7 +574,7 @@ async function installModpack(server: ServerInfo) {
             class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
             :class="server.authType === 'microsoft' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'"
           >
-            {{ server.authType === 'microsoft' ? 'Microsoft' : 'Offline' }}
+            {{ server.authType === 'microsoft' ? $t('servers.auth.microsoftShort') : $t('servers.auth.offlineShort') }}
           </span>
         </div>
 
@@ -583,7 +585,7 @@ async function installModpack(server: ServerInfo) {
             <button
               @click="copyIp(server)"
               class="p-1 hover:bg-muted rounded transition-colors"
-              title="Copy IP"
+              title="{{ $t('servers.actions.copyIp') }}"
             >
               <Check v-if="copiedServerId === server.id" class="h-4 w-4 text-green-500" />
               <Copy v-else class="h-4 w-4 text-muted-foreground" />
@@ -596,7 +598,7 @@ async function installModpack(server: ServerInfo) {
               @click="installModpack(server)"
               :disabled="installingServerId === server.id"
               class="flex items-center gap-1 text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400 disabled:opacity-50"
-              title="Install client with modpack"
+              title="{{ $t('servers.actions.installClient') }}"
             >
               <Loader2 v-if="installingServerId === server.id" class="h-4 w-4 animate-spin" />
               <Download v-else class="h-4 w-4" />
@@ -649,24 +651,24 @@ async function installModpack(server: ServerInfo) {
           </div>
           
           <p class="text-xs text-muted-foreground mb-4">
-            Step {{ publishStep }} of {{ totalSteps }}: 
-            {{ publishStep === 1 ? 'Basic Info' : publishStep === 2 ? 'Version & Type' : publishStep === 3 ? 'Modpack (Optional)' : 'Review & Submit' }}
+            {{ $t('servers.publishDialog.stepOf', { step: publishStep, total: totalSteps }) }} 
+            {{ publishStep === 1 ? $t('servers.publishDialog.steps.basicInfo') : publishStep === 2 ? $t('servers.publishDialog.steps.versionType') : publishStep === 3 ? $t('servers.publishDialog.steps.modpack') : $t('servers.publishDialog.steps.review') }}
           </p>
 
           <div class="space-y-4">
             <!-- Step 1: Basic Info -->
             <template v-if="publishStep === 1">
               <div class="space-y-1">
-                <label class="text-sm font-medium">Server Name <span class="text-red-500">*</span></label>
-                <input v-model="newServer.name" type="text" placeholder="My Awesome Server" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                <label class="text-sm font-medium">{{ $t('servers.publishDialog.serverName') }} <span class="text-red-500">*</span></label>
+                <input v-model="newServer.name" type="text" :placeholder="$t('servers.publishDialog.serverNamePlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
               </div>
               <div class="flex gap-2">
                 <div class="flex-1 space-y-1">
-                  <label class="text-sm font-medium">IP Address <span class="text-red-500">*</span></label>
-                  <input v-model="newServer.ip" type="text" placeholder="play.myserver.net" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <label class="text-sm font-medium">{{ $t('servers.publishDialog.ipAddress') }} <span class="text-red-500">*</span></label>
+                  <input v-model="newServer.ip" type="text" :placeholder="$t('servers.publishDialog.ipPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
                 </div>
                 <div class="w-24 space-y-1">
-                  <label class="text-sm font-medium">Port</label>
+                  <label class="text-sm font-medium">{{ $t('servers.publishDialog.port') }}</label>
                   <input v-model.number="newServer.port" type="number" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
                 </div>
               </div>
@@ -676,7 +678,7 @@ async function installModpack(server: ServerInfo) {
             <template v-if="publishStep === 2">
               <!-- Minecraft Version (Searchable Combobox with Groups) -->
               <div class="space-y-1">
-                <label class="text-sm font-medium">Minecraft Version <span class="text-red-500">*</span></label>
+                <label class="text-sm font-medium">{{ $t('servers.publishDialog.mcVersion') }} <span class="text-red-500">*</span></label>
                 <div class="relative version-dropdown">
                   <div 
                     class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white cursor-pointer flex items-center justify-between"
@@ -697,7 +699,7 @@ async function installModpack(server: ServerInfo) {
                         <input 
                           v-model="versionSearchQuery"
                           type="text"
-                          placeholder="Search versions..."
+                          :placeholder="$t('servers.publishDialog.searchVersions')"
                           class="w-full pl-8 pr-3 py-1.5 text-sm bg-neutral-100 dark:bg-zinc-700 border-0 rounded text-neutral-900 dark:text-white placeholder:text-neutral-400"
                           @click.stop
                           autofocus
@@ -774,7 +776,7 @@ async function installModpack(server: ServerInfo) {
                       </template>
                       
                       <div v-if="(groupedVersions.release.length + groupedVersions.snapshot.length + groupedVersions.old_beta.length + groupedVersions.old_alpha.length) === 0 && versionSearchQuery" class="p-4 text-center text-muted-foreground text-sm">
-                        No versions found
+                        {{ $t('servers.publishDialog.noVersions') }}
                       </div>
                     </div>
                   </div>
@@ -782,14 +784,14 @@ async function installModpack(server: ServerInfo) {
               </div>
               
               <div class="space-y-1">
-                <label class="text-sm font-medium">Server Type</label>
+                <label class="text-sm font-medium">{{ $t('servers.publishDialog.serverType') }}</label>
                 <select v-model="newServer.serverType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
-                  <option value="vanilla">Vanilla (Original)</option>
-                  <option value="modded">Mod Server (requires modpack)</option>
-                  <option value="custom">Custom Client (requires modpack)</option>
+                  <option value="vanilla">{{ $t('servers.publishDialog.typeVanilla') }}</option>
+                  <option value="modded">{{ $t('servers.publishDialog.typeModded') }}</option>
+                  <option value="custom">{{ $t('servers.publishDialog.typeCustom') }}</option>
                 </select>
                 <p class="text-xs text-muted-foreground">
-                  {{ newServer.serverType === 'vanilla' ? 'Standard Minecraft server without mods' : 'Players can download and install a modpack to join' }}
+                  {{ newServer.serverType === 'vanilla' ? $t('servers.publishDialog.descVanilla') : $t('servers.publishDialog.descModded') }}
                 </p>
               </div>
             </template>
@@ -798,27 +800,27 @@ async function installModpack(server: ServerInfo) {
             <template v-if="publishStep === 3">
               <template v-if="needsPackFile(newServer.serverType)">
                 <div class="space-y-2">
-                  <label class="text-sm font-medium">Modpack ZIP File <span class="text-red-500">*</span></label>
+                  <label class="text-sm font-medium">{{ $t('servers.publishDialog.modpackZip') }} <span class="text-red-500">*</span></label>
                   <div class="flex items-center gap-2">
                     <button
                       @click="selectPackFile"
                       class="flex-1 px-3 py-2 text-sm border border-neutral-300 dark:border-zinc-700 rounded-md hover:bg-muted transition-colors text-left text-neutral-900 dark:text-white truncate"
                     >
-                      {{ selectedPackFileName || "Select modpack ZIP file..." }}
+                      {{ selectedPackFileName || $t('servers.publishDialog.selectZip') }}
                     </button>
                   </div>
-                  <p class="text-xs text-muted-foreground">Upload a CurseForge modpack ZIP file. Players can install this with one click.</p>
+                  <p class="text-xs text-muted-foreground">{{ $t('servers.publishDialog.uploadDesc') }}</p>
                   <p v-if="isUploadingPack" class="text-xs text-blue-600 dark:text-blue-400">
                     <Loader2 class="h-3 w-3 animate-spin inline mr-1" />
-                    Uploading modpack...
+                    {{ $t('servers.publishDialog.uploading') }}
                   </p>
                 </div>
               </template>
               <template v-else>
                 <div class="py-8 text-center">
                   <Package class="h-12 w-12 mx-auto text-muted-foreground mb-3" />
-                  <p class="text-muted-foreground">This is a Vanilla server, so no modpack is required.</p>
-                  <p class="text-xs text-muted-foreground mt-2">You can skip this step.</p>
+                  <p class="text-muted-foreground">{{ $t('servers.publishDialog.noModpackReq') }}</p>
+                  <p class="text-xs text-muted-foreground mt-2">{{ $t('servers.publishDialog.skipStep') }}</p>
                 </div>
               </template>
             </template>
@@ -826,35 +828,35 @@ async function installModpack(server: ServerInfo) {
             <!-- Step 4: Review & Submit -->
             <template v-if="publishStep === 4">
               <div class="space-y-3 py-2">
-                <h4 class="font-medium text-neutral-900 dark:text-white">Review Your Server</h4>
+                <h4 class="font-medium text-neutral-900 dark:text-white">{{ $t('servers.publishDialog.reviewTitle') }}</h4>
                 <div class="bg-muted rounded-md p-3 space-y-2 text-sm">
                   <div class="flex justify-between">
-                    <span class="text-muted-foreground">Name:</span>
+                    <span class="text-muted-foreground">{{ $t('servers.publishDialog.name') }}</span>
                     <span class="font-medium">{{ newServer.name }}</span>
                   </div>
                   <div class="flex justify-between">
-                    <span class="text-muted-foreground">Address:</span>
+                    <span class="text-muted-foreground">{{ $t('servers.publishDialog.address') }}</span>
                     <span>{{ newServer.ip }}:{{ newServer.port }}</span>
                   </div>
                   <div class="flex justify-between">
-                    <span class="text-muted-foreground">Version:</span>
+                    <span class="text-muted-foreground">{{ $t('servers.publishDialog.version') }}</span>
                     <span>{{ newServer.version }}</span>
                   </div>
                   <div class="flex justify-between">
-                    <span class="text-muted-foreground">Type:</span>
+                    <span class="text-muted-foreground">{{ $t('servers.publishDialog.type') }}</span>
                     <span class="capitalize">{{ newServer.serverType }}</span>
                   </div>
                   <div v-if="selectedPackFileName" class="flex justify-between">
-                    <span class="text-muted-foreground">Modpack:</span>
+                    <span class="text-muted-foreground">{{ $t('servers.publishDialog.modpack') }}</span>
                     <span>{{ selectedPackFileName }}</span>
                   </div>
                 </div>
                 
                 <!-- Admin Email -->
                 <div class="space-y-1 pt-2 border-t">
-                  <label class="text-sm font-medium">Admin Email <span class="text-red-500">*</span></label>
-                  <input v-model="newServer.email" type="email" placeholder="admin@example.com" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
-                  <p class="text-xs text-muted-foreground">Required for server management.</p>
+                  <label class="text-sm font-medium">{{ $t('servers.publishDialog.adminEmail') }} <span class="text-red-500">*</span></label>
+                  <input v-model="newServer.email" type="email" :placeholder="$t('servers.publishDialog.emailPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <p class="text-xs text-muted-foreground">{{ $t('servers.publishDialog.emailDesc') }}</p>
                 </div>
                 
                 <!-- Error display -->
@@ -891,7 +893,7 @@ async function installModpack(server: ServerInfo) {
               class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               <Loader2 v-if="isSubmitting || isUploadingPack" class="h-4 w-4 animate-spin inline mr-2" />
-              {{ isUploadingPack ? 'Submitting...' : 'Submit Server' }}
+              {{ isUploadingPack ? $t('servers.publishDialog.submitting') : $t('servers.publishDialog.submit') }}
             </button>
           </div>
         </div>
