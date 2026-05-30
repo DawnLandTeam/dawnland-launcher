@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Server, Gamepad2, Plus, Search, ExternalLink, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Wifi } from "@lucide/vue";
+import { Server, Gamepad2, Plus, Search, ExternalLink, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Wifi, Star } from "@lucide/vue";
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -321,6 +321,7 @@ function handleScroll(event: Event) {
 
 // Initial load
 onMounted(() => {
+  loadFavorites();
   fetchServers();
   fetchFilterOptions();
   // Close version dropdown when clicking outside
@@ -346,9 +347,35 @@ function handleClickOutside(e: MouseEvent) {
   }
 }
 
-// Client-side filtering for the recommended ecosystem lobby
+// Local Favorites State
+const favoriteServerIds = ref<number[]>([]);
+const showOnlyFavorites = ref(false);
+
+const loadFavorites = () => {
+  const saved = localStorage.getItem('dawnland_favorite_servers');
+  if (saved) {
+    try {
+      favoriteServerIds.value = JSON.parse(saved);
+    } catch (e) {
+      favoriteServerIds.value = [];
+    }
+  }
+};
+
+const toggleFavorite = (serverId: number, event: Event) => {
+  event.stopPropagation();
+  const index = favoriteServerIds.value.indexOf(serverId);
+  if (index > -1) {
+    favoriteServerIds.value.splice(index, 1);
+  } else {
+    favoriteServerIds.value.push(serverId);
+  }
+  localStorage.setItem('dawnland_favorite_servers', JSON.stringify(favoriteServerIds.value));
+};
+
+// Client-side filtering and sorting for the recommended ecosystem lobby
 const filteredServers = computed(() => {
-  return servers.value.filter(server => {
+  let list = servers.value.filter(server => {
     // Search match
     const searchMatch = !searchQuery.value || 
       server.name.toLowerCase().includes(searchQuery.value.toLowerCase()) || 
@@ -363,8 +390,20 @@ const filteredServers = computed(() => {
     // Auth match
     const authMatch = !filterAuthType.value || server.authType === filterAuthType.value;
     
-    return searchMatch && versionMatch && typeMatch && authMatch;
+    // Favorite match
+    const favoriteMatch = !showOnlyFavorites.value || favoriteServerIds.value.includes(server.id);
+    
+    return searchMatch && versionMatch && typeMatch && authMatch && favoriteMatch;
   });
+  
+  // Sort to bring favorites to top
+  list.sort((a, b) => {
+    const aFav = favoriteServerIds.value.includes(a.id) ? 1 : 0;
+    const bFav = favoriteServerIds.value.includes(b.id) ? 1 : 0;
+    return bFav - aFav;
+  });
+  
+  return list;
 });
 
 async function fetchServerStatus(server: ServerInfo) {
@@ -614,6 +653,16 @@ function cancelPrompt() {
           {{ auth === 'microsoft' ? $t('servers.auth.microsoft') : auth === 'offline' ? $t('servers.auth.offline') : auth }}
         </option>
       </select>
+
+      <!-- Show Only Favorites Filter -->
+      <button 
+        @click="showOnlyFavorites = !showOnlyFavorites"
+        class="flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors border"
+        :class="showOnlyFavorites ? 'bg-yellow-100 border-yellow-300 text-yellow-800 dark:bg-yellow-900/30 dark:border-yellow-700 dark:text-yellow-400' : 'bg-white dark:bg-zinc-800 border-neutral-300 dark:border-zinc-700 text-neutral-900 dark:text-white'"
+      >
+        <Star class="w-4 h-4" :class="{ 'fill-current': showOnlyFavorites }" />
+        {{ $t('servers.filters.favorites', 'Favorites') }}
+      </button>
     </div>
 
     <!-- Server Grid -->
@@ -621,10 +670,22 @@ function cancelPrompt() {
       <div
         v-for="server in filteredServers"
         :key="server.id"
-        class="group rounded-lg border bg-card p-4 hover:border-primary/50 transition-colors"
+        class="group relative rounded-lg border bg-card p-4 hover:border-primary/50 hover:shadow-md transition-all"
       >
+        <!-- Favorite Button -->
+        <button 
+          @click="toggleFavorite(server.id, $event)"
+          class="absolute top-3 right-3 p-1.5 rounded-full hover:bg-neutral-100 dark:hover:bg-zinc-800 transition-colors z-10"
+          :title="$t('servers.favorite', 'Favorite')"
+        >
+          <Star 
+            class="w-5 h-5 transition-all"
+            :class="favoriteServerIds.includes(server.id) ? 'text-yellow-500 fill-yellow-500 scale-110' : 'text-neutral-400 dark:text-neutral-500 group-hover:text-yellow-500'"
+          />
+        </button>
+
         <!-- Server Header -->
-        <div class="flex items-start gap-3 mb-3">
+        <div class="flex items-start gap-3 mb-3 pr-8">
           <div class="flex h-12 w-12 items-center justify-center rounded-lg bg-muted shrink-0">
             <Gamepad2 class="h-6 w-6 text-muted-foreground" />
           </div>
