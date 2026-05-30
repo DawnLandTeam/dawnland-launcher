@@ -374,7 +374,7 @@ function loaderBadgeClass(loaderType: string): string {
 
           <!-- Management actions -->
           <div class="mt-3 flex justify-end">
-            <DropdownMenu>
+            <DropdownMenu align="end">
               <template #trigger>
                 <button
                   class="flex items-center justify-center rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors"
@@ -544,18 +544,18 @@ function loaderBadgeClass(loaderType: string): string {
       :open="showDeleteDialog"
       @update:open="showDeleteDialog = $event"
     >
-      <AlertDialogTitle>Delete Instance?</AlertDialogTitle>
-      <AlertDialogDescription class="mt-2">
+      <AlertDialogTitle class="text-xl font-semibold text-neutral-900 dark:text-white">Delete Instance?</AlertDialogTitle>
+      <AlertDialogDescription class="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
         Are you sure you want to delete
-        <strong>{{ deletingInstanceName }}</strong
+        <strong class="text-neutral-900 dark:text-white">{{ deletingInstanceName }}</strong
         >? This will remove all instance data including saves, mods, and
         resource packs.
-        <span class="text-red-600 font-medium">This action cannot be undone.</span>
+        <span class="block mt-2 text-red-600 dark:text-red-500 font-medium">This action cannot be undone.</span>
       </AlertDialogDescription>
-      <div class="flex justify-end gap-2 mt-6">
+      <div class="flex justify-end gap-3 mt-6">
         <button
           @click="showDeleteDialog = false"
-          class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
+          class="px-4 py-2 text-sm font-medium border border-neutral-200 dark:border-zinc-700 rounded-md hover:bg-neutral-100 dark:hover:bg-zinc-800 text-neutral-900 dark:text-neutral-100 transition-colors"
           :disabled="isDeletingInstance"
         >
           Cancel
@@ -563,7 +563,7 @@ function loaderBadgeClass(loaderType: string): string {
         <button
           @click="deleteInstance"
           :disabled="isDeletingInstance"
-          class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+          class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 dark:bg-red-700 text-white rounded-md hover:bg-red-700 dark:hover:bg-red-600 disabled:opacity-50 transition-colors shadow-sm"
         >
           <Trash2 v-if="isDeletingInstance" class="h-4 w-4 animate-spin" />
           <Trash2 v-else class="h-4 w-4" />
