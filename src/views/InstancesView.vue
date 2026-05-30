@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onActivated } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
@@ -40,9 +40,12 @@ interface JavaInfo {
 
 // Router — deep-link support
 const route = useRoute();
+const router = useRouter();
 
 // State
 const showInstallModal = ref(false);
+const prefillVersion = ref("");
+const prefillLoader = ref("");
 const installedInstances = ref<InstanceItem[]>([]);
 
 // Settings modal state
@@ -95,6 +98,31 @@ watch(
   (newId) => {
     if (newId && typeof newId === "string") {
       openSettingsForInstance(newId);
+    }
+  },
+  { immediate: true },
+);
+
+// ---------------------------------------------------------------------------
+// Deep-link: route.query.install_version & install_loader
+// ---------------------------------------------------------------------------
+watch(
+  () => route.query,
+  (query) => {
+    if (query.install_version && typeof query.install_version === "string") {
+      prefillVersion.value = query.install_version;
+      if (query.install_loader && typeof query.install_loader === "string") {
+        prefillLoader.value = query.install_loader.toLowerCase();
+      } else {
+        prefillLoader.value = "vanilla";
+      }
+      showInstallModal.value = true;
+      
+      // Clean up the URL so a refresh doesn't trigger it again
+      const newQuery = { ...query };
+      delete newQuery.install_version;
+      delete newQuery.install_loader;
+      router.replace({ query: newQuery });
     }
   },
   { immediate: true },
@@ -387,6 +415,8 @@ function loaderBadgeClass(loaderType: string): string {
     <!-- Install Instance Modal -->
     <InstallInstanceModal
       v-model:open="showInstallModal"
+      :initial-version="prefillVersion"
+      :initial-loader="prefillLoader"
       @installed-success="refreshInstancesList"
     />
 
