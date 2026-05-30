@@ -110,6 +110,8 @@ pub struct LaunchConfig {
     pub main_class: String,
     pub jvm_args: Vec<String>,
     pub game_args: Vec<String>,
+    pub server_ip: Option<String>,
+    pub server_port: Option<u16>,
 }
 
 /// Instance-specific configuration stored in versions/<id>/dlml.json
@@ -791,6 +793,21 @@ pub fn parse_game_arguments(
             .replace("${ignoreList}", "");
     }
 
+    // Inject direct connection arguments if provided
+    if let (Some(ip), Some(port)) = (&config.server_ip, config.server_port) {
+        tracing::info!("Injecting direct connection arguments: --server {} --port {}", ip, port);
+        
+        // For older versions (pre-1.20)
+        args.push("--server".to_string());
+        args.push(ip.clone());
+        args.push("--port".to_string());
+        args.push(port.to_string());
+
+        // For newer versions (1.20+) which removed --server and --port
+        args.push("--quickPlayMultiplayer".to_string());
+        args.push(format!("{}:{}", ip, port));
+    }
+
     tracing::debug!("Parsed game args: {:?}", args);
     Ok(args)
 }
@@ -966,6 +983,8 @@ pub async fn launch_instance(
     app: AppHandle,
     version_id: String,
     account_uuid: String,
+    server_ip: Option<String>,
+    server_port: Option<u16>,
 ) -> Result<(), String> {
     tracing::info!("Launching instance {} with account {}", version_id, account_uuid);
 
@@ -1189,6 +1208,8 @@ pub async fn launch_instance(
         main_class: main_class.clone(),
         jvm_args: Vec::new(),
         game_args: Vec::new(),
+        server_ip,
+        server_port,
     };
 
     // Load instance configuration (for custom Java path)
