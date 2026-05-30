@@ -20,16 +20,16 @@ function onBackdropClick() {
       <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center">
         <!-- Backdrop -->
         <div
-          class="absolute inset-0 bg-background/80 backdrop-blur-sm"
+          class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
           @click="onBackdropClick"
         />
         <!-- Panel -->
         <div
-          class="relative z-10 w-full max-w-md border bg-card p-4 shadow-xl rounded-lg pointer-events-auto"
+          class="relative z-10 w-full max-w-md border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg pointer-events-auto"
         >
           <!-- Close button -->
           <button
-            class="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100"
+            class="absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 text-neutral-900 dark:text-white"
             @click="emit('update:open', false)"
           >
             <X class="h-4 w-4" />

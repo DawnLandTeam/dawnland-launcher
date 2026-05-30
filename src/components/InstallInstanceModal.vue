@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch, reactive } from "vue";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -9,6 +9,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "./ui/dialog";
+import InstallCard from "./InstallCard.vue";
 
 // Types
 interface VanillaVersion {
@@ -89,6 +90,82 @@ const error = ref<string | null>(null);
 // Track if we have more installation steps after current one
 const hasMoreSteps = ref<boolean>(false);
 
+// Define Conflict Matrix
+const CONFLICT_MATRIX: Record<string, string[]> = {
+  'Forge': ['Fabric', 'NeoForge', 'Quilt', 'Fabric API', 'QSL/QFAPI'],
+  'Fabric': ['Forge', 'NeoForge', 'Quilt', 'OptiFine'],
+  'NeoForge': ['Forge', 'Fabric', 'Quilt', 'OptiFine'],
+  'OptiFine': ['Fabric', 'NeoForge', 'Quilt'],
+};
+
+// Selected Components Matrix
+const selectedComponents = reactive<Record<string, string | null>>({
+  Forge: null,
+  Fabric: null,
+  NeoForge: null,
+  OptiFine: null,
+  'Fabric API': null,
+});
+
+const activeConfiguringComponent = ref<string | null>(null);
+
+function getConflictReason(target: string): string | undefined {
+  for (const [installedKey, installedValue] of Object.entries(selectedComponents)) {
+    if (installedValue !== null && CONFLICT_MATRIX[installedKey]?.includes(target)) {
+      return `与 ${installedKey} 不兼容`;
+    }
+  }
+  return undefined;
+}
+
+function getCardStatus(target: string): 'pending' | 'selected' | 'disabled' {
+  if (selectedComponents[target as keyof typeof selectedComponents]) return 'selected';
+  if (getConflictReason(target)) return 'disabled';
+  return 'pending';
+}
+
+function handleCardClick(target: string) {
+  activeConfiguringComponent.value = target;
+  if (target === 'Fabric') loadFabricLoaders();
+  else if (target === 'Forge') loadForgeLoaders();
+  else if (target === 'NeoForge') loadNeoForgeLoaders();
+  else if (target === 'OptiFine' || target === 'Fabric API') {
+    // Mock version selection for OptiFine and Fabric API
+    if (!selectedComponents[target as keyof typeof selectedComponents]) {
+       selectedComponents[target as keyof typeof selectedComponents] = 'Default Version (Mock)';
+    }
+  }
+}
+
+function removeComponent(target: string) {
+  selectedComponents[target as keyof typeof selectedComponents] = null;
+  if (activeConfiguringComponent.value === target) {
+    activeConfiguringComponent.value = null;
+  }
+}
+
+function mapComponentsToLegacyState() {
+  installModLoader.value = false;
+  selectedLoaderType.value = "fabric";
+  selectedFabricLoader.value = "";
+  selectedForgeLoader.value = "";
+  selectedNeoForgeLoader.value = "";
+
+  if (selectedComponents.Fabric) {
+    installModLoader.value = true;
+    selectedLoaderType.value = "fabric";
+    selectedFabricLoader.value = selectedComponents.Fabric;
+  } else if (selectedComponents.Forge) {
+    installModLoader.value = true;
+    selectedLoaderType.value = "forge";
+    selectedForgeLoader.value = selectedComponents.Forge;
+  } else if (selectedComponents.NeoForge) {
+    installModLoader.value = true;
+    selectedLoaderType.value = "neoforge";
+    selectedNeoForgeLoader.value = selectedComponents.NeoForge;
+  }
+}
+
 // Event unlisteners
 const unlisteners: UnlistenFn[] = [];
 
@@ -116,27 +193,12 @@ const sortedVersions = computed(() =>
   })
 );
 
-const latestFabricLoader = computed(() => {
-  return stableFabricLoaders.value.length > 0 ? stableFabricLoaders.value[0] : 
-         (unstableFabricLoaders.value.length > 0 ? unstableFabricLoaders.value[0] : "");
-});
 
 const canProceedToStep2 = computed(() => {
   return selectedVersion.value !== "";
 });
 
-const canProceedToStep3 = computed(() => {
-  if (!installModLoader.value) return true;
-  
-  if (selectedLoaderType.value === "fabric") {
-    return selectedFabricLoader.value !== "";
-  } else if (selectedLoaderType.value === "forge") {
-    return selectedForgeLoader.value !== "";
-  } else if (selectedLoaderType.value === "neoforge") {
-    return selectedNeoForgeLoader.value !== "";
-  }
-  return false;
-});
+const canProceedToStep3 = computed(() => true);
 
 const downloadProgressPercent = computed(() => {
   if (!installProgress.value?.totalTasks) return 0;
@@ -150,15 +212,12 @@ const downloadProgressPercent = computed(() => {
 // Generate default instance name based on selections
 function generateInstanceName(): string {
   if (!selectedVersion.value) return "";
-  
-  if (installModLoader.value) {
-    if (selectedLoaderType.value === "fabric" && selectedFabricLoader.value) {
-      return `Fabric-${selectedVersion.value}-${selectedFabricLoader.value}`;
-    } else if (selectedLoaderType.value === "forge" && selectedForgeLoader.value) {
-      return `Forge-${selectedVersion.value}-${selectedForgeLoader.value}`;
-    } else if (selectedLoaderType.value === "neoforge" && selectedNeoForgeLoader.value) {
-      return `NeoForge-${selectedVersion.value}-${selectedNeoForgeLoader.value}`;
-    }
+  if (selectedComponents.Fabric) {
+    return `Fabric-${selectedVersion.value}-${selectedComponents.Fabric}`;
+  } else if (selectedComponents.Forge) {
+    return `Forge-${selectedVersion.value}-${selectedComponents.Forge}`;
+  } else if (selectedComponents.NeoForge) {
+    return `NeoForge-${selectedVersion.value}-${selectedComponents.NeoForge}`;
   }
   return selectedVersion.value;
 }
@@ -223,17 +282,14 @@ function handleOpenChange(open: boolean) {
 }
 
 // Watch version changes to reset mod loader if version changes
-watch(selectedVersion, (newVal, oldVal) => {
+watch(selectedVersion, (_, oldVal) => {
   if (!oldVal) return; // Do not reset on initial initialization from props
-  installModLoader.value = false;
-  stableFabricLoaders.value = [];
-  unstableFabricLoaders.value = [];
-  selectedFabricLoader.value = "";
-  forgeLoaders.value = [];
-  selectedForgeLoader.value = "";
-  neoForgeLoaders.value = [];
-  selectedNeoForgeLoader.value = "";
-  customInstanceName.value = "";
+  activeConfiguringComponent.value = null;
+  selectedComponents.Forge = null;
+  selectedComponents.Fabric = null;
+  selectedComponents.NeoForge = null;
+  selectedComponents.OptiFine = null;
+  selectedComponents['Fabric API'] = null;
 });
 
 // Watch loader type changes to reload appropriate loaders
@@ -383,8 +439,9 @@ function goToStep2() {
 
 function goToStep3() {
   if (canProceedToStep3.value) {
+    mapComponentsToLegacyState();
     currentStep.value = 3;
-    customInstanceName.value = generateInstanceName();
+    if (!customInstanceName.value) customInstanceName.value = generateInstanceName();
     error.value = null;
   }
 }
@@ -680,212 +737,112 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Step 2: Optional Mod Loader -->
+    <!-- Step 2: Modular Installation Workbench -->
     <div v-if="currentStep === 2" class="space-y-4">
       <div class="flex items-center gap-2 text-lg font-medium text-neutral-900 dark:text-white">
         <Puzzle class="w-5 h-5" />
-        {{ t("install.step2Title") }}
+        模块化实例装配台
       </div>
+      <p class="text-sm text-muted-foreground">灵活组装你的 Mod 加载器和基础组件。系统会自动校验不兼容的组合。</p>
 
-      <!-- Toggle for mod loader -->
-      <div class="flex items-center gap-3 p-4 border rounded-lg">
-        <input
-          type="checkbox"
-          id="installModLoader"
-          v-model="installModLoader"
-          :disabled="isInstalling"
-          class="w-5 h-5 rounded border-gray-300 text-primary focus:ring-primary"
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <InstallCard
+          title="Forge"
+          iconUrl="/forge.png"
+          :status="getCardStatus('Forge')"
+          :version="selectedComponents.Forge || undefined"
+          :conflictReason="getConflictReason('Forge')"
+          @click="handleCardClick('Forge')"
+          @remove="removeComponent('Forge')"
+          @change="handleCardClick('Forge')"
         />
-        <label for="installModLoader" class="flex-1">
-          <span class="font-medium">{{ t("install.installModLoader") }}</span>
-          <p class="text-sm text-muted-foreground">
-            {{ t("install.installModLoaderDesc") }}
-          </p>
-        </label>
+        <InstallCard
+          title="Fabric"
+          iconUrl="/fabric.png"
+          :status="getCardStatus('Fabric')"
+          :version="selectedComponents.Fabric || undefined"
+          :conflictReason="getConflictReason('Fabric')"
+          @click="handleCardClick('Fabric')"
+          @remove="removeComponent('Fabric')"
+          @change="handleCardClick('Fabric')"
+        />
+        <InstallCard
+          title="NeoForge"
+          iconUrl="/neoforge.png"
+          :status="getCardStatus('NeoForge')"
+          :version="selectedComponents.NeoForge || undefined"
+          :conflictReason="getConflictReason('NeoForge')"
+          @click="handleCardClick('NeoForge')"
+          @remove="removeComponent('NeoForge')"
+          @change="handleCardClick('NeoForge')"
+        />
+        <InstallCard
+          title="OptiFine"
+          :status="getCardStatus('OptiFine')"
+          :version="selectedComponents.OptiFine || undefined"
+          :conflictReason="getConflictReason('OptiFine')"
+          @click="handleCardClick('OptiFine')"
+          @remove="removeComponent('OptiFine')"
+          @change="handleCardClick('OptiFine')"
+        />
+        <InstallCard
+          title="Fabric API"
+          :status="getCardStatus('Fabric API')"
+          :version="selectedComponents['Fabric API'] || undefined"
+          :conflictReason="getConflictReason('Fabric API')"
+          @click="handleCardClick('Fabric API')"
+          @remove="removeComponent('Fabric API')"
+          @change="handleCardClick('Fabric API')"
+        />
       </div>
 
-      <!-- Loader Type Selector (only when toggled) -->
-      <div v-if="installModLoader" class="space-y-3 animate-in fade-in slide-in-from-top-2">
-        <label class="text-sm font-medium">{{ t("install.modLoaderType") }}</label>
-        <div class="flex gap-2">
-          <button
-            @click="selectedLoaderType = 'fabric'; loadFabricLoaders()"
-            :disabled="isInstalling"
-            :class="[
-              'flex-1 py-2 px-3 rounded-md text-sm font-medium border transition-colors',
-              selectedLoaderType === 'fabric' 
-                ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300' 
-                : 'bg-white dark:bg-zinc-800 border-neutral-300 dark:border-zinc-700 text-neutral-600 dark:text-neutral-400 hover:bg-muted'
-            ]"
-          >
-            Fabric
-          </button>
-          <button
-            @click="selectedLoaderType = 'forge'; loadForgeLoaders()"
-            :disabled="isInstalling"
-            :class="[
-              'flex-1 py-2 px-3 rounded-md text-sm font-medium border transition-colors',
-              selectedLoaderType === 'forge' 
-                ? 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300' 
-                : 'bg-white dark:bg-zinc-800 border-neutral-300 dark:border-zinc-700 text-neutral-600 dark:text-neutral-400 hover:bg-muted'
-            ]"
-          >
-            Forge
-          </button>
-          <button
-            @click="selectedLoaderType = 'neoforge'; loadNeoForgeLoaders()"
-            :disabled="isInstalling"
-            :class="[
-              'flex-1 py-2 px-3 rounded-md text-sm font-medium border transition-colors',
-              selectedLoaderType === 'neoforge' 
-                ? 'bg-green-100 dark:bg-green-900/30 border-green-300 dark:border-green-700 text-green-700 dark:text-green-300' 
-                : 'bg-white dark:bg-zinc-800 border-neutral-300 dark:border-zinc-700 text-neutral-600 dark:text-neutral-400 hover:bg-muted'
-            ]"
-          >
-            NeoForge
-          </button>
-        </div>
-      </div>
-
-      <!-- Fabric Loader Selector -->
-      <div v-if="installModLoader && selectedLoaderType === 'fabric'" class="space-y-3 animate-in fade-in slide-in-from-top-2">
-        <div class="flex items-center justify-between">
-          <label class="text-sm font-medium">{{ t("install.fabricLoader") }}</label>
-          <button
-            @click="loadFabricLoaders"
-            :disabled="isLoadingFabric || !selectedVersion"
-            class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-          >
-            <RefreshCw
-              v-if="isLoadingFabric"
-              class="w-3.5 h-3.5 animate-spin"
-            />
-            <RefreshCw v-else class="w-3.5 h-3.5" /> {{ t("install.refresh") }} </button>
+      <!-- Active Configurator for selected card -->
+      <div v-if="activeConfiguringComponent" class="mt-4 p-4 border rounded-lg bg-neutral-50 dark:bg-zinc-800/50 animate-in fade-in slide-in-from-top-2">
+        <div class="flex items-center justify-between mb-3">
+          <label class="text-sm font-medium">请选择 {{ activeConfiguringComponent }} 版本</label>
         </div>
 
-        <select
-          v-model="selectedFabricLoader"
-          :disabled="isLoadingFabric || !selectedVersion"
-          class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
-        >
-          <option value="" disabled>{{ t("install.selectLoader") }}</option>
-          <optgroup v-if="stableFabricLoaders.length" :label="t('install.stable')">
-            <option
-              v-for="loader in stableFabricLoaders"
-              :key="loader"
-              :value="loader"
-            >
-              {{ loader }}
-            </option>
-          </optgroup>
-          <optgroup v-if="unstableFabricLoaders.length" :label="t('install.unstable')">
-            <option
-              v-for="loader in unstableFabricLoaders"
-              :key="loader"
-              :value="loader"
-            >
-              {{ loader }}
-            </option>
-          </optgroup>
-        </select>
+        <template v-if="activeConfiguringComponent === 'Fabric'">
+          <div v-if="isLoadingFabric" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> 加载中...</div>
+          <select v-else v-model="selectedComponents.Fabric" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm">
+            <option value="" disabled>请选择版本</option>
+            <optgroup v-if="stableFabricLoaders.length" label="Stable">
+              <option v-for="loader in stableFabricLoaders" :key="loader" :value="loader">{{ loader }}</option>
+            </optgroup>
+            <optgroup v-if="unstableFabricLoaders.length" label="Unstable">
+              <option v-for="loader in unstableFabricLoaders" :key="loader" :value="loader">{{ loader }}</option>
+            </optgroup>
+          </select>
+        </template>
 
-        <p v-if="stableFabricLoaders.length > 0 || unstableFabricLoaders.length > 0" class="text-xs text-muted-foreground">
-          {{ t("install.latest") }}: {{ latestFabricLoader }}
-        </p>
+        <template v-else-if="activeConfiguringComponent === 'Forge'">
+          <div v-if="isLoadingForge" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> 加载中...</div>
+          <select v-else v-model="selectedComponents.Forge" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm">
+            <option value="" disabled>请选择版本</option>
+            <option v-for="loader in forgeLoaders" :key="loader.version" :value="loader.version">{{ loader.version }}</option>
+          </select>
+        </template>
+
+        <template v-else-if="activeConfiguringComponent === 'NeoForge'">
+          <div v-if="isLoadingNeoForge" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> 加载中...</div>
+          <select v-else v-model="selectedComponents.NeoForge" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm">
+            <option value="" disabled>请选择版本</option>
+            <option v-for="loader in neoForgeLoaders" :key="loader.version" :value="loader.version">{{ loader.version }}</option>
+          </select>
+        </template>
+        
+        <template v-else>
+          <div class="text-sm text-muted-foreground">该模组暂无需配置具体版本，将在生成实例后自动下载。</div>
+        </template>
       </div>
 
-      <!-- Forge Loader Selector -->
-      <div v-if="installModLoader && selectedLoaderType === 'forge'" class="space-y-3 animate-in fade-in slide-in-from-top-2">
-        <div class="flex items-center justify-between">
-          <label class="text-sm font-medium">{{ t("install.forgeVersion") }}</label>
-          <button
-            @click="loadForgeLoaders"
-            :disabled="isLoadingForge || !selectedVersion"
-            class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-          >
-            <RefreshCw
-              v-if="isLoadingForge"
-              class="w-3.5 h-3.5 animate-spin"
-            />
-            <RefreshCw v-else class="w-3.5 h-3.5" /> {{ t("install.refresh") }} </button>
-        </div>
-
-        <select
-          v-model="selectedForgeLoader"
-          :disabled="isLoadingForge || !selectedVersion"
-          class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
-        >
-          <option value="" disabled>{{ t("install.selectForge") }}</option>
-          <option
-            v-for="loader in forgeLoaders"
-            :key="loader.version"
-            :value="loader.version"
-          >
-            {{ loader.version }}
-          </option>
-        </select>
-
-        <p v-if="forgeLoaders.length > 0" class="text-xs text-muted-foreground">
-          {{ t("install.availableVersions") }}: {{ forgeLoaders.length }}
-        </p>
-      </div>
-
-      <!-- NeoForge Loader Selector -->
-      <div v-if="installModLoader && selectedLoaderType === 'neoforge'" class="space-y-3 animate-in fade-in slide-in-from-top-2">
-        <div class="flex items-center justify-between">
-          <label class="text-sm font-medium">{{ t("install.neoforgeVersion") }}</label>
-          <button
-            @click="loadNeoForgeLoaders"
-            :disabled="isLoadingNeoForge || !selectedVersion"
-            class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-          >
-            <RefreshCw
-              v-if="isLoadingNeoForge"
-              class="w-3.5 h-3.5 animate-spin"
-            />
-            <RefreshCw v-else class="w-3.5 h-3.5" /> {{ t("install.refresh") }} </button>
-        </div>
-
-        <select
-          v-model="selectedNeoForgeLoader"
-          :disabled="isLoadingNeoForge || !selectedVersion"
-          class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
-        >
-          <option value="" disabled>{{ t("install.selectNeoforge") }}</option>
-          <option
-            v-for="loader in neoForgeLoaders"
-            :key="loader.version"
-            :value="loader.version"
-          >
-            {{ loader.version }}
-          </option>
-        </select>
-
-        <p v-if="neoForgeLoaders.length > 0" class="text-xs text-muted-foreground">
-          {{ t("install.availableVersions") }}: {{ neoForgeLoaders.length }}
-        </p>
-      </div>
-
-      <div class="flex justify-between">
-        <button
-          @click="goBackToStep1"
-          :disabled="isInstalling"
-          class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-        >
-          ← {{ t("install.back") }}
-        </button>
-        <button
-          @click="goToStep3"
-          :disabled="!canProceedToStep3"
-          class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
-        >
-          {{ t("install.next") }}
-          <span class="text-lg">→</span>
-        </button>
+      <div class="flex justify-between mt-6">
+        <button @click="goBackToStep1" class="px-3 py-1.5 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white font-medium">← 返回</button>
+        <button @click="goToStep3" class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors text-sm font-medium">下一步 <span class="text-lg">→</span></button>
       </div>
     </div>
 
-<!-- Step 3: Instance Name & Install -->
+    <!-- Step 3: Instance Name & Install -->
     <div v-if="currentStep === 3" class="space-y-4">
       <!-- Show summary when installing OR when installation is complete -->
       <div v-if="isInstalling" class="p-4 bg-muted/30 rounded-lg space-y-2">
@@ -924,42 +881,54 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="space-y-3">
-          <label class="text-sm font-medium">{{ t("install.instanceName") }}</label>
-          <input
-            v-model="customInstanceName"
-            type="text"
-            :placeholder="t('install.instanceNamePlaceholder')"
-            class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
-          />
-          <p class="text-xs text-muted-foreground">
-            {{ t("install.instanceNameDesc") }}
-          </p>
-        </div>
+        <template v-if="installProgress?.phase !== 'complete'">
+          <div class="space-y-3">
+            <label class="text-sm font-medium">{{ t("install.instanceName") }}</label>
+            <input
+              v-model="customInstanceName"
+              type="text"
+              :placeholder="t('install.instanceNamePlaceholder')"
+              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
+            />
+            <p class="text-xs text-muted-foreground">
+              {{ t("install.instanceNameDesc") }}
+            </p>
+          </div>
 
-        <!-- Install Button -->
-        <div class="flex items-center gap-3">
-          <button
-            @click="installVersion"
-            :disabled="!customInstanceName || isLoadingVersions"
-            class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
-          >
-            <Download class="w-4 h-4" />
-            <span>
-            {{ t("install.installInstance") }}
-          </span>
-          </button>
-        </div>
+          <!-- Install Button -->
+          <div class="flex items-center gap-3">
+            <button
+              @click="installVersion"
+              :disabled="!customInstanceName || isLoadingVersions"
+              class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+            >
+              <Download class="w-4 h-4" />
+              <span>
+              {{ t("install.installInstance") }}
+            </span>
+            </button>
+          </div>
 
-        <!-- Back Button -->
-        <div class="flex justify-start">
-          <button
-            @click="goBackToStep2"
-            class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            ← {{ t("install.back") }}
-          </button>
-        </div>
+          <!-- Back Button -->
+          <div class="flex justify-start mt-4">
+            <button
+              @click="goBackToStep2"
+              class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              ← {{ t("install.back") }}
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <div class="flex justify-end mt-4">
+            <button
+              @click="emit('update:open', false)"
+              class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors text-sm font-medium"
+            >
+              完成
+            </button>
+          </div>
+        </template>
       </template>
     </div>
 
