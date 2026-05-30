@@ -428,6 +428,43 @@ watch(servers, (newServers) => {
 });
 
 // Functions
+const isConnecting = ref<number | null>(null);
+
+async function launchAndConnect(server: ServerInfo) {
+  isConnecting.value = server.id;
+  error.value = null;
+  try {
+    const accounts = await invoke<{id: string, username: string}[]>("get_accounts");
+    if (!accounts || accounts.length === 0) {
+      error.value = "No accounts found. Please add an account in Settings first.";
+      isConnecting.value = null;
+      return;
+    }
+    const accountUuid = accounts[0].id;
+
+    const instances = await invoke<{id: string, mcVersion: string}[]>("scan_installed_instances");
+    const matchingInstance = instances.find(i => i.mcVersion === server.version);
+    
+    if (!matchingInstance) {
+      error.value = `No installed instance found for Minecraft ${server.version}. Please install it first.`;
+      isConnecting.value = null;
+      return;
+    }
+
+    await invoke("launch_instance", {
+      versionId: matchingInstance.id,
+      accountUuid,
+      serverIp: server.ip,
+      serverPort: server.port
+    });
+
+  } catch (e) {
+    console.error("Failed to launch and connect:", e);
+    error.value = `Failed to connect: ${e}`;
+  } finally {
+    isConnecting.value = null;
+  }
+}
 function copyIp(server: ServerInfo) {
   navigator.clipboard.writeText(`${server.ip}:${server.port}`);
   copiedServerId.value = server.id;
@@ -771,8 +808,13 @@ function cancelPrompt() {
               <Download v-else class="h-4 w-4" />
               Install
             </button>
-            <button class="flex items-center gap-1 text-sm text-primary hover:underline">
-              <ExternalLink class="h-4 w-4" />
+            <button 
+              @click="launchAndConnect(server)"
+              :disabled="isConnecting === server.id"
+              class="flex items-center gap-1.5 px-4 py-1.5 bg-primary text-primary-foreground text-sm font-bold rounded-md hover:bg-primary/90 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+            >
+              <Loader2 v-if="isConnecting === server.id" class="h-4 w-4 animate-spin" />
+              <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
               {{ $t('servers.join') }}
             </button>
           </div>
