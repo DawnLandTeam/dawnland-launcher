@@ -63,7 +63,7 @@ func GetServers(c *gin.Context) {
 
 	// Fetch paginated results
 	var servers []models.Server
-	result := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&servers)
+	result := query.Order("is_online DESC, id DESC").Offset(offset).Limit(pageSize).Find(&servers)
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch servers"})
 		return
@@ -76,6 +76,22 @@ func GetServers(c *gin.Context) {
 		"pageSize":   pageSize,
 		"totalPages": (total + int64(pageSize) - 1) / int64(pageSize),
 	})
+}
+
+// GetRecommendedServers returns active and online servers sorted strictly by heat DESC.
+func GetRecommendedServers(c *gin.Context) {
+	var servers []models.Server
+	result := database.DB.Model(&models.Server{}).
+		Where("is_active = ?", true).
+		Order("is_online DESC, heat DESC").
+		Find(&servers)
+
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch recommended servers"})
+		return
+	}
+
+	c.JSON(http.StatusOK, servers)
 }
 
 // GetPendingServers returns all pending (inactive) server entries for admin review with pagination.

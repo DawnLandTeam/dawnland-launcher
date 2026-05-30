@@ -5,6 +5,7 @@ import (
 
 	"web-backend/database"
 	"web-backend/handlers"
+	"web-backend/tasks"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -18,6 +19,9 @@ func main() {
 
 	// Initialize database.
 	database.InitDB()
+
+	// Start background SLP ping task.
+	tasks.StartPingTask()
 
 	// Create Gin router with sensible defaults.
 	r := gin.Default()
@@ -34,6 +38,7 @@ func main() {
 	servers := r.Group("/api/servers")
 	{
 		servers.GET("", handlers.GetServers)
+		servers.GET("/recommended", handlers.GetRecommendedServers)
 		servers.GET("/pending", handlers.GetPendingServers)
 		servers.GET("/filter-options", handlers.GetFilterOptions)
 		servers.GET("/ip/:ip", handlers.GetServerByIP)

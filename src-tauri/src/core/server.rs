@@ -96,6 +96,38 @@ pub async fn get_servers(
     Ok(result)
 }
 
+/// Fetch recommended servers from the Go backend.
+#[tauri::command]
+pub async fn get_recommended_servers() -> Result<Vec<Server>, String> {
+    tracing::info!("Fetching recommended servers");
+
+    let url = build_server_url("/recommended", None);
+    tracing::debug!("Server API URL: {}", url);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch recommended servers: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        tracing::error!("Server API error: {} - {}", status, body);
+        return Err(format!("Server API error: {}", status));
+    }
+
+    let result: Vec<Server> = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    tracing::info!("Fetched {} recommended servers", result.len());
+    Ok(result)
+}
+
 /// Fetch available filter options from the Go backend.
 #[tauri::command]
 pub async fn get_filter_options() -> Result<FilterOptionsResponse, String> {
