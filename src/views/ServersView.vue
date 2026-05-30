@@ -162,6 +162,21 @@ const newServer = ref<CreateServerInput>({
   email: "",
 });
 
+// Auto-split IP and Port when user pastes "domain:port"
+watch(() => newServer.value.ip, (newVal) => {
+  if (newVal && newVal.includes(':')) {
+    const parts = newVal.split(':');
+    if (parts.length === 2) {
+      const portStr = parts[1].trim();
+      const portNum = parseInt(portStr, 10);
+      if (!isNaN(portNum) && portNum >= 1 && portNum <= 65535) {
+        newServer.value.ip = parts[0].trim();
+        newServer.value.port = portNum;
+      }
+    }
+  }
+});
+
 // Pack file upload state
 const selectedPackFile = ref<string | null>(null);
 const selectedPackFileName = ref<string>("");
