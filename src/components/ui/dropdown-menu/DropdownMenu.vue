@@ -2,6 +2,12 @@
 import { ref, provide, onMounted, onBeforeUnmount } from "vue";
 import { DROPDOWN_OPEN_KEY, DROPDOWN_CLOSE_KEY } from "./shared";
 
+const props = withDefaults(defineProps<{
+  align?: "start" | "end" | "center";
+}>(), {
+  align: "start"
+});
+
 // --- DropdownMenu root ---
 const open = ref(false);
 
@@ -36,7 +42,12 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDocClick));
     <Transition name="dropdown">
       <div
         v-if="open"
-        class="absolute left-0 z-50 mt-1 w-full min-w-[10rem] overflow-hidden rounded-md border bg-white dark:bg-zinc-900 p-1 text-foreground shadow-md"
+        class="absolute z-50 mt-1 min-w-[10rem] overflow-hidden rounded-md border bg-white dark:bg-zinc-900 p-1 text-foreground shadow-md"
+        :class="[
+          props.align === 'start' ? 'left-0' : '',
+          props.align === 'end' ? 'right-0' : '',
+          props.align === 'center' ? 'left-1/2 -translate-x-1/2' : ''
+        ]"
       >
         <slot />
       </div>
