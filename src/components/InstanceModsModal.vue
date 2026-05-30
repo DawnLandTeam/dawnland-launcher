@@ -288,7 +288,7 @@ function getLoaderBadgeClass(loader: string): string {
           <button
             @click="activeTab = 'local'"
             :class="[
-              'flex-1 py-3 text-sm font-medium transition-colors border-b-2 -mb-px',
+              'flex-1 py-2 text-sm font-medium transition-colors border-b-2 -mb-px',
               activeTab === 'local'
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -300,7 +300,7 @@ function getLoaderBadgeClass(loader: string): string {
           <button
             @click="activeTab = 'browse'"
             :class="[
-              'flex-1 py-3 text-sm font-medium transition-colors border-b-2 -mb-px',
+              'flex-1 py-2 text-sm font-medium transition-colors border-b-2 -mb-px',
               activeTab === 'browse'
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -331,7 +331,7 @@ function getLoaderBadgeClass(loader: string): string {
               <p class="text-sm text-muted-foreground mb-4">Switch to "Browse & Download" to find mods for this instance.</p>
               <button
                 @click="activeTab = 'browse'"
-                class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                class="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
               >
                 Browse Mods
               </button>
@@ -412,7 +412,7 @@ function getLoaderBadgeClass(loader: string): string {
               <button
                 @click="searchMods"
                 :disabled="isLoadingSearch || !searchQuery.trim()"
-                class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors text-sm font-medium"
+                class="px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors text-sm font-medium"
               >
                 <Loader2 v-if="isLoadingSearch" class="h-4 w-4 animate-spin" />
                 <Search v-else class="h-4 w-4" />
@@ -501,7 +501,7 @@ function getLoaderBadgeClass(loader: string): string {
   </DialogContent>
   
   <!-- Version Selection Sub-Modal -->
-  <DialogContent :open="!!selectedModForVersionSelection" @update:open="!$event && (selectedModForVersionSelection = null)" class="max-w-md p-6">
+  <DialogContent :open="!!selectedModForVersionSelection" @update:open="!$event && (selectedModForVersionSelection = null)" class="max-w-md p-4">
     <DialogTitle>Select Version</DialogTitle>
     <DialogDescription>
       Choose which file of <span class="font-semibold text-neutral-900 dark:text-white">{{ selectedModForVersionSelection?.title }}</span> to install.
@@ -534,14 +534,14 @@ function getLoaderBadgeClass(loader: string): string {
       <div class="flex justify-end gap-2 pt-4 border-t">
         <button 
           @click="selectedModForVersionSelection = null" 
-          class="px-4 py-2 border rounded-md text-sm font-medium hover:bg-muted transition-colors"
+          class="px-3 py-1.5 border rounded-md text-sm font-medium hover:bg-muted transition-colors"
         >
           Cancel
         </button>
         <button 
           @click="confirmInstallMod" 
           :disabled="!selectedModFileId || isConfirmingInstall" 
-          class="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors flex items-center gap-2"
+          class="px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors flex items-center gap-2"
         >
           <Loader2 v-if="isConfirmingInstall" class="h-4 w-4 animate-spin" />
           Download

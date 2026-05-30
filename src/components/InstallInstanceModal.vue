@@ -543,38 +543,44 @@ onUnmounted(() => {
     </DialogDescription>
 
     <!-- Step Indicator -->
-    <div class="flex items-center justify-center gap-2 py-4">
+    <div class="flex items-center justify-center gap-2 py-2">
       <div 
         :class="[
-          'flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium',
-          currentStep >= 1 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+          'flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold transition-all',
+          currentStep === 1 ? 'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2 dark:ring-offset-zinc-900' :
+          currentStep > 1 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
         ]"
       >
-        1
+        <Check v-if="currentStep > 1" class="w-4 h-4" />
+        <span v-else>1</span>
       </div>
-      <div :class="['h-0.5 w-8', currentStep >= 2 ? 'bg-primary' : 'bg-muted']" />
+      <div :class="['h-0.5 w-8 transition-colors', currentStep >= 2 ? 'bg-primary' : 'bg-muted']" />
       <div 
         :class="[
-          'flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium',
-          currentStep >= 2 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+          'flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold transition-all',
+          currentStep === 2 ? 'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2 dark:ring-offset-zinc-900' :
+          currentStep > 2 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
         ]"
       >
-        2
+        <Check v-if="currentStep > 2" class="w-4 h-4" />
+        <span v-else>2</span>
       </div>
-      <div :class="['h-0.5 w-8', currentStep >= 3 ? 'bg-primary' : 'bg-muted']" />
+      <div :class="['h-0.5 w-8 transition-colors', currentStep >= 3 ? 'bg-primary' : 'bg-muted']" />
       <div 
         :class="[
-          'flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium',
-          currentStep >= 3 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+          'flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold transition-all',
+          currentStep === 3 ? 'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2 dark:ring-offset-zinc-900' :
+          currentStep > 3 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
         ]"
       >
-        3
+        <Check v-if="currentStep > 3" class="w-4 h-4" />
+        <span v-else>3</span>
       </div>
     </div>
 
     <!-- Step 1: Base Minecraft Version -->
     <div v-if="currentStep === 1" class="space-y-4">
-      <div class="flex items-center gap-2 text-lg font-medium text-neutral-900 dark:text-white">
+      <div class="flex items-center gap-2 text-lg font-semibold text-neutral-900 dark:text-white">
         <Box class="w-5 h-5" />
         {{ t("install.step1Title") }}
       </div>
@@ -642,7 +648,7 @@ onUnmounted(() => {
         <button
           @click="goToStep2"
           :disabled="!canProceedToStep2"
-          class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+          class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
         >
           {{ t("install.next") }}
           <span class="text-lg">→</span>
@@ -840,14 +846,14 @@ onUnmounted(() => {
         <button
           @click="goBackToStep1"
           :disabled="isInstalling"
-          class="px-4 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+          class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
         >
           ← {{ t("install.back") }}
         </button>
         <button
           @click="goToStep3"
           :disabled="!canProceedToStep3"
-          class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+          class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
         >
           {{ t("install.next") }}
           <span class="text-lg">→</span>
@@ -912,7 +918,7 @@ onUnmounted(() => {
           <button
             @click="installVersion"
             :disabled="!customInstanceName || isLoadingVersions"
-            class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+            class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
           >
             <Download class="w-4 h-4" />
             <span>
@@ -925,7 +931,7 @@ onUnmounted(() => {
         <div class="flex justify-start">
           <button
             @click="goBackToStep2"
-            class="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             ← {{ t("install.back") }}
           </button>

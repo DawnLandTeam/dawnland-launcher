@@ -179,7 +179,7 @@ function getLoaderBadgeClass(loader: string): string {
 </script>
 
 <template>
-  <div class="flex h-full flex-col p-6">
+  <div class="flex h-full flex-col p-4">
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-3">
@@ -200,7 +200,7 @@ function getLoaderBadgeClass(loader: string): string {
         <button
           @click="selectedSource = 'modrinth'"
           :class="[
-            'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+            'flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
             selectedSource === 'modrinth'
               ? 'bg-green-600 text-white'
               : 'bg-muted text-muted-foreground hover:bg-muted/80'
@@ -212,7 +212,7 @@ function getLoaderBadgeClass(loader: string): string {
         <button
           @click="selectedSource = 'curseforge'"
           :class="[
-            'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+            'flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
             selectedSource === 'curseforge'
               ? 'bg-orange-600 text-white'
               : 'bg-muted text-muted-foreground hover:bg-muted/80'
@@ -231,14 +231,14 @@ function getLoaderBadgeClass(loader: string): string {
             v-model="searchQuery"
             type="text"
             :placeholder="`Search mods on ${selectedSource === 'modrinth' ? 'Modrinth' : 'CurseForge'}...`"
-            class="w-full pl-10 pr-4 py-3 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-lg text-base text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary"
+            class="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-lg text-base text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary"
             @keyup.enter="searchMods"
           />
         </div>
         <button
           @click="searchMods"
           :disabled="isSearching || !searchQuery.trim()"
-          class="px-6 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          class="px-6 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           <Loader2 v-if="isSearching" class="h-5 w-5 animate-spin" />
           <Search v-else class="h-5 w-5" />
@@ -402,7 +402,7 @@ function getLoaderBadgeClass(loader: string): string {
     <Teleport to="body">
       <div v-if="selectedMod" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="selectedMod = null"></div>
-        <div class="relative z-10 w-full max-w-lg gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg pointer-events-auto max-h-[80vh] overflow-y-auto">
+        <div class="relative z-10 w-full max-w-lg gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg pointer-events-auto max-h-[80vh] overflow-y-auto">
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">Mod Details</h3>
             <button @click="selectedMod = null" class="text-muted-foreground hover:text-foreground text-lg">
@@ -484,14 +484,14 @@ function getLoaderBadgeClass(loader: string): string {
           <div class="flex justify-end gap-2 pt-4 border-t">
             <button
               @click="selectedMod = null"
-              class="px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
+              class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
             >
               Close
             </button>
             <button
               @click="downloadMod(selectedMod)"
               :disabled="isLoadingDownloadUrl || isDownloading"
-              class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
             >
               <Loader2 v-if="isLoadingDownloadUrl" class="h-4 w-4 animate-spin" />
               <Download v-else class="h-4 w-4" />
