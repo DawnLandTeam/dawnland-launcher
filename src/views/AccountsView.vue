@@ -191,7 +191,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex h-full flex-col p-6 gap-6 overflow-y-auto">
+  <div class="flex h-full flex-col p-4 gap-4 overflow-y-auto">
     <!-- Header -->
     <div>
       <h1 class="text-2xl font-bold">{{ $t('accounts.title') }}</h1>
@@ -202,7 +202,7 @@ onMounted(() => {
     <div class="flex items-center justify-between">
       <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.saved', { count: accounts.length }) }}</h2>
       <button
-        class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        class="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         @click="selectedAccountType = 'offline'; openAddAccountModal()"
       >
         <Plus :size="16" />
@@ -291,7 +291,7 @@ onMounted(() => {
           class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
           @click="closeAddAccountModal"
         />
-        <div class="relative z-10 w-full max-w-md gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg pointer-events-auto">
+        <div class="relative z-10 w-full max-w-md gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg pointer-events-auto">
           <!-- Header -->
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.add') }}</h3>
@@ -343,7 +343,7 @@ onMounted(() => {
               @keyup.enter="addOfflineAccount"
             />
             <button
-              class="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              class="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-1.5.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               :disabled="isAddingOffline || !newUsername.trim()"
               @click="addOfflineAccount"
             >
@@ -358,7 +358,7 @@ onMounted(() => {
             <!-- Not logging in -->
             <div v-if="!isLoggingInMicrosoft && !microsoftLoginData">
               <button
-                class="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+                class="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-1.5.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
                 @click="startMicrosoftLogin"
               >
                 <UserPlus :size="16" />
@@ -399,7 +399,7 @@ onMounted(() => {
             </div>
 
             <!-- Waiting for poll -->
-            <div v-else class="flex items-center justify-center gap-2 py-4 text-sm text-neutral-500">
+            <div v-else class="flex items-center justify-center gap-2 py-2 text-sm text-neutral-500">
               <Loader2 :size="16" class="animate-spin" />
               {{ $t('accounts.preparing') }}
             </div>
@@ -423,7 +423,7 @@ onMounted(() => {
           class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
           @click="showDeleteDialog = false"
         />
-        <div class="relative z-10 w-full max-w-sm gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg pointer-events-auto">
+        <div class="relative z-10 w-full max-w-sm gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg pointer-events-auto">
           <div class="flex items-center gap-3 mb-4">
             <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
               <AlertCircle :size="20" class="text-red-600 dark:text-red-400" />
@@ -437,13 +437,13 @@ onMounted(() => {
           </p>
           <div class="flex justify-end gap-2">
             <button
-              class="px-4 py-2 text-sm font-medium border rounded-lg hover:bg-muted transition-colors"
+              class="px-3 py-1.5 text-sm font-medium border rounded-lg hover:bg-muted transition-colors"
               @click="showDeleteDialog = false"
             >
               {{ $t('accounts.cancel') }}
             </button>
             <button
-              class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
               @click="removeAccount"
             >
               <Trash2 :size="14" />

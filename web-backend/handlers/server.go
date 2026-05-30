@@ -131,11 +131,11 @@ func CreateServer(c *gin.Context) {
 		return
 	}
 
-	// Check for duplicate IP address (including soft-deleted records)
+	// Check for duplicate IP address and Port (including soft-deleted records)
 	var existingCount int64
-	database.DB.Unscoped().Model(&models.Server{}).Where("ip = ?", input.IP).Count(&existingCount)
+	database.DB.Unscoped().Model(&models.Server{}).Where("ip = ? AND port = ?", input.IP, input.Port).Count(&existingCount)
 	if existingCount > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "Server with this IP address already exists"})
+		c.JSON(http.StatusConflict, gin.H{"error": "Server with this IP address and Port already exists"})
 		return
 	}
 
@@ -231,12 +231,21 @@ func UpdateServer(c *gin.Context) {
 		return
 	}
 
-	// If IP is being changed, check for duplicates
-	if input.IP != nil && *input.IP != server.IP {
+	// If IP or Port is being changed, check for duplicates
+	newIP := server.IP
+	if input.IP != nil {
+		newIP = *input.IP
+	}
+	newPort := server.Port
+	if input.Port != nil {
+		newPort = *input.Port
+	}
+
+	if newIP != server.IP || newPort != server.Port {
 		var existingCount int64
-		database.DB.Unscoped().Model(&models.Server{}).Where("ip = ? AND id != ?", *input.IP, server.ID).Count(&existingCount)
+		database.DB.Unscoped().Model(&models.Server{}).Where("ip = ? AND port = ? AND id != ?", newIP, newPort, server.ID).Count(&existingCount)
 		if existingCount > 0 {
-			c.JSON(http.StatusConflict, gin.H{"error": "Server with this IP address already exists"})
+			c.JSON(http.StatusConflict, gin.H{"error": "Server with this IP address and Port already exists"})
 			return
 		}
 	}

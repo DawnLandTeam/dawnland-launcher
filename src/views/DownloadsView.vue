@@ -153,7 +153,7 @@ onUnmounted(() => {
     <p class="text-sm text-neutral-500">Phase 3 — Download Engine Test</p>
 
     <button
-      class="w-fit rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+      class="w-fit rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
       :disabled="isDownloading"
       @click="startTestDownload"
     >

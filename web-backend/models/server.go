@@ -13,8 +13,8 @@ type Server struct {
 	UpdatedAt    time.Time      `json:"updatedAt"`
 	DeletedAt    gorm.DeletedAt `json:"deletedAt,omitempty" gorm:"index"`
 	Name         string         `json:"name"`
-	IP           string         `json:"ip" gorm:"uniqueIndex"` // IP address must be unique
-	Port         int            `json:"port"`
+	IP           string         `json:"ip" gorm:"uniqueIndex:idx_ip_port"`
+	Port         int            `json:"port" gorm:"uniqueIndex:idx_ip_port"`
 	Motd         string         `json:"motd"`
 	Version      string         `json:"version"`
 	LoaderType   string         `json:"loaderType"`             // Server loader: Vanilla, Fabric, Forge, Paper, etc.

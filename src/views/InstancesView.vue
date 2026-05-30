@@ -272,7 +272,7 @@ function loaderBadgeClass(loaderType: string): string {
     <!-- Empty State -->
     <div
       v-if="installedInstances.length === 0"
-      class="flex flex-1 flex-col items-center justify-center gap-4 p-6"
+      class="flex flex-1 flex-col items-center justify-center gap-4 p-4"
     >
       <div
         class="flex h-20 w-20 items-center justify-center rounded-2xl bg-muted"
@@ -295,7 +295,7 @@ function loaderBadgeClass(loaderType: string): string {
     </div>
 
     <!-- List State -->
-    <div v-else class="flex flex-1 flex-col p-6 space-y-6">
+    <div v-else class="flex flex-1 flex-col p-4 space-y-6">
       <!-- Header -->
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
@@ -309,7 +309,7 @@ function loaderBadgeClass(loaderType: string): string {
         </div>
         <button
           @click="showInstallModal = true"
-          class="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          class="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           <Plus class="h-4 w-4" />
           {{ $t('instances.add') }}
@@ -494,14 +494,14 @@ function loaderBadgeClass(loaderType: string): string {
           <div class="flex justify-end gap-2 mt-6">
             <button
               @click="showSettingsModal = false"
-              class="px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
+              class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
             >
               Cancel
             </button>
             <button
               @click="saveSettings"
               :disabled="isSavingConfig"
-              class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
             >
               <Save class="h-4 w-4" />
               Save
@@ -525,7 +525,7 @@ function loaderBadgeClass(loaderType: string): string {
       <div class="flex justify-end gap-2 mt-6">
         <button
           @click="showDeleteDialog = false"
-          class="px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
+          class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
           :disabled="isDeletingInstance"
         >
           Cancel
@@ -533,7 +533,7 @@ function loaderBadgeClass(loaderType: string): string {
         <button
           @click="deleteInstance"
           :disabled="isDeletingInstance"
-          class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+          class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
         >
           <Trash2 v-if="isDeletingInstance" class="h-4 w-4 animate-spin" />
           <Trash2 v-else class="h-4 w-4" />
