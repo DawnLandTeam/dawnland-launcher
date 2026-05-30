@@ -102,6 +102,7 @@ pub fn run() {
             core::modrinth::get_modrinth_mod_versions,
             // Server commands (proxies to Go web backend)
             core::server::get_servers,
+            core::server::get_recommended_servers,
             core::server::get_server,
             core::server::create_server,
             core::server::update_server,
