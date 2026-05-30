@@ -53,6 +53,8 @@ interface LoaderVersionList {
 // Props & Emits - Using explicit props for compatibility
 const props = defineProps<{
   open: boolean;
+  initialVersion?: string;
+  initialLoader?: string;
 }>();
 
 const emit = defineEmits<{
@@ -162,13 +164,18 @@ function generateInstanceName(): string {
 }
 
 // When dialog opens, load versions if not yet loaded
-watch(() => props.open, (isOpen) => {
+watch(() => props.open, async (isOpen) => {
   if (isOpen) {
     // Reset ALL state - critical for proper reopen
     currentStep.value = 1;
-    selectedVersion.value = "";
-    installModLoader.value = false;
-    selectedLoaderType.value = "fabric";
+    selectedVersion.value = props.initialVersion || "";
+    if (props.initialLoader && props.initialLoader !== "vanilla") {
+      installModLoader.value = true;
+      selectedLoaderType.value = props.initialLoader as any;
+    } else {
+      installModLoader.value = false;
+      selectedLoaderType.value = "fabric";
+    }
     stableFabricLoaders.value = [];
     unstableFabricLoaders.value = [];
     selectedFabricLoader.value = "";
@@ -185,10 +192,26 @@ watch(() => props.open, (isOpen) => {
     
     // Load versions
     if (versions.value.length === 0) {
-      loadVersions();
+      await loadVersions();
+      // Ensure the pre-filled version gets selected if available
+      if (props.initialVersion) {
+        selectedVersion.value = props.initialVersion;
+      }
+    }
+
+    // Auto-jump to step 3 if this is an auto-install flow
+    if (props.initialVersion) {
+      if (installModLoader.value) {
+        if (selectedLoaderType.value === "fabric") await loadFabricLoaders();
+        else if (selectedLoaderType.value === "forge") await loadForgeLoaders();
+        else if (selectedLoaderType.value === "neoforge") await loadNeoForgeLoaders();
+      } else {
+        customInstanceName.value = generateInstanceName();
+      }
+      currentStep.value = 3;
     }
   }
-});
+}, { immediate: true });
 
 // Prevent closing dialog during installation
 function handleOpenChange(open: boolean) {
@@ -200,7 +223,8 @@ function handleOpenChange(open: boolean) {
 }
 
 // Watch version changes to reset mod loader if version changes
-watch(selectedVersion, () => {
+watch(selectedVersion, (newVal, oldVal) => {
+  if (!oldVal) return; // Do not reset on initial initialization from props
   installModLoader.value = false;
   stableFabricLoaders.value = [];
   unstableFabricLoaders.value = [];
@@ -238,7 +262,7 @@ async function loadVersions(): Promise<void> {
     versions.value = await invoke<VanillaVersion[]>("get_vanilla_versions");
 
     const latestRelease = releaseVersions.value[0];
-    if (latestRelease) {
+    if (latestRelease && !selectedVersion.value) {
       selectedVersion.value = latestRelease.id;
     }
   } catch (err) {

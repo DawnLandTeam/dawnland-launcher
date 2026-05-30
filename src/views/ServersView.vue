@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onActivated, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Server, Gamepad2, Plus, Search, ExternalLink, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Wifi, Star } from "@lucide/vue";
@@ -72,6 +73,7 @@ interface ServerStatus {
 
 // State
 const { t } = useI18n();
+const router = useRouter();
 const servers = ref<ServerInfo[]>([]);
 const isLoading = ref(false);
 const isLoadingMore = ref(false);
@@ -446,7 +448,16 @@ async function launchAndConnect(server: ServerInfo) {
     const matchingInstance = instances.find(i => i.mcVersion === server.version);
     
     if (!matchingInstance) {
-      error.value = `No installed instance found for Minecraft ${server.version}. Please install it first.`;
+      error.value = `No installed instance found for Minecraft ${server.version}. Redirecting to installer...`;
+      setTimeout(() => {
+        router.push({
+          path: '/instances',
+          query: {
+            install_version: server.version,
+            install_loader: server.serverType === 'modded' ? (server.loaderType || 'forge') : 'vanilla'
+          }
+        });
+      }, 1500);
       isConnecting.value = null;
       return;
     }
