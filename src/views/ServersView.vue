@@ -277,17 +277,10 @@ async function fetchServers() {
   isLoading.value = true;
   error.value = null;
   try {
-    const response = await invoke<ServerListResponse>("get_servers", {
-      page: 1,
-      pageSize: 20,
-      search: searchQuery.value,
-      version: filterMcVersion.value,
-      serverType: filterServerType.value,
-      authType: filterAuthType.value,
-    });
-    servers.value = response.data;
-    currentPage.value = response.page;
-    totalPages.value = response.totalPages;
+    const response = await invoke<ServerInfo[]>("get_recommended_servers");
+    servers.value = response;
+    currentPage.value = 1;
+    totalPages.value = 1;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
     console.error("Failed to fetch servers:", e);
@@ -298,28 +291,8 @@ async function fetchServers() {
 
 // Load more servers (infinite scroll)
 async function loadMoreServers() {
-  if (!hasMore.value || isLoadingMore.value) return;
-
-  isLoadingMore.value = true;
-  try {
-    const nextPage = currentPage.value + 1;
-    const response = await invoke<ServerListResponse>("get_servers", {
-      page: nextPage,
-      pageSize: 20,
-      search: searchQuery.value,
-      version: filterMcVersion.value,
-      serverType: filterServerType.value,
-      authType: filterAuthType.value,
-    });
-    servers.value.push(...response.data);
-    currentPage.value = response.page;
-    totalPages.value = response.totalPages;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-    console.error("Failed to load more servers:", e);
-  } finally {
-    isLoadingMore.value = false;
-  }
+  // Infinite scroll is disabled for the recommended ecosystem lobby.
+  hasMore.value = false;
 }
 
 // Infinite scroll handler
@@ -358,8 +331,26 @@ function handleClickOutside(e: MouseEvent) {
   }
 }
 
-// Server list is now filtered by the backend, no client-side filtering needed
-const filteredServers = computed(() => servers.value);
+// Client-side filtering for the recommended ecosystem lobby
+const filteredServers = computed(() => {
+  return servers.value.filter(server => {
+    // Search match
+    const searchMatch = !searchQuery.value || 
+      server.name.toLowerCase().includes(searchQuery.value.toLowerCase()) || 
+      server.ip.toLowerCase().includes(searchQuery.value.toLowerCase());
+      
+    // Version match
+    const versionMatch = !filterMcVersion.value || server.version === filterMcVersion.value;
+    
+    // Type match
+    const typeMatch = !filterServerType.value || server.serverType === filterServerType.value;
+    
+    // Auth match
+    const authMatch = !filterAuthType.value || server.authType === filterAuthType.value;
+    
+    return searchMatch && versionMatch && typeMatch && authMatch;
+  });
+});
 
 async function fetchServerStatus(server: ServerInfo) {
   if (serverStatusesLoading.value[server.id]) return;
@@ -630,17 +621,17 @@ function cancelPrompt() {
           <!-- Server Status (Ping & Players) - Top Right -->
           <div class="flex flex-col items-end gap-1 text-xs text-muted-foreground shrink-0 mt-0.5">
             <!-- Ping Status (Top) -->
-            <div class="flex items-center gap-1" v-if="serverStatuses[server.id]">
-              <Wifi class="h-3 w-3" :class="serverStatuses[server.id].ping < 100 ? 'text-green-500' : serverStatuses[server.id].ping < 200 ? 'text-yellow-500' : 'text-red-500'" />
-              <span :class="serverStatuses[server.id].ping < 100 ? 'text-green-500' : serverStatuses[server.id].ping < 200 ? 'text-yellow-500' : 'text-red-500'">{{ serverStatuses[server.id].ping }}ms</span>
+            <div class="flex items-center gap-1.5" v-if="serverStatuses[server.id]">
+              <span class="w-2 h-2 rounded-full" :class="serverStatuses[server.id].ping <= 50 ? 'bg-green-500' : serverStatuses[server.id].ping <= 150 ? 'bg-yellow-500' : 'bg-red-500'"></span>
+              <span>{{ serverStatuses[server.id].ping }} ms</span>
             </div>
-            <div class="flex items-center gap-1" v-else-if="serverStatusesLoading[server.id]">
-              <Loader2 class="h-3 w-3 animate-spin" />
-              <span>{{ $t('servers.pinging', 'Pinging...') }}</span>
+            <div class="flex items-center gap-1.5" v-else-if="serverStatusesLoading[server.id]">
+              <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+              <span class="italic">{{ $t('servers.pinging', 'Ping...') }}</span>
             </div>
-            <div class="flex items-center gap-1" v-else>
-              <Wifi class="h-3 w-3 opacity-50" />
-              <span>{{ $t('servers.offline', 'Offline') }}</span>
+            <div class="flex items-center gap-1.5" v-else>
+              <span class="w-2 h-2 rounded-full bg-red-500"></span>
+              <span class="italic text-red-500">Timeout</span>
             </div>
             
             <!-- Player Count (Bottom) -->
