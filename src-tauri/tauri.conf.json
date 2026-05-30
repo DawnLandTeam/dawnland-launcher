@@ -15,13 +15,14 @@
         "title": "Dawnland Launcher",
         "width": 1024,
         "height": 700,
-        "minWidth": 1024,
-        "minHeight": 700,
-        "maxWidth": 1024,
-        "maxHeight": 700,
-        "resizable": true,
+        "minWidth": 800,
+        "minHeight": 600,
+        "maxWidth": 1200,
+        "maxHeight": 800,
+        "resizable": false,
         "fullscreen": false,
-        "decorations": false
+        "decorations": false,
+        "visible": false
       }
     ],
     "security": {

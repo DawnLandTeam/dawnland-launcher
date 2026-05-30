@@ -57,7 +57,7 @@ async function copyLogs() {
 
         <!-- Crash Report Content -->
         <div
-          class="relative z-10 w-full max-w-3xl gap-4 border-2 border-red-500 bg-white dark:bg-zinc-900 p-6 shadow-2xl rounded-lg max-h-[85vh] overflow-hidden flex flex-col pointer-events-auto"
+          class="relative z-10 w-full max-w-3xl gap-4 border-2 border-red-500 bg-white dark:bg-zinc-900 p-4 shadow-2xl rounded-lg max-h-[85vh] overflow-hidden flex flex-col pointer-events-auto"
         >
           <!-- Header with red accent -->
           <div class="flex items-center justify-between pb-4 border-b-2 border-red-500 -mx-6 px-6 -mt-6 pt-6 bg-red-50 dark:bg-red-950/30">
@@ -93,7 +93,7 @@ async function copyLogs() {
             <textarea
               readonly
               :value="formattedLogs"
-              class="flex-1 w-full px-4 py-3 font-mono text-xs bg-black text-green-400 rounded-lg resize-none border-0 focus:ring-0"
+              class="flex-1 w-full px-3 py-2 font-mono text-xs bg-black text-green-400 rounded-lg resize-none border-0 focus:ring-0"
               style="min-height: 300px;"
             />
           </div>
@@ -102,7 +102,7 @@ async function copyLogs() {
           <div class="flex justify-end gap-2 mt-4 pt-4 border-t">
             <button
               @click="close"
-              class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              class="px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
             >
               Close
             </button>

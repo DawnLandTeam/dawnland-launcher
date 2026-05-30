@@ -19,6 +19,28 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .setup(|app| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(Some(monitor)) = window.current_monitor() {
+                    let size = monitor.size();
+                    let scale_factor = monitor.scale_factor();
+                    
+                    // Convert physical size to logical size based on scale factor
+                    let mut width = (size.width as f64 / scale_factor * 0.6) as u32;
+                    let mut height = (size.height as f64 / scale_factor * 0.7) as u32;
+
+                    width = width.clamp(800, 1200);
+                    height = height.clamp(600, 800);
+
+                    let _ = window.set_size(tauri::LogicalSize::new(width, height));
+                }
+                
+                let _ = window.center();
+                let _ = window.show();
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -91,6 +113,7 @@ pub fn run() {
             core::server::download_pack_file,
             core::server::install_server_modpack,
             core::server::get_filter_options,
+            core::ping::ping_server,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

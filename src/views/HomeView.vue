@@ -253,7 +253,7 @@ function isMsaAccount(account: Account): boolean {
     <!-- Main Content Area -->
     <div class="flex-1 flex flex-col">
       <!-- Empty State: No instances -->
-      <div v-if="installedInstances.length === 0" class="flex flex-1 flex-col items-center justify-center gap-6">
+      <div v-if="installedInstances.length === 0" class="flex flex-1 flex-col items-center justify-center gap-4">
         <div class="flex h-24 w-24 items-center justify-center rounded-3xl bg-muted">
           <Gamepad2 class="h-12 w-12 text-muted-foreground" />
         </div>
@@ -261,14 +261,14 @@ function isMsaAccount(account: Account): boolean {
           <h2 class="text-2xl font-bold">{{ $t('home.welcome') }}</h2>
           <p class="text-muted-foreground">{{ $t('home.noInstances') }}</p>
         </div>
-        <router-link to="/instances" class="flex items-center gap-2 rounded-md bg-primary px-6 py-3 text-base font-semibold text-primary-foreground hover:bg-primary/90 transition-colors">
+        <router-link to="/instances" class="flex items-center gap-2 rounded-md bg-primary px-6 py-2 text-base font-semibold text-primary-foreground hover:bg-primary/90 transition-colors">
           <Play class="h-5 w-5" />
           {{ $t('home.installInstance') }}
         </router-link>
       </div>
 
       <!-- Main Dashboard -->
-      <div v-else class="flex flex-1 flex-col items-center justify-center p-8">
+      <div v-else class="flex flex-1 flex-col items-center justify-center p-4">
         <!-- Header -->
         <div class="text-center space-y-2 mb-8">
           <h1 class="text-5xl font-extrabold tracking-tight">Dawnland</h1>
@@ -276,13 +276,13 @@ function isMsaAccount(account: Account): boolean {
         </div>
 
         <!-- Control Panel -->
-        <div class="w-full max-w-lg bg-card border rounded-2xl p-6 shadow-sm">
+        <div class="w-full max-w-lg bg-card border rounded-2xl p-4 shadow-sm">
           <!-- Instance Selector -->
           <div class="flex items-center gap-3">
             <label class="text-sm font-medium shrink-0">{{ $t('home.selectInstance') }}</label>
             <DropdownMenu class="flex-1">
               <template #trigger>
-                <button class="w-full flex items-center justify-between px-4 py-3 bg-background border rounded-lg hover:border-primary/50 transition-colors">
+                <button class="w-full flex items-center justify-between px-3 py-2 bg-background border rounded-lg hover:border-primary/50 transition-colors">
                   <div v-if="selectedInstance" class="flex items-center gap-2">
                     <Package class="h-5 w-5 text-primary" />
                     <span class="font-medium truncate">{{ selectedInstance.name }}</span>
@@ -305,7 +305,7 @@ function isMsaAccount(account: Account): boolean {
             <label class="text-sm font-medium shrink-0">{{ $t('home.selectAccount') }}</label>
             <DropdownMenu class="flex-1">
               <template #trigger>
-                <button class="w-full flex items-center justify-between px-4 py-3 bg-background border rounded-lg hover:border-primary/50 transition-colors">
+                <button class="w-full flex items-center justify-between px-3 py-2 bg-background border rounded-lg hover:border-primary/50 transition-colors">
                   <div v-if="selectedAccountId" class="flex items-center gap-2">
                     <component :is="isMsaAccount(accounts.find((a) => a.id === selectedAccountId)!) ? MonitorCheck : WifiOff" :class="isMsaAccount(accounts.find((a) => a.id === selectedAccountId)!) ? 'h-5 w-5 text-green-500' : 'h-5 w-5 text-muted-foreground'" />
                     <span class="font-medium truncate">{{ accounts.find((a) => a.id === selectedAccountId)?.username }}</span>
@@ -326,11 +326,11 @@ function isMsaAccount(account: Account): boolean {
 
           <!-- Action Buttons -->
           <div class="flex items-center justify-center gap-4 mt-6">
-            <button @click="openInstanceSettings" :disabled="!selectedInstanceId" class="flex items-center gap-2 px-4 py-2.5 border rounded-lg hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors" title="Configure instance">
+            <button @click="openInstanceSettings" :disabled="!selectedInstanceId" class="flex items-center gap-2 px-3 py-1.5.5 border rounded-lg hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors" title="Configure instance">
               <Settings class="h-5 w-5" />
               {{ $t('home.configure') }}
             </button>
-            <button @click="launchInstance" :disabled="!canLaunch" class="flex items-center gap-3 rounded-xl bg-green-600 px-10 py-4 text-xl font-bold text-white shadow-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95">
+            <button @click="launchInstance" :disabled="!canLaunch" class="flex items-center gap-3 rounded-xl bg-green-600 px-10 py-2 text-xl font-bold text-white shadow-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95">
               <Loader2 v-if="isLaunching" class="h-6 w-6 animate-spin" />
               <Play v-else class="h-6 w-6" />
               {{ isLaunching ? $t('home.launching') : $t('home.play') }}
