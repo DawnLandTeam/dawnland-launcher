@@ -197,7 +197,7 @@ function changeLanguage(lang: string) {
 </script>
 
 <template>
-  <div class="flex h-full flex-col p-6 gap-6 overflow-y-auto">
+  <div class="flex h-full flex-col p-4 gap-4 overflow-y-auto">
     <div>
       <h1 class="text-2xl font-bold">{{ $t('settings.title') }}</h1>
       <p class="text-sm text-neutral-500 mt-1">{{ $t('settings.desc') }}</p>
@@ -206,21 +206,21 @@ function changeLanguage(lang: string) {
     <!-- Tabs Navigation -->
     <div class="flex border-b border-neutral-200 dark:border-zinc-800">
       <button
-        class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+        class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
         :class="activeTab === 'general' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'general'"
       >
         {{ $t('settings.tabs.general') }}
       </button>
       <button
-        class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+        class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
         :class="activeTab === 'java' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'java'"
       >
         {{ $t('settings.tabs.java') }}
       </button>
       <button
-        class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+        class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
         :class="activeTab === 'about' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'about'"
       >
@@ -413,7 +413,7 @@ function changeLanguage(lang: string) {
 
     <!-- About Tab -->
     <div v-if="activeTab === 'about'" class="space-y-6">
-      <div class="rounded-lg border border-neutral-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900 flex flex-col items-center text-center">
+      <div class="rounded-lg border border-neutral-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 flex flex-col items-center text-center">
         <div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mb-4 text-primary">
           <!-- Temporary logo placeholder -->
           <Package :size="40" />

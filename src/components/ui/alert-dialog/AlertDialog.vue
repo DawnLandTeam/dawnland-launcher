@@ -25,7 +25,7 @@ function onBackdropClick() {
         />
         <!-- Panel -->
         <div
-          class="relative z-10 w-full max-w-md border bg-card p-6 shadow-xl rounded-lg pointer-events-auto"
+          class="relative z-10 w-full max-w-md border bg-card p-4 shadow-xl rounded-lg pointer-events-auto"
         >
           <!-- Close button -->
           <button

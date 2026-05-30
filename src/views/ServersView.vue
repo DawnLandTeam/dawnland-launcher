@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Server, Gamepad2, Plus, Search, ExternalLink, Copy, Check, Loader2, Download, Package, ChevronDown } from "@lucide/vue";
+import { Server, Gamepad2, Plus, Search, ExternalLink, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Wifi } from "@lucide/vue";
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -31,6 +31,7 @@ interface CreateServerInput {
   version: string;
   loaderType: string;
   serverType: string;
+  authType: string;
   iconUrl: string;
   email: string;
 }
@@ -61,6 +62,12 @@ interface ServerListResponse {
   page: number;
   pageSize: number;
   totalPages: number;
+}
+
+interface ServerStatus {
+  onlinePlayers: number;
+  maxPlayers: number;
+  ping: number;
 }
 
 // State
@@ -150,6 +157,7 @@ const newServer = ref<CreateServerInput>({
   version: "",
   loaderType: "",
   serverType: "vanilla",
+  authType: "offline",
   iconUrl: "",
   email: "",
 });
@@ -158,6 +166,10 @@ const newServer = ref<CreateServerInput>({
 const selectedPackFile = ref<string | null>(null);
 const selectedPackFileName = ref<string>("");
 const isUploadingPack = ref(false);
+
+// Server ping status
+const serverStatuses = ref<Record<number, ServerStatus>>({});
+const serverStatusesLoading = ref<Record<number, boolean>>({});
 
 // Install modpack state
 const installingServerId = ref<number | null>(null);
@@ -349,6 +361,27 @@ function handleClickOutside(e: MouseEvent) {
 // Server list is now filtered by the backend, no client-side filtering needed
 const filteredServers = computed(() => servers.value);
 
+async function fetchServerStatus(server: ServerInfo) {
+  if (serverStatusesLoading.value[server.id]) return;
+  serverStatusesLoading.value[server.id] = true;
+  try {
+    const status = await invoke<ServerStatus>("ping_server", { ip: server.ip, port: server.port });
+    serverStatuses.value[server.id] = status;
+  } catch (e) {
+    console.error(`Failed to ping server ${server.id}:`, e);
+  } finally {
+    serverStatusesLoading.value[server.id] = false;
+  }
+}
+
+watch(servers, (newServers) => {
+  newServers.forEach(server => {
+    if (!serverStatuses.value[server.id] && !serverStatusesLoading.value[server.id]) {
+      fetchServerStatus(server);
+    }
+  });
+});
+
 // Functions
 function copyIp(server: ServerInfo) {
   navigator.clipboard.writeText(`${server.ip}:${server.port}`);
@@ -385,7 +418,7 @@ async function submitServer() {
     // Refresh server list
     await fetchServers();
     showPublishDialog.value = false;
-    alert(t('servers.messages.submitted'));
+    showAlert(t('servers.messages.submitted'));
     // Reset form
     resetPublishForm();
   } catch (e) {
@@ -405,6 +438,7 @@ function resetPublishForm() {
     version: "",
     loaderType: "",
     serverType: "vanilla",
+    authType: "offline",
     iconUrl: "",
     email: "",
   };
@@ -426,7 +460,7 @@ function closePublishDialog() {
 // Install modpack from server
 async function installModpack(server: ServerInfo) {
   if (!server.packFileName) {
-    alert(t('servers.messages.noModpack'));
+    showAlert(t('servers.messages.noModpack'));
     return;
   }
   
@@ -434,8 +468,9 @@ async function installModpack(server: ServerInfo) {
   
   try {
     // Prompt for instance name
-    const instanceName = prompt(t('servers.messages.enterInstanceName'), server.name);
+    const instanceName = await showPrompt(t('servers.messages.enterInstanceName'), server.name);
     if (!instanceName) {
+      installingServerId.value = null; // Important to reset if cancelled
       return; // User cancelled
     }
     
@@ -444,19 +479,60 @@ async function installModpack(server: ServerInfo) {
       instanceName: instanceName,
     });
     
-    alert(t('servers.messages.installSuccess').replace('{path}', instancePath));
+    showAlert(t('servers.messages.installSuccess').replace('{path}', instancePath));
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
     console.error("Failed to install modpack:", e);
-    alert(t('servers.messages.installFailed').replace('{error}', e instanceof Error ? e.message : String(e)));
+    showAlert(t('servers.messages.installFailed').replace('{error}', e instanceof Error ? e.message : String(e)));
   } finally {
     installingServerId.value = null;
   }
 }
+
+// Custom Dialog States
+const alertState = ref<{
+  show: boolean;
+  message: string;
+}>({ show: false, message: '' });
+
+function showAlert(message: string) {
+  alertState.value = { show: true, message };
+}
+
+function closeAlert() {
+  alertState.value.show = false;
+}
+
+const promptState = ref<{
+  show: boolean;
+  message: string;
+  value: string;
+  resolve: ((val: string | null) => void) | null;
+}>({ show: false, message: '', value: '', resolve: null });
+
+function showPrompt(message: string, defaultValue: string = ''): Promise<string | null> {
+  return new Promise((resolve) => {
+    promptState.value = { show: true, message, value: defaultValue, resolve };
+  });
+}
+
+function confirmPrompt() {
+  if (promptState.value.resolve) {
+    promptState.value.resolve(promptState.value.value);
+  }
+  promptState.value.show = false;
+}
+
+function cancelPrompt() {
+  if (promptState.value.resolve) {
+    promptState.value.resolve(null);
+  }
+  promptState.value.show = false;
+}
 </script>
 
 <template>
-  <div class="flex h-full flex-col p-6">
+  <div class="flex h-full flex-col p-4">
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-3">
@@ -470,7 +546,7 @@ async function installModpack(server: ServerInfo) {
       </div>
       <button
         @click="openPublishDialog"
-        class="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+        class="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
       >
         <Plus class="h-4 w-4" />
         {{ $t('servers.publish') }}
@@ -543,12 +619,35 @@ async function installModpack(server: ServerInfo) {
       >
         <!-- Server Header -->
         <div class="flex items-start gap-3 mb-3">
-          <div class="flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
+          <div class="flex h-12 w-12 items-center justify-center rounded-lg bg-muted shrink-0">
             <Gamepad2 class="h-6 w-6 text-muted-foreground" />
           </div>
           <div class="flex-1 min-w-0">
             <h3 class="font-semibold truncate">{{ server.name }}</h3>
             <p class="text-xs text-muted-foreground line-clamp-2">{{ server.motd }}</p>
+          </div>
+          
+          <!-- Server Status (Ping & Players) - Top Right -->
+          <div class="flex flex-col items-end gap-1 text-xs text-muted-foreground shrink-0 mt-0.5">
+            <!-- Ping Status (Top) -->
+            <div class="flex items-center gap-1" v-if="serverStatuses[server.id]">
+              <Wifi class="h-3 w-3" :class="serverStatuses[server.id].ping < 100 ? 'text-green-500' : serverStatuses[server.id].ping < 200 ? 'text-yellow-500' : 'text-red-500'" />
+              <span :class="serverStatuses[server.id].ping < 100 ? 'text-green-500' : serverStatuses[server.id].ping < 200 ? 'text-yellow-500' : 'text-red-500'">{{ serverStatuses[server.id].ping }}ms</span>
+            </div>
+            <div class="flex items-center gap-1" v-else-if="serverStatusesLoading[server.id]">
+              <Loader2 class="h-3 w-3 animate-spin" />
+              <span>{{ $t('servers.pinging', 'Pinging...') }}</span>
+            </div>
+            <div class="flex items-center gap-1" v-else>
+              <Wifi class="h-3 w-3 opacity-50" />
+              <span>{{ $t('servers.offline', 'Offline') }}</span>
+            </div>
+            
+            <!-- Player Count (Bottom) -->
+            <div class="flex items-center gap-1" v-if="serverStatuses[server.id]">
+              <Users class="h-3 w-3" />
+              <span>{{ serverStatuses[server.id].onlinePlayers }} / {{ serverStatuses[server.id].maxPlayers }}</span>
+            </div>
           </div>
         </div>
 
@@ -577,6 +676,7 @@ async function installModpack(server: ServerInfo) {
             {{ server.authType === 'microsoft' ? $t('servers.auth.microsoftShort') : $t('servers.auth.offlineShort') }}
           </span>
         </div>
+
 
         <!-- IP and Actions -->
         <div class="flex items-center justify-between pt-3 border-t">
@@ -624,7 +724,7 @@ async function installModpack(server: ServerInfo) {
     <Teleport to="body">
       <div v-if="showPublishDialog" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="closePublishDialog"></div>
-        <div class="relative z-10 w-full max-w-lg gap-4 border bg-white dark:bg-zinc-900 p-6 shadow-xl rounded-lg pointer-events-auto">
+        <div class="relative z-10 w-full max-w-lg gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg pointer-events-auto">
           <!-- Header with Progress -->
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">{{ $t('servers.publishTitle') }}</h3>
@@ -637,16 +737,17 @@ async function installModpack(server: ServerInfo) {
           <div class="flex items-center justify-between mb-6">
             <div v-for="step in totalSteps" :key="step" class="flex items-center flex-1">
               <div 
-                class="flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium transition-colors"
+                class="flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold transition-all"
                 :class="{
-                  'bg-primary text-primary-foreground': publishStep >= step,
+                  'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2 dark:ring-offset-zinc-900': publishStep === step,
+                  'bg-primary text-primary-foreground': publishStep > step,
                   'bg-muted text-muted-foreground': publishStep < step
                 }"
               >
-                <Check v-if="publishStep > step" class="h-4 w-4" />
+                <Check v-if="publishStep > step" class="w-4 h-4" />
                 <span v-else>{{ step }}</span>
               </div>
-              <div v-if="step < totalSteps" class="flex-1 h-0.5 mx-2" :class="publishStep > step ? 'bg-primary' : 'bg-muted'"></div>
+              <div v-if="step < totalSteps" class="flex-1 h-0.5 mx-2 transition-colors" :class="publishStep > step ? 'bg-primary' : 'bg-muted'"></div>
             </div>
           </div>
           
@@ -794,6 +895,14 @@ async function installModpack(server: ServerInfo) {
                   {{ newServer.serverType === 'vanilla' ? $t('servers.publishDialog.descVanilla') : $t('servers.publishDialog.descModded') }}
                 </p>
               </div>
+              
+              <div class="space-y-1">
+                <label class="text-sm font-medium">{{ $t('servers.publishDialog.authType', 'Authentication Type') }}</label>
+                <select v-model="newServer.authType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
+                  <option value="offline">{{ $t('servers.auth.offline') }}</option>
+                  <option value="microsoft">{{ $t('servers.auth.microsoft') }}</option>
+                </select>
+              </div>
             </template>
 
             <!-- Step 3: Modpack (Optional) -->
@@ -872,7 +981,7 @@ async function installModpack(server: ServerInfo) {
             <button 
               v-if="publishStep > 1" 
               @click="publishStep--"
-              class="px-4 py-2 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
+              class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
             >
               Back
             </button>
@@ -882,7 +991,7 @@ async function installModpack(server: ServerInfo) {
               v-if="publishStep < 4" 
               @click="publishStep++"
               :disabled="!canGoToStep(publishStep)"
-              class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+              class="px-3 py-1.5 text-sm font-medium bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50"
             >
               Next
             </button>
@@ -890,11 +999,57 @@ async function installModpack(server: ServerInfo) {
               v-else
               @click="submitServer" 
               :disabled="isSubmitting || isUploadingPack || !newServer.email"
-              class="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+              class="px-3 py-1.5 text-sm font-medium bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50"
             >
               <Loader2 v-if="isSubmitting || isUploadingPack" class="h-4 w-4 animate-spin inline mr-2" />
               {{ isUploadingPack ? $t('servers.publishDialog.submitting') : $t('servers.publishDialog.submit') }}
             </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+    <!-- Custom Alert Modal -->
+    <Teleport to="body">
+      <div v-if="alertState.show" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div class="bg-white dark:bg-zinc-900 w-full max-w-sm rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div class="px-4 py-3 border-b border-neutral-200 dark:border-zinc-800">
+            <h3 class="font-semibold text-neutral-900 dark:text-white">{{ $t('common.notification', 'Notification') }}</h3>
+          </div>
+          <div class="p-4">
+            <p class="text-sm text-neutral-600 dark:text-neutral-400 mb-6">{{ alertState.message }}</p>
+            <div class="flex justify-end mt-4">
+              <button @click="closeAlert" class="px-3 py-1.5 text-sm font-medium bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors">
+                {{ $t('common.ok', 'OK') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Custom Prompt Modal -->
+    <Teleport to="body">
+      <div v-if="promptState.show" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div class="bg-white dark:bg-zinc-900 w-full max-w-sm rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div class="px-4 py-3 border-b border-neutral-200 dark:border-zinc-800">
+            <h3 class="font-semibold text-neutral-900 dark:text-white">{{ $t('common.inputRequired', 'Input Required') }}</h3>
+          </div>
+          <div class="p-4">
+            <p class="text-sm text-neutral-600 dark:text-neutral-400 mb-4">{{ promptState.message }}</p>
+            <input 
+              v-model="promptState.value" 
+              type="text" 
+              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-500 mb-2"
+              @keyup.enter="confirmPrompt"
+            />
+            <div class="flex justify-end gap-2 mt-4">
+              <button @click="cancelPrompt" class="px-3 py-1.5 text-sm font-medium border border-neutral-300 dark:border-zinc-700 rounded-md hover:bg-neutral-100 dark:hover:bg-zinc-800 transition-colors text-neutral-700 dark:text-neutral-300">
+                {{ $t('common.cancel', 'Cancel') }}
+              </button>
+              <button @click="confirmPrompt" class="px-3 py-1.5 text-sm font-medium bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors">
+                {{ $t('common.confirm', 'Confirm') }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
