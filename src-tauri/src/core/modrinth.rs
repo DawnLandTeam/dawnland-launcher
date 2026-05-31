@@ -44,6 +44,17 @@ pub struct UnifiedModFile {
     pub hash: Option<String>,
 }
 
+/// Online Modpack Version representing a modpack file to download
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnlineModpackVersion {
+    pub id: String, // Version ID or File ID
+    pub name: String, // E.g., "1.19.2 - v1.0.0"
+    pub mc_version: String,
+    pub loaders: Vec<String>,
+    pub download_url: String,
+    pub date: String,
+}
+
 // ============================================================================
 // Modrinth API Response Types
 // ============================================================================
@@ -390,4 +401,104 @@ pub async fn get_modrinth_mod_versions(project_id: String) -> Result<Vec<String>
         .collect();
 
     Ok(version_list)
+}
+
+#[tauri::command]
+pub async fn search_modrinth_modpacks(query: String) -> Result<Vec<UnifiedModProject>, String> {
+    tracing::info!("Searching Modrinth modpacks: query={}", query);
+
+    // Build search query parameters with project_type:modpack
+    let facets = "[[\"project_type:modpack\"]]";
+    let search_url = format!(
+        "{}/search?query={}&limit=20&facets={}",
+        MODRINTH_BASE_URL,
+        urlencoding::encode(&query),
+        urlencoding::encode(facets)
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&search_url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "DawnlandLauncher/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send request: {:?}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(format!("Modrinth API error: {}", status));
+    }
+
+    let body = response.text().await.unwrap_or_default();
+    let search_result: ModrinthSearchResult = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse response: {:?}", e))?;
+
+    let projects: Vec<UnifiedModProject> = search_result
+        .hits
+        .into_iter()
+        .map(|p| UnifiedModProject {
+            source: "modrinth".to_string(),
+            project_id: p.project_id,
+            title: p.title,
+            description: p.description,
+            icon_url: p.icon_url,
+            downloads: p.downloads,
+            author: p.author,
+            mc_versions: p.game_versions.unwrap_or_default(),
+            loaders: p.categories.unwrap_or_default(),
+            download_url: None,
+            file_id: None,
+        })
+        .collect();
+
+    tracing::info!(
+        "Found {} Modrinth modpacks (total: {})",
+        projects.len(),
+        search_result.total_hits
+    );
+
+    Ok(projects)
+}
+
+#[tauri::command]
+pub async fn get_modrinth_modpack_versions(project_id: String) -> Result<Vec<OnlineModpackVersion>, String> {
+    tracing::info!("Getting Modrinth modpack versions: project_id={}", project_id);
+
+    let versions_url = format!("{}/project/{}/version", MODRINTH_BASE_URL, project_id);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&versions_url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "DawnlandLauncher/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send request: {:?}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(format!("Modrinth API error: {}", status));
+    }
+
+    let versions: Vec<ModrinthVersion> = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {:?}", e))?;
+
+    let mut result = Vec::new();
+    for version in versions {
+        if let Some(file) = version.files.first() {
+            result.push(OnlineModpackVersion {
+                id: version.id,
+                name: version.version_number.clone(),
+                mc_version: version.game_versions.join(", "),
+                loaders: version.loaders,
+                download_url: file.url.clone(),
+                date: version.date_published,
+            });
+        }
+    }
+
+    Ok(result)
 }
