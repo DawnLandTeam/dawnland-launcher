@@ -48,6 +48,8 @@ pub fn run() {
             commands::get_system_info,
             commands::get_system_memory,
             commands::batch_download,
+            commands::modpack::install_modpack,
+            commands::modpack::get_modpack_name,
             // Auth commands
             commands::get_accounts,
             commands::add_offline_account,
@@ -95,6 +97,7 @@ pub fn run() {
             core::curseforge::search_curseforge,
             core::curseforge::get_cf_mod_files,
             core::curseforge::get_cf_mod_details,
+            core::curseforge::get_cf_files_batch,
             // Modrinth commands
             core::modrinth::search_modrinth,
             core::modrinth::get_modrinth_mod_files,

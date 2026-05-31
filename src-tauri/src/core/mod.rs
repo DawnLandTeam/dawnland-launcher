@@ -8,6 +8,7 @@ pub mod curseforge;
 pub mod modrinth;
 pub mod server;
 pub mod utils;
+pub mod modpack;
 pub mod ping;
 
 // Re-export types from mojang for easier importing

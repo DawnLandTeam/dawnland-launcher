@@ -40,6 +40,8 @@ pub struct UnifiedModFile {
     pub download_url: String,
     pub release_type: String, // "release", "beta", "alpha"
     pub date: String,
+    pub file_size: Option<u64>,
+    pub hash: Option<String>,
 }
 
 // ============================================================================
@@ -111,6 +113,8 @@ struct ModrinthFile {
     size: u64,
     #[serde(rename = "file_type")]
     file_type: Option<String>,
+    #[serde(default)]
+    hashes: std::collections::HashMap<String, String>,
 }
 
 // ============================================================================
@@ -283,6 +287,8 @@ pub async fn get_modrinth_mod_files(
                     download_url: file.url.clone(),
                     release_type: version.version_type.clone(),
                     date: version.date_published.clone(),
+                    file_size: Some(file.size),
+                    hash: file.hashes.get("sha1").cloned(),
                 });
             }
         }

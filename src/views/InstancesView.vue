@@ -2,7 +2,8 @@
 import { ref, onMounted, watch, onActivated } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle } from "@lucide/vue";
+import { open } from "@tauri-apps/plugin-dialog";
+import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
 import InstanceModsModal from "../components/InstanceModsModal.vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
@@ -15,6 +16,8 @@ interface InstanceItem {
   name: string;
   mcVersion: string;
   loaderType: string;
+  modpackVersion?: string;
+  modpackType?: string;
 }
 
 interface InstanceConfig {
@@ -253,6 +256,24 @@ async function openInstanceFolder(instanceId: string) {
   }
 }
 
+async function updateModpack(instance: InstanceItem) {
+  const selected = await open({
+    multiple: false,
+    filters: [
+      {
+        name: "Modpack Archives",
+        extensions: ["zip", "mrpack"],
+      },
+    ],
+  });
+  if (selected && typeof selected === "string") {
+    router.push({
+      path: '/modpack-install',
+      query: { update_id: instance.name, zip: selected }
+    });
+  }
+}
+
 function confirmDeleteInstance(instance: InstanceItem) {
   deletingInstanceId.value = instance.id;
   deletingInstanceName.value = instance.name;
@@ -313,13 +334,22 @@ function loaderBadgeClass(loaderType: string): string {
           Install a Minecraft version to get started.
         </p>
       </div>
-      <button
-        @click="showInstallModal = true"
-        class="flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-      >
-        <Plus class="h-4 w-4" />
-        Install Instance
-      </button>
+      <div class="flex items-center gap-3">
+        <button
+          @click="showInstallModal = true"
+          class="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          <Plus class="h-4 w-4" />
+          Install Instance
+        </button>
+        <button
+          @click="router.push('/modpack-install')"
+          class="flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
+        >
+          <Package class="h-4 w-4" />
+          Install Modpack
+        </button>
+      </div>
     </div>
 
     <!-- List State -->
@@ -335,13 +365,22 @@ function loaderBadgeClass(loaderType: string): string {
             </p>
           </div>
         </div>
-        <button
-          @click="showInstallModal = true"
-          class="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          <Plus class="h-4 w-4" />
-          {{ $t('instances.add') }}
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            @click="router.push('/modpack-install')"
+            class="flex items-center gap-2 rounded-md bg-secondary px-3 py-1.5 text-sm font-medium text-secondary-foreground hover:bg-secondary/90 transition-colors"
+          >
+            <Package class="h-4 w-4" />
+            {{ $t('install.modpackTitle', 'Install Modpack') }}
+          </button>
+          <button
+            @click="showInstallModal = true"
+            class="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <Plus class="h-4 w-4" />
+            {{ $t('instances.add') }}
+          </button>
+        </div>
       </div>
 
       <!-- Instance Grid -->
@@ -366,6 +405,18 @@ function loaderBadgeClass(loaderType: string): string {
                     :class="loaderBadgeClass(instance.loaderType)"
                   >
                     {{ instance.loaderType }}
+                  </span>
+                  <span
+                    v-if="instance.modpackType"
+                    class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
+                  >
+                    {{ instance.modpackType }}
+                  </span>
+                  <span
+                    v-if="instance.modpackVersion"
+                    class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+                  >
+                    v{{ instance.modpackVersion }}
                   </span>
                 </div>
               </div>
@@ -392,6 +443,12 @@ function loaderBadgeClass(loaderType: string): string {
               >
                 <Folder class="h-4 w-4" />
                 Open Folder
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                @click="updateModpack(instance)"
+              >
+                <RefreshCw class="h-4 w-4" />
+                {{ $t('instances.updateModpack', 'Update Modpack') }}
               </DropdownMenuItem>
               <DropdownMenuItem
                 @click="openMods(instance)"
@@ -555,7 +612,7 @@ function loaderBadgeClass(loaderType: string): string {
       <div class="flex justify-end gap-3 mt-6">
         <button
           @click="showDeleteDialog = false"
-          class="px-4 py-2 text-sm font-medium border border-neutral-200 dark:border-zinc-700 rounded-md hover:bg-neutral-100 dark:hover:bg-zinc-800 text-neutral-900 dark:text-neutral-100 transition-colors"
+          class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
           :disabled="isDeletingInstance"
         >
           Cancel
@@ -563,7 +620,7 @@ function loaderBadgeClass(loaderType: string): string {
         <button
           @click="deleteInstance"
           :disabled="isDeletingInstance"
-          class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 dark:bg-red-700 text-white rounded-md hover:bg-red-700 dark:hover:bg-red-600 disabled:opacity-50 transition-colors shadow-sm"
+          class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-red-600 dark:bg-red-700 text-white rounded-md hover:bg-red-700 dark:hover:bg-red-600 disabled:opacity-50 transition-colors"
         >
           <Trash2 v-if="isDeletingInstance" class="h-4 w-4 animate-spin" />
           <Trash2 v-else class="h-4 w-4" />

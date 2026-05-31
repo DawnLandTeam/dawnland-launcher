@@ -16,17 +16,20 @@ pub struct DownloadTask {
     pub url: String,
     /// Destination file path (absolute).
     pub dest_path: String,
-    /// Optional SHA-256 hash for verification.
+    /// Optional SHA-256 (or SHA-1 depending on usage) hash for verification.
     pub hash: Option<String>,
+    /// Optional expected file size in bytes.
+    pub expected_size: Option<u64>,
 }
 
 impl DownloadTask {
-    pub fn new(url: String, dest_path: String, hash: Option<String>) -> Self {
+    pub fn new(url: String, dest_path: String, hash: Option<String>, expected_size: Option<u64>) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             url,
             dest_path,
             hash,
+            expected_size,
         }
     }
 

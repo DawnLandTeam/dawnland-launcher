@@ -76,10 +76,20 @@ pub struct CfAuthor {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CfFileHash {
+    pub value: String,
+    pub algo: i32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CfFile {
     pub id: i64,
+    pub file_name: String,
     pub display_name: String,
     pub download_url: Option<String>,
+    pub file_length: Option<u64>,
+    pub hashes: Option<Vec<CfFileHash>>,
     pub game_versions: Option<Vec<String>>,
     pub loaders: Option<Vec<String>>,
     pub release_type: i32,
@@ -272,13 +282,22 @@ pub async fn get_cf_mod_files(
                 _ => "Unknown",
             };
 
+            let mut hash = None;
+            if let Some(hashes) = &file.hashes {
+                if let Some(h) = hashes.iter().find(|h| h.algo == 1) {
+                    hash = Some(h.value.clone());
+                }
+            }
+
             compatible_files.push(UnifiedModFile {
                 id: file.id.to_string(),
-                filename: file.display_name.clone(),
+                filename: file.file_name.clone(),
                 version_number: "".to_string(),
                 download_url,
                 release_type: release_str.to_string(),
                 date: file.file_date.clone(),
+                file_size: file.file_length,
+                hash,
             });
         } else {
             tracing::warn!("File {} matched but missing download_url!", file.id);
@@ -293,6 +312,76 @@ pub async fn get_cf_mod_files(
             target_loader
         );
         return Err("No compatible file found".to_string());
+    }
+
+    Ok(compatible_files)
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CfBatchFilesRequest {
+    file_ids: Vec<u32>,
+}
+
+/// Get multiple mod files from CurseForge via the web backend proxy using a batch request.
+#[tauri::command]
+pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile>, String> {
+    tracing::info!("Getting CF mod files batch via proxy for {} files", file_ids.len());
+
+    let proxy_url = build_proxy_url("/mods/files", None);
+    
+    let request_body = CfBatchFilesRequest { file_ids };
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&proxy_url)
+        .header("Accept", "application/json")
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send request: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        tracing::error!("CurseForge API error: {} - {}", status, body);
+        return Err(format!("CurseForge API error: {}", status));
+    }
+
+    let files_result: CfFilesResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let mut compatible_files = Vec::new();
+
+    for file in files_result.data {
+        if let Some(download_url) = file.download_url {
+            let release_str = match file.release_type {
+                1 => "Release",
+                2 => "Beta",
+                3 => "Alpha",
+                _ => "Unknown",
+            };
+
+            let mut hash = None;
+            if let Some(hashes) = file.hashes {
+                if let Some(h) = hashes.into_iter().find(|h| h.algo == 1) {
+                    hash = Some(h.value);
+                }
+            }
+
+            compatible_files.push(UnifiedModFile {
+                id: file.id.to_string(),
+                filename: file.file_name.clone(),
+                version_number: "".to_string(),
+                download_url,
+                release_type: release_str.to_string(),
+                date: file.file_date.clone(),
+                file_size: file.file_length,
+                hash,
+            });
+        }
     }
 
     Ok(compatible_files)
