@@ -100,13 +100,14 @@ pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, 
 #[tauri::command]
 pub async fn install_fabric_instance(
     mc_version: String,
-    loader_version: String,
+    fabric_version: String,
     custom_instance_name: String,
+    is_dependency: Option<bool>,
     app: AppHandle,
 ) -> Result<(), String> {
     tracing::info!(
         "Installing Fabric instance: {} (MC {} + Loader {})",
-        custom_instance_name, mc_version, loader_version
+        custom_instance_name, mc_version, fabric_version
     );
 
     let base_dir = get_minecraft_base();
@@ -169,6 +170,20 @@ pub async fn install_fabric_instance(
             .await
             .map_err(|e| format!("Failed to write version JSON: {}", e))?;
 
+        // Create dlml.json for the base vanilla version to mark it as hidden if needed
+        let base_config_path = base_version_dir.join("dlml.json");
+        let base_config = crate::core::launcher::InstanceConfig {
+            java_path: None,
+            max_memory: None,
+            jvm_args_extra: None,
+            window_behavior: "keep".to_string(),
+            show_game_log: false,
+            hidden: is_dependency.unwrap_or(false),
+        };
+        if let Ok(config_json) = serde_json::to_string_pretty(&base_config) {
+            let _ = tokio::fs::write(&base_config_path, config_json).await;
+        }
+
         tracing::info!("Saved base version JSON to: {:?}", base_version_json);
 
         // Now process downloads for base vanilla
@@ -194,6 +209,7 @@ pub async fn install_fabric_instance(
                         url.to_string(),
                         dest.to_string_lossy().to_string(),
                         client.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                        client.get("size").and_then(|s| s.as_u64()),
                     ));
                 }
             }
@@ -211,6 +227,7 @@ pub async fn install_fabric_instance(
                                     url.to_string(),
                                     dest.to_string_lossy().to_string(),
                                     artifact.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                                    artifact.get("size").and_then(|s| s.as_u64()),
                                 ));
                             }
                         }
@@ -227,6 +244,7 @@ pub async fn install_fabric_instance(
                     tasks.push(crate::downloader::DownloadTask::new(
                         url.to_string(),
                         index_path.to_string_lossy().to_string(),
+                        None,
                         None,
                     ));
                 }
@@ -261,7 +279,7 @@ pub async fn install_fabric_instance(
     // Fetch Fabric profile JSON
     let fabric_url = format!(
         "{}/versions/loader/{}/{}/profile/json",
-        FABRIC_META_BASE, mc_version, loader_version
+        FABRIC_META_BASE, mc_version, fabric_version
     );
 
     tracing::info!("Fetching Fabric profile from: {}", fabric_url);
@@ -340,6 +358,7 @@ pub async fn install_fabric_instance(
                 download_url,
                 dest.to_string_lossy().to_string(),
                 None, // SHA1 not available for Maven coordinates
+                None,
             ));
         }
     }
@@ -359,15 +378,23 @@ pub async fn install_fabric_instance(
     }
 
     // Step 4: Create default dlml.json config
-    let config = crate::core::launcher::InstanceConfig {
-        java_path: None,
-        max_memory: None,
-        jvm_args_extra: None,
-        window_behavior: "keep".to_string(),
-        show_game_log: false,
-    };
-
     let config_path = version_dir.join("dlml.json");
+    let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
+        let content = tokio::fs::read_to_string(&config_path).await.unwrap_or_else(|_| "{}".to_string());
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        crate::core::launcher::InstanceConfig {
+            java_path: None,
+            max_memory: None,
+            jvm_args_extra: None,
+            window_behavior: "keep".to_string(),
+            show_game_log: false,
+            hidden: false,
+        }
+    };
+    
+    config.hidden = is_dependency.unwrap_or(false);
+
     let config_json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
     
