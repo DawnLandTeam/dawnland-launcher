@@ -74,19 +74,30 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                         // Parse basic info from JSON
                         let (mut mc_version, loader_type, modpack_version, modpack_type) = parse_version_json(&content, &id);
                         
-                        // Resolve actual MC version if it's pointing to a loader instance (like neoforge-21.1.228)
+                        // Resolve actual MC version if it's pointing to a loader instance
                         if !mc_version.starts_with("1.") {
-                            let inherited_path = versions_dir.join(&mc_version).join(format!("{}.json", mc_version));
-                            if let Ok(inherited_content) = tokio::fs::read_to_string(&inherited_path).await {
-                                let (real_mc, ..) = parse_version_json(&inherited_content, &mc_version);
-                                if real_mc.starts_with("1.") {
-                                    mc_version = real_mc;
-                                } else {
-                                    // Try extracting from string as fallback
-                                    if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
-                                        mc_version = extracted;
+                            let mut current_version = mc_version.clone();
+                            let mut depth = 0;
+                            let mut reached_root = false;
+                            while !current_version.starts_with("1.") && depth < 5 {
+                                let inherited_path = versions_dir.join(&current_version).join(format!("{}.json", current_version));
+                                if let Ok(inherited_content) = tokio::fs::read_to_string(&inherited_path).await {
+                                    let (real_mc, ..) = parse_version_json(&inherited_content, &current_version);
+                                    if real_mc == current_version || real_mc.is_empty() {
+                                        reached_root = true;
+                                        break;
                                     }
+                                    current_version = real_mc;
+                                } else {
+                                    break;
                                 }
+                                depth += 1;
+                            }
+                            
+                            if current_version.starts_with("1.") || reached_root {
+                                mc_version = current_version;
+                            } else if let Some(extracted) = extract_mc_version_from_id(&current_version) {
+                                mc_version = extracted;
                             } else if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
                                 mc_version = extracted;
                             }
@@ -242,14 +253,26 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
 
     // Resolve actual MC version
     if !mc_version.starts_with("1.") {
-        let inherited_path = base_dir.join("versions").join(&mc_version).join(format!("{}.json", mc_version));
-        if let Ok(inherited_content) = tokio::fs::read_to_string(&inherited_path).await {
-            let (real_mc, ..) = parse_version_json(&inherited_content, &mc_version);
-            if real_mc.starts_with("1.") {
-                mc_version = real_mc;
-            } else if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
-                mc_version = extracted;
+        let mut current_version = mc_version.clone();
+        let mut depth = 0;
+        while !current_version.starts_with("1.") && depth < 5 {
+            let inherited_path = base_dir.join("versions").join(&current_version).join(format!("{}.json", current_version));
+            if let Ok(inherited_content) = tokio::fs::read_to_string(&inherited_path).await {
+                let (real_mc, ..) = parse_version_json(&inherited_content, &current_version);
+                if real_mc == current_version || real_mc.is_empty() {
+                    break;
+                }
+                current_version = real_mc;
+            } else {
+                break;
             }
+            depth += 1;
+        }
+        
+        if current_version.starts_with("1.") {
+            mc_version = current_version;
+        } else if let Some(extracted) = extract_mc_version_from_id(&current_version) {
+            mc_version = extracted;
         } else if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
             mc_version = extracted;
         }
