@@ -21,6 +21,8 @@ pub struct InstanceItem {
     pub modpack_version: Option<String>,
     /// Modpack Type (e.g., "CurseForge" or "Modrinth")
     pub modpack_type: Option<String>,
+    /// Modpack Project ID for precise online updates
+    pub modpack_project_id: Option<String>,
 }
 
 /// Scan all locally installed instances from the versions directory.
@@ -72,7 +74,7 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                 match tokio::fs::read_to_string(&json_path).await {
                     Ok(content) => {
                         // Parse basic info from JSON
-                        let (mut mc_version, loader_type, modpack_version, modpack_type) = parse_version_json(&content, &id);
+                        let (mut mc_version, loader_type, modpack_version, modpack_type, modpack_project_id) = parse_version_json(&content, &id);
                         
                         // Resolve actual MC version if it's pointing to a loader instance
                         if !mc_version.starts_with("1.") {
@@ -110,6 +112,7 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                             loader_type,
                             modpack_version,
                             modpack_type,
+                            modpack_project_id,
                         });
                     }
                     Err(e) => {
@@ -119,9 +122,10 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                             id: id.clone(),
                             name: id.clone(),
                             mc_version: extract_mc_version_from_id(&id).unwrap_or_else(|| id.clone()),
-                            loader_type: "Unknown".to_string(),
+                            loader_type: "Vanilla".to_string(),
                             modpack_version: None,
                             modpack_type: None,
+                            modpack_project_id: None,
                         });
                     }
                 }
@@ -137,7 +141,7 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
 }
 
 /// Parse version JSON content to extract Minecraft version and loader type.
-fn parse_version_json(content: &str, id: &str) -> (String, String, Option<String>, Option<String>) {
+fn parse_version_json(content: &str, id: &str) -> (String, String, Option<String>, Option<String>, Option<String>) {
     // Try to parse as JSON
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(json) => {
@@ -187,8 +191,9 @@ fn parse_version_json(content: &str, id: &str) -> (String, String, Option<String
             // Extract Modpack Info
             let modpack_version = json.get("modpackVersion").and_then(|v| v.as_str()).map(String::from);
             let modpack_type = json.get("modpackType").and_then(|v| v.as_str()).map(String::from);
+            let modpack_project_id = json.get("modpackProjectId").and_then(|v| v.as_str()).map(String::from);
 
-            (mc_version, loader_type.to_string(), modpack_version, modpack_type)
+            (mc_version, loader_type.to_string(), modpack_version, modpack_type, modpack_project_id)
         }
         Err(_) => {
             // Fallback: extract from id
@@ -204,6 +209,7 @@ fn parse_version_json(content: &str, id: &str) -> (String, String, Option<String
             (
                 extract_mc_version_from_id(id).unwrap_or_else(|| id.to_string()),
                 loader_type.to_string(),
+                None,
                 None,
                 None,
             )
@@ -249,7 +255,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         .await
         .map_err(|e| format!("Failed to read version JSON: {}", e))?;
 
-    let (mut mc_version, loader_type, modpack_version, modpack_type) = parse_version_json(&content, &version_id);
+    let (mut mc_version, loader_type, modpack_version, modpack_type, modpack_project_id) = parse_version_json(&content, &version_id);
 
     // Resolve actual MC version
     if !mc_version.starts_with("1.") {
@@ -285,6 +291,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         loader_type,
         modpack_version,
         modpack_type,
+        modpack_project_id,
     })
 }
 
