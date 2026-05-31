@@ -1041,6 +1041,98 @@ fn apply_rules(rule_obj: &serde_json::Map<String, serde_json::Value>) -> Result<
 
 // ============ Process Launching ============
 
+/// Verify instance integrity (check modpack tasks) and auto-repair if necessary
+async fn verify_instance_integrity(app: &AppHandle, instance_dir: &std::path::PathBuf) -> Result<(), String> {
+    let modpack_tasks_path = instance_dir.join("modpack_tasks.json");
+    if !modpack_tasks_path.exists() {
+        return Ok(());
+    }
+
+    let _ = app.emit("launch-status", serde_json::json!({
+        "status": "verifying_integrity"
+    }));
+
+    let content = tokio::fs::read_to_string(&modpack_tasks_path).await
+        .map_err(|e| format!("Failed to read modpack_tasks.json: {}", e))?;
+    
+    let tasks: Vec<DownloadTask> = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse modpack_tasks.json: {}", e))?;
+
+    let mut repair_tasks = Vec::new();
+
+    for task in tasks {
+        let path = std::path::PathBuf::from(&task.dest_path);
+        
+        // Ensure parent directories exist
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        if !path.exists() {
+            tracing::warn!("Mod file missing: {:?}", path);
+            repair_tasks.push(task);
+            continue;
+        }
+
+        // Check hash or size
+        if let Some(expected_hash) = &task.hash {
+            if expected_hash.len() == 40 || expected_hash.len() == 64 { // SHA1 or SHA256 length check, we only support SHA1 locally for now
+                if expected_hash.len() == 40 {
+                    match crate::downloader::download::compute_sha1_sync(&path) {
+                        Ok(computed_hash) => {
+                            if computed_hash.to_lowercase() != expected_hash.to_lowercase() {
+                                tracing::warn!("Hash mismatch for {:?}: expected {}, got {}", path, expected_hash, computed_hash);
+                                let _ = std::fs::remove_file(&path);
+                                repair_tasks.push(task);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to compute hash for {:?}: {}", path, e);
+                            let _ = std::fs::remove_file(&path);
+                            repair_tasks.push(task);
+                        }
+                    }
+                }
+            } else if let Some(expected_size) = task.expected_size {
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    if metadata.len() != expected_size {
+                        tracing::warn!("Size mismatch for {:?}: expected {}, got {}", path, expected_size, metadata.len());
+                        let _ = std::fs::remove_file(&path);
+                        repair_tasks.push(task);
+                    }
+                }
+            }
+        } else if let Some(expected_size) = task.expected_size {
+             if let Ok(metadata) = std::fs::metadata(&path) {
+                  if metadata.len() != expected_size {
+                      tracing::warn!("Size mismatch for {:?}: expected {}, got {}", path, expected_size, metadata.len());
+                      let _ = std::fs::remove_file(&path);
+                      repair_tasks.push(task);
+                  }
+             }
+        }
+    }
+
+    if !repair_tasks.is_empty() {
+        tracing::info!("Found {} corrupted or missing mods. Starting auto-repair...", repair_tasks.len());
+        
+        let _ = app.emit("launch-status", serde_json::json!({
+            "status": "repairing_mods",
+            "count": repair_tasks.len()
+        }));
+
+        crate::downloader::run_batch_download(repair_tasks, app.clone()).await;
+        
+        let _ = app.emit("launch-status", serde_json::json!({
+            "status": "repairing_complete"
+        }));
+        
+        tracing::info!("Auto-repair completed");
+    }
+
+    Ok(())
+}
+
 /// Launch a Minecraft instance.
 #[tauri::command]
 pub async fn launch_instance(
@@ -1054,9 +1146,11 @@ pub async fn launch_instance(
 
     let base_dir = get_minecraft_base();
     
-    // Version isolation: Use instance-specific directory for game data (saves, resourcepacks, options.txt)
-    // This ensures each instance has its own isolated game directory
+    // Version isolation: Use instance-specific directory for game data
     let instance_dir = base_dir.join("versions").join(&version_id);
+
+    // Verify and repair instance integrity before proceeding
+    verify_instance_integrity(&app, &instance_dir).await?;
     let game_dir = instance_dir.clone();
     let assets_dir = base_dir.join("assets");
 

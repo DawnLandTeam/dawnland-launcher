@@ -70,6 +70,26 @@ const showCrashAlert = ref(false);
 const crashExitCode = ref(0);
 const crashVersionId = ref("");
 
+// Repair progress state
+interface DownloadProgress {
+  taskId: string;
+  downloaded: number;
+  total: number;
+  speed: number;
+  completed: boolean;
+  error?: string;
+}
+const isRepairing = ref(false);
+const repairTotalFiles = ref(0);
+const repairCompletedFiles = ref(0);
+const repairDownloadSpeed = ref(0);
+const repairActiveTasks = ref(new Map<string, DownloadProgress>());
+
+const repairProgressPercentage = computed(() => {
+  if (repairTotalFiles.value === 0) return 0;
+  return (repairCompletedFiles.value / repairTotalFiles.value) * 100;
+});
+
 // ---------------------------------------------------------------------------
 // Computed
 // ---------------------------------------------------------------------------
@@ -137,7 +157,7 @@ onMounted(async () => {
 
   // Listen for instance state changes
   listen<InstanceState>("instance-state-changed", (event) => {
-    const { versionId, status, exitCode } = event.payload;
+    const { versionId, status, exitCode, missingCount } = event.payload;
 
     if (status === "running") {
       jvmSpawnedInstances.value.add(versionId);
@@ -151,11 +171,13 @@ onMounted(async () => {
       }, 8000);
 
       repairingInstances.value.delete(versionId);
+      isRepairing.value = false;
     } else if (status === "exited") {
       jvmSpawnedInstances.value.delete(versionId);
       runningInstances.value.delete(versionId);
       launchingInstances.value.delete(versionId);
       repairingInstances.value.delete(versionId);
+      isRepairing.value = false;
 
       // Check if this was an intentional kill
       const wasIntentionallyKilled = intentionallyKilledInstances.value.has(versionId);
@@ -169,9 +191,50 @@ onMounted(async () => {
       }
     } else if (status === "repairing") {
       repairingInstances.value.add(versionId);
+      isRepairing.value = true;
+      repairTotalFiles.value = missingCount || 0;
+      repairCompletedFiles.value = 0;
+      repairDownloadSpeed.value = 0;
+      repairActiveTasks.value.clear();
     } else if (status === "repairing_complete") {
       repairingInstances.value.delete(versionId);
+      isRepairing.value = false;
     }
+  });
+
+  // Listen for launch-status (repair events)
+  listen("launch-status", (event: any) => {
+    const payload = event.payload;
+    if (payload.status === "repairing_mods") {
+      isRepairing.value = true;
+      repairTotalFiles.value = payload.count || 0;
+      repairCompletedFiles.value = 0;
+      repairDownloadSpeed.value = 0;
+      repairActiveTasks.value.clear();
+    } else if (payload.status === "repairing_complete") {
+      isRepairing.value = false;
+    }
+  });
+
+  // Listen for download-progress during repair
+  listen<DownloadProgress>("download-progress", (event) => {
+    if (!isRepairing.value) return;
+    
+    const progress = event.payload;
+    repairActiveTasks.value.set(progress.taskId, progress);
+
+    if (progress.completed) {
+      repairCompletedFiles.value++;
+    }
+
+    // Calculate total speed
+    let currentSpeed = 0;
+    for (const task of repairActiveTasks.value.values()) {
+      if (!task.completed) {
+        currentSpeed += task.speed;
+      }
+    }
+    repairDownloadSpeed.value = currentSpeed;
   });
 });
 
@@ -443,5 +506,68 @@ function isMsaAccount(account: Account): boolean {
 
     <!-- Crash Report Modal -->
     <CrashReportModal :open="showCrashAlert" :exit-code="crashExitCode" :version-id="crashVersionId" :logs="gameLogs" @update:open="showCrashAlert = $event" />
+
+    <!-- Repair Progress Modal -->
+    <Teleport to="body">
+      <Transition name="dialog">
+        <div v-if="isRepairing" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+          <!-- Backdrop -->
+          <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" />
+          
+          <!-- Content -->
+          <div class="relative z-10 w-full max-w-md bg-white dark:bg-zinc-900 border rounded-2xl p-6 shadow-2xl space-y-4 pointer-events-auto">
+            <div class="flex items-center gap-3">
+              <Loader2 class="h-6 w-6 animate-spin text-primary" />
+              <h3 class="text-xl font-bold">正在校验与修复 Mod...</h3>
+            </div>
+            
+            <p class="text-sm text-muted-foreground">
+              检测到 {{ repairTotalFiles }} 个文件缺失或损坏，正在自动重新下载。
+            </p>
+
+            <!-- Progress Bar -->
+            <div class="space-y-2">
+              <div class="flex justify-between text-xs font-medium">
+                <span>{{ repairCompletedFiles }} / {{ repairTotalFiles }} 文件</span>
+                <span>{{ (repairDownloadSpeed / 1024 / 1024).toFixed(2) }} MB/s</span>
+              </div>
+              <div class="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                <div
+                  class="h-full bg-primary transition-all duration-300 ease-out"
+                  :style="{ width: `${repairProgressPercentage}%` }"
+                ></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
+
+<style scoped>
+.dialog-enter-active,
+.dialog-leave-active {
+  transition: opacity 150ms ease;
+}
+
+.dialog-enter-from,
+.dialog-leave-to {
+  opacity: 0;
+}
+
+.dialog-enter-active .relative,
+.dialog-leave-active .relative {
+  transition: transform 150ms ease, opacity 150ms ease;
+}
+
+.dialog-enter-from .relative {
+  transform: scale(0.95);
+  opacity: 0;
+}
+
+.dialog-leave-to .relative {
+  transform: scale(0.95);
+  opacity: 0;
+}
+</style>
