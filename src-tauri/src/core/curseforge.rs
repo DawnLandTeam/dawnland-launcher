@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use super::modrinth::{UnifiedModProject, UnifiedModFile};
+use super::modrinth::{UnifiedModProject, UnifiedModFile, OnlineModpackVersion};
 
 /// Get the web backend URL from environment or use default.
 fn get_web_backend_url() -> String {
@@ -41,6 +41,12 @@ impl CfModLoader {
     }
 }
 
+fn get_fallback_download_url(file_id: i64, file_name: &str) -> String {
+    let part1 = file_id / 1000;
+    let part2 = file_id % 1000;
+    let encoded_name = urlencoding::encode(file_name);
+    format!("https://edge.forgecdn.net/files/{}/{:03}/{}", part1, part2, encoded_name)
+}
 // ============================================================================
 // CurseForge API Response Types
 // ============================================================================
@@ -274,34 +280,31 @@ pub async fn get_cf_mod_files(
     let mut compatible_files = Vec::new();
 
     for file in sorted_files {
-        if let Some(download_url) = file.download_url {
-            let release_str = match file.release_type {
-                1 => "Release",
-                2 => "Beta",
-                3 => "Alpha",
-                _ => "Unknown",
-            };
+        let download_url = file.download_url.unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name));
+        let release_str = match file.release_type {
+            1 => "Release",
+            2 => "Beta",
+            3 => "Alpha",
+            _ => "Unknown",
+        };
 
-            let mut hash = None;
-            if let Some(hashes) = &file.hashes {
-                if let Some(h) = hashes.iter().find(|h| h.algo == 1) {
-                    hash = Some(h.value.clone());
-                }
+        let mut hash = None;
+        if let Some(hashes) = &file.hashes {
+            if let Some(h) = hashes.iter().find(|h| h.algo == 1) {
+                hash = Some(h.value.clone());
             }
-
-            compatible_files.push(UnifiedModFile {
-                id: file.id.to_string(),
-                filename: file.file_name.clone(),
-                version_number: "".to_string(),
-                download_url,
-                release_type: release_str.to_string(),
-                date: file.file_date.clone(),
-                file_size: file.file_length,
-                hash,
-            });
-        } else {
-            tracing::warn!("File {} matched but missing download_url!", file.id);
         }
+
+        compatible_files.push(UnifiedModFile {
+            id: file.id.to_string(),
+            filename: file.file_name.clone(),
+            version_number: "".to_string(),
+            download_url,
+            release_type: release_str.to_string(),
+            date: file.file_date.clone(),
+            file_size: file.file_length,
+            hash,
+        });
     }
 
     if compatible_files.is_empty() {
@@ -356,32 +359,31 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
     let mut compatible_files = Vec::new();
 
     for file in files_result.data {
-        if let Some(download_url) = file.download_url {
-            let release_str = match file.release_type {
-                1 => "Release",
-                2 => "Beta",
-                3 => "Alpha",
-                _ => "Unknown",
-            };
+        let download_url = file.download_url.unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name));
+        let release_str = match file.release_type {
+            1 => "Release",
+            2 => "Beta",
+            3 => "Alpha",
+            _ => "Unknown",
+        };
 
-            let mut hash = None;
-            if let Some(hashes) = file.hashes {
-                if let Some(h) = hashes.into_iter().find(|h| h.algo == 1) {
-                    hash = Some(h.value);
-                }
+        let mut hash = None;
+        if let Some(hashes) = file.hashes {
+            if let Some(h) = hashes.into_iter().find(|h| h.algo == 1) {
+                hash = Some(h.value);
             }
-
-            compatible_files.push(UnifiedModFile {
-                id: file.id.to_string(),
-                filename: file.file_name.clone(),
-                version_number: "".to_string(),
-                download_url,
-                release_type: release_str.to_string(),
-                date: file.file_date.clone(),
-                file_size: file.file_length,
-                hash,
-            });
         }
+
+        compatible_files.push(UnifiedModFile {
+            id: file.id.to_string(),
+            filename: file.file_name.clone(),
+            version_number: "".to_string(),
+            download_url,
+            release_type: release_str.to_string(),
+            date: file.file_date.clone(),
+            file_size: file.file_length,
+            hash,
+        });
     }
 
     Ok(compatible_files)
@@ -453,4 +455,155 @@ pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject,
         download_url: None,
         file_id: None,
     })
+}
+
+#[tauri::command]
+pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModProject>, String> {
+    tracing::info!("Searching CurseForge modpacks: query={}", query);
+
+    // Build search query parameters with classId=4471 (Modpacks)
+    let query_string = format!(
+        "gameId=432&classId=4471&searchFilter={}&sortField=2&sortOrder=desc",
+        urlencoding::encode(&query)
+    );
+
+    let proxy_url = build_proxy_url("/mods/search", Some(&query_string));
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&proxy_url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send request: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("CurseForge API error: {} - {}", status, body));
+    }
+
+    let raw_text = response.text().await.map_err(|e| e.to_string())?;
+
+    #[derive(Deserialize)]
+    struct CfSearchResponse {
+        data: Vec<CfModProject>,
+    }
+
+    let search_result: CfSearchResponse = match serde_json::from_str(&raw_text) {
+        Ok(res) => res,
+        Err(e) => {
+            tracing::error!("Failed to parse CurseForge API response: {}", e);
+            tracing::error!("Raw Response: {}", raw_text);
+            return Err(format!("Failed to parse JSON: {}", e));
+        }
+    };
+
+    let projects: Vec<UnifiedModProject> = search_result
+        .data
+        .into_iter()
+        .map(|m| {
+            let mc_versions = m
+                .latest_files
+                .as_ref()
+                .and_then(|f| f.first())
+                .and_then(|f| f.game_versions.as_ref())
+                .cloned()
+                .unwrap_or_default();
+
+            let loaders = m
+                .latest_files
+                .as_ref()
+                .and_then(|f| f.first())
+                .and_then(|f| f.loaders.as_ref())
+                .cloned()
+                .unwrap_or_default();
+
+            UnifiedModProject {
+                source: "curseforge".to_string(),
+                project_id: m.id.to_string(),
+                title: m.name,
+                description: m.summary,
+                icon_url: m.logo.and_then(|l| l.thumbnail_url),
+                downloads: m.download_count as u64,
+                author: m
+                    .authors
+                    .first()
+                    .map(|a| a.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                mc_versions,
+                loaders,
+                download_url: None,
+                file_id: None,
+            }
+        })
+        .collect();
+
+    tracing::info!("Found {} CurseForge modpacks", projects.len());
+
+    Ok(projects)
+}
+
+#[tauri::command]
+pub async fn get_curseforge_modpack_versions(project_id: String) -> Result<Vec<OnlineModpackVersion>, String> {
+    tracing::info!("Getting CurseForge modpack versions: project_id={}", project_id);
+
+    let query_string = format!("modId={}", project_id);
+    // Use /mods/{modId}/files to get versions. The proxy might just expect /mods/files or something?
+    // Wait, the API endpoint is /v1/mods/{modId}/files. Let's see how `get_cf_files_batch` or others use proxy.
+    // I'll assume `build_proxy_url(&format!("/mods/{}/files", project_id), None)`
+    let proxy_url = build_proxy_url(&format!("/mods/{}/files", project_id), None);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&proxy_url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send request: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(format!("CurseForge API error: {}", status));
+    }
+
+    #[derive(Deserialize)]
+    struct CfFilesResponse {
+        data: Vec<CfFile>,
+    }
+
+    let files: CfFilesResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let mut result = Vec::new();
+    for file in files.data {
+        let mut mc_versions = Vec::new();
+        let mut loaders = file.loaders.clone().unwrap_or_default();
+        
+        if let Some(gv) = &file.game_versions {
+            for v in gv {
+                let lower = v.to_lowercase();
+                if ["forge", "fabric", "quilt", "neoforge", "liteloader"].contains(&lower.as_str()) {
+                    if !loaders.contains(v) {
+                        loaders.push(v.clone());
+                    }
+                } else if lower != "standard" && !lower.starts_with("java ") && lower != "modpack" {
+                    mc_versions.push(v.clone());
+                }
+            }
+        }
+
+        result.push(OnlineModpackVersion {
+            id: file.id.to_string(),
+            name: file.display_name,
+            mc_version: mc_versions.join(", "),
+            loaders,
+            download_url: file.download_url.unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name)),
+            date: file.file_date,
+        });
+    }
+
+    Ok(result)
 }

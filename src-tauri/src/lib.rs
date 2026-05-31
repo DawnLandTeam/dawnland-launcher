@@ -50,6 +50,7 @@ pub fn run() {
             commands::get_system_memory,
             commands::batch_download,
             commands::modpack::install_modpack,
+            commands::modpack::download_and_install_online_modpack,
             commands::modpack::get_modpack_name,
             // Auth commands
             commands::get_accounts,
@@ -100,11 +101,15 @@ pub fn run() {
             core::curseforge::get_cf_mod_files,
             core::curseforge::get_cf_mod_details,
             core::curseforge::get_cf_files_batch,
+            core::curseforge::search_curseforge_modpacks,
+            core::curseforge::get_curseforge_modpack_versions,
             // Modrinth commands
             core::modrinth::search_modrinth,
             core::modrinth::get_modrinth_mod_files,
             core::modrinth::get_modrinth_mod_details,
             core::modrinth::get_modrinth_mod_versions,
+            core::modrinth::search_modrinth_modpacks,
+            core::modrinth::get_modrinth_modpack_versions,
             // Server commands (proxies to Go web backend)
             core::server::get_servers,
             core::server::get_recommended_servers,

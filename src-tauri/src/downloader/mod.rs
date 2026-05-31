@@ -54,6 +54,8 @@ pub struct DownloadProgress {
     pub completed: bool,
     /// Error message if failed.
     pub error: Option<String>,
+    /// Filename being downloaded.
+    pub file_name: Option<String>,
 }
 
 impl DownloadProgress {
@@ -65,6 +67,7 @@ impl DownloadProgress {
             speed,
             completed: false,
             error: None,
+            file_name: None,
         }
     }
 
@@ -76,6 +79,7 @@ impl DownloadProgress {
             speed: 0,
             completed: true,
             error: None,
+            file_name: None,
         }
     }
 
@@ -87,6 +91,7 @@ impl DownloadProgress {
             speed: 0,
             completed: true,
             error: Some(error),
+            file_name: None,
         }
     }
 }
