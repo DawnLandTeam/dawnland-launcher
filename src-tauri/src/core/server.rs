@@ -15,7 +15,7 @@ fn get_web_backend_url() -> String {
 const SERVER_API_PATH: &str = "/api/servers";
 
 /// Build the full URL to the web backend server API with query parameters.
-fn build_server_url(path: &str, query_params: Option<&str>) -> String {
+pub fn build_server_url(path: &str, query_params: Option<&str>) -> String {
     let backend_url = get_web_backend_url();
     let base = format!("{}{}", backend_url, SERVER_API_PATH);
     match query_params {

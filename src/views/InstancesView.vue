@@ -392,11 +392,11 @@ function loaderBadgeClass(loaderType: string): string {
         >
           <!-- Instance info — primary visual focus -->
           <div class="flex items-start justify-between">
-            <div class="space-y-1.5 min-w-0 flex items-center gap-2">
+            <div class="min-w-0 flex items-center gap-3 flex-1">
               <Package class="h-5 w-5 shrink-0 text-muted-foreground" />
-              <div>
-                <h3 class="font-semibold truncate">{{ instance.name }}</h3>
-                <div class="flex items-center gap-2">
+              <div class="min-w-0 flex-1">
+                <h3 class="font-semibold truncate" :title="instance.name">{{ instance.name }}</h3>
+                <div class="flex items-center gap-2 mt-1 flex-wrap">
                   <span class="text-xs text-muted-foreground font-mono">
                     {{ instance.mcVersion }}
                   </span>
