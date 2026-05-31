@@ -15,7 +15,7 @@ const MAX_CONCURRENT: usize = 16;
 const PROGRESS_THROTTLE_MS: u64 = 500;
 
 /// Compute SHA-1 hash of a file
-fn compute_sha1_sync(path: &std::path::Path) -> Result<String, String> {
+pub fn compute_sha1_sync(path: &std::path::Path) -> Result<String, String> {
     use std::io::Read;
     
     let file = std::fs::File::open(path)
