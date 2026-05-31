@@ -73,7 +73,7 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
         .form(&payload)
         .send()
         .await
-        .map_err(|e| format!("Failed to request device code: {e}"))?;
+        .map_err(|e| format!("Failed to request device code: {e:?}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -121,7 +121,7 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
             .form(&payload)
             .send()
             .await
-            .map_err(|e| format!("Token request failed: {e}"))?;
+            .map_err(|e| format!("Token request failed: {e:?}"))?;
 
         let raw_text = response.text().await.map_err(|e| format!("Failed to read token response: {e}"))?;
         
@@ -206,7 +206,7 @@ async fn get_xbox_live_token(ms_token: &str) -> Result<String, String> {
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("Xbox Live auth request failed: {e}"))?;
+        .map_err(|e| format!("Xbox Live auth request failed: {e:?}"))?;
 
     let status = response.status();
     let raw_text = response.text().await.unwrap_or_default();
@@ -270,7 +270,7 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("XSTS auth request failed: {e}"))?;
+        .map_err(|e| format!("XSTS auth request failed: {e:?}"))?;
 
     let status = response.status();
     let raw_text = response.text().await.unwrap_or_default();
@@ -362,7 +362,7 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, Stri
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("Minecraft auth request failed: {e}"))?;
+        .map_err(|e| format!("Minecraft auth request failed: {e:?}"))?;
 
     let status = response.status();
     let raw_text = response.text().await.unwrap_or_default();
@@ -404,7 +404,7 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), Strin
         .header("Authorization", format!("Bearer {}", mc_token))
         .send()
         .await
-        .map_err(|e| format!("Minecraft profile request failed: {e}"))?;
+        .map_err(|e| format!("Minecraft profile request failed: {e:?}"))?;
 
     let status = response.status();
     let raw_text = response.text().await.unwrap_or_default();
@@ -526,7 +526,7 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
         .form(&payload)
         .send()
         .await
-        .map_err(|e| format!("Token refresh request failed: {}", e))?;
+        .map_err(|e| format!("Token refresh request failed: {:?}", e))?;
 
     let raw_text = response.text().await.map_err(|e| format!("Failed to read refresh response: {e}"))?;
 
