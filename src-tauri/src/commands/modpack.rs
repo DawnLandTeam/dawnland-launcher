@@ -164,8 +164,8 @@ pub async fn install_modpack(
         "totalTasks": tasks.len()
     }));
 
-    // We block on batch download.
-    run_batch_download(tasks, app.clone()).await;
+    // Run batch download
+    run_batch_download(tasks.clone(), app.clone()).await;
 
     // 5. Copy Overrides
     let _ = app.emit("modpack-install-status", serde_json::json!({
@@ -182,10 +182,16 @@ pub async fn install_modpack(
     .await
     .map_err(|e| format!("Task join error: {}", e))??;
 
-    // Write the new modpack_files.json
+    // Write the new modpack_files.json (for backwards compatibility if needed, but we will upgrade to modpack_tasks.json)
     let new_files_list: Vec<String> = expected_mod_filenames.into_iter().collect();
     if let Ok(json_str) = serde_json::to_string_pretty(&new_files_list) {
         let _ = tokio::fs::write(&modpack_files_path, json_str).await;
+    }
+
+    // Save the full download tasks for integrity verification
+    let modpack_tasks_path = instance_dir.join("modpack_tasks.json");
+    if let Ok(json_str) = serde_json::to_string_pretty(&tasks) {
+        let _ = tokio::fs::write(&modpack_tasks_path, json_str).await;
     }
 
     // Clean up
