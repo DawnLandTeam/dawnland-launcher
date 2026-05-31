@@ -3,6 +3,7 @@ import { ref, onMounted, computed, onActivated } from "vue";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   Play,
   Loader2,
@@ -13,6 +14,7 @@ import {
   Package,
   MonitorCheck,
   WifiOff,
+  Square,
 } from "@lucide/vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
@@ -53,10 +55,15 @@ const selectedInstanceId = ref<string>("");
 const selectedAccountId = ref<string>("");
 
 // Running state
+const launchingInstances = ref<Set<string>>(new Set());
+const jvmSpawnedInstances = ref<Set<string>>(new Set());
 const runningInstances = ref<Set<string>>(new Set());
 const repairingInstances = ref<Set<string>>(new Set());
 const gameLogs = ref<string[]>([]);
 const showGameLog = ref(false);
+
+// Kill tracking state
+const intentionallyKilledInstances = ref<Set<string>>(new Set());
 
 // Crash alert state
 const showCrashAlert = ref(false);
@@ -73,21 +80,27 @@ const selectedInstance = computed(() => {
   );
 });
 
-const canLaunch = computed(() => {
-  return (
-    selectedInstanceId.value &&
-    selectedAccountId.value &&
-    !runningInstances.value.has(selectedInstanceId.value) &&
-    !repairingInstances.value.has(selectedInstanceId.value)
-  );
+const isActionDisabled = computed(() => {
+  if (!selectedInstanceId.value || !selectedAccountId.value) return true;
+  
+  if (launchingInstances.value.has(selectedInstanceId.value) || 
+      repairingInstances.value.has(selectedInstanceId.value)) {
+    return true;
+  }
+  
+  return false;
 });
 
 const isLaunching = computed(() => {
   const instanceId = selectedInstanceId.value;
   return (
-    runningInstances.value.has(instanceId) ||
+    launchingInstances.value.has(instanceId) ||
     repairingInstances.value.has(instanceId)
   );
+});
+
+const isRunning = computed(() => {
+  return runningInstances.value.has(selectedInstanceId.value);
 });
 
 // ---------------------------------------------------------------------------
@@ -108,6 +121,18 @@ onMounted(async () => {
     if (gameLogs.value.length > 500) {
       gameLogs.value = gameLogs.value.slice(-500);
     }
+    
+    // Heuristic: detect when Minecraft window is likely appearing
+    const line = event.payload.line || "";
+    if (line.includes("Backend library:") || line.includes("LWJGL") || line.includes("Setting user") || line.includes("OpenAL initialized")) {
+      // Transition all spawned JVMs to fully running state
+      for (const id of launchingInstances.value) {
+        if (jvmSpawnedInstances.value.has(id)) {
+          runningInstances.value.add(id);
+          launchingInstances.value.delete(id);
+        }
+      }
+    }
   });
 
   // Listen for instance state changes
@@ -115,14 +140,29 @@ onMounted(async () => {
     const { versionId, status, exitCode } = event.payload;
 
     if (status === "running") {
-      runningInstances.value.add(versionId);
+      jvmSpawnedInstances.value.add(versionId);
+      
+      // Fallback: If logs don't match, auto-transition after 8 seconds
+      setTimeout(() => {
+        if (launchingInstances.value.has(versionId)) {
+          runningInstances.value.add(versionId);
+          launchingInstances.value.delete(versionId);
+        }
+      }, 8000);
+
       repairingInstances.value.delete(versionId);
     } else if (status === "exited") {
+      jvmSpawnedInstances.value.delete(versionId);
       runningInstances.value.delete(versionId);
+      launchingInstances.value.delete(versionId);
       repairingInstances.value.delete(versionId);
 
-      // Show crash alert if exit code is non-zero
-      if (exitCode !== 0) {
+      // Check if this was an intentional kill
+      const wasIntentionallyKilled = intentionallyKilledInstances.value.has(versionId);
+      intentionallyKilledInstances.value.delete(versionId);
+
+      // Show crash alert if exit code is non-zero and it wasn't intentionally killed
+      if (exitCode !== 0 && !wasIntentionallyKilled) {
         crashVersionId.value = versionId;
         crashExitCode.value = exitCode ?? -1;
         showCrashAlert.value = true;
@@ -170,15 +210,40 @@ async function loadAccounts() {
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
-async function launchInstance() {
-  if (!selectedInstanceId.value || !selectedAccountId.value) {
+async function handlePrimaryAction() {
+  if (isRunning.value) {
+    const confirmed = await confirm(
+      "你确定要强制结束正在运行的游戏进程吗？",
+      { title: "强制停止游戏", kind: "warning" }
+    );
+    if (confirmed) {
+      try {
+        await invoke("kill_instance", { versionId: selectedInstanceId.value });
+        intentionallyKilledInstances.value.add(selectedInstanceId.value);
+      } catch (e) {
+        console.error("Failed to kill instance:", e);
+        alert(`停止游戏失败: ${e}`);
+      }
+    }
     return;
   }
 
-  // Add to running set immediately for UI feedback
-  runningInstances.value.add(selectedInstanceId.value);
+  if (!selectedInstanceId.value || !selectedAccountId.value || isActionDisabled.value) {
+    return;
+  }
+
+  // Add to launching set immediately for UI feedback
+  launchingInstances.value.add(selectedInstanceId.value);
   gameLogs.value = [];
-  showGameLog.value = true;
+
+  try {
+    const config = await invoke<any>("get_instance_config", { versionId: selectedInstanceId.value });
+    if (config && config.showGameLog) {
+      showGameLog.value = true;
+    }
+  } catch (e) {
+    console.warn("Failed to get instance config for log display preference:", e);
+  }
 
   try {
     await invoke("launch_instance", {
@@ -187,7 +252,7 @@ async function launchInstance() {
     });
   } catch (e) {
     console.error("Failed to launch instance:", e);
-    runningInstances.value.delete(selectedInstanceId.value);
+    launchingInstances.value.delete(selectedInstanceId.value);
     alert(`Failed to launch: ${e}`);
   }
 }
@@ -330,19 +395,28 @@ function isMsaAccount(account: Account): boolean {
               <Settings class="h-5 w-5" />
               {{ $t('home.configure') }}
             </button>
-            <button @click="launchInstance" :disabled="!canLaunch" class="flex items-center gap-3 rounded-xl bg-green-600 px-10 py-2 text-xl font-bold text-white shadow-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95">
+            <button @click="handlePrimaryAction" :disabled="isActionDisabled" 
+              :class="isRunning ? 'bg-zinc-700 hover:bg-zinc-800 text-white dark:bg-zinc-800 dark:hover:bg-zinc-700' : 'bg-green-600 hover:bg-green-700 text-white'"
+              class="flex items-center gap-3 rounded-xl px-10 py-2 text-xl font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:scale-105 active:scale-95">
               <Loader2 v-if="isLaunching" class="h-6 w-6 animate-spin" />
+              <Square v-else-if="isRunning" class="h-6 w-6 fill-current" />
               <Play v-else class="h-6 w-6" />
-              {{ isLaunching ? $t('home.launching') : $t('home.play') }}
+              {{ isLaunching ? $t('home.launching') : (isRunning ? $t('home.stopGame', '停止运行') : $t('home.play')) }}
             </button>
           </div>
 
           <!-- Instance Info Badge -->
           <div v-if="selectedInstance" class="flex items-center justify-center gap-2 mt-4">
-            <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold" :class="loaderBadgeClass(selectedInstance.loaderType)">
+            <span class="text-sm text-muted-foreground mr-1">Minecraft {{ selectedInstance.mcVersion }}</span>
+            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none" :class="loaderBadgeClass(selectedInstance.loaderType)">
               {{ formatLoaderType(selectedInstance.loaderType) }}
             </span>
-            <span class="text-sm text-muted-foreground">Minecraft {{ selectedInstance.mcVersion }}</span>
+            <span v-if="selectedInstance.modpackType" class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
+              {{ selectedInstance.modpackType }}
+            </span>
+            <span v-if="selectedInstance.modpackVersion" class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
+              v{{ selectedInstance.modpackVersion }}
+            </span>
           </div>
         </div>
       </div>

@@ -8,10 +8,51 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use sysinfo::System;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::Mutex;
+use std::sync::Arc;
+use std::collections::HashMap;
+
+pub struct RunningInstances(pub Arc<Mutex<HashMap<String, u32>>>);
+
+#[tauri::command]
+pub async fn kill_instance(version_id: String, state: State<'_, RunningInstances>) -> Result<(), String> {
+    let pid = {
+        let map = state.0.lock().await;
+        map.get(&version_id).copied()
+    };
+
+    if let Some(pid) = pid {
+        #[cfg(windows)]
+        {
+            let output = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .output()
+                .map_err(|e| e.to_string())?;
+                
+            if !output.status.success() {
+                return Err(String::from_utf8_lossy(&output.stderr).to_string());
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let output = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .output()
+                .map_err(|e| e.to_string())?;
+                
+            if !output.status.success() {
+                return Err(String::from_utf8_lossy(&output.stderr).to_string());
+            }
+        }
+        Ok(())
+    } else {
+        Err("Instance is not running or PID not found".to_string())
+    }
+}
 
 // ============ Constants ============
 
@@ -1410,6 +1451,11 @@ pub async fn launch_instance(
     let pid = child.id().unwrap_or(0);
     tracing::info!("Minecraft process spawned with PID: {}", pid);
 
+    if let Some(state) = app.try_state::<RunningInstances>() {
+        let mut map = state.0.lock().await;
+        map.insert(version_id.clone(), pid);
+    }
+
     // Emit "running" state to frontend
     let _ = app.emit("instance-state-changed", serde_json::json!({
         "versionId": version_id,
@@ -1457,6 +1503,8 @@ pub async fn launch_instance(
 
                 // Restore window visibility when game exits
                 let _ = window_clone.show();
+                let _ = window_clone.unminimize();
+                let _ = window_clone.set_focus();
 
                 // Notify frontend game has exited with exit code
                 let _ = app_handle_clone.emit("instance-state-changed", serde_json::json!({
@@ -1464,17 +1512,29 @@ pub async fn launch_instance(
                     "status": "exited",
                     "exitCode": exit_code
                 }));
+
+                if let Some(state) = app_handle_clone.try_state::<RunningInstances>() {
+                    let mut map = state.0.lock().await;
+                    map.remove(&version_id_clone);
+                }
             }
             Err(e) => {
                 tracing::error!("Failed to wait for game process: {}", e);
                 // Restore window on error too
                 let _ = window_clone.show();
+                let _ = window_clone.unminimize();
+                let _ = window_clone.set_focus();
                 
                 let _ = app_handle_clone.emit("instance-state-changed", serde_json::json!({
                     "versionId": version_id_clone,
                     "status": "exited",
                     "exitCode": -1
                 }));
+
+                if let Some(state) = app_handle_clone.try_state::<RunningInstances>() {
+                    let mut map = state.0.lock().await;
+                    map.remove(&version_id_clone);
+                }
             }
         }
     });
