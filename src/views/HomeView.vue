@@ -25,6 +25,9 @@ interface InstanceItem {
   name: string;
   mcVersion: string;
   loaderType: string;
+  modpackVersion?: string;
+  modpackType?: string;
+  modpackProjectId?: string;
 }
 
 interface Account {

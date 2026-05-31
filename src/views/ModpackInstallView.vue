@@ -19,6 +19,7 @@ const isUpdate = computed(() => !!route.query.update_id);
 
 const zipPath = ref("");
 const onlineUrl = ref("");
+const selectedVersionName = ref<string | null>(null);
 const instanceName = ref("");
 const isInstalling = ref(false);
 const showSuccessModal = ref(false);
@@ -58,11 +59,44 @@ const totalSpeedMB = computed(() => {
 });
 
 onMounted(() => {
-  if (route.query.update_id && route.query.zip) {
-    // If it's an update, force local mode and lock it
-    installMode.value = 'local';
+  if (route.query.update_id) {
     instanceName.value = route.query.update_id as string;
-    zipPath.value = route.query.zip as string;
+    
+    if (route.query.zip) {
+      installMode.value = 'local';
+      zipPath.value = route.query.zip as string;
+    } else {
+      installMode.value = 'online';
+      searchQuery.value = route.query.update_id as string;
+      const sourceQuery = route.query.source as string;
+      if (sourceQuery === 'modrinth' || sourceQuery === 'curseforge') {
+        source.value = sourceQuery;
+      }
+      
+      // Auto-search and open modal
+      if (route.query.project_id) {
+        const dummyModpack = {
+          project_id: route.query.project_id as string,
+          title: route.query.update_id as string,
+          source: source.value
+        };
+        openVersionsModal(dummyModpack);
+      } else {
+        isSearching.value = true;
+        modpacks.value = [];
+        invoke(source.value === 'modrinth' ? 'search_modrinth_modpacks' : 'search_curseforge_modpacks', { query: searchQuery.value })
+          .then((res: any) => {
+            modpacks.value = res;
+            if (res && res.length > 0) {
+              openVersionsModal(res[0]);
+            }
+          })
+          .catch(console.error)
+          .finally(() => {
+            isSearching.value = false;
+          });
+      }
+    }
   } else {
     // Default to fetching trending modpacks if not an update
     searchModpacks();
@@ -177,7 +211,11 @@ const searchModpacks = async () => {
 
 const openVersionsModal = async (modpack: any) => {
   selectedModpack.value = modpack;
-  instanceNameInput.value = modpack.title.replace(/[^a-zA-Z0-9_ -]/g, '_');
+  if (route.query.update_id) {
+    instanceNameInput.value = route.query.update_id as string;
+  } else {
+    instanceNameInput.value = modpack.title.replace(/[^a-zA-Z0-9_ -]/g, '_');
+  }
   showVersionsModal.value = true;
   isFetchingVersions.value = true;
   modpackVersions.value = [];
@@ -195,6 +233,25 @@ const openVersionsModal = async (modpack: any) => {
   }
 };
 
+const getVersionUpgradeStatus = (index: number) => {
+  if (!route.query.current_version) return { text: '安装', disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+  
+  const currentVersionIndex = modpackVersions.value.findIndex(v => {
+    const cv = route.query.current_version as string;
+    return v.name === cv || 
+           v.id.toString() === cv || 
+           (cv && v.name.includes(cv));
+  });
+  
+  if (currentVersionIndex === -1) {
+    return { text: '安装', disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+  }
+  
+  if (index < currentVersionIndex) return { text: '升级', disabled: false, class: 'bg-blue-600 hover:bg-blue-700' };
+  if (index === currentVersionIndex) return { text: '重装', disabled: false, class: 'bg-amber-600 hover:bg-amber-700' };
+  return { text: '已过时', disabled: true, class: 'bg-gray-500' };
+};
+
 const selectOnlineVersion = (version: any) => {
   if (!instanceNameInput.value.trim()) {
     alert("请输入实例名称 / Please enter an instance name");
@@ -203,7 +260,9 @@ const selectOnlineVersion = (version: any) => {
   
   // Set installation parameters
   onlineUrl.value = version.download_url;
-  instanceName.value = instanceNameInput.value.trim();
+  installMode.value = 'online';
+  instanceName.value = instanceNameInput.value;
+  selectedVersionName.value = version.name;
   showVersionsModal.value = false;
   
   // Start installation automatically
@@ -257,6 +316,8 @@ const installModpack = async () => {
       await invoke("download_and_install_online_modpack", {
         url: onlineUrl.value,
         instanceName: instanceName.value,
+        projectId: selectedModpack.value?.project_id || route.query.project_id || null,
+        isUpdate: isUpdate.value,
       });
     } else {
       console.log("Invoking install_modpack...");
@@ -264,6 +325,7 @@ const installModpack = async () => {
         zipPath: zipPath.value,
         instanceName: instanceName.value,
         isUpdate: isUpdate.value,
+        projectId: null,
       });
     }
     
@@ -314,8 +376,8 @@ const formatDate = (dateString: string) => {
       </button>
     </div>
 
-    <!-- Mode Selector (hidden if installing or updating) -->
-    <div v-if="!isInstalling && !isUpdate" class="flex p-1 bg-gray-100 dark:bg-gray-900 rounded-lg w-fit shrink-0">
+    <!-- Mode Selector -->
+    <div v-if="!isInstalling" class="flex p-1 bg-gray-100 dark:bg-gray-900 rounded-lg w-fit shrink-0">
       <button 
         @click="installMode = 'online'"
         class="px-6 py-2 rounded-md text-sm font-medium transition-all"
@@ -568,6 +630,7 @@ const formatDate = (dateString: string) => {
               <input 
                 type="text"
                 v-model="instanceNameInput" 
+                :disabled="!!route.query.update_id"
                 placeholder="输入安装后的游戏实例名称..." 
                 class="flex h-10 w-full rounded-md border border-input px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-medium bg-background" 
               />
@@ -577,7 +640,7 @@ const formatDate = (dateString: string) => {
           <div class="flex-1 overflow-hidden border rounded-xl bg-background/50 flex flex-col">
             <!-- Table Header -->
             <div class="grid grid-cols-12 gap-4 p-3 bg-secondary/50 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b shrink-0">
-              <div class="col-span-4 pl-2">版本名称</div>
+              <div class="col-span-4 pl-2">整合包版本</div>
               <div class="col-span-2">游戏版本</div>
               <div class="col-span-2">加载器</div>
               <div class="col-span-2">发布日期</div>
@@ -597,12 +660,15 @@ const formatDate = (dateString: string) => {
               </div>
 
               <div 
-                v-for="version in modpackVersions" 
+                v-for="(version, index) in modpackVersions" 
                 :key="version.id"
                 class="grid grid-cols-12 gap-4 p-3 items-center hover:bg-secondary/60 rounded-lg transition-colors group border border-transparent hover:border-white/5"
               >
-                <div class="col-span-4 font-medium pl-2 line-clamp-1" :title="version.name">
-                  {{ version.name }}
+                <div class="col-span-4 font-medium pl-2 flex items-center gap-2 line-clamp-1" :title="version.name">
+                  <span class="truncate">{{ version.name }}</span>
+                  <span v-if="getVersionUpgradeStatus(index) === 'reinstall'" class="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                    当前版本
+                  </span>
                 </div>
                 <div class="col-span-2">
                   <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-foreground font-mono bg-background text-xs">
@@ -620,10 +686,12 @@ const formatDate = (dateString: string) => {
                 </div>
                 <div class="col-span-2 flex justify-end pr-2">
                   <button 
-                    class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-emerald-600 text-white hover:bg-emerald-700 h-9 px-3 w-full shadow-sm hover:shadow-md transition-all"
+                    class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 text-white h-9 px-3 w-full shadow-sm hover:shadow-md transition-all"
+                    :class="getVersionUpgradeStatus(index).class"
+                    :disabled="getVersionUpgradeStatus(index).disabled"
                     @click="selectOnlineVersion(version)"
                   >
-                    安装
+                    {{ getVersionUpgradeStatus(index).text }}
                   </button>
                 </div>
               </div>

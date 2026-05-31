@@ -309,7 +309,6 @@ async function fetchServers() {
 // Load more servers (infinite scroll)
 async function loadMoreServers() {
   // Infinite scroll is disabled for the recommended ecosystem lobby.
-  hasMore.value = false;
 }
 
 // Infinite scroll handler
