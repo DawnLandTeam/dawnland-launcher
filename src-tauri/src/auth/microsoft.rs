@@ -40,6 +40,13 @@ impl AuthError {
     }
 }
 
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 /// Device code request payload.
 #[derive(Serialize)]
 struct DeviceCodePayload {
@@ -53,7 +60,7 @@ const SCOPE: &str = "XboxLive.signin offline_access";
 
 /// Initiate Microsoft Device Code Flow.
 pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     let payload = DeviceCodePayload {
         client_id: CLIENT_ID,
@@ -99,7 +106,7 @@ struct TokenPayload<'a> {
 
 /// Poll for token - returns (access_token, refresh_token).
 async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     loop {
         let payload = TokenPayload {
@@ -160,7 +167,7 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
 
 /// Exchange Microsoft token for Xbox Live token.
 async fn get_xbox_live_token(ms_token: &str) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     #[derive(Serialize)]
     struct XboxLiveAuthRequest {
@@ -226,7 +233,7 @@ async fn get_xbox_live_token(ms_token: &str) -> Result<String, String> {
 
 /// Exchange Xbox Live token for XSTS token.
 async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     #[derive(Serialize)]
     #[serde(rename_all = "PascalCase")]
@@ -336,7 +343,7 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
 
 /// Exchange XSTS token for Minecraft access token.
 async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     #[derive(Serialize)]
     struct MCAuthRequest {
@@ -390,7 +397,7 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, Stri
 
 /// Get Minecraft profile (UUID and username).
 async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), String> {
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     let response = client
         .get("https://api.minecraftservices.com/minecraft/profile")
@@ -498,7 +505,7 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
         .ok_or_else(|| "No refresh token available for this account".to_string())?;
 
     // Step 1: Refresh Microsoft access token
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     #[derive(Serialize)]
     struct RefreshPayload<'a> {
