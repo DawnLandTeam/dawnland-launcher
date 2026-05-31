@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A modern, cross-platform Minecraft launcher"
 authors = ["Dawnland"]
 edition = "2021"
+default-run = "dawnland-launcher"
 
 [lib]
 name = "dawnland_launcher_lib"

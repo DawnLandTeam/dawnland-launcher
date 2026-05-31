@@ -5,6 +5,8 @@ import ServersView from "../views/ServersView.vue";
 import AccountsView from "../views/AccountsView.vue";
 import SettingsView from "../views/SettingsView.vue";
 
+import ModpackInstallView from "../views/ModpackInstallView.vue";
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -32,6 +34,11 @@ const router = createRouter({
       path: "/settings",
       name: "settings",
       component: SettingsView,
+    },
+    {
+      path: "/modpack-install",
+      name: "modpack-install",
+      component: ModpackInstallView,
     },
   ],
 });

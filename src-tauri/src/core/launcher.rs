@@ -130,6 +130,9 @@ pub struct InstanceConfig {
     /// Whether to show the game log window automatically on launch
     #[serde(default = "default_show_game_log")]
     pub show_game_log: bool,
+    /// Whether this instance is a dependency and should be hidden from the UI
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 fn default_window_behavior() -> String {
@@ -533,9 +536,14 @@ pub fn build_classpath(
         .join("versions")
         .join(jar_version)
         .join(format!("{}.jar", jar_version));
+    let is_bootstrap_launcher = version_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher");
     
     if client_jar.exists() {
-        classpath.push(client_jar);
+        if !is_bootstrap_launcher {
+            classpath.push(client_jar);
+        } else {
+            tracing::info!("Skipping client.jar in classpath for BootstrapLauncher to avoid module conflicts");
+        }
     } else {
         // Try to find patched client JAR in libraries directory as fallback
         let mc_version = jar_version;
@@ -574,6 +582,18 @@ pub fn build_classpath(
         }
     }
     
+    // Deduplicate classpath while preserving order to prevent Forge duplicate key errors
+    let mut unique_classpath = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for p in classpath {
+        // Resolve absolute path to ensure accurate deduplication
+        let normalized = p.canonicalize().unwrap_or(p.clone());
+        if seen.insert(normalized) {
+            unique_classpath.push(p);
+        }
+    }
+    classpath = unique_classpath;
+
     Ok(classpath)
 }
 
@@ -610,6 +630,7 @@ pub async fn verify_and_collect_missing_files(
                                 url,
                                 lib_path.to_string_lossy().to_string(),
                                 artifact.sha1.clone(),
+                                artifact.size,
                             ));
                         }
                     }
@@ -631,6 +652,7 @@ pub async fn verify_and_collect_missing_files(
                         download_url,
                         lib_path.to_string_lossy().to_string(),
                         None, // SHA1 not available for Maven coords
+                        None,
                     ));
                 }
             }
@@ -664,6 +686,7 @@ pub async fn verify_and_collect_missing_files(
                             url.to_string(),
                             client_jar.to_string_lossy().to_string(),
                             client.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                            client.get("size").and_then(|s| s.as_u64()),
                         ));
                     }
                 }
@@ -1034,14 +1057,19 @@ pub async fn launch_instance(
     let mut version_meta: VersionMeta = serde_json::from_str(&version_json_content)
         .map_err(|e| format!("Failed to parse version JSON: {e}"))?;
 
-    // Handle inheritsFrom (used by Fabric, Forge, etc.)
-    // If the version has inheritsFrom, we need to load the parent version's data
-    if let Some(ref parent_version) = version_meta.inherits_from {
-        tracing::info!("Version {} inherits from {}, loading parent...", version_id, parent_version);
+    // Merge libraries from inheritsFrom
+    let mut merged_libraries = version_meta.libraries.clone().unwrap_or_default();
+    
+    let mut current_inherits = version_meta.inherits_from.clone();
+    let mut final_base_version = version_id.clone();
+
+    // Handle inheritsFrom recursively (used by Modpacks, Fabric, Forge, etc.)
+    while let Some(parent_version) = current_inherits.take() {
+        tracing::info!("Version inherits from {}, loading parent...", parent_version);
         
         let parent_json_path = base_dir
             .join("versions")
-            .join(parent_version)
+            .join(&parent_version)
             .join(format!("{}.json", parent_version));
         
         let parent_content = fs::read_to_string(&parent_json_path)
@@ -1050,6 +1078,8 @@ pub async fn launch_instance(
         
         let mut parent_meta: VersionMeta = serde_json::from_str(&parent_content)
             .map_err(|e| format!("Failed to parse parent version JSON: {e}"))?;
+            
+        merged_libraries.extend(parent_meta.libraries.clone().unwrap_or_default());
         
         // Merge parent data into version_meta
         // Use parent's data if current version doesn't have it
@@ -1060,7 +1090,7 @@ pub async fn launch_instance(
             version_meta.minecraft_arguments = parent_meta.minecraft_arguments;
         }
         
-// Deep merge arguments: parent first, then child appends
+        // Deep merge arguments: parent first, then child appends
         if let Some(parent_args) = parent_meta.arguments.take() {
             if let Some(child_args) = version_meta.arguments.take() {
                 // Both have arguments - deep merge
@@ -1126,12 +1156,6 @@ pub async fn launch_instance(
                 // Child has no arguments, use parent's
                 version_meta.arguments = Some(parent_args);
             }
-        } else if version_meta.arguments.is_none() {
-            // Neither has arguments
-            version_meta.arguments = parent_meta.arguments;
-        }
-        
-        if version_meta.assets.is_none() {
             version_meta.assets = parent_meta.assets;
         }
         if version_meta.asset_index.is_none() {
@@ -1142,13 +1166,20 @@ pub async fn launch_instance(
         }
         
         // Merge libraries: parent libraries + current libraries
-        let mut merged_libs = parent_meta.libraries.unwrap_or_default();
+        let mut merged_libs = parent_meta.libraries.clone().unwrap_or_default();
         if let Some(current_libs) = version_meta.libraries.take() {
             merged_libs.extend(current_libs);
         }
         version_meta.libraries = Some(merged_libs);
         
-        tracing::info!("Successfully merged parent version {} into {}", parent_version, version_id);
+        final_base_version = parent_version;
+        current_inherits = parent_meta.inherits_from;
+        
+        tracing::info!("Successfully merged parent version into {}", version_id);
+    }
+    
+    if final_base_version != version_id {
+        version_meta.inherits_from = Some(final_base_version);
     }
 
     // Get main class

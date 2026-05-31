@@ -527,6 +527,7 @@ pub async fn install_forge_instance(
     loader_version: String,
     loader_type: String, // "forge" or "neoforge"
     custom_instance_name: String,
+    is_dependency: Option<bool>,
     app: AppHandle,
 ) -> Result<(), String> {
     tracing::info!(
@@ -599,6 +600,20 @@ pub async fn install_forge_instance(
             .await
             .map_err(|e| format!("Failed to write version JSON: {}", e))?;
 
+        // Create dlml.json for the base vanilla version to mark it as hidden if needed
+        let base_config_path = base_version_dir.join("dlml.json");
+        let base_config = crate::core::launcher::InstanceConfig {
+            java_path: None,
+            max_memory: None,
+            jvm_args_extra: None,
+            window_behavior: "keep".to_string(),
+            show_game_log: false,
+            hidden: is_dependency.unwrap_or(false),
+        };
+        if let Ok(config_json) = serde_json::to_string_pretty(&base_config) {
+            let _ = fs::write(&base_config_path, config_json).await;
+        }
+
         tracing::info!("Saved base version JSON to: {:?}", base_version_json);
 
         // Parse version metadata and download libraries
@@ -618,6 +633,7 @@ pub async fn install_forge_instance(
                         url.to_string(),
                         dest.to_string_lossy().to_string(),
                         client.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                        client.get("size").and_then(|s| s.as_u64()),
                     ));
                 }
             }
@@ -635,6 +651,7 @@ pub async fn install_forge_instance(
                                     url.to_string(),
                                     dest.to_string_lossy().to_string(),
                                     artifact.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                                    artifact.get("size").and_then(|s| s.as_u64()),
                                 ));
                             }
                         }
@@ -651,6 +668,7 @@ pub async fn install_forge_instance(
                     tasks.push(crate::downloader::DownloadTask::new(
                         url.to_string(),
                         index_path.to_string_lossy().to_string(),
+                        None,
                         None,
                     ));
                 }
@@ -785,6 +803,7 @@ pub async fn install_forge_instance(
                     url,
                     dest.to_string_lossy().to_string(),
                     None,
+                    None,
                 ));
             }
         }
@@ -831,31 +850,70 @@ pub async fn install_forge_instance(
         }
     }
 
-    let installer_output = tokio::process::Command::new(&java_exec)
+    let mut child = match tokio::process::Command::new(&java_exec)
         .arg("-jar")
         .arg(&installer_path)
         .arg("--installClient")
         .arg(base_dir.to_string_lossy().to_string())
-        .output()
-        .await;
-
-    match installer_output {
-        Ok(output) => {
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let err_msg = format!("Forge installer failed to run processors. Stdout: {}\nStderr: {}", stdout, stderr);
-                tracing::error!("{}", err_msg);
-                return Err(err_msg);
-            } else {
-                tracing::info!("Forge installer processors completed successfully");
-            }
-        },
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
         Err(e) => {
             let err_msg = format!("Failed to execute Forge installer: {}. Make sure Java is installed.", e);
             tracing::warn!("{}", err_msg);
             return Err(err_msg);
         }
+    };
+
+    let stdout = child.stdout.take().expect("Failed to get stdout");
+    let stderr = child.stderr.take().expect("Failed to get stderr");
+
+    use tokio::io::AsyncBufReadExt;
+    let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
+    let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
+
+    let app_clone1 = app.clone();
+    let instance_name_clone1 = custom_instance_name.clone();
+    
+    let stdout_task = tokio::spawn(async move {
+        while let Ok(Some(line)) = stdout_reader.next_line().await {
+            tracing::debug!("Forge stdout: {}", line);
+            let display_line = if line.len() > 120 { format!("{}...", &line[..120]) } else { line };
+            let _ = app_clone1.emit("install-progress", serde_json::json!({
+                "phase": "running_processors",
+                "versionId": instance_name_clone1,
+                "currentFile": display_line
+            }));
+        }
+    });
+
+    let app_clone2 = app.clone();
+    let instance_name_clone2 = custom_instance_name.clone();
+    let stderr_task = tokio::spawn(async move {
+        while let Ok(Some(line)) = stderr_reader.next_line().await {
+            tracing::warn!("Forge stderr: {}", line);
+            let display_line = if line.len() > 120 { format!("{}...", &line[..120]) } else { line };
+            let _ = app_clone2.emit("install-progress", serde_json::json!({
+                "phase": "running_processors",
+                "versionId": instance_name_clone2,
+                "currentFile": display_line
+            }));
+        }
+    });
+
+    let status = child.wait().await.map_err(|e| format!("Failed to wait on Forge installer: {}", e))?;
+
+    let _ = stdout_task.await;
+    let _ = stderr_task.await;
+
+    if !status.success() {
+        let err_msg = format!("Forge installer failed to run processors with exit code: {:?}", status.code());
+        tracing::error!("{}", err_msg);
+        return Err(err_msg);
+    } else {
+        tracing::info!("Forge installer processors completed successfully");
     }
 
     // ========== Step 4: Create the final version JSON ==========
@@ -899,15 +957,23 @@ pub async fn install_forge_instance(
     tracing::info!("Saved Forge version profile to: {:?}", final_version_json_path);
 
     // ========== Step 5: Create default dlml.json config ==========
-    let config = crate::core::launcher::InstanceConfig {
-        java_path: None,
-        max_memory: None,
-        jvm_args_extra: None,
-        window_behavior: "keep".to_string(),
-        show_game_log: false,
-    };
-
     let config_path = version_dir.join("dlml.json");
+    let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
+        let content = tokio::fs::read_to_string(&config_path).await.unwrap_or_else(|_| "{}".to_string());
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        crate::core::launcher::InstanceConfig {
+            java_path: None,
+            max_memory: None,
+            jvm_args_extra: None,
+            window_behavior: "keep".to_string(),
+            show_game_log: false,
+            hidden: false,
+        }
+    };
+    
+    config.hidden = is_dependency.unwrap_or(false);
+
     let config_json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
     

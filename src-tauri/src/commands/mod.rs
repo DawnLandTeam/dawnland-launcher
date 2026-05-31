@@ -1,9 +1,10 @@
 use crate::auth::{self, Account, LoginInitResponse};
-use crate::core::mojang;
 use crate::downloader::{run_batch_download, DownloadTask};
 use std::env::consts;
 use sysinfo::System;
 use tauri::AppHandle;
+
+pub mod modpack;
 
 /// Returns a human-readable OS identifier string.
 #[tauri::command]

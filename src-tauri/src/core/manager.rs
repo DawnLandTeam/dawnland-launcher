@@ -17,6 +17,10 @@ pub struct InstanceItem {
     pub mc_version: String,
     /// Loader type: "Vanilla" or "Fabric"
     pub loader_type: String,
+    /// Modpack Version (if any)
+    pub modpack_version: Option<String>,
+    /// Modpack Type (e.g., "CurseForge" or "Modrinth")
+    pub modpack_type: Option<String>,
 }
 
 /// Scan all locally installed instances from the versions directory.
@@ -49,17 +53,52 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
             let json_path = path.join(format!("{}.json", id));
 
             if json_path.exists() {
+                // Check if instance is hidden via dlml.json
+                let config_path = path.join("dlml.json");
+                let mut is_hidden = false;
+                if config_path.exists() {
+                    if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+                        if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                            is_hidden = config.hidden;
+                        }
+                    }
+                }
+
+                if is_hidden {
+                    continue;
+                }
+
                 // Read version JSON to extract metadata
                 match tokio::fs::read_to_string(&json_path).await {
                     Ok(content) => {
                         // Parse basic info from JSON
-                        let (mc_version, loader_type) = parse_version_json(&content, &id);
+                        let (mut mc_version, loader_type, modpack_version, modpack_type) = parse_version_json(&content, &id);
                         
+                        // Resolve actual MC version if it's pointing to a loader instance (like neoforge-21.1.228)
+                        if !mc_version.starts_with("1.") {
+                            let inherited_path = versions_dir.join(&mc_version).join(format!("{}.json", mc_version));
+                            if let Ok(inherited_content) = tokio::fs::read_to_string(&inherited_path).await {
+                                let (real_mc, ..) = parse_version_json(&inherited_content, &mc_version);
+                                if real_mc.starts_with("1.") {
+                                    mc_version = real_mc;
+                                } else {
+                                    // Try extracting from string as fallback
+                                    if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
+                                        mc_version = extracted;
+                                    }
+                                }
+                            } else if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
+                                mc_version = extracted;
+                            }
+                        }
+
                         instances.push(InstanceItem {
                             id: id.clone(),
                             name: id.clone(),
                             mc_version,
                             loader_type,
+                            modpack_version,
+                            modpack_type,
                         });
                     }
                     Err(e) => {
@@ -70,6 +109,8 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                             name: id.clone(),
                             mc_version: extract_mc_version_from_id(&id).unwrap_or_else(|| id.clone()),
                             loader_type: "Unknown".to_string(),
+                            modpack_version: None,
+                            modpack_type: None,
                         });
                     }
                 }
@@ -85,17 +126,20 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
 }
 
 /// Parse version JSON content to extract Minecraft version and loader type.
-fn parse_version_json(content: &str, id: &str) -> (String, String) {
+fn parse_version_json(content: &str, id: &str) -> (String, String, Option<String>, Option<String>) {
     // Try to parse as JSON
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(json) => {
-            // Determine loader type based on id first, then mainClass
+            // Determine loader type based on id first, then inheritsFrom, then mainClass
             let id_lower = id.to_lowercase();
-            let loader_type = if id_lower.contains("neoforge") {
+            let inherits_from = json.get("inheritsFrom").and_then(|v| v.as_str()).unwrap_or("");
+            let inherits_lower = inherits_from.to_lowercase();
+            
+            let loader_type = if id_lower.contains("neoforge") || inherits_lower.contains("neoforge") {
                 "NeoForge"
-            } else if id_lower.contains("forge") {
+            } else if id_lower.contains("forge") || inherits_lower.contains("forge") {
                 "Forge"
-            } else if id_lower.contains("fabric") {
+            } else if id_lower.contains("fabric") || inherits_lower.contains("fabric") {
                 "Fabric"
             } else if let Some(main_class) = json.get("mainClass").and_then(|v| v.as_str()) {
                 let mc_lower = main_class.to_lowercase();
@@ -129,21 +173,29 @@ fn parse_version_json(content: &str, id: &str) -> (String, String) {
                     extract_mc_version_from_id(id).unwrap_or_else(|| id.to_string())
                 });
 
-            (mc_version, loader_type.to_string())
+            // Extract Modpack Info
+            let modpack_version = json.get("modpackVersion").and_then(|v| v.as_str()).map(String::from);
+            let modpack_type = json.get("modpackType").and_then(|v| v.as_str()).map(String::from);
+
+            (mc_version, loader_type.to_string(), modpack_version, modpack_type)
         }
         Err(_) => {
             // Fallback: extract from id
-            let mc_version = extract_mc_version_from_id(id).unwrap_or_else(|| id.to_string());
             let loader_type = if id.to_lowercase().contains("fabric") {
                 "Fabric"
-            } else if id.to_lowercase().contains("neoforge") {
-                "NeoForge"
             } else if id.to_lowercase().contains("forge") {
                 "Forge"
+            } else if id.to_lowercase().contains("neoforge") {
+                "NeoForge"
             } else {
                 "Vanilla"
             };
-            (mc_version, loader_type.to_string())
+            (
+                extract_mc_version_from_id(id).unwrap_or_else(|| id.to_string()),
+                loader_type.to_string(),
+                None,
+                None,
+            )
         }
     }
 }
@@ -186,13 +238,30 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         .await
         .map_err(|e| format!("Failed to read version JSON: {}", e))?;
 
-    let (mc_version, loader_type) = parse_version_json(&content, &version_id);
+    let (mut mc_version, loader_type, modpack_version, modpack_type) = parse_version_json(&content, &version_id);
+
+    // Resolve actual MC version
+    if !mc_version.starts_with("1.") {
+        let inherited_path = base_dir.join("versions").join(&mc_version).join(format!("{}.json", mc_version));
+        if let Ok(inherited_content) = tokio::fs::read_to_string(&inherited_path).await {
+            let (real_mc, ..) = parse_version_json(&inherited_content, &mc_version);
+            if real_mc.starts_with("1.") {
+                mc_version = real_mc;
+            } else if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
+                mc_version = extracted;
+            }
+        } else if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
+            mc_version = extracted;
+        }
+    }
 
     Ok(InstanceItem {
         id: version_id.clone(),
         name: version_id,
         mc_version,
         loader_type,
+        modpack_version,
+        modpack_type,
     })
 }
 

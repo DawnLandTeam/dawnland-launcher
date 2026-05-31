@@ -59,38 +59,45 @@ async fn download_file(
         }
     }
 
-    // Check if file already exists and verify integrity with hash
+    // If file exists, check hash OR size
     if dest_path.exists() {
         if let Some(expected_hash) = &task.hash {
-            // Hash is available - compute existing file's hash for verification
+            tracing::debug!("Checking existing file hash: {}", dest_path.display());
             let dest_path_clone = dest_path.clone();
-            let existing_hash = tokio::task::spawn_blocking(move || {
-                compute_sha1_sync(&dest_path_clone)
-            }).await
-            .map_err(|e| format!("Task join error: {}", e))?;
-            
-            match existing_hash {
+            match tokio::task::spawn_blocking(move || compute_sha1_sync(&dest_path_clone)).await.map_err(|e| e.to_string())? {
                 Ok(actual_hash) => {
-                    if actual_hash == *expected_hash {
-                        tracing::debug!("File exists and hash matches, skipping: {}", task.dest_path);
+                    if actual_hash.eq_ignore_ascii_case(expected_hash) {
+                        tracing::debug!("File exists and hash matches, skipping: {}", dest_path.display());
                         return Ok(());
                     } else {
-                        tracing::debug!("File exists but hash mismatch, re-downloading: {} (expected: {}, got: {})", 
-                            task.dest_path, expected_hash, actual_hash);
-                        // Hash mismatch - delete the corrupted file and re-download
-                        tokio::fs::remove_file(&dest_path).await
-                            .map_err(|e| format!("Failed to remove corrupted file: {}", e))?;
+                        tracing::debug!(
+                            "Hash mismatch. Expected {}, got {}. Re-downloading...",
+                            expected_hash, actual_hash
+                        );
+                        let _ = tokio::fs::remove_file(&dest_path).await;
                     }
                 }
                 Err(e) => {
-                    // Failed to compute hash - delete and re-download
-                    tracing::warn!("Failed to compute hash for existing file: {}, re-downloading", e);
+                    tracing::warn!("Failed to compute hash for existing file, re-downloading: {}", e);
+                }
+            }
+        } else if let Some(expected_size) = task.expected_size {
+            // No hash, but we have expected size
+            if let Ok(metadata) = tokio::fs::metadata(&dest_path).await {
+                if metadata.len() == expected_size {
+                    tracing::debug!("File exists and size matches ({} bytes), skipping: {}", expected_size, dest_path.display());
+                    return Ok(());
+                } else {
+                    tracing::debug!(
+                        "Size mismatch. Expected {}, got {}. Re-downloading...",
+                        expected_size, metadata.len()
+                    );
                     let _ = tokio::fs::remove_file(&dest_path).await;
                 }
             }
         } else {
-            // No hash available - for safety, download anyway since we can't verify
-            tracing::debug!("File exists but no hash available, re-downloading: {}", task.dest_path);
+            // No hash and no size available - for safety, download anyway since we can't verify
+            tracing::debug!("File exists but no hash or size available, re-downloading: {}", dest_path.display());
         }
     }
 
