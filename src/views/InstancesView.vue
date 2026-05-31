@@ -18,6 +18,7 @@ interface InstanceItem {
   loaderType: string;
   modpackVersion?: string;
   modpackType?: string;
+  modpackProjectId?: string;
 }
 
 interface InstanceConfig {
@@ -256,22 +257,16 @@ async function openInstanceFolder(instanceId: string) {
   }
 }
 
-async function updateModpack(instance: InstanceItem) {
-  const selected = await open({
-    multiple: false,
-    filters: [
-      {
-        name: "Modpack Archives",
-        extensions: ["zip", "mrpack"],
-      },
-    ],
+function updateModpack(instance: InstanceItem) {
+  router.push({
+    path: '/modpack-install',
+    query: { 
+      update_id: instance.name,
+      source: instance.modpackType?.toLowerCase() || '',
+      current_version: instance.modpackVersion || '',
+      project_id: instance.modpackProjectId || ''
+    }
   });
-  if (selected && typeof selected === "string") {
-    router.push({
-      path: '/modpack-install',
-      query: { update_id: instance.name, zip: selected }
-    });
-  }
 }
 
 function confirmDeleteInstance(instance: InstanceItem) {

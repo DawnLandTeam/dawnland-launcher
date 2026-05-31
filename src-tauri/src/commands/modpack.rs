@@ -11,6 +11,7 @@ pub async fn install_modpack(
     zip_path: String,
     instance_name: String,
     is_update: bool,
+    project_id: Option<String>,
     app: AppHandle,
 ) -> Result<(), String> {
     tracing::info!("Starting modpack installation: {} -> {}", zip_path, instance_name);
@@ -111,7 +112,8 @@ pub async fn install_modpack(
         "type": "release",
         "mainClass": if loader.contains("fabric") { "net.fabricmc.loader.impl.launch.knot.KnotClient" } else if loader.contains("forge") { "cpw.mods.bootstraplauncher.BootstrapLauncher" } else { "net.minecraft.client.main.Main" },
         "modpackVersion": modpack_version,
-        "modpackType": modpack_type_str
+        "modpackType": modpack_type_str,
+        "modpackProjectId": project_id
     });
 
     std::fs::write(
@@ -322,6 +324,8 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, String> {
 pub async fn download_and_install_online_modpack(
     url: String,
     instance_name: String,
+    project_id: Option<String>,
+    is_update: bool,
     app: AppHandle,
 ) -> Result<(), String> {
     tracing::info!("Downloading online modpack from {} to {}", url, instance_name);
@@ -403,10 +407,12 @@ pub async fn download_and_install_online_modpack(
     }));
 
     // Call existing install_modpack
-    install_modpack(
+    let result = install_modpack(
         temp_zip_path.to_string_lossy().to_string(),
         instance_name,
-        false, // Not an update
-        app
-    ).await
+        is_update,
+        project_id,
+        app,
+    ).await;
+    result
 }
