@@ -3,36 +3,72 @@ import { ref, computed, nextTick, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
-import { Package, UploadCloud, Loader2 } from "@lucide/vue";
+import { Package, UploadCloud, Loader2, Search, Download, User, Calendar } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 
 const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
 
+// Modes: 'online' or 'local'
+const installMode = ref<'online' | 'local'>('online');
+
 const isUpdate = computed(() => !!route.query.update_id);
 
 const zipPath = ref("");
+const onlineUrl = ref("");
 const instanceName = ref("");
 const isInstalling = ref(false);
 const showSuccessModal = ref(false);
 
-onMounted(() => {
-  if (route.query.update_id && route.query.zip) {
-    instanceName.value = route.query.update_id as string;
-    zipPath.value = route.query.zip as string;
-  }
-});
+// --- Online Search State ---
+const searchQuery = ref('');
+const source = ref('curseforge'); // 'modrinth' or 'curseforge'
+const isSearching = ref(false);
+const modpacks = ref<any[]>([]);
 
+const selectedModpack = ref<any>(null);
+const showVersionsModal = ref(false);
+const isFetchingVersions = ref(false);
+const modpackVersions = ref<any[]>([]);
+const instanceNameInput = ref('');
+
+// --- Install Progress State ---
 const currentPhase = ref("");
 const statusMessage = ref("");
 const completedMods = ref(new Set<string>());
 const totalMods = ref(0);
 const currentFile = ref("");
 const forgeLogs = ref<string[]>([]);
+const archiveProgress = ref(0);
+const archiveSpeedMb = ref(0);
+const archiveTotalMb = ref(0);
+const archiveDownloadedMb = ref(0);
 const logContainer = ref<HTMLElement | null>(null);
+const activeDownloads = ref(new Map<string, any>());
+
+const totalSpeedMB = computed(() => {
+  let speed = 0;
+  for (const p of activeDownloads.value.values()) {
+    speed += p.speed || 0;
+  }
+  return (speed / 1024 / 1024).toFixed(1);
+});
+
+onMounted(() => {
+  if (route.query.update_id && route.query.zip) {
+    // If it's an update, force local mode and lock it
+    installMode.value = 'local';
+    instanceName.value = route.query.update_id as string;
+    zipPath.value = route.query.zip as string;
+  } else {
+    // Default to fetching trending modpacks if not an update
+    searchModpacks();
+  }
+});
+
 listen("modpack-install-status", (e: any) => {
   if (e.payload.phase === "downloading_mods" && currentPhase.value !== "downloading_mods") {
     completedMods.value.clear();
@@ -50,10 +86,15 @@ listen("modpack-install-status", (e: any) => {
     forgeLogs.value = [];
     currentFile.value = "";
   }
+  if (e.payload.progress !== undefined) {
+    archiveProgress.value = e.payload.progress;
+    archiveSpeedMb.value = e.payload.speedMb || 0;
+    archiveTotalMb.value = e.payload.totalMb || 0;
+    archiveDownloadedMb.value = e.payload.downloadedMb || 0;
+  }
 });
 
 listen("install-progress", (e: any) => {
-  // Always update phase if it's explicitly emitted by forge installer
   if (e.payload.phase) {
     currentPhase.value = e.payload.phase;
   }
@@ -86,82 +127,122 @@ listen("install-progress", (e: any) => {
   } else if (e.payload.phase && e.payload.phase !== "complete" && e.payload.phase !== "running_processors") {
     statusMessage.value = "Installing dependency...";
   }
-});
 
-listen("download-batch-complete", () => {
-  // Batch download completed
-  statusMessage.value = "Mod downloading completed";
+  if (e.payload.completedFile) {
+    completedMods.value.add(e.payload.completedFile);
+    currentFile.value = e.payload.completedFile;
+  }
 });
-
-const activeDownloads = ref(new Map<string, any>());
 
 listen("download-progress", (e: any) => {
   const p = e.payload;
-  if (p.taskId) {
-    const parts = p.taskId.split(/[/\\]/);
-    currentFile.value = parts[parts.length - 1] || "file";
-    
-    if (p.completed || p.error) {
-      activeDownloads.value.delete(p.taskId);
-      if (p.completed) completedMods.value.add(p.taskId);
-    } else {
-      activeDownloads.value.set(p.taskId, p);
+  if (p.completed) {
+    activeDownloads.value.delete(p.taskId);
+    if (!p.error) {
+      completedMods.value.add(p.taskId);
+      if (p.fileName) {
+        currentFile.value = p.fileName;
+      }
+    }
+  } else {
+    activeDownloads.value.set(p.taskId, p);
+    if (p.fileName) {
+      currentFile.value = p.fileName;
     }
   }
 });
-
-const totalSpeed = computed(() => {
-  let sum = 0;
-  for (const [_, p] of activeDownloads.value) {
-    sum += p.speed || 0;
-  }
-  return sum;
-});
-
-function formatSpeed(bytesPerSec: number): string {
-  if (bytesPerSec === 0) return "";
-  if (bytesPerSec < 1024) return `${bytesPerSec.toFixed(0)} B/s`;
-  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
-  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
-}
 
 const progressPercent = computed(() => {
   if (totalMods.value === 0) return 0;
-  return Math.min(100, Math.round((completedMods.value.size / totalMods.value) * 100));
+  return Math.floor((completedMods.value.size / totalMods.value) * 100);
 });
 
+// --- Actions ---
+
+const searchModpacks = async () => {
+  isSearching.value = true;
+  modpacks.value = [];
+  try {
+    if (source.value === 'modrinth') {
+      modpacks.value = await invoke('search_modrinth_modpacks', { query: searchQuery.value });
+    } else {
+      modpacks.value = await invoke('search_curseforge_modpacks', { query: searchQuery.value });
+    }
+  } catch (error) {
+    console.error("Failed to search modpacks:", error);
+  } finally {
+    isSearching.value = false;
+  }
+};
+
+const openVersionsModal = async (modpack: any) => {
+  selectedModpack.value = modpack;
+  instanceNameInput.value = modpack.title.replace(/[^a-zA-Z0-9_ -]/g, '_');
+  showVersionsModal.value = true;
+  isFetchingVersions.value = true;
+  modpackVersions.value = [];
+  
+  try {
+    if (source.value === 'modrinth') {
+      modpackVersions.value = await invoke('get_modrinth_modpack_versions', { projectId: modpack.project_id });
+    } else {
+      modpackVersions.value = await invoke('get_curseforge_modpack_versions', { projectId: modpack.project_id });
+    }
+  } catch (error) {
+    console.error("Failed to fetch modpack versions:", error);
+  } finally {
+    isFetchingVersions.value = false;
+  }
+};
+
+const selectOnlineVersion = (version: any) => {
+  if (!instanceNameInput.value.trim()) {
+    alert("请输入实例名称 / Please enter an instance name");
+    return;
+  }
+  
+  // Set installation parameters
+  onlineUrl.value = version.download_url;
+  instanceName.value = instanceNameInput.value.trim();
+  showVersionsModal.value = false;
+  
+  // Start installation automatically
+  installModpack();
+};
+
 const selectZip = async () => {
-  const selected = await open({
-    multiple: false,
-    filters: [
-      {
-        name: "Modpack Archives",
-        extensions: ["zip", "mrpack"],
-      },
-    ],
-  });
-  if (selected && typeof selected === "string") {
-    zipPath.value = selected;
+  try {
+    const selected = await invoke('dialog_open', {
+      filters: [{ name: "Modpack Archives", extensions: ["zip", "mrpack"] }],
+    }) as string | null;
     
-    try {
-      const manifestName = await invoke("get_modpack_name", { zipPath: selected });
-      if (manifestName) {
-        // Sanitize the name for folder usage (remove illegal chars)
-        instanceName.value = String(manifestName).replace(/[<>:"/\\|?*]/g, "").trim();
-      }
-    } catch (e) {
-      console.warn("Failed to read modpack name from manifest:", e);
-      // Fallback to filename
-      const match = selected.match(/[\\\/]([^\\\/]+)\.(zip|mrpack)$/i);
-      if (match) {
-        instanceName.value = match[1];
+    if (selected) {
+      zipPath.value = selected;
+      
+      // Auto-extract name if not set
+      if (!instanceName.value) {
+        try {
+          const manifestName = await invoke('read_modpack_name', { zipPath: selected });
+          if (manifestName && typeof manifestName === 'string') {
+            instanceName.value = String(manifestName).replace(/[<>:"/\\|?*]/g, "").trim();
+          }
+        } catch (e) {
+          console.warn("Failed to read modpack name from manifest:", e);
+          const match = selected.match(/[\\\/]([^\\\/]+)\.(zip|mrpack)$/i);
+          if (match) {
+            instanceName.value = match[1];
+          }
+        }
       }
     }
+  } catch (err) {
+    console.error("Failed to open dialog", err);
   }
 };
 
 const installModpack = async () => {
-  if (!zipPath.value || !instanceName.value) return;
+  if (!zipPath.value && !onlineUrl.value) return;
+  if (!instanceName.value) return;
 
   isInstalling.value = true;
   completedMods.value.clear();
@@ -171,15 +252,22 @@ const installModpack = async () => {
   statusMessage.value = "Starting installation...";
 
   try {
-    console.log("Invoking install_modpack...");
-    await invoke("install_modpack", {
-      zipPath: zipPath.value,
-      instanceName: instanceName.value,
-      isUpdate: isUpdate.value,
-    });
+    if (onlineUrl.value) {
+      console.log("Invoking download_and_install_online_modpack...");
+      await invoke("download_and_install_online_modpack", {
+        url: onlineUrl.value,
+        instanceName: instanceName.value,
+      });
+    } else {
+      console.log("Invoking install_modpack...");
+      await invoke("install_modpack", {
+        zipPath: zipPath.value,
+        instanceName: instanceName.value,
+        isUpdate: isUpdate.value,
+      });
+    }
     
-    console.log("invoke install_modpack finished successfully. Showing success modal...");
-    // Finished successfully
+    console.log("Installation finished successfully. Showing success modal...");
     isInstalling.value = false;
     showSuccessModal.value = true;
   } catch (error) {
@@ -193,120 +281,358 @@ const handleSuccessConfirm = () => {
   showSuccessModal.value = false;
   router.push("/instances");
 };
+
+const formatDate = (dateString: string) => {
+  if (!dateString) return 'Unknown';
+  return new Date(dateString).toLocaleDateString();
+};
 </script>
 
 <template>
-  <div class="h-full flex flex-col max-w-2xl mx-auto py-10 px-6">
-    <div class="mb-8">
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+  <div class="h-full flex flex-col mx-auto w-full" :class="isInstalling ? 'max-w-2xl py-10 px-6' : 'p-4 space-y-6 overflow-hidden'">
+    
+    <!-- Unified Header -->
+    <div class="flex items-center justify-between shrink-0 mb-2">
+      <div class="flex items-center gap-3">
         <Package class="w-8 h-8 text-emerald-600" />
-        {{ isUpdate ? t('install.updateModpackTitle', 'Update Modpack') : t('install.modpackTitle', 'Install Modpack') }}
-      </h1>
-      <p class="text-gray-500 dark:text-gray-400 mt-2">
-        {{ isUpdate ? t('install.updateModpackDesc', 'Update your instance using a newer modpack archive.') : t('install.modpackDesc', 'Install a CurseForge (.zip) or Modrinth (.mrpack) modpack from your local computer.') }}
-      </p>
-    </div>
-
-    <!-- Upload Zone -->
-    <div
-      v-if="!isInstalling"
-      class="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-10 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
-      @click="selectZip"
-    >
-      <UploadCloud class="w-12 h-12 text-gray-400 mb-4" />
-      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-1">
-        {{ zipPath ? t('install.fileSelected', 'File Selected') : t('install.selectFile', 'Select Modpack Archive') }}
-      </h3>
-      <p class="text-sm text-gray-500 max-w-sm overflow-hidden text-ellipsis whitespace-nowrap">
-        {{ zipPath || t('install.supportedFormats', 'Supports .zip and .mrpack formats') }}
-      </p>
-    </div>
-
-    <!-- Form -->
-    <div v-if="!isInstalling" class="mt-8 space-y-6">
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ t('install.instanceName', 'Instance Name') }}
-        </label>
-        <input
-          v-model="instanceName"
-          type="text"
-          :disabled="isUpdate"
-          class="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none disabled:opacity-60 disabled:cursor-not-allowed"
-          :placeholder="t('install.instanceNamePlaceholder', 'My Awesome Modpack')"
-        />
-      </div>
-
-      <div v-if="isUpdate" class="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/50 rounded-lg flex items-start gap-3">
-        <div class="mt-0.5 text-yellow-600 dark:text-yellow-400 font-bold">!</div>
         <div>
-          <h4 class="text-sm font-semibold text-yellow-800 dark:text-yellow-300">Update Notice</h4>
-          <p class="text-sm text-yellow-700 dark:text-yellow-400/80 mt-1">
-            Updating will automatically clean up outdated modpack mods and apply the new ones. Don't worry, your manually installed mods will be preserved.
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
+            {{ isUpdate ? t('install.updateModpackTitle', 'Update Modpack') : t('install.modpackTitle', 'Install Modpack') }}
+          </h1>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            {{ isUpdate ? t('install.updateModpackDesc', 'Update your instance using a newer modpack archive.') : '从在线资源库搜索整合包，或从本地上传压缩包进行安装。' }}
           </p>
         </div>
       </div>
-
-      <div class="flex justify-end gap-3 pt-4">
-        <button
-          class="px-5 py-2 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          @click="router.back()"
-        >
-          {{ t('common.cancel', 'Cancel') }}
-        </button>
-        <button
-          class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-          :disabled="!zipPath || !instanceName"
-          @click="installModpack"
-        >
-          {{ t('install.installButton', 'Install') }}
-        </button>
-      </div>
+      
+      <button
+        v-if="!isInstalling"
+        class="px-4 py-2 rounded-lg text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors border"
+        @click="router.back()"
+      >
+        {{ t('common.cancel', 'Cancel') }}
+      </button>
     </div>
 
-    <!-- Progress State -->
-    <div v-else class="mt-10 flex flex-col items-center justify-center py-10">
-      <Loader2 class="w-12 h-12 text-emerald-600 animate-spin mb-6" />
-      <h3 class="text-xl font-medium text-gray-900 dark:text-white mb-2">
-        {{ statusMessage }}
-      </h3>
-      
-      <p class="text-sm text-gray-500 mb-8 capitalize">
-        {{ currentPhase.replace(/_/g, ' ') }}
-      </p>
+    <!-- Mode Selector (hidden if installing or updating) -->
+    <div v-if="!isInstalling && !isUpdate" class="flex p-1 bg-gray-100 dark:bg-gray-900 rounded-lg w-fit shrink-0">
+      <button 
+        @click="installMode = 'online'"
+        class="px-6 py-2 rounded-md text-sm font-medium transition-all"
+        :class="installMode === 'online' ? 'bg-white dark:bg-gray-800 text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+      >
+        在线搜索
+      </button>
+      <button 
+        @click="installMode = 'local'"
+        class="px-6 py-2 rounded-md text-sm font-medium transition-all"
+        :class="installMode === 'local' ? 'bg-white dark:bg-gray-800 text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+      >
+        本地上传
+      </button>
+    </div>
 
-      <!-- Progress bar for mod downloads -->
-      <div v-if="totalMods > 0" class="w-full max-w-md">
-        <div class="flex justify-between text-sm mb-1">
-          <span class="text-gray-600 dark:text-gray-400">
-            {{ completedMods.size }} / {{ totalMods }} files
-          </span>
-          <span class="font-medium text-emerald-600">
-            {{ progressPercent }}%
-            <span v-if="totalSpeed > 0" class="text-gray-500 text-xs ml-2 font-normal">{{ formatSpeed(totalSpeed) }}</span>
-          </span>
+    <!-- ONLINE MODE UI -->
+    <template v-if="!isInstalling && installMode === 'online'">
+      <!-- Search Controls -->
+      <div class="flex gap-4 items-center bg-white dark:bg-zinc-950 p-4 rounded-xl border border-neutral-200 dark:border-zinc-800 shadow-sm shrink-0">
+        <div class="relative flex-1">
+          <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500 dark:text-zinc-400" />
+          <input 
+            type="text"
+            v-model="searchQuery" 
+            placeholder="搜索整合包名称 (例如: Fabulously Optimized)..." 
+            class="flex h-10 w-full rounded-md px-3 py-2 text-sm pl-10 bg-white dark:bg-zinc-900 border border-neutral-300 dark:border-zinc-700 text-neutral-900 dark:text-zinc-100 placeholder:text-neutral-500 dark:placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+            @keydown.enter="searchModpacks"
+          />
         </div>
-        <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden mb-2">
-          <div 
-            class="bg-emerald-600 h-2.5 rounded-full transition-all duration-300" 
-            :style="{ width: `${progressPercent}%` }"
-          ></div>
-        </div>
-        <div class="text-xs text-gray-500 truncate text-center" v-if="currentFile">
-          Downloading: {{ currentFile }}
-        </div>
+        
+        <select 
+          v-model="source" 
+          @change="searchModpacks"
+          class="flex h-10 w-[180px] items-center justify-between rounded-md px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-neutral-300 dark:border-zinc-700 text-neutral-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+        >
+          <option value="modrinth">Modrinth</option>
+          <option value="curseforge">CurseForge</option>
+        </select>
+        
+        <button 
+          @click="searchModpacks" 
+          :disabled="isSearching" 
+          class="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-600 dark:hover:bg-emerald-700 h-10 px-4 py-2 min-w-[100px] shadow-sm disabled:opacity-50"
+        >
+          <Loader2 v-if="isSearching" class="h-4 w-4 animate-spin mr-2" />
+          <Search v-else class="h-4 w-4 mr-2" />
+          搜索
+        </button>
       </div>
 
-      <!-- Forge Log Box -->
-      <div v-if="forgeLogs.length > 0" class="w-full max-w-2xl mt-8 bg-gray-950 rounded-xl p-4 h-64 overflow-y-auto border border-gray-800 shadow-inner" ref="logContainer">
-        <div class="text-xs text-emerald-400 font-mono space-y-1">
-          <div v-for="(log, idx) in forgeLogs" :key="idx" class="break-words">
-            {{ log }}
+      <!-- Results Grid -->
+      <div class="flex-1 overflow-y-auto pr-2 pb-4">
+        <div v-if="modpacks.length === 0 && !isSearching" class="h-full flex flex-col items-center justify-center text-neutral-500 dark:text-zinc-400">
+          <Package class="h-16 w-16 mb-4 opacity-20" />
+          <p>输入关键词开始搜索整合包</p>
+        </div>
+        
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div 
+            v-for="modpack in modpacks" 
+            :key="modpack.project_id"
+            class="rounded-xl border border-neutral-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-neutral-900 dark:text-zinc-100 shadow-sm group overflow-hidden flex flex-col cursor-pointer transition-all duration-300 hover:shadow-xl hover:-translate-y-1 hover:border-emerald-500/50 backdrop-blur-sm"
+            @click="openVersionsModal(modpack)"
+          >
+            <!-- Cover/Header Image Area -->
+            <div class="h-32 bg-neutral-100 dark:bg-zinc-800 relative overflow-hidden flex items-center justify-center shrink-0">
+              <img 
+                v-if="modpack.icon_url" 
+                :src="modpack.icon_url" 
+                class="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500"
+                alt="Cover"
+              />
+              <Package v-else class="h-12 w-12 text-neutral-400/30 dark:text-zinc-500/30" />
+              <div class="absolute inset-0 bg-gradient-to-t from-white/90 dark:from-zinc-900/90 to-transparent"></div>
+              
+              <div class="absolute bottom-3 left-4 flex gap-2">
+                <div class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors border-transparent bg-white/80 text-neutral-900 dark:bg-zinc-900/80 dark:text-zinc-100 backdrop-blur-md shadow-sm">
+                  {{ modpack.source === 'modrinth' ? 'Modrinth' : 'CurseForge' }}
+                </div>
+              </div>
+            </div>
+            
+            <div class="flex flex-col space-y-1.5 p-6 pt-4 pb-2 shrink-0">
+              <h3 class="text-2xl font-semibold leading-none tracking-tight line-clamp-1 text-lg group-hover:text-emerald-500 transition-colors">
+                {{ modpack.title }}
+              </h3>
+              <p class="text-sm text-neutral-500 dark:text-zinc-400 flex items-center gap-4 text-xs mt-1.5">
+                <span class="flex items-center gap-1.5 font-medium">
+                  <User class="h-3.5 w-3.5" /> {{ modpack.author }}
+                </span>
+                <span class="flex items-center gap-1.5">
+                  <Download class="h-3.5 w-3.5" /> {{ (modpack.downloads / 1000).toFixed(1) }}k
+                </span>
+              </p>
+            </div>
+            
+            <div class="p-6 pt-0 text-sm text-muted-foreground line-clamp-2 flex-1">
+              {{ modpack.description || '无介绍' }}
+            </div>
+            
+            <div class="p-4 pt-0 mt-auto flex flex-wrap gap-1.5">
+              <div v-for="loader in modpack.loaders.slice(0, 3)" :key="loader" class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-foreground text-[10px] uppercase">
+                {{ loader }}
+              </div>
+              <div v-if="modpack.loaders.length > 3" class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-foreground text-[10px]">
+                +{{ modpack.loaders.length - 3 }}
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </template>
+
+    <!-- LOCAL MODE UI -->
+    <template v-else-if="!isInstalling && installMode === 'local'">
+      <div class="max-w-2xl w-full mx-auto space-y-8 mt-4">
+        <!-- Upload Zone -->
+        <div
+          class="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-10 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+          @click="selectZip"
+        >
+          <UploadCloud class="w-12 h-12 text-gray-400 mb-4" />
+          <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-1">
+            {{ zipPath ? t('install.fileSelected', 'File Selected') : t('install.selectFile', 'Select Modpack Archive') }}
+          </h3>
+          <p class="text-sm text-gray-500 max-w-sm overflow-hidden text-ellipsis whitespace-nowrap">
+            {{ zipPath || t('install.supportedFormats', 'Supports .zip and .mrpack formats') }}
+          </p>
+        </div>
+
+        <!-- Form -->
+        <div class="space-y-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {{ t('install.instanceName', 'Instance Name') }}
+            </label>
+            <input
+              v-model="instanceName"
+              type="text"
+              :disabled="isUpdate"
+              class="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none disabled:opacity-60 disabled:cursor-not-allowed"
+              :placeholder="t('install.instanceNamePlaceholder', 'My Awesome Modpack')"
+            />
+          </div>
+
+          <div v-if="isUpdate" class="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/50 rounded-lg flex items-start gap-3">
+            <div class="mt-0.5 text-yellow-600 dark:text-yellow-400 font-bold">!</div>
+            <div>
+              <h4 class="text-sm font-semibold text-yellow-800 dark:text-yellow-300">Update Notice</h4>
+              <p class="text-sm text-yellow-700 dark:text-yellow-400/80 mt-1">
+                Updating will automatically clean up outdated modpack mods and apply the new ones. Don't worry, your manually installed mods will be preserved.
+              </p>
+            </div>
+          </div>
+
+          <div class="flex justify-end pt-4">
+            <button
+              class="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+              :disabled="!zipPath || !instanceName"
+              @click="installModpack"
+            >
+              {{ t('install.installButton', 'Install Local Archive') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- INSTALLING STATE UI -->
+    <template v-else-if="isInstalling">
+      <div class="flex flex-col items-center justify-center py-10">
+        <Loader2 class="w-12 h-12 text-emerald-600 animate-spin mb-6" />
+        <h3 class="text-xl font-medium text-gray-900 dark:text-white mb-2">
+          {{ statusMessage }}
+        </h3>
+        
+        <p class="text-sm text-gray-500 mb-8 capitalize">
+          {{ currentPhase.replace(/_/g, ' ') }}
+        </p>
+
+        <!-- Progress bar for mod downloads -->
+        <div v-if="totalMods > 0 || currentPhase === 'downloading_archive'" class="w-full max-w-md">
+          <div class="flex justify-between text-sm mb-1">
+            <span v-if="currentPhase === 'downloading_archive'" class="text-gray-600 dark:text-gray-400">
+              Downloading Archive...
+              <span v-if="archiveTotalMb > 0" class="ml-2">
+                {{ archiveDownloadedMb.toFixed(1) }}MB / {{ archiveTotalMb.toFixed(1) }}MB
+              </span>
+            </span>
+            <span v-else class="text-gray-600 dark:text-gray-400">
+              {{ completedMods.size }} / {{ totalMods }} files
+            </span>
+            <div class="flex items-center gap-2">
+              <span v-if="currentPhase === 'downloading_archive' && archiveTotalMb > 0" class="text-emerald-600 font-mono text-xs">
+                ({{ archiveSpeedMb.toFixed(1) }} MB/s)
+              </span>
+              <span v-else-if="currentPhase !== 'downloading_archive' && Number(totalSpeedMB) > 0" class="text-emerald-600 font-mono text-xs">
+                ({{ totalSpeedMB }} MB/s)
+              </span>
+              <span class="font-medium text-emerald-600">
+                {{ currentPhase === 'downloading_archive' ? Math.floor(archiveProgress) : progressPercent }}%
+              </span>
+            </div>
+          </div>
+          <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden mb-2">
+            <div 
+              class="bg-emerald-600 h-2.5 rounded-full transition-all duration-300" 
+              :style="{ width: `${currentPhase === 'downloading_archive' ? archiveProgress : progressPercent}%` }"
+            ></div>
+          </div>
+          <div class="text-xs text-gray-500 truncate text-center" v-if="currentFile && currentPhase !== 'downloading_archive'">
+            Downloading: {{ currentFile }}
+          </div>
+        </div>
+
+        <!-- Forge Log Box -->
+        <div v-if="forgeLogs.length > 0" class="w-full max-w-2xl mt-8 bg-gray-950 rounded-xl p-4 h-64 overflow-y-auto border border-gray-800 shadow-inner" ref="logContainer">
+          <div class="text-xs text-emerald-400 font-mono space-y-1">
+            <div v-for="(log, idx) in forgeLogs" :key="idx" class="break-words">
+              {{ log }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
     
+    <!-- Modpack Versions Modal -->
+    <Dialog 
+      :open="showVersionsModal" 
+      @update:open="showVersionsModal = $event"
+      class="max-w-4xl max-h-[85vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-950 border-neutral-200 dark:border-zinc-800 shadow-2xl p-6 text-neutral-900 dark:text-zinc-100"
+    >
+        <div class="flex flex-col space-y-1.5 text-center sm:text-left shrink-0">
+          <DialogTitle class="text-2xl flex items-center gap-3">
+            <img v-if="selectedModpack?.icon_url" :src="selectedModpack.icon_url" class="h-8 w-8 rounded-md" />
+            {{ selectedModpack?.title }}
+          </DialogTitle>
+          <DialogDescription class="mt-2 line-clamp-2 text-muted-foreground text-sm">
+            {{ selectedModpack?.description }}
+          </DialogDescription>
+        </div>
+
+        <div class="flex flex-col gap-4 py-4 overflow-hidden">
+          <div class="flex items-center gap-4 bg-secondary/30 p-4 rounded-xl border border-white/5">
+            <div class="flex-1">
+              <label class="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
+                将要创建的实例名称
+              </label>
+              <input 
+                type="text"
+                v-model="instanceNameInput" 
+                placeholder="输入安装后的游戏实例名称..." 
+                class="flex h-10 w-full rounded-md border border-input px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-medium bg-background" 
+              />
+            </div>
+          </div>
+
+          <div class="flex-1 overflow-hidden border rounded-xl bg-background/50 flex flex-col">
+            <!-- Table Header -->
+            <div class="grid grid-cols-12 gap-4 p-3 bg-secondary/50 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b shrink-0">
+              <div class="col-span-4 pl-2">版本名称</div>
+              <div class="col-span-2">游戏版本</div>
+              <div class="col-span-2">加载器</div>
+              <div class="col-span-2">发布日期</div>
+              <div class="col-span-2 text-right pr-2">操作</div>
+            </div>
+            
+            <!-- Table Body -->
+            <div class="overflow-y-auto flex-1 p-2 space-y-1 relative min-h-[200px]">
+              <div v-if="isFetchingVersions" class="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm z-10">
+                <Loader2 class="h-8 w-8 animate-spin text-emerald-500 mb-4" />
+                <p class="text-sm text-muted-foreground font-medium animate-pulse">正在获取版本列表...</p>
+              </div>
+              
+              <div v-else-if="modpackVersions.length === 0" class="flex flex-col items-center justify-center h-full text-muted-foreground opacity-60">
+                <Package class="h-12 w-12 mb-3" />
+                <p>该整合包暂无可用版本</p>
+              </div>
+
+              <div 
+                v-for="version in modpackVersions" 
+                :key="version.id"
+                class="grid grid-cols-12 gap-4 p-3 items-center hover:bg-secondary/60 rounded-lg transition-colors group border border-transparent hover:border-white/5"
+              >
+                <div class="col-span-4 font-medium pl-2 line-clamp-1" :title="version.name">
+                  {{ version.name }}
+                </div>
+                <div class="col-span-2">
+                  <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-foreground font-mono bg-background text-xs">
+                    {{ version.mc_version.split(',')[0] }}
+                  </div>
+                </div>
+                <div class="col-span-2 flex gap-1 flex-wrap">
+                  <div class="inline-flex items-center rounded-full border px-2.5 py-0.5 font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80 text-[10px] capitalize">
+                    {{ version.loaders[0] || 'Unknown' }}
+                  </div>
+                </div>
+                <div class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+                  <Calendar class="h-3.5 w-3.5 opacity-50" />
+                  {{ formatDate(version.date) }}
+                </div>
+                <div class="col-span-2 flex justify-end pr-2">
+                  <button 
+                    class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-emerald-600 text-white hover:bg-emerald-700 h-9 px-3 w-full shadow-sm hover:shadow-md transition-all"
+                    @click="selectOnlineVersion(version)"
+                  >
+                    安装
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+    </Dialog>
+
+    <!-- Success Modal -->
     <AlertDialog :open="showSuccessModal" @update:open="val => { if (!val) handleSuccessConfirm() }">
       <div class="p-2">
         <AlertDialogTitle class="text-xl font-bold text-gray-900 dark:text-white mb-2">

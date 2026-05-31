@@ -317,3 +317,96 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, String> {
     .await
     .map_err(|e| format!("Task join error: {}", e))?
 }
+
+#[tauri::command]
+pub async fn download_and_install_online_modpack(
+    url: String,
+    instance_name: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    tracing::info!("Downloading online modpack from {} to {}", url, instance_name);
+
+    let base_dir = crate::core::mojang::get_minecraft_base();
+    let temp_dir = base_dir.join("temp");
+    std::fs::create_dir_all(&temp_dir).unwrap_or_default();
+    let temp_zip_path = temp_dir.join(format!("{}.zip", uuid::Uuid::new_v4()));
+
+    let _ = app.emit("modpack-install-status", serde_json::json!({
+        "phase": "downloading_archive",
+        "message": "Downloading modpack archive...",
+        "progress": 0.0
+    }));
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .unwrap_or_default();
+
+    let mut response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to start download: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed: {}", response.status()));
+    }
+
+    let total_size = response.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+    
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    
+    let mut file = tokio::fs::File::create(&temp_zip_path)
+        .await
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+
+    let mut last_emit_time = tokio::time::Instant::now();
+    let mut speed_calc_time = tokio::time::Instant::now();
+    let mut last_downloaded: u64 = 0;
+    let mut current_speed: f64 = 0.0;
+
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+
+        if total_size > 0 && last_emit_time.elapsed().as_millis() > 200 {
+            let elapsed_sec = speed_calc_time.elapsed().as_secs_f64();
+            if elapsed_sec > 0.5 {
+                current_speed = (downloaded - last_downloaded) as f64 / elapsed_sec;
+                last_downloaded = downloaded;
+                speed_calc_time = tokio::time::Instant::now();
+            }
+
+            let progress = (downloaded as f64 / total_size as f64) * 100.0;
+            let downloaded_mb = downloaded as f64 / 1024.0 / 1024.0;
+            let total_mb = total_size as f64 / 1024.0 / 1024.0;
+            let speed_mb = current_speed / 1024.0 / 1024.0;
+
+            let _ = app.emit("modpack-install-status", serde_json::json!({
+                "phase": "downloading_archive",
+                "message": "Downloading modpack archive...",
+                "progress": progress,
+                "speedMb": speed_mb,
+                "totalMb": total_mb,
+                "downloadedMb": downloaded_mb
+            }));
+            last_emit_time = tokio::time::Instant::now();
+        }
+    }
+
+    let _ = app.emit("modpack-install-status", serde_json::json!({
+        "phase": "downloading_archive",
+        "message": "Download complete. Starting installation...",
+        "progress": 100.0
+    }));
+
+    // Call existing install_modpack
+    install_modpack(
+        temp_zip_path.to_string_lossy().to_string(),
+        instance_name,
+        false, // Not an update
+        app
+    ).await
+}

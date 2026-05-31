@@ -153,12 +153,13 @@ async fn download_file(
                     };
 
                     // Emit progress (don't fail on emit error).
-                    let progress = DownloadProgress::progress(
+                    let mut progress = DownloadProgress::progress(
                         task.id.clone(),
                         downloaded,
                         total,
                         speed,
                     );
+                    progress.file_name = std::path::Path::new(&task.dest_path).file_name().map(|f| f.to_string_lossy().to_string());
                     let _ = app.emit("download-progress", &progress);
 
                     last_emit_time = std::time::Instant::now();
@@ -221,7 +222,8 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle) {
                     Ok(()) => {
                         // Emit completion.
                         tracing::info!("Emitting completed for task: {}", task_id);
-                        let progress = DownloadProgress::completed(task_id);
+                        let mut progress = DownloadProgress::completed(task_id);
+                        progress.file_name = std::path::Path::new(&dest_path).file_name().map(|f| f.to_string_lossy().to_string());
                         let _ = app.emit("download-progress", &progress);
                     }
                     Err(err) => {
