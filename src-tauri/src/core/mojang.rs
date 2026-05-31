@@ -130,7 +130,7 @@ pub struct VanillaVersion {
 }
 
 /// Version metadata (from version's JSON file).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionMeta {
     pub id: String,
@@ -161,7 +161,7 @@ pub struct VersionMeta {
     pub libraries: Option<Vec<Library>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetIndex {
     pub id: String,
@@ -169,7 +169,7 @@ pub struct AssetIndex {
     pub url: Option<String>, // URL might be missing in some old versions
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Downloads {
     pub client: Option<DownloadInfo>,
@@ -178,7 +178,7 @@ pub struct Downloads {
     pub windows_server: Option<DownloadInfo>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadInfo {
     pub sha1: Option<String>, // May be missing in old versions
@@ -186,7 +186,7 @@ pub struct DownloadInfo {
     pub url: Option<String>,  // Critical - might be missing
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Library {
     pub downloads: Option<LibraryDownloads>,
@@ -197,14 +197,14 @@ pub struct Library {
     pub natives: Option<std::collections::HashMap<String, String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryDownloads {
     pub artifact: Option<Artifact>,
     pub classifiers: Option<std::collections::HashMap<String, Artifact>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Artifact {
     pub path: Option<String>,
@@ -213,13 +213,13 @@ pub struct Artifact {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractRule {
     pub exclude: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rule {
     pub action: Option<String>, // Some rules may not have action
@@ -227,7 +227,7 @@ pub struct Rule {
     pub features: Option<std::collections::HashMap<String, bool>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleOs {
     pub name: Option<String>,
@@ -235,7 +235,7 @@ pub struct RuleOs {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Arguments {
     pub game: Option<serde_json::Value>,
@@ -448,6 +448,7 @@ pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
 pub async fn install_vanilla_version(
     version_id: String,
     version_json_url: String,
+    is_dependency: Option<bool>,
     app: AppHandle,
 ) -> Result<(), String> {
     tracing::info!("Starting installation of version: {}", version_id);
@@ -550,6 +551,7 @@ pub async fn install_vanilla_version(
                         url,
                         dest.to_string_lossy().to_string(),
                         hash,
+                        artifact.size,
                     ));
                 }
             }
@@ -581,6 +583,7 @@ pub async fn install_vanilla_version(
                             url,
                             dest.to_string_lossy().to_string(),
                             hash,
+                            classifier.size,
                         ));
                     }
                 }
@@ -613,6 +616,7 @@ pub async fn install_vanilla_version(
                 url,
                 dest.to_string_lossy().to_string(),
                 hash,
+                client_download.size,
             ));
             tracing::info!("Added client.jar to download queue");
         }
@@ -700,6 +704,7 @@ pub async fn install_vanilla_version(
                 url,
                 dest.to_string_lossy().to_string(),
                 Some(hash),
+                obj.size,
             ));
         }
     }
@@ -747,6 +752,24 @@ tracing::info!("Starting download of {} files...", total_tasks);
     }));
 
     tracing::info!("Installation complete!");
+
+    // Save dlml.json with hidden state if needed
+    let version_dir = base_dir.join("versions").join(&version_id);
+    let config_path = version_dir.join("dlml.json");
+    
+    let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
+        let content = tokio::fs::read_to_string(&config_path).await.unwrap_or_else(|_| "{}".to_string());
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        Default::default()
+    };
+    
+    config.hidden = is_dependency.unwrap_or(false);
+    
+    if let Ok(config_json) = serde_json::to_string_pretty(&config) {
+        let _ = tokio::fs::write(&config_path, config_json).await;
+    }
+
     Ok(())
 }
 
