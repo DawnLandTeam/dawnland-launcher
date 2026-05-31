@@ -19,6 +19,7 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .manage(core::launcher::RunningInstances(std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))))
         .setup(|app| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
@@ -63,6 +64,7 @@ pub fn run() {
             core::mojang::fetch_install_state,
             core::mojang::get_installed_versions,
             core::launcher::launch_instance,
+            core::launcher::kill_instance,
             core::launcher::get_instance_config,
             core::launcher::save_instance_config,
             // Fabric commands
