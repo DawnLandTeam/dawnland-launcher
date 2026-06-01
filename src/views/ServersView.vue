@@ -943,9 +943,9 @@ function cancelPrompt() {
           
           <!-- Progress Steps -->
           <div class="flex items-center justify-between mb-6">
-            <div v-for="step in totalSteps" :key="step" class="flex items-center flex-1">
+            <template v-for="step in totalSteps" :key="step">
               <div 
-                class="flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold transition-all"
+                class="flex items-center justify-center shrink-0 w-8 h-8 rounded-full text-sm font-semibold transition-all"
                 :class="{
                   'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2 dark:ring-offset-zinc-900': publishStep === step,
                   'bg-primary text-primary-foreground': publishStep > step,
@@ -956,7 +956,7 @@ function cancelPrompt() {
                 <span v-else>{{ step }}</span>
               </div>
               <div v-if="step < totalSteps" class="flex-1 h-0.5 mx-2 transition-colors" :class="publishStep > step ? 'bg-primary' : 'bg-muted'"></div>
-            </div>
+            </template>
           </div>
           
           <p class="text-xs text-muted-foreground mb-4">
