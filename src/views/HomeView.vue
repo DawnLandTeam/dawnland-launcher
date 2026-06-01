@@ -458,11 +458,6 @@ function loaderBadgeClass(loaderType: string): string {
 
 <template>
   <div class="relative flex h-full flex-col overflow-hidden">
-    <!-- Global Background Image -->
-    <div class="absolute inset-0 z-0">
-      <img src="/minecraft_bg.png" class="w-full h-full object-cover" />
-      <div class="absolute inset-0 bg-black/60 backdrop-blur-[2px]"></div>
-    </div>
 
     <!-- Marquee Notice Bar -->
     <div class="relative z-10 w-full overflow-hidden bg-gradient-to-r from-blue-600/80 via-purple-600/80 to-pink-600/80 py-2 backdrop-blur-sm border-b border-white/10 shadow-sm">

@@ -21,7 +21,7 @@ const navItems = computed(() => [
 </script>
 
 <template>
-  <aside class="flex w-16 flex-col border-r border-neutral-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+  <aside class="flex w-16 flex-col border-r border-white/20 bg-white/10 dark:border-white/10 dark:bg-black/20 backdrop-blur-md">
     <nav class="flex flex-1 flex-col items-center gap-1 py-2">
       <RouterLink
         v-for="item in navItems"
