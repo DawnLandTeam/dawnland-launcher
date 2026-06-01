@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Server, Gamepad2, Plus, Search, ExternalLink, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Wifi, Star } from "@lucide/vue";
+import { Server, Gamepad2, Plus, Search, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Star } from "@lucide/vue";
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -19,6 +19,9 @@ interface ServerInfo {
   authType: string;          // "offline", "online"
   packFileName: string | null;
   packFileSize: number | null;
+  packProjectId: string | null;
+  packVersionId: string | null;
+  packSource: string | null;
   iconUrl: string;
   email: string;
   isActive: boolean;
@@ -33,6 +36,10 @@ interface CreateServerInput {
   loaderType: string;
   serverType: string;
   authType: string;
+  packFileName: string;
+  packProjectId: string;
+  packVersionId: string;
+  packSource: string;
   iconUrl: string;
   email: string;
 }
@@ -56,14 +63,13 @@ interface FilterOptions {
   authTypes: string[];
 }
 
-// API response with pagination
-interface ServerListResponse {
-  data: ServerInfo[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-}
+// interface ServerListResponse {
+//   data: ServerInfo[];
+//   total: number;
+//   page: number;
+//   pageSize: number;
+//   totalPages: number;
+// }
 
 interface ServerStatus {
   onlinePlayers: number;
@@ -76,11 +82,9 @@ const { t } = useI18n();
 const router = useRouter();
 const servers = ref<ServerInfo[]>([]);
 const isLoading = ref(false);
-const isLoadingMore = ref(false);
 const error = ref<string | null>(null);
 const currentPage = ref(1);
 const totalPages = ref(1);
-const hasMore = computed(() => currentPage.value < totalPages.value);
 
 // Minecraft versions
 const mcVersions = ref<VanillaVersion[]>([]);
@@ -142,9 +146,12 @@ const canGoToStep = (step: number): boolean => {
     return newServer.value.version !== "";
   }
   if (step === 3) {
-    // If server type needs pack file, check if file is selected
     if (needsPackFile(newServer.value.serverType)) {
-      return selectedPackFile.value !== null;
+      if (packBindMode.value === 'local') {
+        return selectedPackFile.value !== null;
+      } else {
+        return selectedOnlineVersion.value !== null;
+      }
     }
     return true;
   }
@@ -160,9 +167,13 @@ const newServer = ref<CreateServerInput>({
   loaderType: "",
   serverType: "vanilla",
   authType: "offline",
+  packFileName: "",
+  packProjectId: "",
+  packVersionId: "",
+  packSource: "",
   iconUrl: "",
   email: "",
-});
+} as any);
 
 // Auto-split IP and Port when user pastes "domain:port"
 watch(() => newServer.value.ip, (newVal) => {
@@ -180,9 +191,57 @@ watch(() => newServer.value.ip, (newVal) => {
 });
 
 // Pack file upload state
+const packBindMode = ref<'local' | 'online'>('local');
 const selectedPackFile = ref<string | null>(null);
 const selectedPackFileName = ref<string>("");
 const isUploadingPack = ref(false);
+
+// Online modpack search state
+const onlineSearchQuery = ref('');
+const onlineSource = ref<'modrinth' | 'curseforge'>('modrinth');
+const isSearchingOnline = ref(false);
+const onlineModpacks = ref<any[]>([]);
+const isFetchingOnlineVersions = ref(false);
+const onlineModpackVersions = ref<any[]>([]);
+const selectedOnlineProject = ref<any>(null);
+const selectedOnlineVersion = ref<any>(null);
+
+async function searchOnlineModpacks() {
+  if (!onlineSearchQuery.value) return;
+  isSearchingOnline.value = true;
+  onlineModpacks.value = [];
+  selectedOnlineProject.value = null;
+  onlineModpackVersions.value = [];
+  try {
+    if (onlineSource.value === 'modrinth') {
+      onlineModpacks.value = await invoke('search_modrinth_modpacks', { query: onlineSearchQuery.value });
+    } else {
+      onlineModpacks.value = await invoke('search_curseforge_modpacks', { query: onlineSearchQuery.value });
+    }
+  } catch (error) {
+    console.error("Failed to search modpacks:", error);
+  } finally {
+    isSearchingOnline.value = false;
+  }
+}
+
+async function selectOnlineProject(project: any) {
+  selectedOnlineProject.value = project;
+  isFetchingOnlineVersions.value = true;
+  onlineModpackVersions.value = [];
+  selectedOnlineVersion.value = null;
+  try {
+    if (onlineSource.value === 'modrinth') {
+      onlineModpackVersions.value = await invoke('get_modrinth_modpack_versions', { projectId: project.project_id });
+    } else {
+      onlineModpackVersions.value = await invoke('get_curseforge_modpack_versions', { projectId: project.project_id });
+    }
+  } catch (error) {
+    console.error("Failed to fetch modpack versions:", error);
+  } finally {
+    isFetchingOnlineVersions.value = false;
+  }
+}
 
 // Server ping status
 const serverStatuses = ref<Record<number, ServerStatus>>({});
@@ -531,11 +590,20 @@ function resetPublishForm() {
     loaderType: "",
     serverType: "vanilla",
     authType: "offline",
+    packFileName: "",
+    packProjectId: "",
+    packVersionId: "",
+    packSource: "",
     iconUrl: "",
     email: "",
-  };
+  } as any;
   selectedPackFile.value = null;
   selectedPackFileName.value = "";
+  packBindMode.value = 'local';
+  onlineSearchQuery.value = '';
+  onlineModpacks.value = [];
+  selectedOnlineProject.value = null;
+  selectedOnlineVersion.value = null;
   publishStep.value = 1;
 }
 
@@ -551,34 +619,31 @@ function closePublishDialog() {
 
 // Install modpack from server
 async function installModpack(server: ServerInfo) {
-  if (!server.packFileName) {
+  if (!server.packFileName && !server.packSource) {
     showAlert(t('servers.messages.noModpack'));
     return;
   }
   
-  installingServerId.value = server.id;
-  
-  try {
-    // Prompt for instance name
-    const instanceName = await showPrompt(t('servers.messages.enterInstanceName'), server.name);
-    if (!instanceName) {
-      installingServerId.value = null; // Important to reset if cancelled
-      return; // User cancelled
-    }
-    
-    const instancePath = await invoke<string>("install_server_modpack", {
-      serverId: String(server.id),
-      instanceName: instanceName,
-    });
-    
-    showAlert(t('servers.messages.installSuccess').replace('{path}', instancePath));
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-    console.error("Failed to install modpack:", e);
-    showAlert(t('servers.messages.installFailed').replace('{error}', e instanceof Error ? e.message : String(e)));
-  } finally {
-    installingServerId.value = null;
+  // Route to ModpackInstallView with appropriate query params
+  const queryParams: Record<string, string> = {
+    server_id: String(server.id),
+    update_id: server.name, // Use server name as instance name
+  };
+
+  if (server.packSource && server.packProjectId && server.packVersionId) {
+    // Online bound modpack
+    queryParams.source = server.packSource;
+    queryParams.project_id = server.packProjectId;
+    queryParams.version_id = server.packVersionId;
+  } else if (server.packFileName) {
+    // Local zip pack
+    queryParams.online_url = `http://localhost:8080/api/servers/${server.id}/pack`;
   }
+  
+  router.push({
+    path: '/modpack-install',
+    query: queryParams
+  });
 }
 
 // Custom Dialog States
@@ -601,12 +666,6 @@ const promptState = ref<{
   value: string;
   resolve: ((val: string | null) => void) | null;
 }>({ show: false, message: '', value: '', resolve: null });
-
-function showPrompt(message: string, defaultValue: string = ''): Promise<string | null> {
-  return new Promise((resolve) => {
-    promptState.value = { show: true, message, value: defaultValue, resolve };
-  });
-}
 
 function confirmPrompt() {
   if (promptState.value.resolve) {
@@ -1027,7 +1086,24 @@ function cancelPrompt() {
             <!-- Step 3: Modpack (Optional) -->
             <template v-if="publishStep === 3">
               <template v-if="needsPackFile(newServer.serverType)">
-                <div class="space-y-2">
+                <div class="flex bg-neutral-100 dark:bg-zinc-800 rounded-lg p-1 mb-4 shrink-0">
+                  <button 
+                    @click="packBindMode = 'local'"
+                    class="flex-1 py-1.5 text-sm font-medium rounded-md transition-all"
+                    :class="packBindMode === 'local' ? 'bg-white dark:bg-zinc-700 shadow-sm text-neutral-900 dark:text-white' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'"
+                  >
+                    Upload Local ZIP
+                  </button>
+                  <button 
+                    @click="packBindMode = 'online'"
+                    class="flex-1 py-1.5 text-sm font-medium rounded-md transition-all"
+                    :class="packBindMode === 'online' ? 'bg-white dark:bg-zinc-700 shadow-sm text-neutral-900 dark:text-white' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'"
+                  >
+                    Bind Online Modpack
+                  </button>
+                </div>
+
+                <div v-if="packBindMode === 'local'" class="space-y-2">
                   <label class="text-sm font-medium">{{ $t('servers.publishDialog.modpackZip') }} <span class="text-red-500">*</span></label>
                   <div class="flex items-center gap-2">
                     <button
@@ -1042,6 +1118,67 @@ function cancelPrompt() {
                     <Loader2 class="h-3 w-3 animate-spin inline mr-1" />
                     {{ $t('servers.publishDialog.uploading') }}
                   </p>
+                </div>
+
+                <div v-else class="space-y-4">
+                  <div class="flex gap-2">
+                    <select v-model="onlineSource" class="w-1/3 px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
+                      <option value="modrinth">Modrinth</option>
+                      <option value="curseforge">CurseForge</option>
+                    </select>
+                    <div class="flex-1 relative">
+                      <input 
+                        v-model="onlineSearchQuery" 
+                        type="text" 
+                        placeholder="Search modpacks..." 
+                        class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400"
+                        @keydown.enter="searchOnlineModpacks"
+                      />
+                    </div>
+                    <button @click="searchOnlineModpacks" :disabled="isSearchingOnline" class="px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium disabled:opacity-50 hover:bg-primary/90">
+                      <Loader2 v-if="isSearchingOnline" class="h-4 w-4 animate-spin" />
+                      <Search v-else class="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div v-if="selectedOnlineProject" class="p-3 bg-neutral-50 dark:bg-zinc-800/50 rounded-lg border border-neutral-200 dark:border-zinc-700 space-y-3">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2 overflow-hidden">
+                        <img v-if="selectedOnlineProject.icon_url" :src="selectedOnlineProject.icon_url" class="h-6 w-6 rounded" />
+                        <span class="text-sm font-medium truncate">{{ selectedOnlineProject.title }}</span>
+                      </div>
+                      <button @click="selectedOnlineProject = null" class="text-xs text-muted-foreground hover:text-foreground">Change</button>
+                    </div>
+                    <div class="space-y-1">
+                      <label class="text-xs font-medium text-muted-foreground">Select Version <span class="text-red-500">*</span></label>
+                      <select 
+                        v-model="selectedOnlineVersion" 
+                        class="w-full px-3 py-1.5 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
+                        :disabled="isFetchingOnlineVersions"
+                        @change="() => { newServer.packProjectId = selectedOnlineProject.project_id; newServer.packSource = onlineSource; newServer.packVersionId = selectedOnlineVersion?.id }"
+                      >
+                        <option :value="null" disabled>{{ isFetchingOnlineVersions ? 'Loading versions...' : 'Select a version' }}</option>
+                        <option v-for="v in onlineModpackVersions" :key="v.id" :value="v">
+                          {{ v.name }} ({{ v.version_number || v.name }})
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div v-else-if="onlineModpacks.length > 0" class="max-h-48 overflow-y-auto space-y-2 border border-neutral-200 dark:border-zinc-700 rounded-lg p-2 bg-neutral-50 dark:bg-zinc-800/30">
+                    <div 
+                      v-for="pack in onlineModpacks" 
+                      :key="pack.project_id"
+                      class="flex items-center gap-3 p-2 hover:bg-neutral-100 dark:hover:bg-zinc-800 rounded-md cursor-pointer transition-colors"
+                      @click="selectOnlineProject(pack)"
+                    >
+                      <img v-if="pack.icon_url" :src="pack.icon_url" class="h-8 w-8 rounded object-cover bg-neutral-200 dark:bg-zinc-700" />
+                      <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium text-neutral-900 dark:text-white truncate">{{ pack.title }}</p>
+                        <p class="text-xs text-muted-foreground truncate">{{ pack.author || pack.description }}</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </template>
               <template v-else>

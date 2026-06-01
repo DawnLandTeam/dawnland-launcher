@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useI18n } from "vue-i18n";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
+import { Dialog, DialogTitle, DialogDescription } from "../components/ui/dialog";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -65,6 +65,15 @@ onMounted(() => {
     if (route.query.zip) {
       installMode.value = 'local';
       zipPath.value = route.query.zip as string;
+    } else if (route.query.online_url) {
+      // Direct install from a backend server ZIP URL
+      installMode.value = 'online';
+      onlineUrl.value = route.query.online_url as string;
+      
+      // Auto-start installation for server zip
+      nextTick(() => {
+        installModpack();
+      });
     } else {
       installMode.value = 'online';
       searchQuery.value = route.query.update_id as string;
@@ -73,14 +82,42 @@ onMounted(() => {
         source.value = sourceQuery;
       }
       
-      // Auto-search and open modal
       if (route.query.project_id) {
         const dummyModpack = {
           project_id: route.query.project_id as string,
           title: route.query.update_id as string,
           source: source.value
         };
-        openVersionsModal(dummyModpack);
+        
+        if (route.query.version_id) {
+          // If we have a specific version ID, fetch versions and auto-install
+          isSearching.value = true;
+          const fetchVersions = source.value === 'modrinth' ? 'get_modrinth_modpack_versions' : 'get_curseforge_modpack_versions';
+          invoke(fetchVersions, { projectId: dummyModpack.project_id })
+            .then((versions: any) => {
+              const targetVersion = versions.find((v: any) => v.id.toString() === route.query.version_id);
+              if (targetVersion) {
+                onlineUrl.value = targetVersion.download_url;
+                selectedVersionName.value = targetVersion.name;
+                nextTick(() => {
+                  installModpack();
+                });
+              } else {
+                // Fallback to versions modal if not found
+                openVersionsModal(dummyModpack);
+              }
+            })
+            .catch((e) => {
+              console.error(e);
+              openVersionsModal(dummyModpack);
+            })
+            .finally(() => {
+              isSearching.value = false;
+            });
+        } else {
+          // Open versions modal if no specific version
+          openVersionsModal(dummyModpack);
+        }
       } else {
         isSearching.value = true;
         modpacks.value = [];
@@ -666,7 +703,7 @@ const formatDate = (dateString: string) => {
               >
                 <div class="col-span-4 font-medium pl-2 flex items-center gap-2 line-clamp-1" :title="version.name">
                   <span class="truncate">{{ version.name }}</span>
-                  <span v-if="getVersionUpgradeStatus(index) === 'reinstall'" class="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                  <span v-if="getVersionUpgradeStatus(index).text === '重装'" class="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
                     当前版本
                   </span>
                 </div>
