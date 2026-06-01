@@ -617,7 +617,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <DialogContent :open="props.open" @update:open="handleOpenChange" class="max-w-2xl">
+  <DialogContent :open="props.open" @update:open="handleOpenChange" class="max-w-lg">
     <DialogTitle>{{ t("install.title") }}</DialogTitle>
     <DialogDescription>
       {{ t("install.subtitle") }}
@@ -745,7 +745,7 @@ onUnmounted(() => {
       </div>
       <p class="text-sm text-muted-foreground">灵活组装你的 Mod 加载器和基础组件。系统会自动校验不兼容的组合。</p>
 
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <InstallCard
           title="Forge"
           iconUrl="/forge.png"
