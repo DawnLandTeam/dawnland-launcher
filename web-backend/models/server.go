@@ -13,7 +13,7 @@ type Server struct {
 	UpdatedAt      time.Time      `json:"updatedAt"`
 	DeletedAt      gorm.DeletedAt `json:"deletedAt,omitempty" gorm:"index"`
 	Name           string         `json:"name"`
-	IP             string         `json:"ip" gorm:"uniqueIndex:idx_ip_port"`
+	IP             string         `json:"ip" gorm:"type:varchar(255);uniqueIndex:idx_ip_port"`
 	Port           int            `json:"port" gorm:"uniqueIndex:idx_ip_port"`
 	Motd           string         `json:"motd"`
 	Version        string         `json:"version"`
