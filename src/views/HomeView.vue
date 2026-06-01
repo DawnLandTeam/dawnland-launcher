@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, onActivated } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm } from "@tauri-apps/plugin-dialog";
@@ -51,6 +51,7 @@ interface InstanceState {
 
 // Router for navigation to settings
 const router = useRouter();
+const route = useRoute();
 
 // State
 const installedInstances = ref<InstanceItem[]>([]);
@@ -246,9 +247,79 @@ onMounted(async () => {
   });
 });
 
-onActivated(() => {
+onActivated(async () => {
   // Refresh instances when returning to HomeView
-  loadInstances();
+  await loadInstances();
+  await loadAccounts();
+  
+  if (route.query.auto_launch === 'true') {
+    let matchingInstance = null;
+    const serverName = route.query.server_name as string;
+    
+    // First try matching by instance name (for modpacks)
+    matchingInstance = installedInstances.value.find(i => i.name === serverName);
+    
+    // Fallback: match by version and loader if not found
+    if (!matchingInstance) {
+      const serverVersion = route.query.server_version as string;
+      const serverLoader = route.query.server_loader as string;
+      
+      matchingInstance = installedInstances.value.find(i => 
+        i.mcVersion === serverVersion && 
+        (serverLoader === 'vanilla' || i.loaderType.toLowerCase().includes(serverLoader.toLowerCase()))
+      );
+    }
+    
+    if (matchingInstance) {
+      selectedInstanceId.value = matchingInstance.id;
+    } else {
+      alert(`没有找到匹配的实例 (No installed instance found for server ${serverName}). 请先安装它。`);
+      router.replace({ query: {} });
+      return;
+    }
+    
+    // Select matching account
+    let matchingAccount = null;
+    const authType = route.query.auth_type as string;
+    
+    if (authType === 'online' || authType === 'microsoft') {
+      matchingAccount = accounts.value.find(a => a.accountType === 'microsoft');
+    } else {
+      matchingAccount = accounts.value.find(a => a.accountType === 'offline');
+    }
+    
+    if (!matchingAccount && accounts.value.length > 0) {
+      matchingAccount = accounts.value[0];
+    }
+    
+    if (matchingAccount) {
+      selectedAccountId.value = matchingAccount.id;
+    } else {
+      alert(`没有找到可用账号 (No account found). 请在设置中添加账号。`);
+      router.replace({ query: {} });
+      return;
+    }
+    
+    // Launch
+    launchingInstances.value.add(selectedInstanceId.value);
+    gameLogs.value = [];
+    
+    try {
+      await invoke("launch_instance", {
+        versionId: selectedInstanceId.value,
+        accountUuid: selectedAccountId.value,
+        serverIp: route.query.server_ip as string,
+        serverPort: parseInt(route.query.server_port as string) || 25565
+      });
+    } catch (e) {
+      console.error("Failed to launch auto instance:", e);
+      launchingInstances.value.delete(selectedInstanceId.value);
+      alert(`启动失败 (Failed to launch): ${e}`);
+    }
+    
+    // Clean up query
+    router.replace({ query: {} });
+  }
 });
 
 // ---------------------------------------------------------------------------
