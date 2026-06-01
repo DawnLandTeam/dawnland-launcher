@@ -867,7 +867,7 @@ function cancelPrompt() {
           <div class="flex items-center gap-2">
             <!-- Install Client button (only for modded/custom servers with pack) -->
             <button
-              v-if="server.packFileName && server.isActive"
+              v-if="(server.packFileName || server.packSource) && server.isActive"
               @click="installModpack(server)"
               :disabled="installingServerId === server.id"
               class="flex items-center gap-1 text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400 disabled:opacity-50"
