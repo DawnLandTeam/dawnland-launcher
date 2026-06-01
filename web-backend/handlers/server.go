@@ -169,18 +169,21 @@ func CreateServer(c *gin.Context) {
 	}
 
 	server := models.Server{
-		Name:         input.Name,
-		IP:           input.IP,
-		Port:         input.Port,
-		Motd:         input.Motd,
-		Version:      input.Version,
-		LoaderType:   input.LoaderType,
-		ServerType:   serverType,
-		AuthType:     authType,
-		PackFileName: input.PackFileName,
-		IconURL:      input.IconURL,
-		Email:        input.Email,
-		IsActive:     false, // Requires approval
+		Name:          input.Name,
+		IP:            input.IP,
+		Port:          input.Port,
+		Motd:          input.Motd,
+		Version:       input.Version,
+		LoaderType:    input.LoaderType,
+		ServerType:    serverType,
+		AuthType:      authType,
+		PackFileName:  input.PackFileName,
+		PackProjectID: input.PackProjectID,
+		PackVersionID: input.PackVersionID,
+		PackSource:    input.PackSource,
+		IconURL:       input.IconURL,
+		Email:         input.Email,
+		IsActive:      false, // Requires approval
 	}
 
 	result := database.DB.Create(&server)
@@ -294,6 +297,15 @@ func UpdateServer(c *gin.Context) {
 	}
 	if input.PackFileName != nil {
 		updates["pack_file_name"] = *input.PackFileName
+	}
+	if input.PackProjectID != nil {
+		updates["pack_project_id"] = *input.PackProjectID
+	}
+	if input.PackVersionID != nil {
+		updates["pack_version_id"] = *input.PackVersionID
+	}
+	if input.PackSource != nil {
+		updates["pack_source"] = *input.PackSource
 	}
 	if input.IconURL != nil {
 		updates["icon_url"] = *input.IconURL
