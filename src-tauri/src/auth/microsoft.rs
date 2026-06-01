@@ -47,30 +47,20 @@ fn http_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// Device code request payload.
-#[derive(Serialize)]
-struct DeviceCodePayload {
-    client_id: &'static str,
-    scope: &'static str,
+fn get_web_backend_url() -> String {
+    option_env!("WEB_BACKEND_URL")
+        .unwrap_or("http://localhost:8080")
+        .to_string()
 }
-
-/// Client ID for the launcher (newly registered application).
-const CLIENT_ID: &str = "780ab3ca-a1a0-4830-ac98-92a595e85a13";
-const SCOPE: &str = "XboxLive.signin offline_access";
 
 /// Initiate Microsoft Device Code Flow.
 pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
     let client = http_client();
 
-    let payload = DeviceCodePayload {
-        client_id: CLIENT_ID,
-        scope: SCOPE,
-    };
+    let url = format!("{}/api/microsoft/devicecode", get_web_backend_url());
 
     let response = client
-        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .form(&payload)
+        .post(&url)
         .send()
         .await
         .map_err(|e| format!("Failed to request device code: {e:?}"))?;
@@ -99,9 +89,7 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
 /// Token request payload.
 #[derive(Serialize)]
 struct TokenPayload<'a> {
-    client_id: &'a str,
     device_code: &'a str,
-    grant_type: &'a str,
 }
 
 /// Poll for token - returns (access_token, refresh_token).
@@ -110,15 +98,15 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
 
     loop {
         let payload = TokenPayload {
-            client_id: CLIENT_ID,
             device_code,
-            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
         };
 
+        let url = format!("{}/api/microsoft/token", get_web_backend_url());
+
         let response = client
-            .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .form(&payload)
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&payload)
             .send()
             .await
             .map_err(|e| format!("Token request failed: {e:?}"))?;
@@ -473,8 +461,12 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, String> 
     // Load existing accounts and add new one.
     let mut accounts = get_accounts().await?;
 
-    // Remove existing Microsoft account with same UUID if exists.
-    accounts.retain(|a| !(a.account_type == AccountType::Microsoft && a.id == account.id));
+    // Remove existing Microsoft account with same UUID if exists (ignore case and hyphens just in case).
+    accounts.retain(|a| {
+        let same_type = a.account_type == AccountType::Microsoft;
+        let same_id = a.id.replace("-", "").eq_ignore_ascii_case(&account.id.replace("-", ""));
+        !(same_type && same_id)
+    });
 
     accounts.push(account.clone());
     super::save_accounts(&accounts).await?;
@@ -509,21 +501,19 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
 
     #[derive(Serialize)]
     struct RefreshPayload<'a> {
-        client_id: &'a str,
         refresh_token: &'a str,
-        grant_type: &'a str,
     }
 
     let payload = RefreshPayload {
-        client_id: CLIENT_ID,
         refresh_token,
-        grant_type: "refresh_token",
     };
 
+    let url = format!("{}/api/microsoft/refresh", get_web_backend_url());
+
     let response = client
-        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .form(&payload)
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&payload)
         .send()
         .await
         .map_err(|e| format!("Token refresh request failed: {:?}", e))?;
