@@ -19,7 +19,8 @@ type Server struct {
 	Version        string         `json:"version"`
 	LoaderType     string         `json:"loaderType"`             // Server loader: Vanilla, Fabric, Forge, Paper, etc.
 	ServerType     string         `json:"serverType"`             // Server category: vanilla, modded, custom
-	AuthType       string         `json:"authType"`               // Authentication type: offline, online
+	AuthType       string         `json:"authType"`               // Authentication type: offline, microsoft, authlib
+	AuthlibAPI     string         `json:"authlibApi,omitempty"`   // Yggdrasil API URL if authType is authlib
 	PackFileName   string         `json:"packFileName,omitempty"` // Modpack ZIP file name (for modded/custom)
 	PackFileSize   int64          `json:"packFileSize,omitempty"` // Modpack file size in bytes
 	PackProjectID  string         `json:"packProjectId,omitempty"` // CurseForge or Modrinth Project ID
@@ -43,7 +44,8 @@ type CreateServerInput struct {
 	Version       string `json:"version"`
 	LoaderType    string `json:"loaderType"`
 	ServerType    string `json:"serverType"`   // vanilla, modded, custom
-	AuthType      string `json:"authType"`     // offline, online
+	AuthType      string `json:"authType"`     // offline, microsoft, authlib
+	AuthlibAPI    string `json:"authlibApi"`   // Optional Authlib API URL
 	PackFileName  string `json:"packFileName"` // Modpack file name (set when pack is uploaded)
 	PackProjectID string `json:"packProjectId"`
 	PackVersionID string `json:"packVersionId"`
@@ -62,6 +64,7 @@ type UpdateServerInput struct {
 	LoaderType    *string `json:"loaderType"`
 	ServerType    *string `json:"serverType"`
 	AuthType      *string `json:"authType"`
+	AuthlibAPI    *string `json:"authlibApi"`
 	PackFileName  *string `json:"packFileName"`
 	PackProjectID *string `json:"packProjectId"`
 	PackVersionID *string `json:"packVersionId"`

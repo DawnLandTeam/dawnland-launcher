@@ -603,12 +603,11 @@ pub async fn install_forge_instance(
         // Create dlml.json for the base vanilla version to mark it as hidden if needed
         let base_config_path = base_version_dir.join("dlml.json");
         let base_config = crate::core::launcher::InstanceConfig {
-            java_path: None,
-            max_memory: None,
-            jvm_args_extra: None,
-            window_behavior: "keep".to_string(),
-            show_game_log: false,
             hidden: is_dependency.unwrap_or(false),
+            server_id: None,
+            pack_version_id: None,
+            pack_file_name: None,
+            ..Default::default()
         };
         if let Ok(config_json) = serde_json::to_string_pretty(&base_config) {
             let _ = fs::write(&base_config_path, config_json).await;
@@ -969,6 +968,9 @@ pub async fn install_forge_instance(
             window_behavior: "keep".to_string(),
             show_game_log: false,
             hidden: false,
+            server_id: None,
+            pack_version_id: None,
+            pack_file_name: None,
         }
     };
     

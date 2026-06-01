@@ -401,7 +401,7 @@ function getLoaderBadgeClass(loader: string): string {
     <!-- Mod Details Modal -->
     <Teleport to="body">
       <div v-if="selectedMod" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="selectedMod = null"></div>
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"></div>
         <div class="relative z-10 w-full max-w-lg gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg pointer-events-auto max-h-[80vh] overflow-y-auto">
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">Mod Details</h3>

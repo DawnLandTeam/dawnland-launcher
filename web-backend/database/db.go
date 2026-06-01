@@ -3,6 +3,7 @@ package database
 import (
 	"log"
 	"os"
+	"strings"
 
 	"web-backend/models"
 
@@ -25,6 +26,16 @@ func InitDB() {
 		if dsn == "" {
 			log.Fatal("DB_DSN must be set when DB_TYPE is mysql")
 		}
+		
+		// Ensure parseTime=true is included to fix time.Time scanning issues
+		if !strings.Contains(dsn, "parseTime=true") {
+			if strings.Contains(dsn, "?") {
+				dsn += "&parseTime=true"
+			} else {
+				dsn += "?parseTime=true"
+			}
+		}
+		
 		DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 		log.Println("Connecting to MySQL database...")
 	} else {

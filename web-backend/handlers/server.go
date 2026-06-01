@@ -87,7 +87,7 @@ func GetRecommendedServers(c *gin.Context) {
 		Find(&servers)
 
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch recommended servers"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch recommended servers: " + result.Error.Error()})
 		return
 	}
 
@@ -177,6 +177,7 @@ func CreateServer(c *gin.Context) {
 		LoaderType:    input.LoaderType,
 		ServerType:    serverType,
 		AuthType:      authType,
+		AuthlibAPI:    input.AuthlibAPI,
 		PackFileName:  input.PackFileName,
 		PackProjectID: input.PackProjectID,
 		PackVersionID: input.PackVersionID,
@@ -294,6 +295,9 @@ func UpdateServer(c *gin.Context) {
 	}
 	if input.AuthType != nil {
 		updates["auth_type"] = *input.AuthType
+	}
+	if input.AuthlibAPI != nil {
+		updates["authlib_api"] = *input.AuthlibAPI
 	}
 	if input.PackFileName != nil {
 		updates["pack_file_name"] = *input.PackFileName
