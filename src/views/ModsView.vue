@@ -19,7 +19,7 @@ interface UnifiedModProject {
 }
 
 // State
-const selectedSource = ref<"modrinth" | "curseforge">("modrinth");
+const selectedSource = ref<"modrinth" | "curseforge">("curseforge");
 const searchQuery = ref("");
 const isSearching = ref(false);
 const searchResults = ref<UnifiedModProject[]>([]);
