@@ -176,7 +176,7 @@ const newServer = ref<CreateServerInput>({
   version: "",
   loaderType: "",
   serverType: "vanilla",
-  authType: "offline",
+  authType: "microsoft",
   authlibApi: "",
   packFileName: "",
   packProjectId: "",
@@ -209,7 +209,7 @@ const isUploadingPack = ref(false);
 
 // Online modpack search state
 const onlineSearchQuery = ref('');
-const onlineSource = ref<'modrinth' | 'curseforge'>('modrinth');
+const onlineSource = ref<'modrinth' | 'curseforge'>('curseforge');
 const isSearchingOnline = ref(false);
 const onlineModpacks = ref<any[]>([]);
 const isFetchingOnlineVersions = ref(false);
@@ -616,7 +616,7 @@ function resetPublishForm() {
     version: "",
     loaderType: "",
     serverType: "vanilla",
-    authType: "offline",
+    authType: "microsoft",
     authlibApi: "",
     packFileName: "",
     packProjectId: "",
