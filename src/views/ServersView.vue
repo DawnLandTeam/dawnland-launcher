@@ -491,48 +491,18 @@ watch(servers, (newServers) => {
 const isConnecting = ref<number | null>(null);
 
 async function launchAndConnect(server: ServerInfo) {
-  isConnecting.value = server.id;
-  error.value = null;
-  try {
-    const accounts = await invoke<{id: string, username: string}[]>("get_accounts");
-    if (!accounts || accounts.length === 0) {
-      error.value = "No accounts found. Please add an account in Settings first.";
-      isConnecting.value = null;
-      return;
+  router.push({
+    path: '/',
+    query: {
+      auto_launch: 'true',
+      server_name: server.name,
+      server_version: server.version,
+      server_loader: server.serverType === 'modded' ? (server.loaderType || 'forge') : 'vanilla',
+      server_ip: server.ip,
+      server_port: String(server.port),
+      auth_type: server.authType
     }
-    const accountUuid = accounts[0].id;
-
-    const instances = await invoke<{id: string, mcVersion: string}[]>("scan_installed_instances");
-    const matchingInstance = instances.find(i => i.mcVersion === server.version);
-    
-    if (!matchingInstance) {
-      error.value = `No installed instance found for Minecraft ${server.version}. Redirecting to installer...`;
-      setTimeout(() => {
-        router.push({
-          path: '/instances',
-          query: {
-            install_version: server.version,
-            install_loader: server.serverType === 'modded' ? (server.loaderType || 'forge') : 'vanilla'
-          }
-        });
-      }, 1500);
-      isConnecting.value = null;
-      return;
-    }
-
-    await invoke("launch_instance", {
-      versionId: matchingInstance.id,
-      accountUuid,
-      serverIp: server.ip,
-      serverPort: server.port
-    });
-
-  } catch (e) {
-    console.error("Failed to launch and connect:", e);
-    error.value = `Failed to connect: ${e}`;
-  } finally {
-    isConnecting.value = null;
-  }
+  });
 }
 function copyIp(server: ServerInfo) {
   navigator.clipboard.writeText(`${server.ip}:${server.port}`);
