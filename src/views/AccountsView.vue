@@ -4,8 +4,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { 
   User, Trash2, Plus, UserPlus, Loader2, X, WifiOff, 
-  MonitorCheck, Check, AlertCircle 
+  MonitorCheck, AlertCircle 
 } from "@lucide/vue";
+import { DialogContent, DialogTitle } from "../components/ui/dialog";
+import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 
 interface Account {
   id: string;
@@ -26,7 +28,6 @@ type AccountType = "offline" | "microsoft";
 
 // State
 const accounts = ref<Account[]>([]);
-const activeAccountId = ref<string>("");
 const newUsername = ref("");
 const isAddingOffline = ref(false);
 const isLoggingInMicrosoft = ref(false);
@@ -45,10 +46,6 @@ const deletingAccountName = ref("");
 async function loadAccounts(): Promise<void> {
   try {
     accounts.value = await invoke<Account[]>("get_accounts");
-    // Set first account as active if none selected
-    if (!activeAccountId.value && accounts.value.length > 0) {
-      activeAccountId.value = accounts.value[0].id;
-    }
   } catch (err) {
     console.error("Failed to load accounts:", err);
   }
@@ -94,12 +91,6 @@ async function addOfflineAccount(): Promise<void> {
   }
 }
 
-// Set active account
-async function setActiveAccount(id: string): Promise<void> {
-  activeAccountId.value = id;
-  // TODO: Persist active account preference
-}
-
 // Confirm delete account
 function confirmDeleteAccount(account: Account): void {
   deletingAccountId.value = account.id;
@@ -113,10 +104,6 @@ async function removeAccount(): Promise<void> {
 
   try {
     await invoke("remove_account", { id: deletingAccountId.value });
-    // If we removed the active account, clear it
-    if (activeAccountId.value === deletingAccountId.value) {
-      activeAccountId.value = "";
-    }
     await loadAccounts();
     // Notify other views to refresh accounts
     await emit("accounts-updated");
@@ -224,20 +211,8 @@ onMounted(() => {
         <div
           v-for="account in accounts"
           :key="account.id"
-          class="relative rounded-lg border-2 p-4 transition-all"
-          :class="activeAccountId === account.id 
-            ? 'border-primary bg-primary/5 dark:bg-primary/10' 
-            : 'border-neutral-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-primary/50'"
+          class="relative rounded-lg border-2 p-4 transition-all border-neutral-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-primary/50"
         >
-          <!-- Active Badge -->
-          <div 
-            v-if="activeAccountId === account.id"
-            class="absolute -top-2.5 -right-2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-green-500 to-emerald-500 px-2.5 py-1 text-xs font-bold text-white shadow-lg shadow-green-500/30"
-          >
-            <Check :size="11" stroke-width="3" />
-            {{ $t('accounts.active') }}
-          </div>
-
           <!-- Account Info -->
           <div class="flex items-start gap-3">
             <div
@@ -263,18 +238,11 @@ onMounted(() => {
           <!-- Action Buttons -->
           <div class="flex gap-2 mt-4">
             <button
-              v-if="activeAccountId !== account.id"
-              class="flex-1 flex items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted transition-colors"
-              @click="setActiveAccount(account.id)"
-            >
-              <Check :size="14" />
-              {{ $t('accounts.setActive') }}
-            </button>
-            <button
-              class="flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-600 hover:bg-red-100 dark:border-red-900/30 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 transition-colors"
+              class="w-full flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-600 hover:bg-red-100 dark:border-red-900/30 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 transition-colors"
               @click="confirmDeleteAccount(account)"
             >
               <Trash2 :size="14" />
+              {{ $t('accounts.delete') }}
             </button>
           </div>
         </div>
@@ -282,26 +250,11 @@ onMounted(() => {
     </div>
 
     <!-- Add Account Modal -->
-    <Teleport to="body">
-      <div
-        v-if="showAddAccountModal"
-        class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
-      >
-        <div
-          class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
-          @click="closeAddAccountModal"
-        />
-        <div class="relative z-10 w-full max-w-md gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg pointer-events-auto">
-          <!-- Header -->
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.add') }}</h3>
-            <button
-              class="rounded p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-zinc-800"
-              @click="closeAddAccountModal"
-            >
-              <X :size="20" class="text-neutral-900 dark:text-white" />
-            </button>
-          </div>
+    <DialogContent :open="showAddAccountModal" @update:open="!$event && closeAddAccountModal()" class="max-w-md p-4">
+      <!-- Header -->
+      <div class="flex items-center justify-between mb-4">
+        <DialogTitle>{{ $t('accounts.add') }}</DialogTitle>
+      </div>
 
           <!-- Account Type Selection -->
           <div class="space-y-3">
@@ -343,7 +296,7 @@ onMounted(() => {
               @keyup.enter="addOfflineAccount"
             />
             <button
-              class="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-1.5.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              class="w-full flex items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               :disabled="isAddingOffline || !newUsername.trim()"
               @click="addOfflineAccount"
             >
@@ -358,7 +311,7 @@ onMounted(() => {
             <!-- Not logging in -->
             <div v-if="!isLoggingInMicrosoft && !microsoftLoginData">
               <button
-                class="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-1.5.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+                class="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
                 @click="startMicrosoftLogin"
               >
                 <UserPlus :size="16" />
@@ -409,30 +362,19 @@ onMounted(() => {
           <div v-if="loginError" class="mt-3 rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-400">
             {{ loginError }}
           </div>
-        </div>
-      </div>
-    </Teleport>
+    </DialogContent>
 
     <!-- Delete Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showDeleteDialog"
-        class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
-      >
-        <div
-          class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
-          @click="showDeleteDialog = false"
-        />
-        <div class="relative z-10 w-full max-w-sm gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg pointer-events-auto">
-          <div class="flex items-center gap-3 mb-4">
-            <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
-              <AlertCircle :size="20" class="text-red-600 dark:text-red-400" />
-            </div>
-            <div>
-              <h3 class="font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.deleteTitle') }}</h3>
-              <p class="text-sm text-muted-foreground">{{ $t('accounts.deleteUndone') }}</p>
-            </div>
-          </div>
+    <AlertDialog :open="showDeleteDialog" @update:open="showDeleteDialog = $event" class="max-w-sm p-4">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
+          <AlertCircle :size="20" class="text-red-600 dark:text-red-400" />
+        </div>
+        <div>
+          <AlertDialogTitle class="font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.deleteTitle') }}</AlertDialogTitle>
+          <AlertDialogDescription class="text-sm text-muted-foreground">{{ $t('accounts.deleteUndone') }}</AlertDialogDescription>
+        </div>
+      </div>
           <p class="text-sm mb-4" v-html="$t('accounts.deleteConfirm', { name: deletingAccountName })">
           </p>
           <div class="flex justify-end gap-2">
@@ -450,8 +392,6 @@ onMounted(() => {
               {{ $t('accounts.delete') }}
             </button>
           </div>
-        </div>
-      </div>
-    </Teleport>
+    </AlertDialog>
   </div>
 </template>
