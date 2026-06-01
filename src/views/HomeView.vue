@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, onActivated } from "vue";
+import { ref, onMounted, computed, onActivated, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -247,17 +247,29 @@ onMounted(async () => {
   });
 });
 
-onActivated(async () => {
+onActivated(() => {
   // Refresh instances when returning to HomeView
-  await loadInstances();
-  await loadAccounts();
-  
-  if (route.query.auto_launch === 'true') {
+  loadInstances();
+  loadAccounts();
+});
+
+watch(() => route.query.auto_launch, async (isAutoLaunch) => {
+  if (isAutoLaunch === 'true') {
+    // Ensure instances and accounts are loaded first
+    if (installedInstances.value.length === 0) {
+      await loadInstances();
+    }
+    if (accounts.value.length === 0) {
+      await loadAccounts();
+    }
+    
     let matchingInstance = null;
     const serverName = route.query.server_name as string;
     
     // First try matching by instance name (for modpacks)
-    matchingInstance = installedInstances.value.find(i => i.name === serverName);
+    if (serverName) {
+      matchingInstance = installedInstances.value.find(i => i.name === serverName);
+    }
     
     // Fallback: match by version and loader if not found
     if (!matchingInstance) {
@@ -266,14 +278,14 @@ onActivated(async () => {
       
       matchingInstance = installedInstances.value.find(i => 
         i.mcVersion === serverVersion && 
-        (serverLoader === 'vanilla' || i.loaderType.toLowerCase().includes(serverLoader.toLowerCase()))
+        (!serverLoader || serverLoader === 'vanilla' || (i.loaderType && i.loaderType.toLowerCase().includes(serverLoader.toLowerCase())))
       );
     }
     
     if (matchingInstance) {
       selectedInstanceId.value = matchingInstance.id;
     } else {
-      alert(`没有找到匹配的实例 (No installed instance found for server ${serverName}). 请先安装它。`);
+      alert(`没有找到匹配的实例 (No installed instance found for server ${serverName || 'Unknown'}). 请先安装它。`);
       router.replace({ query: {} });
       return;
     }
@@ -308,8 +320,8 @@ onActivated(async () => {
       await invoke("launch_instance", {
         versionId: selectedInstanceId.value,
         accountUuid: selectedAccountId.value,
-        serverIp: route.query.server_ip as string,
-        serverPort: parseInt(route.query.server_port as string) || 25565
+        serverIp: (route.query.server_ip as string) || undefined,
+        serverPort: parseInt(route.query.server_port as string) || undefined
       });
     } catch (e) {
       console.error("Failed to launch auto instance:", e);
@@ -320,7 +332,7 @@ onActivated(async () => {
     // Clean up query
     router.replace({ query: {} });
   }
-});
+}, { immediate: true });
 
 // ---------------------------------------------------------------------------
 // Data loading
