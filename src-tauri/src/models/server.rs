@@ -18,6 +18,9 @@ pub struct Server {
     pub auth_type: String,          // "offline", "online"
     pub pack_file_name: Option<String>, // Modpack ZIP file name
     pub pack_file_size: Option<i64>,    // Modpack file size in bytes
+    pub pack_project_id: Option<String>, // CurseForge or Modrinth Project ID
+    pub pack_version_id: Option<String>, // CurseForge or Modrinth Version/File ID
+    pub pack_source: Option<String>,     // "curseforge" or "modrinth"
     pub icon_url: String,
     pub email: String,
     pub is_active: bool,
@@ -36,6 +39,9 @@ pub struct CreateServerInput {
     pub server_type: String,          // "vanilla", "modded", "custom"
     pub auth_type: String,            // "offline", "online"
     pub pack_file_name: Option<String>, // Set after pack is uploaded
+    pub pack_project_id: Option<String>,
+    pub pack_version_id: Option<String>,
+    pub pack_source: Option<String>,
     pub icon_url: String,
     pub email: String,
 }
@@ -53,6 +59,9 @@ pub struct UpdateServerInput {
     pub server_type: Option<String>,
     pub auth_type: Option<String>,
     pub pack_file_name: Option<String>,
+    pub pack_project_id: Option<String>,
+    pub pack_version_id: Option<String>,
+    pub pack_source: Option<String>,
     pub icon_url: Option<String>,
     pub email: Option<String>,
     pub is_active: Option<bool>,
