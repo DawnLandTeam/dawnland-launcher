@@ -899,7 +899,7 @@ function cancelPrompt() {
               v-if="(server.packFileName || server.packSource) && server.isActive && !isModpackInstalled(server)"
               @click="installModpack(server)"
               :disabled="installingServerId === server.id"
-              class="flex items-center gap-1 text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400 disabled:opacity-50"
+              class="flex items-center gap-1.5 px-4 py-1.5 bg-primary text-primary-foreground text-sm font-bold rounded-md hover:bg-primary/90 transition-all shadow-sm active:scale-95 disabled:opacity-50"
               title="{{ $t('servers.actions.installClient') }}"
             >
               <Loader2 v-if="installingServerId === server.id" class="h-4 w-4 animate-spin" />
