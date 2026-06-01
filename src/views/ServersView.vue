@@ -1155,7 +1155,7 @@ function cancelPrompt() {
                         v-model="selectedOnlineVersion" 
                         class="w-full px-3 py-1.5 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
                         :disabled="isFetchingOnlineVersions"
-                        @change="() => { newServer.packProjectId = selectedOnlineProject.project_id; newServer.packSource = onlineSource; newServer.packVersionId = selectedOnlineVersion?.id }"
+                        @change="() => { newServer.packProjectId = selectedOnlineProject?.project_id || ''; newServer.packSource = onlineSource || ''; newServer.packVersionId = selectedOnlineVersion?.id ? String(selectedOnlineVersion.id) : '' }"
                       >
                         <option :value="null" disabled>{{ isFetchingOnlineVersions ? 'Loading versions...' : 'Select a version' }}</option>
                         <option v-for="v in onlineModpackVersions" :key="v.id" :value="v">
