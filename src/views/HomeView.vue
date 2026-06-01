@@ -485,7 +485,7 @@ function loaderBadgeClass(loaderType: string): string {
           </div>
 
           <!-- Empty State (No Instances) -->
-          <div v-if="installedInstances.length === 0" class="w-full flex flex-col items-center justify-center gap-4 p-8 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl rounded-3xl border border-white/20 shadow-2xl">
+          <div v-if="installedInstances.length === 0" class="w-full flex flex-col items-center justify-center gap-4 p-8 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-xl rounded-3xl border border-white/20 shadow-2xl">
             <div class="flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10">
               <Gamepad2 class="h-10 w-10 text-primary" />
             </div>
@@ -500,13 +500,13 @@ function loaderBadgeClass(loaderType: string): string {
           </div>
 
           <!-- Control Panel -->
-          <div v-else class="w-full bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl border border-white/30 dark:border-zinc-800/50 rounded-3xl p-6 shadow-2xl">
+          <div v-else class="w-full bg-white/60 dark:bg-zinc-900/60 backdrop-blur-xl border border-white/20 dark:border-zinc-800/50 rounded-3xl p-6 shadow-2xl">
             <!-- Instance Selector -->
             <div class="flex items-center gap-3">
               <label class="text-sm font-medium shrink-0 w-16">{{ $t('home.selectInstance') }}</label>
               <DropdownMenu class="flex-1 min-w-0">
                 <template #trigger>
-                  <button class="w-full flex items-center justify-between px-3 py-2.5 bg-background/80 border rounded-xl hover:border-primary/50 transition-colors">
+                  <button class="w-full flex items-center justify-between px-3 py-2.5 bg-white/40 dark:bg-zinc-800/40 border border-white/20 rounded-xl hover:border-primary/50 transition-colors">
                     <div v-if="selectedInstance" class="flex items-center gap-2 overflow-hidden">
                       <Package class="h-5 w-5 text-primary shrink-0" />
                       <span class="font-medium truncate">{{ selectedInstance.name }}</span>
@@ -529,7 +529,7 @@ function loaderBadgeClass(loaderType: string): string {
               <label class="text-sm font-medium shrink-0 w-16">{{ $t('home.selectAccount') }}</label>
               <DropdownMenu class="flex-1 min-w-0">
                 <template #trigger>
-                  <button class="w-full flex items-center justify-between px-3 py-2.5 bg-background/80 border rounded-xl hover:border-primary/50 transition-colors overflow-hidden">
+                  <button class="w-full flex items-center justify-between px-3 py-2.5 bg-white/40 dark:bg-zinc-800/40 border border-white/20 rounded-xl hover:border-primary/50 transition-colors overflow-hidden">
                     <div v-if="selectedAccount" class="flex items-center gap-2 overflow-hidden">
                       <MonitorCheck v-if="selectedAccount.accountType === 'microsoft'" class="h-5 w-5 text-green-500 shrink-0" />
                       <Globe v-else-if="selectedAccount.accountType === 'authlib'" class="h-5 w-5 text-purple-500 shrink-0" />
@@ -563,7 +563,7 @@ function loaderBadgeClass(loaderType: string): string {
 
             <!-- Action Buttons -->
             <div class="flex items-center justify-center gap-3 mt-6">
-              <button @click="openInstanceSettings" :disabled="!selectedInstanceId" class="flex items-center gap-2 px-4 py-3 border border-zinc-200 dark:border-zinc-700 bg-white/50 dark:bg-zinc-800/50 rounded-xl hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shadow-sm shrink-0" title="Configure instance">
+              <button @click="openInstanceSettings" :disabled="!selectedInstanceId" class="flex items-center gap-2 px-4 py-3 border border-white/20 dark:border-zinc-700 bg-white/40 dark:bg-zinc-800/40 rounded-xl hover:bg-white/60 dark:hover:bg-zinc-700/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shadow-sm shrink-0" title="Configure instance">
                 <Settings class="h-5 w-5" />
               </button>
               <button @click="handlePrimaryAction" :disabled="isActionDisabled" 
