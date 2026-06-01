@@ -174,6 +174,15 @@ pub struct InstanceConfig {
     /// Whether this instance is a dependency and should be hidden from the UI
     #[serde(default)]
     pub hidden: bool,
+    /// ID of the server this instance is bound to (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
+    /// Modpack Version ID (e.g. from CurseForge/Modrinth) (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack_version_id: Option<String>,
+    /// Modpack File Name for local zips (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack_file_name: Option<String>,
 }
 
 fn default_window_behavior() -> String {

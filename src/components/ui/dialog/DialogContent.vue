@@ -22,7 +22,6 @@ function close() {
         <!-- Frosted glass backdrop -->
         <div 
           class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
-          @click="close"
         />
         
         <!-- Content with solid background -->

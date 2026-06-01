@@ -21,8 +21,13 @@ pub struct InstanceItem {
     pub modpack_version: Option<String>,
     /// Modpack Type (e.g., "CurseForge" or "Modrinth")
     pub modpack_type: Option<String>,
-    /// Modpack Project ID for precise online updates
     pub modpack_project_id: Option<String>,
+    /// Server ID this instance is bound to (optional)
+    pub server_id: Option<String>,
+    /// Modpack Version ID for online modpacks (optional)
+    pub pack_version_id: Option<String>,
+    /// Modpack File Name for local zips (optional)
+    pub pack_file_name: Option<String>,
 }
 
 /// Scan all locally installed instances from the versions directory.
@@ -58,10 +63,17 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                 // Check if instance is hidden via dlml.json
                 let config_path = path.join("dlml.json");
                 let mut is_hidden = false;
+                let mut server_id = None;
+                let mut pack_version_id = None;
+                let mut pack_file_name = None;
+
                 if config_path.exists() {
                     if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
                         if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
                             is_hidden = config.hidden;
+                            server_id = config.server_id;
+                            pack_version_id = config.pack_version_id;
+                            pack_file_name = config.pack_file_name;
                         }
                     }
                 }
@@ -113,6 +125,9 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                             modpack_version,
                             modpack_type,
                             modpack_project_id,
+                            server_id,
+                            pack_version_id,
+                            pack_file_name,
                         });
                     }
                     Err(e) => {
@@ -126,6 +141,9 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                             modpack_version: None,
                             modpack_type: None,
                             modpack_project_id: None,
+                            server_id,
+                            pack_version_id,
+                            pack_file_name,
                         });
                     }
                 }
@@ -284,6 +302,22 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         }
     }
 
+    // Read dlml.json for bindings
+    let config_path = base_dir.join("versions").join(&version_id).join("dlml.json");
+    let mut server_id = None;
+    let mut pack_version_id = None;
+    let mut pack_file_name = None;
+
+    if config_path.exists() {
+        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+            if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                server_id = config.server_id;
+                pack_version_id = config.pack_version_id;
+                pack_file_name = config.pack_file_name;
+            }
+        }
+    }
+
     Ok(InstanceItem {
         id: version_id.clone(),
         name: version_id,
@@ -292,6 +326,9 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         modpack_version,
         modpack_type,
         modpack_project_id,
+        server_id,
+        pack_version_id,
+        pack_file_name,
     })
 }
 
@@ -611,3 +648,48 @@ pub async fn install_mod_to_instance(
 
     Ok(filename)
 }
+
+/// Bind an installed instance to a specific server for updates
+#[tauri::command]
+pub async fn bind_instance_to_server(
+    instance_id: String,
+    server_id: String,
+    pack_version_id: Option<String>,
+    pack_file_name: Option<String>,
+) -> Result<(), String> {
+    tracing::info!(
+        "Binding instance {} to server {} (packVersionId: {:?}, packFileName: {:?})",
+        instance_id, server_id, pack_version_id, pack_file_name
+    );
+
+    let base_dir = get_minecraft_base();
+    let instance_dir = base_dir.join("versions").join(&instance_id);
+    
+    if !instance_dir.exists() {
+        return Err(format!("Instance directory does not exist: {}", instance_id));
+    }
+    
+    let config_path = instance_dir.join("dlml.json");
+    
+    let mut config = if config_path.exists() {
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .unwrap_or_else(|_| "{}".to_string());
+        serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content).unwrap_or_default()
+    } else {
+        crate::core::launcher::InstanceConfig::default()
+    };
+    
+    config.server_id = Some(server_id);
+    config.pack_version_id = pack_version_id;
+    config.pack_file_name = pack_file_name;
+    
+    let json_str = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize dlml.json: {}", e))?;
+        
+    tokio::fs::write(&config_path, json_str)
+        .await
+        .map_err(|e| format!("Failed to write dlml.json: {}", e))?;
+        
+    Ok(())
+}
