@@ -744,7 +744,7 @@ function cancelPrompt() {
     </div>
 
     <!-- Filters - always visible, even while loading more -->
-    <div class="flex flex-wrap gap-3 mb-6 p-4 bg-card rounded-lg border">
+    <div class="flex flex-wrap gap-3 mb-6 p-4 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md rounded-lg border border-white/20 shadow-sm">
       <!-- Search -->
       <div class="relative flex-1 min-w-[200px]">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -805,7 +805,7 @@ function cancelPrompt() {
       <div
         v-for="server in filteredServers"
         :key="server.id"
-        class="group relative rounded-lg border bg-card p-4 hover:border-primary/50 hover:shadow-md transition-all"
+        class="flex flex-col bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md rounded-xl border border-white/20 overflow-hidden hover:border-primary/50 transition-all hover:shadow-md hover:bg-white/80 dark:hover:bg-zinc-900/80 p-4"
       >
         <!-- Favorite Button -->
         <button 
@@ -1183,14 +1183,12 @@ function cancelPrompt() {
                     </button>
                   </div>
 
-                  <div v-if="selectedOnlineProject" class="p-3 bg-neutral-50 dark:bg-zinc-800/50 rounded-lg border border-neutral-200 dark:border-zinc-700 space-y-3">
-                    <div class="flex items-center justify-between">
-                      <div class="flex items-center gap-2 overflow-hidden">
-                        <img v-if="selectedOnlineProject.icon_url" :src="selectedOnlineProject.icon_url" class="h-6 w-6 rounded" />
-                        <span class="text-sm font-medium truncate">{{ selectedOnlineProject.title }}</span>
-                      </div>
-                      <button @click="selectedOnlineProject = null" class="text-xs text-muted-foreground hover:text-foreground">Change</button>
+                  <div v-if="selectedOnlineProject" class="bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 rounded-xl border border-white/20 flex items-center justify-between shadow-sm">
+                    <div class="flex items-center gap-2 overflow-hidden">
+                      <img v-if="selectedOnlineProject.icon_url" :src="selectedOnlineProject.icon_url" class="h-6 w-6 rounded" />
+                      <span class="text-sm font-medium truncate">{{ selectedOnlineProject.title }}</span>
                     </div>
+                    <button @click="selectedOnlineProject = null" class="text-xs text-muted-foreground hover:text-foreground">Change</button>
                     <div class="space-y-1">
                       <label class="text-xs font-medium text-muted-foreground">Select Version <span class="text-red-500">*</span></label>
                       <select 

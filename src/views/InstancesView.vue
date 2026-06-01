@@ -382,7 +382,7 @@ function loaderBadgeClass(loaderType: string): string {
         <div
           v-for="instance in installedInstances"
           :key="instance.id"
-          class="group rounded-lg border bg-card p-4 hover:border-primary/50 transition-colors"
+          class="group rounded-lg border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-all shadow-sm"
         >
           <!-- Instance info — primary visual focus -->
           <div class="flex items-start justify-between">

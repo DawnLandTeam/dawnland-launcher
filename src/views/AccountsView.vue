@@ -311,7 +311,7 @@ onMounted(() => {
         <div
           v-for="account in accounts"
           :key="account.id"
-          class="relative rounded-lg border-2 p-4 transition-all border-neutral-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-primary/50"
+          class="relative rounded-xl border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 transition-all hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 shadow-sm"
         >
           <!-- Account Info -->
           <div class="flex items-start gap-3">
