@@ -46,8 +46,8 @@ checkMaximized();
 
 <template>
   <header
-    class="region-drag flex h-8 shrink-0 select-none items-center justify-between px-3 w-full"
-    style="background-color: #171717; position: relative; z-index: 99999;"
+    class="region-drag flex h-8 shrink-0 select-none items-center justify-between px-3 w-full bg-white/10 dark:bg-black/20 backdrop-blur-md border-b border-white/10"
+    style="position: relative; z-index: 99999;"
     data-tauri-drag-region
     @mousedown="startDrag"
   >
