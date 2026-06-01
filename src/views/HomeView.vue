@@ -15,6 +15,7 @@ import {
   MonitorCheck,
   WifiOff,
   Square,
+  Globe,
 } from "@lucide/vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
@@ -101,6 +102,10 @@ const selectedInstance = computed(() => {
     installedInstances.value.find((i) => i.id === selectedInstanceId.value) ||
     null
   );
+});
+
+const selectedAccount = computed(() => {
+  return accounts.value.find((a) => a.id === selectedAccountId.value) || null;
 });
 
 const isActionDisabled = computed(() => {
@@ -360,10 +365,7 @@ function loaderBadgeClass(loaderType: string): string {
   }
 }
 
-// Account type helper: returns true for Microsoft account (premium)
-function isMsaAccount(account: Account): boolean {
-  return account.accountType === "microsoft";
-}
+// Formats loader badge background class
 </script>
 
 <template>
@@ -436,20 +438,33 @@ function isMsaAccount(account: Account): boolean {
             <label class="text-sm font-medium shrink-0">{{ $t('home.selectAccount') }}</label>
             <DropdownMenu class="flex-1">
               <template #trigger>
-                <button class="w-full flex items-center justify-between px-3 py-2 bg-background border rounded-lg hover:border-primary/50 transition-colors">
-                  <div v-if="selectedAccountId" class="flex items-center gap-2">
-                    <component :is="isMsaAccount(accounts.find((a) => a.id === selectedAccountId)!) ? MonitorCheck : WifiOff" :class="isMsaAccount(accounts.find((a) => a.id === selectedAccountId)!) ? 'h-5 w-5 text-green-500' : 'h-5 w-5 text-muted-foreground'" />
-                    <span class="font-medium truncate">{{ accounts.find((a) => a.id === selectedAccountId)?.username }}</span>
+                <button class="w-full flex items-center justify-between px-3 py-2 bg-background border rounded-lg hover:border-primary/50 transition-colors overflow-hidden">
+                  <div v-if="selectedAccount" class="flex items-center gap-2 overflow-hidden">
+                    <MonitorCheck v-if="selectedAccount.accountType === 'microsoft'" class="h-5 w-5 text-green-500 shrink-0" />
+                    <Globe v-else-if="selectedAccount.accountType === 'authlib'" class="h-5 w-5 text-purple-500 shrink-0" />
+                    <WifiOff v-else class="h-5 w-5 text-muted-foreground shrink-0" />
+                    <span class="font-medium truncate flex-1 min-w-0 flex items-center gap-1.5">
+                      <span class="truncate">{{ selectedAccount.username }}</span>
+                      <span class="text-xs text-muted-foreground font-normal shrink-0">
+                        ({{ selectedAccount.accountType === 'microsoft' ? $t('accounts.microsoft') : (selectedAccount.accountType === 'authlib' ? $t('accounts.authlib') : $t('accounts.offline')) }})
+                      </span>
+                    </span>
                   </div>
                   <span v-else class="text-muted-foreground">{{ $t('home.selectAccountPlaceholder') }}</span>
-                  <ChevronDown class="h-5 w-5 text-muted-foreground shrink-0" />
+                  <ChevronDown class="h-5 w-5 text-muted-foreground shrink-0 ml-2" />
                 </button>
               </template>
-              <div class="bg-background">
-                <DropdownMenuItem v-for="account in accounts" :key="account.id" @click="selectedAccountId = account.id" class="flex items-center gap-3">
-                  <MonitorCheck v-if="isMsaAccount(account)" class="h-4 w-4 text-green-500" />
-                  <WifiOff v-else class="h-4 w-4 text-muted-foreground" />
-                  <span class="truncate">{{ account.username }}</span>
+              <div class="bg-background max-h-60 overflow-y-auto">
+                <DropdownMenuItem v-for="account in accounts" :key="account.id" @click="selectedAccountId = account.id" class="flex items-center justify-between w-full">
+                  <div class="flex items-center gap-3 overflow-hidden">
+                    <MonitorCheck v-if="account.accountType === 'microsoft'" class="h-4 w-4 text-green-500 shrink-0" />
+                    <Globe v-else-if="account.accountType === 'authlib'" class="h-4 w-4 text-purple-500 shrink-0" />
+                    <WifiOff v-else class="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span class="truncate">{{ account.username }}</span>
+                  </div>
+                  <span class="text-xs text-muted-foreground shrink-0 ml-3">
+                    {{ account.accountType === 'microsoft' ? $t('accounts.microsoft') : (account.accountType === 'authlib' ? $t('accounts.authlib') : $t('accounts.offline')) }}
+                  </span>
                 </DropdownMenuItem>
               </div>
             </DropdownMenu>

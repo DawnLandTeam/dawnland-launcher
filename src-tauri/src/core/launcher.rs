@@ -1366,7 +1366,7 @@ pub async fn launch_instance(
     // Create launch config
     let config = LaunchConfig {
         version_id: version_id.clone(),
-        account,
+        account: account.clone(),
         game_directory: game_dir.clone(),
         assets_directory: assets_dir.clone(),
         natives_directory: natives_dir.clone(),
@@ -1458,8 +1458,48 @@ pub async fn launch_instance(
         ));
     }
 
+    // ========== Authlib Injector Setup ==========
+    if account.account_type == crate::auth::AccountType::Authlib {
+        let injector_path = base_dir.join("authlib-injector.jar");
+        if !injector_path.exists() {
+            tracing::info!("Fetching latest authlib-injector...");
+            if let Ok(res) = reqwest::get("https://authlib-injector.yushi.moe/artifact/latest.json").await {
+                if let Ok(json) = res.json::<serde_json::Value>().await {
+                    if let Some(download_url) = json.get("download_url").and_then(|v| v.as_str()) {
+                        tracing::info!("Downloading authlib-injector from {}", download_url);
+                        let _ = app.emit("instance-state-changed", serde_json::json!({
+                            "versionId": version_id,
+                            "status": "downloading_authlib_injector"
+                        }));
+                        let mut missing = Vec::new();
+                        missing.push(crate::downloader::DownloadTask::new(
+                            download_url.to_string(),
+                            injector_path.to_string_lossy().to_string(),
+                            None,
+                            None
+                        ));
+                        crate::downloader::run_batch_download(missing, app.clone()).await;
+                    }
+                }
+            }
+        }
+    }
+
     // Parse JVM args
     let mut jvm_args = parse_jvm_arguments(&version_meta, &config)?;
+
+    // Add authlib-injector javaagent
+    if account.account_type == crate::auth::AccountType::Authlib {
+        let injector_path = base_dir.join("authlib-injector.jar");
+        if injector_path.exists() {
+            if let Some(authlib_url) = &account.authlib_url {
+                jvm_args.insert(0, format!("-javaagent:{}={}", injector_path.to_string_lossy(), authlib_url));
+                tracing::info!("Injected authlib-injector for URL: {}", authlib_url);
+            }
+        } else {
+            tracing::warn!("Authlib injector not found at {:?}, game may fail to connect to custom skin server.", injector_path);
+        }
+    }
 
     // ========== Dynamic JVM Args Filtering ==========
     // For Java < 23, filter out unsupported parameters (Java 23+ only)

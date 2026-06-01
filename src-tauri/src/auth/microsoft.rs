@@ -453,9 +453,12 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, String> 
         id: uuid,
         username,
         account_type: AccountType::Microsoft,
-        access_token: Some(mc_token),
-        refresh_token: Some(refresh_token),
+        access_token: Some(mc_token.clone()),
+        refresh_token: Some(refresh_token.clone()),
         textures: None,
+        authlib_url: None,
+        authlib_server_name: None,
+        client_token: None,
     };
 
     // Load existing accounts and add new one.
