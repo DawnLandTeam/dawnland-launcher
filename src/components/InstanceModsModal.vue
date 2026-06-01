@@ -60,7 +60,7 @@ const searchResults = ref<UnifiedModProject[]>([]);
 const searchQuery = ref("");
 const error = ref<string | null>(null);
 const installingMod = ref<string | null>(null);
-const selectedSource = ref<"modrinth" | "curseforge">("modrinth");
+const selectedSource = ref<"modrinth" | "curseforge">("curseforge");
 
 // Version Selection State
 const selectedModForVersionSelection = ref<UnifiedModProject | null>(null);
