@@ -66,7 +66,7 @@ const deviceCode = ref("");
 
 // Modal state
 const showAddAccountModal = ref(false);
-const selectedAccountType = ref<AccountType>("offline");
+const selectedAccountType = ref<AccountType>("microsoft");
 const showDeleteDialog = ref(false);
 const deletingAccountId = ref("");
 const deletingAccountName = ref("");
