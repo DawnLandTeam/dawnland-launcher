@@ -968,16 +968,16 @@ function cancelPrompt() {
             <!-- Step 1: Basic Info -->
             <template v-if="publishStep === 1">
               <div class="space-y-1">
-                <label class="text-sm font-medium">{{ $t('servers.publishDialog.serverName') }} <span class="text-red-500">*</span></label>
+                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.serverName') }} <span class="text-red-500">*</span></label>
                 <input v-model="newServer.name" type="text" :placeholder="$t('servers.publishDialog.serverNamePlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
               </div>
               <div class="flex gap-2">
                 <div class="flex-1 space-y-1">
-                  <label class="text-sm font-medium">{{ $t('servers.publishDialog.ipAddress') }} <span class="text-red-500">*</span></label>
+                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.ipAddress') }} <span class="text-red-500">*</span></label>
                   <input v-model="newServer.ip" type="text" :placeholder="$t('servers.publishDialog.ipPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
                 </div>
                 <div class="w-24 space-y-1">
-                  <label class="text-sm font-medium">{{ $t('servers.publishDialog.port') }}</label>
+                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.port') }}</label>
                   <input v-model.number="newServer.port" type="number" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
                 </div>
               </div>
@@ -986,7 +986,7 @@ function cancelPrompt() {
             <!-- Step 2: Version & Type -->
             <template v-if="publishStep === 2">
               <div class="space-y-1">
-                <label class="text-sm font-medium">{{ $t('servers.publishDialog.serverType') }}</label>
+                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.serverType') }}</label>
                 <select v-model="newServer.serverType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
                   <option value="vanilla">{{ $t('servers.publishDialog.typeVanilla') }}</option>
                   <option value="modded">{{ $t('servers.publishDialog.typeModded') }}</option>
@@ -999,7 +999,7 @@ function cancelPrompt() {
 
               <!-- Minecraft Version (Searchable Combobox with Groups) -->
               <div class="space-y-1" :class="{ 'opacity-50 pointer-events-none': newServer.serverType === 'modded' }">
-                <label class="text-sm font-medium">{{ $t('servers.publishDialog.mcVersion') }} <span v-if="newServer.serverType !== 'modded'" class="text-red-500">*</span></label>
+                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.mcVersion') }} <span v-if="newServer.serverType !== 'modded'" class="text-red-500">*</span></label>
                 <div class="relative version-dropdown">
                   <div 
                     class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white flex items-center justify-between"
@@ -1106,7 +1106,7 @@ function cancelPrompt() {
               </div>
               
               <div class="space-y-1">
-                <label class="text-sm font-medium">{{ $t('servers.publishDialog.authType', 'Authentication Type') }}</label>
+                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.authType', 'Authentication Type') }}</label>
                 <select v-model="newServer.authType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
                   <option value="offline">{{ $t('servers.auth.offline') }}</option>
                   <option value="microsoft">{{ $t('servers.auth.microsoft') }}</option>
@@ -1115,7 +1115,7 @@ function cancelPrompt() {
               </div>
               
               <div v-if="newServer.authType === 'authlib'" class="space-y-1">
-                <label class="text-sm font-medium">Authlib API URL <span class="text-red-500">*</span></label>
+                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">Authlib API URL <span class="text-red-500">*</span></label>
                 <input 
                   v-model="newServer.authlibApi" 
                   type="url" 
@@ -1146,7 +1146,7 @@ function cancelPrompt() {
                 </div>
 
                 <div v-if="packBindMode === 'local'" class="space-y-2">
-                  <label class="text-sm font-medium">{{ $t('servers.publishDialog.modpackZip') }} <span class="text-red-500">*</span></label>
+                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.modpackZip') }} <span class="text-red-500">*</span></label>
                   <div class="flex items-center gap-2">
                     <button
                       @click="selectPackFile"
@@ -1268,7 +1268,7 @@ function cancelPrompt() {
                 
                 <!-- Admin Email -->
                 <div class="space-y-1 pt-2 border-t">
-                  <label class="text-sm font-medium">{{ $t('servers.publishDialog.adminEmail') }} <span class="text-red-500">*</span></label>
+                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.adminEmail') }} <span class="text-red-500">*</span></label>
                   <input v-model="newServer.email" type="email" :placeholder="$t('servers.publishDialog.emailPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
                   <p class="text-xs text-muted-foreground">{{ $t('servers.publishDialog.emailDesc') }}</p>
                 </div>
