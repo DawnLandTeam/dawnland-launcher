@@ -16,7 +16,8 @@ interface ServerInfo {
   version: string;
   loaderType: string;
   serverType: string;        // "vanilla", "modded", "custom"
-  authType: string;          // "offline", "online"
+  authType: string;          // "offline", "online", "authlib"
+  authlibApi?: string;
   packFileName: string | null;
   packFileSize: number | null;
   packProjectId: string | null;
@@ -36,6 +37,7 @@ interface CreateServerInput {
   loaderType: string;
   serverType: string;
   authType: string;
+  authlibApi: string;
   packFileName: string;
   packProjectId: string;
   packVersionId: string;
@@ -143,6 +145,14 @@ const canGoToStep = (step: number): boolean => {
     return newServer.value.name.trim() !== "" && newServer.value.ip.trim() !== "";
   }
   if (step === 2) {
+    // Validate authlib API if authlib is selected
+    if (newServer.value.authType === 'authlib' && newServer.value.authlibApi.trim() === '') {
+      return false;
+    }
+    
+    if (newServer.value.serverType === 'modded') {
+      return true; // Version is selected later in Step 3 for modded servers
+    }
     return newServer.value.version !== "";
   }
   if (step === 3) {
@@ -167,13 +177,14 @@ const newServer = ref<CreateServerInput>({
   loaderType: "",
   serverType: "vanilla",
   authType: "offline",
+  authlibApi: "",
   packFileName: "",
   packProjectId: "",
   packVersionId: "",
   packSource: "",
   iconUrl: "",
   email: "",
-} as any);
+});
 
 // Auto-split IP and Port when user pastes "domain:port"
 watch(() => newServer.value.ip, (newVal) => {
@@ -370,6 +381,40 @@ async function loadMoreServers() {
   // Infinite scroll is disabled for the recommended ecosystem lobby.
 }
 
+const installedInstances = ref<any[]>([]);
+const accounts = ref<any[]>([]);
+
+async function fetchLocalData() {
+  try {
+    installedInstances.value = await invoke("scan_installed_instances");
+    accounts.value = await invoke("get_accounts");
+  } catch (error) {
+    console.error("Failed to load local data:", error);
+  }
+}
+
+function isModpackInstalled(server: ServerInfo): boolean {
+  if (server.serverType !== 'modded' && server.serverType !== 'custom') return true;
+  if (!server.packFileName && !server.packSource) return true;
+  return installedInstances.value.some(i => {
+    // Exact match on serverId
+    if (i.serverId !== String(server.id)) return false;
+    
+    // If it's an online modpack, compare packVersionId
+    if (server.packVersionId) {
+      return i.packVersionId === server.packVersionId;
+    }
+    
+    // If it's a local zip modpack, compare packFileName
+    if (server.packFileName) {
+      return i.packFileName === server.packFileName;
+    }
+    
+    return true;
+  });
+}
+
+
 // Infinite scroll handler
 function handleScroll(event: Event) {
   const target = event.target as HTMLElement;
@@ -384,6 +429,7 @@ onMounted(() => {
   loadFavorites();
   fetchServers();
   fetchFilterOptions();
+  fetchLocalData();
   // Close version dropdown when clicking outside
   document.addEventListener("click", handleClickOutside);
 });
@@ -391,6 +437,7 @@ onMounted(() => {
 // Refresh when coming back to this view (keep-alive reactivation)
 onActivated(() => {
   fetchFilterOptions();
+  fetchLocalData();
 });
 
 onUnmounted(() => {
@@ -491,16 +538,26 @@ watch(servers, (newServers) => {
 const isConnecting = ref<number | null>(null);
 
 async function launchAndConnect(server: ServerInfo) {
+  if (server.authType === 'authlib') {
+    const matchingAccount = accounts.value.find(a => a.accountType === 'authlib' && a.authlibUrl === server.authlibApi);
+    if (!matchingAccount) {
+      showAlert(`此服务器需要 Authlib 账号进行验证（API：${server.authlibApi}）。请先在账号管理中添加对应的 Authlib 账号。`);
+      return;
+    }
+  }
+
   router.push({
     path: '/',
     query: {
       auto_launch: 'true',
+      server_id: String(server.id),
       server_name: server.name,
       server_version: server.version,
       server_loader: server.serverType === 'modded' ? (server.loaderType || 'forge') : 'vanilla',
       server_ip: server.ip,
       server_port: String(server.port),
-      auth_type: server.authType
+      auth_type: server.authType,
+      authlib_api: server.authlibApi
     }
   });
 }
@@ -560,6 +617,7 @@ function resetPublishForm() {
     loaderType: "",
     serverType: "vanilla",
     authType: "offline",
+    authlibApi: "",
     packFileName: "",
     packProjectId: "",
     packVersionId: "",
@@ -608,6 +666,7 @@ async function installModpack(server: ServerInfo) {
   } else if (server.packFileName) {
     // Local zip pack
     queryParams.online_url = `http://localhost:8080/api/servers/${server.id}/pack`;
+    queryParams.pack_file_name = server.packFileName;
   }
   
   router.push({
@@ -814,9 +873,9 @@ function cancelPrompt() {
           <span
             v-if="server.authType"
             class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-            :class="server.authType === 'microsoft' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'"
+            :class="server.authType === 'microsoft' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : server.authType === 'authlib' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'"
           >
-            {{ server.authType === 'microsoft' ? $t('servers.auth.microsoftShort') : $t('servers.auth.offlineShort') }}
+            {{ server.authType === 'microsoft' ? $t('servers.auth.microsoftShort') : server.authType === 'authlib' ? 'Authlib' : $t('servers.auth.offlineShort') }}
           </span>
         </div>
 
@@ -837,7 +896,7 @@ function cancelPrompt() {
           <div class="flex items-center gap-2">
             <!-- Install Client button (only for modded/custom servers with pack) -->
             <button
-              v-if="(server.packFileName || server.packSource) && server.isActive"
+              v-if="(server.packFileName || server.packSource) && server.isActive && !isModpackInstalled(server)"
               @click="installModpack(server)"
               :disabled="installingServerId === server.id"
               class="flex items-center gap-1 text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400 disabled:opacity-50"
@@ -848,6 +907,7 @@ function cancelPrompt() {
               Install
             </button>
             <button 
+              v-if="!((server.packFileName || server.packSource) && server.isActive && !isModpackInstalled(server))"
               @click="launchAndConnect(server)"
               :disabled="isConnecting === server.id"
               class="flex items-center gap-1.5 px-4 py-1.5 bg-primary text-primary-foreground text-sm font-bold rounded-md hover:bg-primary/90 transition-all shadow-sm active:scale-95 disabled:opacity-50"
@@ -871,7 +931,7 @@ function cancelPrompt() {
     <!-- Publish Server Dialog -->
     <Teleport to="body">
       <div v-if="showPublishDialog" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="closePublishDialog"></div>
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"></div>
         <div class="relative z-10 w-full max-w-lg gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg pointer-events-auto">
           <!-- Header with Progress -->
           <div class="flex items-center justify-between mb-4">
@@ -925,13 +985,26 @@ function cancelPrompt() {
 
             <!-- Step 2: Version & Type -->
             <template v-if="publishStep === 2">
-              <!-- Minecraft Version (Searchable Combobox with Groups) -->
               <div class="space-y-1">
-                <label class="text-sm font-medium">{{ $t('servers.publishDialog.mcVersion') }} <span class="text-red-500">*</span></label>
+                <label class="text-sm font-medium">{{ $t('servers.publishDialog.serverType') }}</label>
+                <select v-model="newServer.serverType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
+                  <option value="vanilla">{{ $t('servers.publishDialog.typeVanilla') }}</option>
+                  <option value="modded">{{ $t('servers.publishDialog.typeModded') }}</option>
+                  <option value="custom">{{ $t('servers.publishDialog.typeCustom') }}</option>
+                </select>
+                <p class="text-xs text-muted-foreground">
+                  {{ newServer.serverType === 'vanilla' ? $t('servers.publishDialog.descVanilla') : $t('servers.publishDialog.descModded') }}
+                </p>
+              </div>
+
+              <!-- Minecraft Version (Searchable Combobox with Groups) -->
+              <div class="space-y-1" :class="{ 'opacity-50 pointer-events-none': newServer.serverType === 'modded' }">
+                <label class="text-sm font-medium">{{ $t('servers.publishDialog.mcVersion') }} <span v-if="newServer.serverType !== 'modded'" class="text-red-500">*</span></label>
                 <div class="relative version-dropdown">
                   <div 
-                    class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white cursor-pointer flex items-center justify-between"
-                    @click="showVersionDropdown = !showVersionDropdown; fetchMcVersions(); versionSearchQuery = ''"
+                    class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white flex items-center justify-between"
+                    :class="newServer.serverType === 'modded' ? 'cursor-not-allowed bg-neutral-100 dark:bg-zinc-800/50' : 'cursor-pointer'"
+                    @click="if (newServer.serverType !== 'modded') { showVersionDropdown = !showVersionDropdown; fetchMcVersions(); versionSearchQuery = ''; }"
                   >
                     <span :class="newServer.version ? 'text-neutral-900 dark:text-white' : 'text-neutral-400'">
                       {{ newServer.version || ($t('servers.selectVersion') as string) }}
@@ -940,7 +1013,7 @@ function cancelPrompt() {
                   </div>
                   
                   <!-- Dropdown -->
-                  <div v-if="showVersionDropdown" class="absolute z-20 w-full mt-1 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md shadow-lg max-h-80 overflow-hidden">
+                  <div v-if="showVersionDropdown && newServer.serverType !== 'modded'" class="absolute z-20 w-full mt-1 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md shadow-lg max-h-80 overflow-hidden">
                     <!-- Search Input -->
                     <div class="p-2 border-b border-neutral-200 dark:border-zinc-700">
                       <div class="relative">
@@ -1033,23 +1106,22 @@ function cancelPrompt() {
               </div>
               
               <div class="space-y-1">
-                <label class="text-sm font-medium">{{ $t('servers.publishDialog.serverType') }}</label>
-                <select v-model="newServer.serverType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
-                  <option value="vanilla">{{ $t('servers.publishDialog.typeVanilla') }}</option>
-                  <option value="modded">{{ $t('servers.publishDialog.typeModded') }}</option>
-                  <option value="custom">{{ $t('servers.publishDialog.typeCustom') }}</option>
-                </select>
-                <p class="text-xs text-muted-foreground">
-                  {{ newServer.serverType === 'vanilla' ? $t('servers.publishDialog.descVanilla') : $t('servers.publishDialog.descModded') }}
-                </p>
-              </div>
-              
-              <div class="space-y-1">
                 <label class="text-sm font-medium">{{ $t('servers.publishDialog.authType', 'Authentication Type') }}</label>
                 <select v-model="newServer.authType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
                   <option value="offline">{{ $t('servers.auth.offline') }}</option>
                   <option value="microsoft">{{ $t('servers.auth.microsoft') }}</option>
+                  <option value="authlib">Authlib</option>
                 </select>
+              </div>
+              
+              <div v-if="newServer.authType === 'authlib'" class="space-y-1">
+                <label class="text-sm font-medium">Authlib API URL <span class="text-red-500">*</span></label>
+                <input 
+                  v-model="newServer.authlibApi" 
+                  type="url" 
+                  placeholder="https://yggdrasil.example.com/api/yggdrasil" 
+                  class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" 
+                />
               </div>
             </template>
 
@@ -1125,7 +1197,14 @@ function cancelPrompt() {
                         v-model="selectedOnlineVersion" 
                         class="w-full px-3 py-1.5 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
                         :disabled="isFetchingOnlineVersions"
-                        @change="() => { newServer.packProjectId = selectedOnlineProject?.project_id || ''; newServer.packSource = onlineSource || ''; newServer.packVersionId = selectedOnlineVersion?.id ? String(selectedOnlineVersion.id) : '' }"
+                        @change="() => { 
+                          newServer.packProjectId = selectedOnlineProject?.project_id || ''; 
+                          newServer.packSource = onlineSource || ''; 
+                          newServer.packVersionId = selectedOnlineVersion?.id ? String(selectedOnlineVersion.id) : '';
+                          if (selectedOnlineVersion?.mc_version) {
+                            newServer.version = selectedOnlineVersion.mc_version.split(',')[0].trim();
+                          }
+                        }"
                       >
                         <option :value="null" disabled>{{ isFetchingOnlineVersions ? 'Loading versions...' : 'Select a version' }}</option>
                         <option v-for="v in onlineModpackVersions" :key="v.id" :value="v">

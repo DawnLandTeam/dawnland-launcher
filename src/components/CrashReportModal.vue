@@ -52,7 +52,6 @@ async function copyLogs() {
         <!-- Frosted glass backdrop -->
         <div
           class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
-          @click="close"
         />
 
         <!-- Crash Report Content -->

@@ -29,12 +29,16 @@ interface InstanceItem {
   modpackVersion?: string;
   modpackType?: string;
   modpackProjectId?: string;
+  serverId?: string;
+  packVersionId?: string;
+  packFileName?: string;
 }
 
 interface Account {
   id: string;
   username: string;
-  accountType: string; // 'microsoft' or 'offline'
+  accountType: string; // 'microsoft', 'offline', or 'authlib'
+  authlibUrl?: string;
 }
 
 interface GameLog {
@@ -255,20 +259,20 @@ onActivated(() => {
 
 watch(() => route.query.auto_launch, async (isAutoLaunch) => {
   if (isAutoLaunch === 'true') {
-    // Ensure instances and accounts are loaded first
-    if (installedInstances.value.length === 0) {
-      await loadInstances();
-    }
-    if (accounts.value.length === 0) {
-      await loadAccounts();
-    }
+    // Force refresh instances and accounts to ensure we have the latest data before matching
+    await loadInstances();
+    await loadAccounts();
     
     let matchingInstance = null;
     const serverName = route.query.server_name as string;
     
-    // First try matching by instance name (for modpacks)
+    // First try matching by serverId, then fallback to instance name (for modpacks)
     if (serverName) {
-      matchingInstance = installedInstances.value.find(i => i.name === serverName);
+      const serverId = route.query.server_id as string;
+      matchingInstance = installedInstances.value.find(i => {
+        if (serverId && i.serverId === serverId) return true;
+        return i.name === serverName;
+      });
     }
     
     // Fallback: match by version and loader if not found
@@ -296,6 +300,9 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
     
     if (authType === 'online' || authType === 'microsoft') {
       matchingAccount = accounts.value.find(a => a.accountType === 'microsoft');
+    } else if (authType === 'authlib') {
+      const authlibApi = route.query.authlib_api as string;
+      matchingAccount = accounts.value.find(a => a.accountType === 'authlib' && a.authlibUrl === authlibApi);
     } else {
       matchingAccount = accounts.value.find(a => a.accountType === 'offline');
     }
@@ -589,7 +596,7 @@ function loaderBadgeClass(loaderType: string): string {
     <!-- Game Log Modal -->
     <Teleport to="body">
       <div v-if="showGameLog" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" @click="showGameLog = false"></div>
+        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"></div>
         <div class="relative z-10 w-full max-w-3xl h-[70vh] gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg flex flex-col pointer-events-auto">
           <div class="flex items-center justify-between">
             <h3 class="font-semibold">{{ $t('home.gameOutput') }}</h3>
