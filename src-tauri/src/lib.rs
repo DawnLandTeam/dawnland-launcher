@@ -91,6 +91,7 @@ pub fn run() {
             core::manager::toggle_mod_status,
             core::manager::delete_local_mod,
             core::manager::install_mod_to_instance,
+            core::manager::bind_instance_to_server,
             // Java commands
             core::java::scan_local_javas,
             core::java::clear_java_cache,

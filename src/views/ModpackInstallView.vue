@@ -366,6 +366,17 @@ const installModpack = async () => {
       });
     }
     
+    // Bind to server if applicable
+    if (route.query.server_id) {
+      console.log("Binding instance to server...");
+      await invoke("bind_instance_to_server", {
+        instanceId: instanceName.value,
+        serverId: String(route.query.server_id),
+        packVersionId: route.query.version_id ? String(route.query.version_id) : null,
+        packFileName: route.query.pack_file_name ? String(route.query.pack_file_name) : null,
+      });
+    }
+    
     console.log("Installation finished successfully. Showing success modal...");
     isInstalling.value = false;
     showSuccessModal.value = true;

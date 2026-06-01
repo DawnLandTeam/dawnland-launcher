@@ -9,9 +9,7 @@ const emit = defineEmits<{
   "update:open": [value: boolean];
 }>();
 
-function onBackdropClick() {
-  emit("update:open", false);
-}
+
 </script>
 
 <template>
@@ -21,7 +19,6 @@ function onBackdropClick() {
         <!-- Backdrop -->
         <div
           class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
-          @click="onBackdropClick"
         />
         <!-- Panel -->
         <div
