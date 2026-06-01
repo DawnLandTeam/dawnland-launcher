@@ -22,6 +22,9 @@ type Server struct {
 	AuthType       string         `json:"authType"`               // Authentication type: offline, online
 	PackFileName   string         `json:"packFileName,omitempty"` // Modpack ZIP file name (for modded/custom)
 	PackFileSize   int64          `json:"packFileSize,omitempty"` // Modpack file size in bytes
+	PackProjectID  string         `json:"packProjectId,omitempty"` // CurseForge or Modrinth Project ID
+	PackVersionID  string         `json:"packVersionId,omitempty"` // CurseForge or Modrinth Version/File ID
+	PackSource     string         `json:"packSource,omitempty"`    // "curseforge" or "modrinth"
 	IconURL        string         `json:"iconUrl"`
 	Email          string         `json:"email"` // Admin email for server management
 	IsActive       bool           `json:"isActive" gorm:"default:false"`
@@ -33,31 +36,37 @@ type Server struct {
 
 // CreateServerInput defines the input for creating a new server.
 type CreateServerInput struct {
-	Name         string `json:"name" binding:"required"`
-	IP           string `json:"ip" binding:"required"`
-	Port         int    `json:"port" binding:"required"`
-	Motd         string `json:"motd"`
-	Version      string `json:"version"`
-	LoaderType   string `json:"loaderType"`
-	ServerType   string `json:"serverType"`   // vanilla, modded, custom
-	AuthType     string `json:"authType"`     // offline, online
-	PackFileName string `json:"packFileName"` // Modpack file name (set when pack is uploaded)
-	IconURL      string `json:"iconUrl"`
-	Email        string `json:"email" binding:"required,email"` // Email is required
+	Name          string `json:"name" binding:"required"`
+	IP            string `json:"ip" binding:"required"`
+	Port          int    `json:"port" binding:"required"`
+	Motd          string `json:"motd"`
+	Version       string `json:"version"`
+	LoaderType    string `json:"loaderType"`
+	ServerType    string `json:"serverType"`   // vanilla, modded, custom
+	AuthType      string `json:"authType"`     // offline, online
+	PackFileName  string `json:"packFileName"` // Modpack file name (set when pack is uploaded)
+	PackProjectID string `json:"packProjectId"`
+	PackVersionID string `json:"packVersionId"`
+	PackSource    string `json:"packSource"`
+	IconURL       string `json:"iconUrl"`
+	Email         string `json:"email" binding:"required,email"` // Email is required
 }
 
 // UpdateServerInput defines the input for updating a server (all fields optional).
 type UpdateServerInput struct {
-	Name         *string `json:"name"`
-	IP           *string `json:"ip"`
-	Port         *int    `json:"port"`
-	Motd         *string `json:"motd"`
-	Version      *string `json:"version"`
-	LoaderType   *string `json:"loaderType"`
-	ServerType   *string `json:"serverType"`
-	AuthType     *string `json:"authType"`
-	PackFileName *string `json:"packFileName"`
-	IconURL      *string `json:"iconUrl"`
-	Email        *string `json:"email"`
-	IsActive     *bool   `json:"isActive"`
+	Name          *string `json:"name"`
+	IP            *string `json:"ip"`
+	Port          *int    `json:"port"`
+	Motd          *string `json:"motd"`
+	Version       *string `json:"version"`
+	LoaderType    *string `json:"loaderType"`
+	ServerType    *string `json:"serverType"`
+	AuthType      *string `json:"authType"`
+	PackFileName  *string `json:"packFileName"`
+	PackProjectID *string `json:"packProjectId"`
+	PackVersionID *string `json:"packVersionId"`
+	PackSource    *string `json:"packSource"`
+	IconURL       *string `json:"iconUrl"`
+	Email         *string `json:"email"`
+	IsActive      *bool   `json:"isActive"`
 }
