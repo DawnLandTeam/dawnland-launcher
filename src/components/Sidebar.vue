@@ -27,17 +27,17 @@ const navItems = computed(() => [
         v-for="item in navItems"
         :key="item.name"
         :to="item.path"
-        class="flex h-12 w-12 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-        :class="{ 'bg-neutral-100 text-neutral-900 dark:bg-zinc-800 dark:text-zinc-100': route.path === item.path }"
+        class="flex h-12 w-12 items-center justify-center rounded-lg text-neutral-800 transition-colors hover:bg-black/10 hover:text-black dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
+        :class="{ 'bg-black/10 text-black dark:bg-white/10 dark:text-white': route.path === item.path }"
         :title="item.label"
       >
         <component :is="item.icon" :size="20" />
       </RouterLink>
     </nav>
 
-    <div class="border-t border-neutral-200 p-2 dark:border-zinc-800">
+    <div class="border-t border-white/20 p-2 dark:border-white/10">
       <button
-        class="flex h-10 w-10 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+        class="flex h-10 w-10 items-center justify-center rounded-lg text-neutral-800 transition-colors hover:bg-black/10 hover:text-black dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
         :title="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
         @click="toggleDark()"
       >
