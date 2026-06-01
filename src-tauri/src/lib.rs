@@ -59,6 +59,11 @@ pub fn run() {
             commands::start_microsoft_login,
             commands::poll_microsoft_token,
             commands::refresh_microsoft_token,
+            auth::authlib::add_authlib_account,
+            auth::authlib::get_authlib_meta,
+            auth::authlib::fetch_authlib_servers,
+            auth::authlib::add_authlib_server,
+            auth::authlib::remove_authlib_server,
             // Core/Game commands
             core::mojang::get_vanilla_versions,
             core::mojang::install_vanilla_version,

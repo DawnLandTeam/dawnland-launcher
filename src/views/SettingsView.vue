@@ -5,6 +5,9 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
+
+const route = useRoute();
 
 interface SystemMemoryInfo {
   totalMb: number;
@@ -25,8 +28,13 @@ interface DownloadProgress {
   total: number;
 }
 
+interface AuthlibServer {
+  url: string;
+  name: string;
+}
+
 // Global settings
-const activeTab = ref<'general' | 'java' | 'about'>('general');
+const activeTab = ref<'general' | 'java' | 'authlib' | 'about'>('general');
 const systemMemory = ref<SystemMemoryInfo>({ totalMb: 8192, recommendedMaxMb: 4096 });
 const defaultMaxMemory = ref(4096);
 
@@ -41,6 +49,52 @@ const selectedJavaVersion = ref<number>(21);
 const availableJavaVersions = [8, 11, 17, 21, 22, 23];
 const isFullDiskScanning = ref(false);
 const fullDiskScanPath = ref("");
+
+// Authlib state
+const authlibServers = ref<AuthlibServer[]>([]);
+const isFetchingAuthlibServers = ref(false);
+const newAuthlibUrl = ref("");
+const isAddingAuthlibServer = ref(false);
+
+async function loadAuthlibServers(): Promise<void> {
+  isFetchingAuthlibServers.value = true;
+  try {
+    const res = await invoke<AuthlibServer[]>("fetch_authlib_servers");
+    authlibServers.value = res || [];
+  } catch (err) {
+    console.error("Failed to load authlib servers:", err);
+    authlibServers.value = [];
+  } finally {
+    isFetchingAuthlibServers.value = false;
+  }
+}
+
+async function addAuthlibServer(): Promise<void> {
+  if (!newAuthlibUrl.value.trim()) return;
+  isAddingAuthlibServer.value = true;
+  try {
+    const server = await invoke<AuthlibServer>("add_authlib_server", { url: newAuthlibUrl.value.trim() });
+    authlibServers.value = authlibServers.value.filter(s => s.url !== server.url);
+    authlibServers.value.push(server);
+    newAuthlibUrl.value = "";
+  } catch (err) {
+    console.error("Failed to add authlib server:", err);
+    alert(`Failed to add Authlib Server: ${err}`);
+  } finally {
+    isAddingAuthlibServer.value = false;
+  }
+}
+
+async function removeAuthlibServer(url: string): Promise<void> {
+  if (confirm("Are you sure you want to remove this authentication server?")) {
+    try {
+      await invoke("remove_authlib_server", { url });
+      authlibServers.value = authlibServers.value.filter(s => s.url !== url);
+    } catch (err) {
+      console.error("Failed to remove authlib server:", err);
+    }
+  }
+}
 
 async function loadSystemMemory(): Promise<void> {
   try {
@@ -183,9 +237,18 @@ async function downloadJava(majorVersion: number): Promise<void> {
 }
 
 onMounted(() => {
+  if (route.query.tab === 'authlib') {
+    activeTab.value = 'authlib';
+  } else if (route.query.tab === 'java') {
+    activeTab.value = 'java';
+  } else if (route.query.tab === 'about') {
+    activeTab.value = 'about';
+  }
+
   loadSystemMemory();
   loadJavaDownloadPath();
   scanLocalJavas();
+  loadAuthlibServers();
 });
 
 const { locale } = useI18n();
@@ -218,6 +281,13 @@ function changeLanguage(lang: string) {
         @click="activeTab = 'java'"
       >
         {{ $t('settings.tabs.java') }}
+      </button>
+      <button
+        class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
+        :class="activeTab === 'authlib' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
+        @click="activeTab = 'authlib'"
+      >
+        外置登录
       </button>
       <button
         class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
@@ -407,6 +477,65 @@ function changeLanguage(lang: string) {
             </button>
           </div>
         </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Authlib Management Tab -->
+    <div v-if="activeTab === 'authlib'" class="space-y-6">
+      <div class="rounded-lg border border-neutral-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+        <h2 class="text-lg font-semibold mb-4">认证服务器管理</h2>
+        
+        <!-- Add Server -->
+        <div class="mb-6 space-y-1">
+          <label class="text-sm font-medium">添加认证服务器 (API URL)</label>
+          <div class="flex gap-2">
+            <input
+              v-model="newAuthlibUrl"
+              type="text"
+              placeholder="例如: https://skin.dawnland.cn/api/yggdrasil"
+              class="flex-1 rounded-md border border-neutral-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700"
+              @keyup.enter="addAuthlibServer"
+            />
+            <button
+              class="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              :disabled="isAddingAuthlibServer || !newAuthlibUrl.trim()"
+              @click="addAuthlibServer"
+            >
+              <Loader2 v-if="isAddingAuthlibServer" :size="14" class="animate-spin" />
+              <Plus v-else :size="14" />
+              添加
+            </button>
+          </div>
+        </div>
+
+        <!-- Servers List -->
+        <div class="space-y-2">
+          <p class="text-sm font-medium">已添加的服务器 ({{ authlibServers.length }})</p>
+          <div v-if="isFetchingAuthlibServers" class="py-4 flex justify-center">
+            <Loader2 class="animate-spin text-muted-foreground" :size="24" />
+          </div>
+          <div v-else-if="authlibServers.length === 0" class="text-sm text-muted-foreground py-2">
+            暂无已添加的认证服务器。
+          </div>
+          <div
+            v-else
+            v-for="server in authlibServers"
+            :key="server.url"
+            class="flex items-center justify-between p-3 border rounded-lg bg-muted/20"
+          >
+            <div class="min-w-0">
+              <p class="text-sm font-medium">{{ server.name }}</p>
+              <p class="text-xs text-muted-foreground truncate mt-0.5" :title="server.url">{{ server.url }}</p>
+            </div>
+            <button
+              class="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-50 rounded-md transition-colors dark:hover:bg-red-950 shrink-0 ml-2"
+              @click="removeAuthlibServer(server.url)"
+              title="Remove Server"
+            >
+              <Trash2 :size="16" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
