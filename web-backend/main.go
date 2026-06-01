@@ -34,6 +34,14 @@ func main() {
 	// CurseForge API proxy — injects server-side API key.
 	r.Any("/api/curseforge/*path", handlers.CurseForgeProxy)
 
+	// Microsoft Auth proxy
+	ms := r.Group("/api/microsoft")
+	{
+		ms.POST("/devicecode", handlers.MsDeviceCode)
+		ms.POST("/token", handlers.MsToken)
+		ms.POST("/refresh", handlers.MsRefresh)
+	}
+
 	// Server CRUD endpoints.
 	servers := r.Group("/api/servers")
 	{
