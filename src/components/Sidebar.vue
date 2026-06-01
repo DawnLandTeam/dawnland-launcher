@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { useDark, useToggle } from "@vueuse/core";
-import { Gamepad2, Library, Server, Users, Settings, Sun, Moon, Package } from "@lucide/vue";
+import { Gamepad2, Library, Server, Users, Settings, Sun, Moon } from "@lucide/vue";
 
 import { useI18n } from "vue-i18n";
 
