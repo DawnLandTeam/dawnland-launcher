@@ -3,8 +3,10 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 pub mod microsoft;
+pub mod authlib;
 
 pub use microsoft::{poll_microsoft_token, refresh_microsoft_token, start_microsoft_login, LoginInitResponse};
+pub use authlib::{add_authlib_account, get_authlib_meta, fetch_authlib_servers, add_authlib_server, remove_authlib_server};
 
 /// Account types supported by the launcher.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -12,6 +14,7 @@ pub use microsoft::{poll_microsoft_token, refresh_microsoft_token, start_microso
 pub enum AccountType {
     Offline,
     Microsoft,
+    Authlib,
 }
 
 /// A player account stored in the launcher.
@@ -33,6 +36,15 @@ pub struct Account {
     /// Player's texture URL (cape, skin).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub textures: Option<String>,
+    /// Optional Yggdrasil API URL for Authlib accounts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authlib_url: Option<String>,
+    /// Optional Yggdrasil Server Name for Authlib accounts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authlib_server_name: Option<String>,
+    /// Optional Yggdrasil Client Token for Authlib accounts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_token: Option<String>,
 }
 
 /// Get the accounts file path.
@@ -110,6 +122,9 @@ pub async fn add_offline_account(username: &str) -> Result<Account, String> {
         access_token: None,
         refresh_token: None,
         textures: None,
+        authlib_url: None,
+        authlib_server_name: None,
+        client_token: None,
     };
 
     accounts.push(account.clone());

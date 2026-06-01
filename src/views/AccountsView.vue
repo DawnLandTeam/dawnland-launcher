@@ -3,18 +3,21 @@ import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { 
-  User, Trash2, Plus, UserPlus, Loader2, X, WifiOff, 
-  MonitorCheck, AlertCircle 
+  User, Trash2, Plus, UserPlus, Loader2, WifiOff, Globe, MonitorCheck
 } from "@lucide/vue";
 import { DialogContent, DialogTitle } from "../components/ui/dialog";
+import { useRouter } from "vue-router";
+
+const router = useRouter();
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 
 interface Account {
   id: string;
   username: string;
-  accountType: "offline" | "microsoft";
+  accountType: "offline" | "microsoft" | "authlib";
   accessToken?: string;
   refreshToken?: string;
+  authlibServerName?: string;
 }
 
 interface LoginInitResponse {
@@ -24,12 +27,38 @@ interface LoginInitResponse {
   message: string;
 }
 
-type AccountType = "offline" | "microsoft";
+interface YggdrasilMetaLinks {
+  homepage?: string;
+  register?: string;
+}
+
+interface YggdrasilMeta {
+  serverName?: string;
+  links?: YggdrasilMetaLinks;
+}
+
+interface YggdrasilRootResponse {
+  meta?: YggdrasilMeta;
+}
+
+interface AuthlibServer {
+  url: string;
+  name: string;
+}
+
+type AccountType = "offline" | "microsoft" | "authlib";
 
 // State
 const accounts = ref<Account[]>([]);
 const newUsername = ref("");
+const authlibUrl = ref("");
+const authlibUsername = ref("");
+const authlibPassword = ref("");
+const authlibMeta = ref<YggdrasilRootResponse | null>(null);
+const authlibServers = ref<AuthlibServer[]>([]);
+const isFetchingMeta = ref(false);
 const isAddingOffline = ref(false);
+const isAddingAuthlib = ref(false);
 const isLoggingInMicrosoft = ref(false);
 const microsoftLoginData = ref<LoginInitResponse | null>(null);
 const loginError = ref<string | null>(null);
@@ -45,20 +74,27 @@ const deletingAccountName = ref("");
 // Load accounts on mount
 async function loadAccounts(): Promise<void> {
   try {
-    accounts.value = await invoke<Account[]>("get_accounts");
+    const res = await invoke<Account[]>("get_accounts");
+    accounts.value = res || [];
   } catch (err) {
     console.error("Failed to load accounts:", err);
+    accounts.value = [];
   }
 }
 
 // Open add account modal
 function openAddAccountModal(): void {
   showAddAccountModal.value = true;
-  selectedAccountType.value = "offline";
+  selectedAccountType.value = "microsoft";
   newUsername.value = "";
   loginError.value = null;
   microsoftLoginData.value = null;
   isLoggingInMicrosoft.value = false;
+  
+  // Reset authlib form and fetch initial meta if authlib is selected or on open
+  authlibUsername.value = "";
+  authlibPassword.value = "";
+  loadAuthlibServers();
 }
 
 // Close add account modal
@@ -88,6 +124,65 @@ async function addOfflineAccount(): Promise<void> {
     loginError.value = typeof err === "string" ? err : String(err);
   } finally {
     isAddingOffline.value = false;
+  }
+}
+
+// Add authlib account
+async function addAuthlibAccount(): Promise<void> {
+  if (!authlibUsername.value.trim() || !authlibPassword.value.trim() || !authlibUrl.value.trim()) return;
+
+  isAddingAuthlib.value = true;
+  loginError.value = null;
+
+  try {
+    await invoke("add_authlib_account", { 
+      url: authlibUrl.value.trim(),
+      username: authlibUsername.value.trim(),
+      password: authlibPassword.value
+    });
+    authlibUsername.value = "";
+    authlibPassword.value = "";
+    await loadAccounts();
+    closeAddAccountModal();
+    await emit("accounts-updated");
+  } catch (err) {
+    loginError.value = typeof err === "string" ? err : String(err);
+  } finally {
+    isAddingAuthlib.value = false;
+  }
+}
+
+// Fetch authlib metadata
+async function fetchAuthlibMeta(): Promise<void> {
+  if (!authlibUrl.value || !authlibUrl.value.trim()) return;
+  isFetchingMeta.value = true;
+  try {
+    const meta = await invoke<YggdrasilRootResponse>("get_authlib_meta", { url: authlibUrl.value.trim() });
+    authlibMeta.value = meta;
+  } catch (err) {
+    console.error("Failed to fetch authlib meta:", err);
+    authlibMeta.value = null;
+  } finally {
+    isFetchingMeta.value = false;
+  }
+}
+
+async function loadAuthlibServers(): Promise<void> {
+  try {
+    const res = await invoke<AuthlibServer[]>("fetch_authlib_servers");
+    authlibServers.value = res || [];
+    if (authlibServers.value.length > 0) {
+      if (!authlibServers.value.some(s => s.url === authlibUrl.value)) {
+        authlibUrl.value = authlibServers.value[0].url;
+      }
+      fetchAuthlibMeta();
+    } else {
+      authlibUrl.value = "";
+      authlibMeta.value = null;
+    }
+  } catch (err) {
+    console.error("Failed to load authlib servers:", err);
+    authlibServers.value = [];
   }
 }
 
@@ -138,6 +233,7 @@ async function startMicrosoftLogin(): Promise<void> {
 async function pollMicrosoftToken(code: string): Promise<void> {
   try {
     const account = await invoke<Account>("poll_microsoft_token", { deviceCode: code });
+    if (!accounts.value) accounts.value = [];
     accounts.value.push(account);
     microsoftLoginData.value = null;
     isLoggingInMicrosoft.value = false;
@@ -172,6 +268,10 @@ function isMsaAccount(account: Account): boolean {
   return account.accountType === "microsoft";
 }
 
+function isAuthlibAccount(account: Account): boolean {
+  return account.accountType === "authlib";
+}
+
 onMounted(() => {
   loadAccounts();
 });
@@ -187,7 +287,7 @@ onMounted(() => {
 
     <!-- Accounts Grid Header -->
     <div class="flex items-center justify-between">
-      <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.saved', { count: accounts.length }) }}</h2>
+      <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.saved', { count: accounts?.length || 0 }) }}</h2>
       <button
         class="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         @click="selectedAccountType = 'offline'; openAddAccountModal()"
@@ -199,7 +299,7 @@ onMounted(() => {
 
     <!-- Accounts Grid -->
     <div class="flex-1">
-      <div v-if="accounts.length === 0" class="flex flex-col items-center justify-center py-12 text-center">
+      <div v-if="!accounts || accounts.length === 0" class="flex flex-col items-center justify-center py-12 text-center">
         <div class="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
           <User :size="32" class="text-muted-foreground" />
         </div>
@@ -217,9 +317,11 @@ onMounted(() => {
           <div class="flex items-start gap-3">
             <div
               class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-lg font-bold"
-              :class="isMsaAccount(account) 
-                ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' 
-                : 'bg-neutral-100 text-neutral-600 dark:bg-zinc-800 dark:text-zinc-400'"
+              :class="{
+                'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400': isMsaAccount(account),
+                'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400': isAuthlibAccount(account),
+                'bg-neutral-100 text-neutral-600 dark:bg-zinc-800 dark:text-zinc-400': !isMsaAccount(account) && !isAuthlibAccount(account)
+              }"
             >
               {{ account.username.charAt(0).toUpperCase() }}
             </div>
@@ -227,9 +329,10 @@ onMounted(() => {
               <p class="font-medium truncate">{{ account.username }}</p>
               <div class="flex items-center gap-1.5 mt-1">
                 <MonitorCheck v-if="isMsaAccount(account)" :size="14" class="text-green-500" />
-                <WifiOff v-else :size="14" class="text-muted-foreground" />
-                <span class="text-xs" :class="isMsaAccount(account) ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'">
-                  {{ isMsaAccount(account) ? $t('accounts.microsoft') : $t('accounts.offline') }}
+                <Globe v-else-if="isAuthlibAccount(account)" :size="14" class="text-purple-500" />
+                <WifiOff v-else :size="14" class="text-neutral-400 dark:text-neutral-500" />
+                <span class="text-xs text-neutral-500 dark:text-neutral-400 truncate">
+                  {{ isMsaAccount(account) ? $t('accounts.microsoft') : (isAuthlibAccount(account) ? ($t('accounts.authlib') + (account.authlibServerName ? ` - ${account.authlibServerName}` : '')) : $t('accounts.offline')) }}
                 </span>
               </div>
             </div>
@@ -262,17 +365,6 @@ onMounted(() => {
             <div class="flex gap-3">
               <button
                 class="flex-1 flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all"
-                :class="selectedAccountType === 'offline' 
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' 
-                  : 'border-neutral-200 dark:border-zinc-700 hover:border-blue-300'"
-                @click="selectedAccountType = 'offline'"
-              >
-                <WifiOff :size="24" :class="selectedAccountType === 'offline' ? 'text-blue-600 dark:text-blue-400' : 'text-neutral-500'" />
-                <span class="text-sm font-medium" :class="selectedAccountType === 'offline' ? 'text-blue-700 dark:text-blue-300' : ''">{{ $t('accounts.offline') }}</span>
-                <span class="text-xs text-neutral-500">{{ $t('accounts.playWithout') }}</span>
-              </button>
-              <button
-                class="flex-1 flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all"
                 :class="selectedAccountType === 'microsoft' 
                   ? 'border-green-500 bg-green-50 dark:bg-green-900/30' 
                   : 'border-neutral-200 dark:border-zinc-700 hover:border-green-300'"
@@ -281,6 +373,28 @@ onMounted(() => {
                 <UserPlus :size="24" :class="selectedAccountType === 'microsoft' ? 'text-green-600 dark:text-green-400' : 'text-neutral-500'" />
                 <span class="text-sm font-medium" :class="selectedAccountType === 'microsoft' ? 'text-green-700 dark:text-green-300' : ''">{{ $t('accounts.microsoft') }}</span>
                 <span class="text-xs text-neutral-500">{{ $t('accounts.playOnline') }}</span>
+              </button>
+              <button
+                class="flex-1 flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all"
+                :class="selectedAccountType === 'authlib' 
+                  ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/30' 
+                  : 'border-neutral-200 dark:border-zinc-700 hover:border-purple-300'"
+                @click="selectedAccountType = 'authlib'"
+              >
+                <Globe :size="24" :class="selectedAccountType === 'authlib' ? 'text-purple-600 dark:text-purple-400' : 'text-neutral-500'" />
+                <span class="text-sm font-medium" :class="selectedAccountType === 'authlib' ? 'text-purple-700 dark:text-purple-300' : ''">Authlib</span>
+                <span class="text-xs text-neutral-500">外置登录</span>
+              </button>
+              <button
+                class="flex-1 flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all"
+                :class="selectedAccountType === 'offline' 
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30' 
+                  : 'border-neutral-200 dark:border-zinc-700 hover:border-blue-300'"
+                @click="selectedAccountType = 'offline'"
+              >
+                <WifiOff :size="24" :class="selectedAccountType === 'offline' ? 'text-blue-600 dark:text-blue-400' : 'text-neutral-500'" />
+                <span class="text-sm font-medium" :class="selectedAccountType === 'offline' ? 'text-blue-700 dark:text-blue-300' : ''">{{ $t('accounts.offline') }}</span>
+                <span class="text-xs text-neutral-500">{{ $t('accounts.playWithout') }}</span>
               </button>
             </div>
           </div>
@@ -356,6 +470,74 @@ onMounted(() => {
               <Loader2 :size="16" class="animate-spin" />
               {{ $t('accounts.preparing') }}
             </div>
+          </div>
+
+          <!-- Authlib Account Form -->
+          <div v-else-if="selectedAccountType === 'authlib'" class="mt-4 space-y-3">
+            <div v-if="!authlibServers || authlibServers.length === 0" class="flex flex-col items-center justify-center p-6 border-2 border-dashed border-neutral-300 dark:border-zinc-700 rounded-lg bg-neutral-50 dark:bg-zinc-800/50">
+              <p class="text-sm text-neutral-500 mb-4 text-center">暂无已添加的认证服务器，<br>请先前往设置页面进行添加。</p>
+              <button 
+                class="bg-primary text-primary-foreground text-sm font-medium px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors" 
+                @click="closeAddAccountModal(); router.push({ path: '/settings', query: { tab: 'authlib' } })"
+              >
+                前往设置管理
+              </button>
+            </div>
+            
+            <template v-else>
+              <div class="flex items-center justify-between px-1">
+                <div class="flex items-center gap-2">
+                  <Loader2 v-if="isFetchingMeta" :size="14" class="animate-spin text-muted-foreground" />
+                  <span v-else-if="authlibMeta?.meta?.serverName" class="text-sm text-neutral-600 dark:text-zinc-400">
+                    {{ authlibMeta.meta.serverName }}
+                  </span>
+                </div>
+                <div class="flex items-center gap-2 text-xs" v-if="authlibMeta?.meta?.links">
+                  <a v-if="authlibMeta.meta.links.homepage" :href="authlibMeta.meta.links.homepage" target="_blank" class="text-blue-500 hover:underline">主页</a>
+                  <a v-if="authlibMeta.meta.links.register" :href="authlibMeta.meta.links.register" target="_blank" class="text-blue-500 hover:underline">注册</a>
+                  <a v-if="authlibMeta.meta.links.register && authlibMeta.meta.links.register.includes('/register')" :href="authlibMeta.meta.links.register.replace('/register', '/forgot')" target="_blank" class="text-blue-500 hover:underline">忘记密码</a>
+                </div>
+              </div>
+              
+              <div class="space-y-1">
+                <label class="text-sm font-medium">认证服务器</label>
+                <select
+                  v-model="authlibUrl"
+                  class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700 dark:bg-zinc-800"
+                  @change="fetchAuthlibMeta"
+                >
+                  <option v-for="server in authlibServers" :key="server.url" :value="server.url">
+                    {{ server.name }}
+                  </option>
+                </select>
+              </div>
+              <div class="space-y-1">
+                <label class="text-sm font-medium">Email / Username</label>
+                <input
+                  v-model="authlibUsername"
+                  type="text"
+                  class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
+                />
+              </div>
+              <div class="space-y-1">
+                <label class="text-sm font-medium">Password</label>
+                <input
+                  v-model="authlibPassword"
+                  type="password"
+                  class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
+                  @keyup.enter="addAuthlibAccount"
+                />
+              </div>
+              <button
+                class="w-full flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="isAddingAuthlib || !authlibUsername.trim() || !authlibPassword.trim() || !authlibUrl.trim()"
+                @click="addAuthlibAccount"
+              >
+                <Loader2 v-if="isAddingAuthlib" :size="16" class="animate-spin" />
+                <Globe v-else :size="16" />
+                {{ isAddingAuthlib ? $t('accounts.adding') : $t('accounts.add') }}
+              </button>
+            </template>
           </div>
 
           <!-- Error Display -->
