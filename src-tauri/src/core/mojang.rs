@@ -16,8 +16,10 @@ static MINECRAFT_BASE: OnceLock<PathBuf> = OnceLock::new();
 /// Get the Minecraft base directory path.
 pub fn get_minecraft_base() -> &'static PathBuf {
     MINECRAFT_BASE.get_or_init(|| {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        home.join(".dawnland").join(".minecraft")
+        let base = std::env::current_exe()
+            .map(|p| p.parent().unwrap().to_path_buf())
+            .unwrap_or_else(|_| PathBuf::from("."));
+        base.join(".minecraft")
     })
 }
 

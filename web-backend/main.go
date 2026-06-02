@@ -61,9 +61,9 @@ func main() {
 		servers.GET("/:id/pack", handlers.DownloadPackFile)
 	}
 
-	// Start the server on port 8080.
-	log.Println("Starting Dawnland Web Backend on :8080")
-	if err := r.Run(":8080"); err != nil {
+	// Start the server on port 3030.
+	log.Println("Starting Dawnland Web Backend on :3030")
+	if err := r.Run(":3030"); err != nil {
 		log.Fatal("Failed to start server: ", err)
 	}
 }
