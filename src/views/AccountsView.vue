@@ -299,12 +299,12 @@ onMounted(() => {
 
     <!-- Accounts Grid -->
     <div class="flex-1">
-      <div v-if="!accounts || accounts.length === 0" class="flex flex-col items-center justify-center py-12 text-center">
-        <div class="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
-          <User :size="32" class="text-muted-foreground" />
+      <div v-if="!accounts || accounts.length === 0" class="flex flex-col items-center justify-center py-12 px-6 text-center max-w-md mx-auto mt-12 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-xl border border-white/40 dark:border-zinc-800 rounded-3xl shadow-sm">
+        <div class="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/80 dark:bg-zinc-800 shadow-sm border border-white/50 dark:border-zinc-700 mb-5">
+          <User :size="32" class="text-neutral-700 dark:text-neutral-300" />
         </div>
-        <p class="text-lg font-medium text-neutral-900 dark:text-white">{{ $t('accounts.noAccounts') }}</p>
-        <p class="text-sm text-muted-foreground">{{ $t('accounts.noAccountsDesc') }}</p>
+        <p class="text-xl font-semibold text-neutral-900 dark:text-white mb-2">{{ $t('accounts.noAccounts') }}</p>
+        <p class="text-sm text-neutral-600 dark:text-neutral-400 font-medium">{{ $t('accounts.noAccountsDesc') }}</p>
       </div>
 
       <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

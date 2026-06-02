@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useI18n } from "vue-i18n";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
+import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -654,11 +654,11 @@ const formatDate = (dateString: string) => {
     </template>
     
     <!-- Modpack Versions Modal -->
-    <Dialog 
+    <DialogContent 
       :open="showVersionsModal" 
       @update:open="showVersionsModal = $event"
+      class="max-w-4xl max-h-[85vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-950 border-neutral-200 dark:border-zinc-800 shadow-2xl p-6 text-neutral-900 dark:text-zinc-100"
     >
-      <DialogContent class="max-w-4xl max-h-[85vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-950 border-neutral-200 dark:border-zinc-800 shadow-2xl p-6 text-neutral-900 dark:text-zinc-100">
         <div class="flex flex-col space-y-1.5 text-center sm:text-left shrink-0">
           <DialogTitle class="text-2xl flex items-center gap-3">
             <img v-if="selectedModpack?.icon_url" :src="selectedModpack.icon_url" class="h-8 w-8 rounded-md" />
@@ -747,8 +747,6 @@ const formatDate = (dateString: string) => {
           </div>
         </div>
       </DialogContent>
-    </Dialog>
-
     <!-- Success Modal -->
     <AlertDialog :open="showSuccessModal" @update:open="val => { if (!val) handleSuccessConfirm() }">
       <div class="p-2">
