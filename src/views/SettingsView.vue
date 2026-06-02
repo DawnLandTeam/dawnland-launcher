@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { ref, shallowRef, onMounted } from "vue";
+import { ref, shallowRef, onMounted, onActivated, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
 import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
 
 const route = useRoute();
+const router = useRouter();
 
 // App version state
 const appVersion = ref('0.0.0');
@@ -22,11 +23,28 @@ onMounted(async () => {
   } catch (err) {
     console.error("Failed to get app version:", err);
   }
+});
+
+onActivated(async () => {
   await loadAuthlibServers();
   await loadSystemMemory();
   await scanLocalJavas();
   await loadJavaDownloadPath();
 });
+
+watch(
+  () => route.query.tab,
+  (newTab) => {
+    if (newTab) {
+      if (['general', 'java', 'authlib', 'about'].includes(newTab as string)) {
+        activeTab.value = newTab as any;
+      }
+      // Clean up the query so it doesn't persist
+      router.replace({ query: { ...route.query, tab: undefined } });
+    }
+  },
+  { immediate: true }
+);
 
 interface SystemMemoryInfo {
   totalMb: number;
@@ -278,20 +296,7 @@ async function downloadJava(majorVersion: number): Promise<void> {
   }
 }
 
-onMounted(() => {
-  if (route.query.tab === 'authlib') {
-    activeTab.value = 'authlib';
-  } else if (route.query.tab === 'java') {
-    activeTab.value = 'java';
-  } else if (route.query.tab === 'about') {
-    activeTab.value = 'about';
-  }
 
-  loadSystemMemory();
-  loadJavaDownloadPath();
-  scanLocalJavas();
-  loadAuthlibServers();
-});
 const { t, locale } = useI18n();
 function changeLanguage(lang: string) {
   locale.value = lang;
