@@ -6,7 +6,7 @@ use tokio::task;
 
 /// Get the web backend URL from environment or use default.
 fn get_web_backend_url() -> String {
-    option_env!("WEB_BACKEND_URL")
+    option_env!("VITE_WEB_BACKEND_URL")
         .unwrap_or("http://localhost:3030")
         .to_string()
 }
