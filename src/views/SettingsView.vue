@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, shallowRef, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
+import { check } from "@tauri-apps/plugin-updater";
+import type { Update } from "@tauri-apps/plugin-updater";
+import UpdaterModal from "../components/UpdaterModal.vue";
 
 const route = useRoute();
 
@@ -37,6 +40,29 @@ interface AuthlibServer {
 const activeTab = ref<'general' | 'java' | 'authlib' | 'about'>('general');
 const systemMemory = ref<SystemMemoryInfo>({ totalMb: 8192, recommendedMaxMb: 4096 });
 const defaultMaxMemory = ref(4096);
+
+// Updater state
+const isCheckingUpdate = ref(false);
+const showUpdaterModal = ref(false);
+const updateInfo = shallowRef<Update | null>(null);
+
+async function checkForUpdates() {
+  isCheckingUpdate.value = true;
+  try {
+    const update = await check();
+    if (update) {
+      updateInfo.value = update;
+      showUpdaterModal.value = true;
+    } else {
+      alert("当前已是最新版本！");
+    }
+  } catch (err) {
+    console.error("Failed to check for updates:", err);
+    alert("检查更新失败: " + err);
+  } finally {
+    isCheckingUpdate.value = false;
+  }
+}
 
 // Java management state
 const installedJavas = ref<JavaInfo[]>([]);
@@ -574,6 +600,17 @@ function changeLanguage(lang: string) {
             <span class="text-sm font-medium">{{ $t('settings.about.featureReq') }}</span>
             <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">Suggest Feature &rarr;</span>
           </a>
+          
+          <button @click="checkForUpdates" :disabled="isCheckingUpdate" class="flex items-center justify-between p-3 rounded-lg border hover:bg-primary/10 hover:border-primary/30 transition-colors group text-left">
+            <div class="flex items-center gap-2">
+              <Download class="w-4 h-4 text-primary" />
+              <span class="text-sm font-medium text-primary">检查更新 (Check for Updates)</span>
+            </div>
+            <span class="text-xs text-muted-foreground">
+              <Loader2 v-if="isCheckingUpdate" class="w-4 h-4 animate-spin" />
+              <span v-else>&rarr;</span>
+            </span>
+          </button>
         </div>
         
         <p class="text-xs text-muted-foreground mt-8">
@@ -581,5 +618,7 @@ function changeLanguage(lang: string) {
         </p>
       </div>
     </div>
+    
+    <UpdaterModal v-model:open="showUpdaterModal" :update-info="updateInfo" />
   </div>
 </template>
