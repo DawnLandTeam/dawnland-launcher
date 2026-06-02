@@ -184,6 +184,10 @@ func CreateServer(c *gin.Context) {
 		PackSource:    input.PackSource,
 		IconURL:       input.IconURL,
 		Email:         input.Email,
+		Tags:          input.Tags,
+		Description:   input.Description,
+		ContactGroup:  input.ContactGroup,
+		ContactOwner:  input.ContactOwner,
 		IsActive:      false, // Requires approval
 	}
 
@@ -319,6 +323,18 @@ func UpdateServer(c *gin.Context) {
 	}
 	if input.IsActive != nil {
 		updates["is_active"] = *input.IsActive
+	}
+	if input.Tags != nil {
+		updates["tags"] = *input.Tags
+	}
+	if input.Description != nil {
+		updates["description"] = *input.Description
+	}
+	if input.ContactGroup != nil {
+		updates["contact_group"] = *input.ContactGroup
+	}
+	if input.ContactOwner != nil {
+		updates["contact_owner"] = *input.ContactOwner
 	}
 
 	database.DB.Model(&server).Updates(updates)

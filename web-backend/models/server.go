@@ -33,6 +33,10 @@ type Server struct {
 	CurrentPlayers int            `json:"currentPlayers" gorm:"default:0"`
 	MaxPlayers     int            `json:"maxPlayers" gorm:"default:0"`
 	Heat           int            `json:"heat" gorm:"default:0"` // Calculated heat value
+	Tags           string         `json:"tags,omitempty"`        // Comma-separated tags (e.g. "Survival,Magic")
+	Description    string         `json:"description,omitempty" gorm:"type:text"` // Markdown/HTML description
+	ContactGroup   string         `json:"contactGroup,omitempty"` // e.g. QQ Group, Discord invite
+	ContactOwner   string         `json:"contactOwner,omitempty"` // e.g. Owner QQ, Email
 }
 
 // CreateServerInput defines the input for creating a new server.
@@ -52,6 +56,10 @@ type CreateServerInput struct {
 	PackSource    string `json:"packSource"`
 	IconURL       string `json:"iconUrl"`
 	Email         string `json:"email" binding:"required,email"` // Email is required
+	Tags          string `json:"tags"`
+	Description   string `json:"description"`
+	ContactGroup  string `json:"contactGroup"`
+	ContactOwner  string `json:"contactOwner"`
 }
 
 // UpdateServerInput defines the input for updating a server (all fields optional).
@@ -72,4 +80,8 @@ type UpdateServerInput struct {
 	IconURL       *string `json:"iconUrl"`
 	Email         *string `json:"email"`
 	IsActive      *bool   `json:"isActive"`
+	Tags          *string `json:"tags"`
+	Description   *string `json:"description"`
+	ContactGroup  *string `json:"contactGroup"`
+	ContactOwner  *string `json:"contactOwner"`
 }
