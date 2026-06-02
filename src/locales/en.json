@@ -53,7 +53,34 @@
       "desc": "Click the + button to install a new Minecraft instance.",
       "search": "Try adjusting your search query."
     },
-    "manage": "Manage"
+    "manage": "Manage",
+    "noInstances": "No instances yet",
+    "noInstancesDesc": "Install a Minecraft version to get started.",
+    "installInstance": "Install Instance",
+    "installModpack": "Install Modpack",
+    "updateModpack": "Update Modpack",
+    "openFolder": "Open Folder",
+    "settingsDialog": {
+      "title": "Instance Settings",
+      "javaVersion": "Java Version",
+      "defaultAuto": "Default (Auto-detect)",
+      "javaWarning": "MC 1.20.5+ requires Java 21. Leave Default to use the system default Java or recommended version. If your desired Java is not listed, you can add it in Settings > Java Management.",
+      "maxMemory": "Max Memory (MB)",
+      "systemMemory": "System: {system} MB",
+      "recommendedMemory": "Recommended: {recommended} MB (1/3 of system RAM)",
+      "jvmArgs": "Extra JVM Arguments (advanced)",
+      "windowBehavior": "Window Behavior",
+      "keepVisible": "Keep visible (default)",
+      "hideLauncher": "Hide launcher",
+      "minimizeTaskbar": "Minimize to taskbar",
+      "windowBehaviorDesc": "Choose what happens to the launcher window when the game starts.",
+      "showGameLog": "Show Game Log on Launch",
+      "showGameLogDesc": "Enable to automatically show the console log window when starting the instance.",
+      "deleteTitle": "Delete Instance?",
+      "deleteDescPrefix": "Are you sure you want to delete",
+      "deleteDescSuffix": "? This will remove all instance data including saves, mods, and resource packs.",
+      "deleteUndone": "This action cannot be undone."
+    }
   },
   "servers": {
     "title": "Servers",
@@ -249,7 +276,10 @@
       "checkUpdates": "Check for Updates",
       "upToDate": "You are up to date!",
       "updateFailed": "Failed to check for updates: ",
-      "footer": "Made with ❤️ by Dawnland Team. Not an official Minecraft product."
+      "footer": "Made with ❤️ by Dawnland Team. Not an official Minecraft product.",
+      "visitRepo": "Visit Repository",
+      "submitIssue": "Submit Issue",
+      "suggestFeature": "Suggest Feature"
     },
     "authlib": {
       "tab": "Authlib",

@@ -53,7 +53,34 @@
       "desc": "点击 + 按钮安装一个新的 Minecraft 实例。",
       "search": "请尝试调整您的搜索关键词。"
     },
-    "manage": "管理"
+    "manage": "管理",
+    "noInstances": "暂无实例",
+    "noInstancesDesc": "安装一个 Minecraft 版本以开始游玩。",
+    "installInstance": "安装实例",
+    "installModpack": "安装整合包",
+    "updateModpack": "更新整合包",
+    "openFolder": "打开文件夹",
+    "settingsDialog": {
+      "title": "实例设置",
+      "javaVersion": "Java 版本",
+      "defaultAuto": "默认 (自动检测)",
+      "javaWarning": "MC 1.20.5+ 需要 Java 21。保留“默认”将使用系统默认或推荐的 Java 版本。如果列表中没有您想要的 Java，可以在“设置 > Java 管理”中添加。",
+      "maxMemory": "最大内存 (MB)",
+      "systemMemory": "系统内存: {system} MB",
+      "recommendedMemory": "推荐: {recommended} MB (约为系统内存的1/3)",
+      "jvmArgs": "额外 JVM 参数 (高级)",
+      "windowBehavior": "窗口行为",
+      "keepVisible": "保持可见 (默认)",
+      "hideLauncher": "隐藏启动器",
+      "minimizeTaskbar": "最小化到任务栏",
+      "windowBehaviorDesc": "选择游戏启动时启动器窗口的默认行为。",
+      "showGameLog": "启动时显示游戏日志",
+      "showGameLogDesc": "启用后，启动实例时将自动弹出控制台日志窗口。",
+      "deleteTitle": "删除实例？",
+      "deleteDescPrefix": "您确定要删除",
+      "deleteDescSuffix": " 吗？这将永久移除该实例的所有数据，包括存档、模组和资源包。",
+      "deleteUndone": "此操作不可撤销。"
+    }
   },
   "servers": {
     "title": "服务器",
@@ -249,7 +276,10 @@
       "checkUpdates": "检查更新",
       "upToDate": "当前已是最新版本！",
       "updateFailed": "检查更新失败: ",
-      "footer": "由 Dawnland Team 用 ❤️ 制作。并非 Minecraft 官方产品。"
+      "footer": "由 Dawnland Team 用 ❤️ 制作。并非 Minecraft 官方产品。",
+      "visitRepo": "访问仓库",
+      "submitIssue": "提交问题",
+      "suggestFeature": "建议功能"
     },
     "authlib": {
       "tab": "外置登录",
