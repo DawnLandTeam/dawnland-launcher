@@ -20,7 +20,18 @@
     "launching": "Launching...",
     "gameOutput": "Game Output",
     "waitingOutput": "Waiting for game output...",
-    "marquee": "Welcome to Dawnland Launcher v1.0.0 · New: Auto Java Management"
+    "marquee": "Welcome to Dawnland Launcher v1.0.0 · New: Auto Java Management",
+    "noInstanceFound": "No installed instance found for server {name}. Please install it first.",
+    "noAccountFound": "No account found. Please add an account in Settings.",
+    "launchFailed": "Failed to launch: {error}",
+    "stopGame": "Stop Game",
+    "stopGameConfirmTitle": "Force Stop Game",
+    "stopGameConfirm": "Are you sure you want to force kill the running game process?",
+    "stopGameFailed": "Failed to stop game: {error}",
+    "addAccount": "Add New Account",
+    "repairing": "Verifying & Repairing Mods...",
+    "repairFound": "Detected {total} missing or corrupted files, re-downloading automatically.",
+    "repairProgress": "{completed} / {total} files"
   },
   "instances": {
     "title": "Instances",
@@ -91,7 +102,9 @@
     "actions": {
       "installClient": "Install client with modpack",
       "install": "Install",
-      "copyIp": "Copy IP"
+      "copyIp": "Copy IP",
+      "installInstance": "Install Instance",
+      "details": "Details"
     },
     "publishDialog": {
       "stepOf": "Step {step} of {total}:",
@@ -99,7 +112,8 @@
         "basicInfo": "Basic Info",
         "versionType": "Version & Type",
         "modpack": "Modpack (Optional)",
-        "review": "Review & Submit"
+        "review": "Review & Submit",
+        "details": "Details & Contact"
       },
       "serverName": "Server Name",
       "serverNamePlaceholder": "My Awesome Server",
@@ -133,14 +147,36 @@
       "back": "Back",
       "next": "Next",
       "submitting": "Submitting...",
-      "submit": "Submit Server"
+      "submit": "Submit Server",
+      "tags": "Tags - Comma separated",
+      "tagsPlaceholder": "e.g. survival, magic, tech",
+      "description": "Server Description (Markdown)",
+      "descPlaceholder": "Markdown supported. Describe your server in detail...",
+      "contactGroup": "Community Group",
+      "contactGroupPlaceholder": "e.g. Discord link",
+      "contactOwner": "Owner Contact",
+      "contactOwnerPlaceholder": "e.g. admin@example.com"
     },
     "messages": {
       "submitted": "Server submitted for review! It will be visible after approval.",
       "enterInstanceName": "Enter a name for the new instance:",
       "installSuccess": "Modpack installed successfully to:\n{path}",
       "installFailed": "Failed to install modpack: {error}",
-      "noModpack": "This server does not have a modpack available"
+      "noModpack": "This server does not have a modpack available",
+      "authlibRequired": "This server requires Authlib verification (API: {api}). Please add the corresponding Authlib account in Account Settings first."
+    },
+    "details": {
+      "vanilla": "Vanilla",
+      "serverAddress": "Server Address",
+      "auth": "MOTD & Auth",
+      "authMicrosoft": "Auth: Microsoft",
+      "contact": "Contact Info",
+      "communityGroup": "Community Group",
+      "ownerContact": "Owner Contact",
+      "description": "Server Description",
+      "modded": "Modded",
+      "noDescription": "No description provided",
+      "authAuthlib": "Auth: Authlib"
     }
   },
   "accounts": {
@@ -168,7 +204,10 @@
     "deleteTitle": "Delete Account?",
     "deleteUndone": "This action cannot be undone",
     "deleteConfirm": "Are you sure you want to delete account <strong>{name}</strong>?",
-    "delete": "Delete"
+    "delete": "Delete",
+    "noAuthlibServers": "No Authlib servers added yet.\nPlease go to Settings to add one.",
+    "authlibTab": "Authlib",
+    "goToSettings": "Go to Settings"
   },
   "settings": {
     "title": "Settings",
@@ -201,25 +240,39 @@
       "noInstalled": "No Java installations found. Click a version above to download."
     },
     "about": {
-      "desc": "A modern, lightweight Minecraft launcher built with Rust & Tauri",
+      "desc": "A modern, lightweight Minecraft launcher built with Rust and Tauri",
       "version": "Version",
       "arch": "Architecture",
-      "github": "Source Code & GitHub",
+      "github": "Open Source & GitHub",
       "reportBug": "Report a Bug",
-      "featureReq": "Feature Request",
+      "featureReq": "Request a Feature",
+      "checkUpdates": "Check for Updates",
+      "upToDate": "You are up to date!",
+      "updateFailed": "Failed to check for updates: ",
       "footer": "Made with ❤️ by Dawnland Team. Not an official Minecraft product."
+    },
+    "authlib": {
+      "tab": "Authlib",
+      "title": "Authentication Servers",
+      "addServer": "Add Server (API URL)",
+      "addServerPlaceholder": "e.g. https://skin.dawnland.cn/api/yggdrasil",
+      "addBtn": "Add",
+      "addedServers": "Added Servers",
+      "noServers": "No authentication servers added yet."
     }
   },
   "install": {
     "title": "Install New Instance",
-    "subtitle": "Progressive installation wizard",
+    "conflict": "Incompatible with {component}",
+    "requirement": "Requires {component} first",
+    "subtitle": "Progressive Installation Wizard",
     "step1": "1",
     "step2": "2",
     "step3": "3",
     "step1Title": "Select Base Minecraft Version",
     "mcVersion": "Minecraft Version",
     "refresh": "Refresh",
-    "selectVersion": "Select a version...",
+    "selectVersion": "Select version",
     "releases": "Releases",
     "snapshots": "Snapshots",
     "other": "Other",
@@ -235,7 +288,7 @@
     "unstable": "Unstable (Testing)",
     "latest": "Latest",
     "forgeVersion": "Forge Version",
-    "selectForge": "Select a Forge version...",
+    "selectForge": "Select Forge version",
     "availableVersions": "Available versions",
     "neoforgeVersion": "NeoForge Version",
     "selectNeoforge": "Select a NeoForge version...",
@@ -260,7 +313,14 @@
       "installingBase": "Installing base Minecraft...",
       "downloadingForge": "Downloading Forge installer...",
       "runningProcessors": "Running Forge processors (this may take a while)..."
-    }
+    },
+    "modularTitle": "Modular Instance Assembler",
+    "modularDesc": "Flexibly assemble your Mod loader and base components. The system automatically verifies incompatible combinations.",
+    "uninstalled": "Not installed",
+    "selectFabric": "Select Fabric version",
+    "selectNeoForge": "Select NeoForge version",
+    "loading": "Loading...",
+    "noVersionNeeded": "No specific version config needed, it will be automatically downloaded."
   },
   "mods": {
     "title": "Discover Mods",
@@ -298,15 +358,44 @@
   },
   "crash": {
     "title": "Game Crashed",
-    "warning": "The game crashed unexpectedly",
-    "exitCode": "Exit code",
+    "warning": "Game crashed unexpectedly",
+    "exitCode": "Exit Code",
     "viewLog": "View Log",
     "copy": "Copy",
+    "copyLogs": "Copy Logs",
+    "copied": "Copied!",
     "close": "Close"
+  },
+  "updater": {
+    "title": "Update Available",
+    "releaseNotes": "Release Notes",
+    "noNotes": "No release notes provided.",
+    "preparingRestart": "Preparing to restart...",
+    "downloading": "Downloading update...",
+    "unknownSize": "Unknown",
+    "updateFailed": "Update Failed",
+    "remindLater": "Remind Me Later",
+    "restarting": "Restarting...",
+    "updating": "Updating...",
+    "updateNow": "Update Now"
   },
   "titlebar": {
     "minimize": "Minimize",
     "maximize": "Maximize",
     "close": "Close"
+  },
+  "modpacks": {
+    "searchPlaceholder": "Search modpack name...",
+    "searchOnline": "Online Search",
+    "uploadLocal": "Local Upload",
+    "searchBtn": "Search",
+    "searchHint": "Enter keywords to search for modpacks",
+    "instanceNamePrefix": "Instance name to create",
+    "packVersion": "Modpack Version",
+    "gameVersion": "Game Version",
+    "loader": "Loader",
+    "publishDate": "Publish Date",
+    "actions": "Actions",
+    "installBtn": "Install"
   }
 }

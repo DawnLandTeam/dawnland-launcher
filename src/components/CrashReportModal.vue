@@ -63,9 +63,9 @@ async function copyLogs() {
             <div class="flex items-center gap-3">
               <AlertTriangle class="h-6 w-6 text-red-600" />
               <div>
-                <h3 class="font-bold text-lg text-red-600">Game Crashed!</h3>
+                <h3 class="font-bold text-lg text-red-600">{{ $t('crash.title') }}</h3>
                 <p class="text-sm text-muted-foreground">
-                  {{ versionId }} · Exit Code: {{ exitCode }}
+                  {{ versionId }} · {{ $t('crash.exitCode') }}: {{ exitCode }}
                 </p>
               </div>
             </div>
@@ -80,13 +80,13 @@ async function copyLogs() {
           <!-- Crash Log Display -->
           <div class="flex-1 mt-4 overflow-hidden flex flex-col min-h-0">
             <div class="flex items-center justify-between mb-2">
-              <label class="text-sm font-medium">Crash Log (Last 50 lines)</label>
+              <label class="text-sm font-medium">{{ $t('crash.viewLog') }}</label>
               <button
                 @click="copyLogs"
                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-muted transition-colors"
               >
                 <Copy class="h-3.5 w-3.5" />
-                {{ copied ? "Copied!" : "Copy Logs" }}
+                {{ copied ? $t('crash.copied', 'Copied!') : $t('crash.copyLogs', 'Copy Logs') }}
               </button>
             </div>
             <textarea
@@ -103,7 +103,7 @@ async function copyLogs() {
               @click="close"
               class="px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
             >
-              Close
+              {{ $t('crash.close') }}
             </button>
           </div>
         </div>
