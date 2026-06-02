@@ -798,7 +798,7 @@ dependencies = [
 
 [[package]]
 name = "dawnland-launcher"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
  "craftping",
