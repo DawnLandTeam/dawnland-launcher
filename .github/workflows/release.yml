@@ -63,4 +63,5 @@ jobs:
           releaseBody: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
           releaseDraft: true
           prerelease: false
+          uploadPlainBinary: true
           args: ${{ matrix.args }}
