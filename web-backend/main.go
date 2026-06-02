@@ -31,6 +31,9 @@ func main() {
 		c.JSON(200, gin.H{"message": "pong"})
 	})
 
+	// Updater endpoint
+	r.GET("/api/launcher/update/:target/:current_version", handlers.CheckUpdate)
+
 	// CurseForge API proxy — injects server-side API key.
 	r.Any("/api/curseforge/*path", handlers.CurseForgeProxy)
 
