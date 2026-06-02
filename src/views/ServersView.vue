@@ -576,7 +576,12 @@ async function launchAndConnect(server: ServerInfo) {
   if (server.authType === 'authlib') {
     const matchingAccount = accounts.value.find(a => a.accountType === 'authlib' && a.authlibUrl === server.authlibApi);
     if (!matchingAccount) {
-      showAlert(t('servers.messages.authlibRequired', { api: server.authlibApi }));
+      showAlert(t('servers.messages.authlibRequired', { api: server.authlibApi }), {
+        label: t('accounts.addAccount', 'Add Account'),
+        onClick: () => {
+          router.push({ path: '/accounts', query: { addAuthlib: server.authlibApi } });
+        }
+      });
       return;
     }
   }
@@ -730,10 +735,14 @@ async function installClient(server: ServerInfo) {
 const alertState = ref<{
   show: boolean;
   message: string;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }>({ show: false, message: '' });
 
-function showAlert(message: string) {
-  alertState.value = { show: true, message };
+function showAlert(message: string, action?: { label: string; onClick: () => void }) {
+  alertState.value = { show: true, message, action };
 }
 
 function closeAlert() {
@@ -1400,9 +1409,12 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
           </div>
           <div class="p-4">
             <p class="text-sm text-neutral-600 dark:text-neutral-400 mb-6">{{ alertState.message }}</p>
-            <div class="flex justify-end mt-4">
-              <button @click="closeAlert" class="px-3 py-1.5 text-sm font-medium bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors">
-                {{ $t('common.ok', 'OK') }}
+            <div class="flex justify-end gap-2 mt-4">
+              <button @click="closeAlert" :class="alertState.action ? 'px-3 py-1.5 text-sm font-medium border border-neutral-300 dark:border-zinc-700 rounded-md hover:bg-neutral-100 dark:hover:bg-zinc-800 transition-colors text-neutral-700 dark:text-neutral-300' : 'px-3 py-1.5 text-sm font-medium bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors'">
+                {{ alertState.action ? $t('common.cancel', 'Cancel') : $t('common.ok', 'OK') }}
+              </button>
+              <button v-if="alertState.action" @click="() => { alertState.action?.onClick(); closeAlert(); }" class="px-3 py-1.5 text-sm font-medium bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors">
+                {{ alertState.action.label }}
               </button>
             </div>
           </div>
