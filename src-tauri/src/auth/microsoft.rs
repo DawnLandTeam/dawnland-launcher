@@ -49,7 +49,7 @@ fn http_client() -> reqwest::Client {
 
 fn get_web_backend_url() -> String {
     option_env!("WEB_BACKEND_URL")
-        .unwrap_or("http://localhost:8080")
+        .unwrap_or("http://localhost:3030")
         .to_string()
 }
 

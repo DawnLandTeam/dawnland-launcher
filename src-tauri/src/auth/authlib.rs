@@ -67,8 +67,10 @@ pub struct AuthlibServer {
 }
 
 pub async fn get_authlib_servers() -> Result<Vec<AuthlibServer>, String> {
-    let mut config_path = dirs::data_local_dir().ok_or("Local data directory not found")?;
-    config_path.push("dawnland");
+    let mut config_path = std::env::current_exe()
+        .map(|p| p.parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    config_path.push(".dawnland");
     std::fs::create_dir_all(&config_path).map_err(|e| e.to_string())?;
     config_path.push("authlib_servers.json");
 
@@ -96,8 +98,10 @@ pub async fn add_authlib_server(url: String) -> Result<AuthlibServer, String> {
     servers.retain(|s| s.url != url);
     servers.push(server.clone());
 
-    let mut config_path = dirs::data_local_dir().ok_or("Local data directory not found")?;
-    config_path.push("dawnland");
+    let mut config_path = std::env::current_exe()
+        .map(|p| p.parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    config_path.push(".dawnland");
     std::fs::create_dir_all(&config_path).map_err(|e| e.to_string())?;
     config_path.push("authlib_servers.json");
 
@@ -112,8 +116,10 @@ pub async fn remove_authlib_server(url: String) -> Result<(), String> {
     let mut servers = get_authlib_servers().await?;
     servers.retain(|s| s.url != url);
 
-    let mut config_path = dirs::data_local_dir().ok_or("Local data directory not found")?;
-    config_path.push("dawnland");
+    let mut config_path = std::env::current_exe()
+        .map(|p| p.parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    config_path.push(".dawnland");
     std::fs::create_dir_all(&config_path).map_err(|e| e.to_string())?;
     config_path.push("authlib_servers.json");
 

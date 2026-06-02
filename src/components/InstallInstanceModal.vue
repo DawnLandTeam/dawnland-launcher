@@ -919,16 +919,7 @@ onUnmounted(() => {
             </button>
           </div>
         </template>
-        <template v-else>
-          <div class="flex justify-end mt-4">
-            <button
-              @click="emit('update:open', false)"
-              class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors text-sm font-medium"
-            >
-              完成
-            </button>
-          </div>
-        </template>
+        <!-- The finish button has been moved to the bottom of the modal -->
       </template>
     </div>
 
@@ -1030,6 +1021,16 @@ onUnmounted(() => {
           </span>
         </div>
       </div>
+    </div>
+    
+    <!-- Success Button (Shown at the very bottom) -->
+    <div v-if="installProgress?.phase === 'complete'" class="flex justify-end mt-4">
+      <button
+        @click="emit('update:open', false)"
+        class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors text-sm font-medium shadow-sm"
+      >
+        完成
+      </button>
     </div>
   </DialogContent>
 </template>
