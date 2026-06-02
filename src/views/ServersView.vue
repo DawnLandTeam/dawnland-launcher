@@ -26,6 +26,10 @@ interface ServerInfo {
   iconUrl: string;
   email: string;
   isActive: boolean;
+  tags?: string;
+  description?: string;
+  contactGroup?: string;
+  contactOwner?: string;
 }
 
 interface CreateServerInput {
@@ -44,6 +48,10 @@ interface CreateServerInput {
   packSource: string;
   iconUrl: string;
   email: string;
+  tags: string;
+  description: string;
+  contactGroup: string;
+  contactOwner: string;
 }
 
 // {{ $t('servers.types.vanilla') }} version from Mojang API
@@ -136,8 +144,16 @@ watch(filterAuthType, () => {
 // Dialog state
 const showPublishDialog = ref(false);
 const publishStep = ref(1);
-const totalSteps = 4;
+const totalSteps = 5;
 const isSubmitting = ref(false);
+
+const showDetailsModal = ref(false);
+const selectedDetailsServer = ref<ServerInfo | null>(null);
+
+function openServerDetails(server: ServerInfo) {
+  selectedDetailsServer.value = server;
+  showDetailsModal.value = true;
+}
 
 // Step validation
 const canGoToStep = (step: number): boolean => {
@@ -145,17 +161,21 @@ const canGoToStep = (step: number): boolean => {
     return newServer.value.name.trim() !== "" && newServer.value.ip.trim() !== "";
   }
   if (step === 2) {
+    // Details step - no mandatory fields
+    return true;
+  }
+  if (step === 3) {
     // Validate authlib API if authlib is selected
     if (newServer.value.authType === 'authlib' && newServer.value.authlibApi.trim() === '') {
       return false;
     }
     
     if (newServer.value.serverType === 'modded') {
-      return true; // Version is selected later in Step 3 for modded servers
+      return true; // Version is selected later in Step 4 for modded servers
     }
     return newServer.value.version !== "";
   }
-  if (step === 3) {
+  if (step === 4) {
     if (needsPackFile(newServer.value.serverType)) {
       if (packBindMode.value === 'local') {
         return selectedPackFile.value !== null;
@@ -184,6 +204,10 @@ const newServer = ref<CreateServerInput>({
   packSource: "",
   iconUrl: "",
   email: "",
+  tags: "",
+  description: "",
+  contactGroup: "",
+  contactOwner: "",
 });
 
 // Auto-split IP and Port when user pastes "domain:port"
@@ -393,25 +417,36 @@ async function fetchLocalData() {
   }
 }
 
-function isModpackInstalled(server: ServerInfo): boolean {
-  if (server.serverType !== 'modded' && server.serverType !== 'custom') return true;
-  if (!server.packFileName && !server.packSource) return true;
-  return installedInstances.value.some(i => {
-    // Exact match on serverId
-    if (i.serverId !== String(server.id)) return false;
-    
-    // If it's an online modpack, compare packVersionId
-    if (server.packVersionId) {
-      return i.packVersionId === server.packVersionId;
+function isClientInstalled(server: ServerInfo): boolean {
+  if (server.serverType === 'vanilla') {
+    return installedInstances.value.some(i => i.mcVersion === server.version && (!i.loaderType || i.loaderType.toLowerCase() === 'vanilla'));
+  }
+  
+  if (server.serverType === 'modded' || server.serverType === 'custom') {
+    if (!server.packFileName && !server.packSource) {
+      // Custom server with no pack attached: show Join directly
+      return true;
     }
     
-    // If it's a local zip modpack, compare packFileName
-    if (server.packFileName) {
-      return i.packFileName === server.packFileName;
-    }
-    
-    return true;
-  });
+    return installedInstances.value.some(i => {
+      // Exact match on serverId
+      if (i.serverId !== String(server.id)) return false;
+      
+      // If it's an online modpack, compare packVersionId
+      if (server.packVersionId) {
+        return i.packVersionId === server.packVersionId;
+      }
+      
+      // If it's a local zip modpack, compare packFileName
+      if (server.packFileName) {
+        return i.packFileName === server.packFileName;
+      }
+      
+      return true;
+    });
+  }
+  
+  return true;
 }
 
 
@@ -624,6 +659,10 @@ function resetPublishForm() {
     packSource: "",
     iconUrl: "",
     email: "",
+    tags: "",
+    description: "",
+    contactGroup: "",
+    contactOwner: "",
   } as any;
   selectedPackFile.value = null;
   selectedPackFileName.value = "";
@@ -645,8 +684,19 @@ function closePublishDialog() {
   resetPublishForm();
 }
 
-// Install modpack from server
-async function installModpack(server: ServerInfo) {
+// Install client (modpack or vanilla) from server
+async function installClient(server: ServerInfo) {
+  if (server.serverType === 'vanilla') {
+    router.push({
+      path: '/instances',
+      query: {
+        install_version: server.version,
+        install_loader: 'vanilla'
+      }
+    });
+    return;
+  }
+
   if (!server.packFileName && !server.packSource) {
     showAlert(t('servers.messages.noModpack'));
     return;
@@ -709,6 +759,7 @@ function cancelPrompt() {
   }
   promptState.value.show = false;
 }
+import ServerDetailsModal from '../components/ServerDetailsModal.vue';
 </script>
 
 <template>
@@ -881,40 +932,46 @@ function cancelPrompt() {
 
 
         <!-- IP and Actions -->
-        <div class="flex items-center justify-between pt-3 border-t">
-          <div class="flex items-center gap-2">
-            <code class="text-xs bg-muted px-2 py-1 rounded">{{ server.ip }}:{{ server.port }}</code>
+        <div class="flex items-center justify-between pt-3 border-t gap-2">
+          <div class="flex items-center gap-2 min-w-0 flex-1">
+            <code class="text-xs bg-muted px-2 py-1 rounded truncate">{{ server.ip }}:{{ server.port }}</code>
             <button
               @click="copyIp(server)"
-              class="p-1 hover:bg-muted rounded transition-colors"
+              class="p-1 hover:bg-muted rounded transition-colors shrink-0"
               title="{{ $t('servers.actions.copyIp') }}"
             >
               <Check v-if="copiedServerId === server.id" class="h-4 w-4 text-green-500" />
               <Copy v-else class="h-4 w-4 text-muted-foreground" />
             </button>
           </div>
-          <div class="flex items-center gap-2">
-            <!-- Install Client button (only for modded/custom servers with pack) -->
+          <div class="flex items-center gap-2 shrink-0">
+            <!-- Install Client button -->
             <button
-              v-if="(server.packFileName || server.packSource) && server.isActive && !isModpackInstalled(server)"
-              @click="installModpack(server)"
+              v-if="!isClientInstalled(server)"
+              @click="installClient(server)"
               :disabled="installingServerId === server.id"
-              class="flex items-center gap-1.5 px-4 py-1.5 bg-primary text-primary-foreground text-sm font-bold rounded-md hover:bg-primary/90 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+              class="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-bold rounded-md hover:bg-primary/90 transition-all shadow-sm active:scale-95 disabled:opacity-50 whitespace-nowrap"
               title="{{ $t('servers.actions.installClient') }}"
             >
               <Loader2 v-if="installingServerId === server.id" class="h-4 w-4 animate-spin" />
               <Download v-else class="h-4 w-4" />
-              Install
+              {{ server.serverType === 'vanilla' ? '安装实例' : 'Install' }}
             </button>
             <button 
-              v-if="!((server.packFileName || server.packSource) && server.isActive && !isModpackInstalled(server))"
+              v-else
               @click="launchAndConnect(server)"
               :disabled="isConnecting === server.id"
-              class="flex items-center gap-1.5 px-4 py-1.5 bg-primary text-primary-foreground text-sm font-bold rounded-md hover:bg-primary/90 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+              class="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-bold rounded-md hover:bg-primary/90 transition-all shadow-sm active:scale-95 disabled:opacity-50 whitespace-nowrap"
             >
               <Loader2 v-if="isConnecting === server.id" class="h-4 w-4 animate-spin" />
               <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
               {{ $t('servers.join') }}
+            </button>
+            <button
+              @click="openServerDetails(server)"
+              class="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-200 dark:bg-zinc-700 text-neutral-900 dark:text-white text-sm font-medium rounded-md hover:bg-neutral-300 dark:hover:bg-zinc-600 transition-all shadow-sm active:scale-95 whitespace-nowrap"
+            >
+              详情
             </button>
           </div>
         </div>
@@ -961,7 +1018,7 @@ function cancelPrompt() {
           
           <p class="text-xs text-muted-foreground mb-4">
             {{ $t('servers.publishDialog.stepOf', { step: publishStep, total: totalSteps }) }} 
-            {{ publishStep === 1 ? $t('servers.publishDialog.steps.basicInfo') : publishStep === 2 ? $t('servers.publishDialog.steps.versionType') : publishStep === 3 ? $t('servers.publishDialog.steps.modpack') : $t('servers.publishDialog.steps.review') }}
+            {{ publishStep === 1 ? $t('servers.publishDialog.steps.basicInfo') : publishStep === 2 ? '详情与联系方式 (Details)' : publishStep === 3 ? $t('servers.publishDialog.steps.versionType') : publishStep === 4 ? $t('servers.publishDialog.steps.modpack') : $t('servers.publishDialog.steps.review') }}
           </p>
 
           <div class="space-y-4">
@@ -983,8 +1040,30 @@ function cancelPrompt() {
               </div>
             </template>
 
-            <!-- Step 2: Version & Type -->
+            <!-- Step 2: Additional Details -->
             <template v-if="publishStep === 2">
+              <div class="space-y-1">
+                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">标签/徽标 (Tags) - 逗号分隔</label>
+                <input v-model="newServer.tags" type="text" placeholder="例如: 生存, 魔法, 科技" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+              </div>
+              <div class="space-y-1">
+                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">服务器详情介绍 (Description - Markdown)</label>
+                <textarea v-model="newServer.description" placeholder="支持 Markdown 格式。详细介绍您的服务器..." rows="4" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 custom-scrollbar"></textarea>
+              </div>
+              <div class="flex gap-2">
+                <div class="flex-1 space-y-1">
+                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">交流群 (Community Group)</label>
+                  <input v-model="newServer.contactGroup" type="text" placeholder="例如: QQ群 12345678" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                </div>
+                <div class="flex-1 space-y-1">
+                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">服主联系方式 (Owner Contact)</label>
+                  <input v-model="newServer.contactOwner" type="text" placeholder="例如: admin@example.com" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                </div>
+              </div>
+            </template>
+
+            <!-- Step 3: Version & Type -->
+            <template v-if="publishStep === 3">
               <div class="space-y-1">
                 <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.serverType') }}</label>
                 <select v-model="newServer.serverType" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white">
@@ -1125,8 +1204,8 @@ function cancelPrompt() {
               </div>
             </template>
 
-            <!-- Step 3: Modpack (Optional) -->
-            <template v-if="publishStep === 3">
+            <!-- Step 4: Modpack (Optional) -->
+            <template v-if="publishStep === 4">
               <template v-if="needsPackFile(newServer.serverType)">
                 <div class="flex bg-neutral-100 dark:bg-zinc-800 rounded-lg p-1 mb-4 shrink-0">
                   <button 
@@ -1237,8 +1316,8 @@ function cancelPrompt() {
               </template>
             </template>
 
-            <!-- Step 4: Review & Submit -->
-            <template v-if="publishStep === 4">
+            <!-- Step 5: Review & Submit -->
+            <template v-if="publishStep === 5">
               <div class="space-y-3 py-2">
                 <h4 class="font-medium text-neutral-900 dark:text-white">{{ $t('servers.publishDialog.reviewTitle') }}</h4>
                 <div class="bg-muted rounded-md p-3 space-y-2 text-sm">
@@ -1291,7 +1370,7 @@ function cancelPrompt() {
             <div v-else></div>
             
             <button 
-              v-if="publishStep < 4" 
+              v-if="publishStep < 5" 
               @click="publishStep++"
               :disabled="!canGoToStep(publishStep)"
               class="px-3 py-1.5 text-sm font-medium bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50"
@@ -1357,5 +1436,11 @@ function cancelPrompt() {
         </div>
       </div>
     </Teleport>
+
+    <!-- Server Details Modal -->
+    <ServerDetailsModal
+      v-model:open="showDetailsModal"
+      :server="selectedDetailsServer"
+    />
   </div>
 </template>
