@@ -580,3 +580,165 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
     tracing::info!(target: "auth", "Account token refreshed for: {}", account_id);
     Ok(updated_account)
 }
+
+/// Start Microsoft OAuth 2.0 PKCE flow
+pub async fn login_microsoft_oauth() -> Result<Account, String> {
+    use sha2::{Sha256, Digest};
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    tracing::info!("Starting Microsoft OAuth login flow");
+
+    let client_id = "6a3728d6-27a3-4180-99bb-479895b8f88e";
+    let redirect_uri = "http://localhost:23333/auth-callback";
+    
+    // 1. Generate state and code verifier
+    let state = uuid::Uuid::new_v4().simple().to_string();
+    let code_verifier = format!("{}{}{}", 
+        uuid::Uuid::new_v4().simple().to_string(), 
+        uuid::Uuid::new_v4().simple().to_string(), 
+        uuid::Uuid::new_v4().simple().to_string()
+    );
+
+    // 2. Generate code challenge
+    let mut hasher = Sha256::new();
+    hasher.update(code_verifier.as_bytes());
+    let code_challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+    // 3. Construct URL
+    let auth_url = format!(
+        "https://login.live.com/oauth20_authorize.srf?client_id={}&response_type=code&redirect_uri={}&scope=XboxLive.signin%20offline_access&prompt=select_account&code_challenge={}&code_challenge_method=S256&state={}",
+        client_id, urlencoding::encode(redirect_uri), code_challenge, state
+    );
+
+    // 4. Start local HTTP server
+    let listener = TcpListener::bind("127.0.0.1:23333").await
+        .map_err(|e| format!("Failed to bind local server on port 23333: {}", e))?;
+
+    // 5. Open browser
+    open::that(auth_url).map_err(|e| format!("Failed to open browser: {}", e))?;
+
+    // 6. Wait for callback with timeout
+    let callback_result: Result<Result<String, String>, _> = tokio::time::timeout(tokio::time::Duration::from_secs(300), async {
+        loop {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0; 4096];
+                if let Ok(n) = stream.read(&mut buf).await {
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    // Look for GET /auth-callback?code=...&state=...
+                    if request.starts_with("GET /auth-callback") {
+                        let first_line = request.lines().next().unwrap_or("");
+                        let parts: Vec<&str> = first_line.split(' ').collect();
+                        if parts.len() >= 2 {
+                            let path = parts[1];
+                            if let Some(query) = path.split('?').nth(1) {
+                                let mut code = String::new();
+                                let mut returned_state = String::new();
+                                for param in query.split('&') {
+                                    let kv: Vec<&str> = param.split('=').collect();
+                                    if kv.len() == 2 {
+                                        if kv[0] == "code" {
+                                            code = kv[1].to_string();
+                                        } else if kv[0] == "state" {
+                                            returned_state = kv[1].to_string();
+                                        }
+                                    }
+                                }
+                                
+                                if returned_state == state && !code.is_empty() {
+                                    // Send success response
+                                    let html = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><head><title>Login Successful</title></head><body style=\"font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #121212; color: white;\"><div style=\"text-align: center;\"><h1 style=\"color: #4ade80;\">登录成功！</h1><p>您现在可以安全地关闭此页面并返回启动器了。</p><p style=\"color: #888; font-size: 14px;\">Login successful! You can safely close this window and return to the launcher.</p></div></body></html>";
+                                    let _ = stream.write_all(html.as_bytes()).await;
+                                    return Ok(code);
+                                } else {
+                                    let html = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nInvalid state or code.";
+                                    let _ = stream.write_all(html.as_bytes()).await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }).await;
+    
+    let code = match callback_result {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => return Err("Login timed out after 5 minutes.".to_string()),
+    };
+
+    tracing::info!("Received authorization code from browser callback.");
+
+    // 7. Exchange code for token
+    let client = reqwest::Client::new();
+    let token_url = "https://login.live.com/oauth20_token.srf";
+    
+    let params = [
+        ("client_id", client_id),
+        ("code", &code),
+        ("grant_type", "authorization_code"),
+        ("redirect_uri", redirect_uri),
+        ("code_verifier", &code_verifier),
+    ];
+
+    let response = client.post(token_url)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("Token request failed: {}", e))?;
+
+    let raw_text = response.text().await.map_err(|e| format!("Failed to read token response: {}", e))?;
+
+    #[derive(Deserialize)]
+    struct TokenResponse {
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        error: Option<String>,
+        error_description: Option<String>,
+    }
+
+    let token_resp: TokenResponse = serde_json::from_str(&raw_text)
+        .map_err(|e| format!("Failed to parse token response: {}. Raw: {}", e, raw_text))?;
+
+    if let Some(error) = token_resp.error {
+        return Err(format!("Token error: {} - {}", error, token_resp.error_description.unwrap_or_default()));
+    }
+
+    let ms_token = token_resp.access_token.ok_or_else(|| "No access token in response".to_string())?;
+    let refresh_token = token_resp.refresh_token.unwrap_or_default();
+
+    tracing::info!("Received Microsoft access token from OAuth flow");
+
+    // 8. Continue with standard flow
+    let xbl_token = get_xbox_live_token(&ms_token).await?;
+    let (xsts_token, uhs) = get_xsts_token(&xbl_token).await?;
+    let mc_token = get_minecraft_token(&xsts_token, &uhs).await?;
+    let (uuid, username) = get_minecraft_profile(&mc_token).await?;
+
+    // Create account
+    let account = Account {
+        id: uuid,
+        username,
+        account_type: AccountType::Microsoft,
+        access_token: Some(mc_token.clone()),
+        refresh_token: Some(refresh_token.clone()),
+        textures: None,
+        authlib_url: None,
+        authlib_server_name: None,
+        client_token: None,
+    };
+
+    let mut accounts = get_accounts().await?;
+    accounts.retain(|a| {
+        let same_type = a.account_type == AccountType::Microsoft;
+        let same_id = a.id.replace("-", "").eq_ignore_ascii_case(&account.id.replace("-", ""));
+        !(same_type && same_id)
+    });
+
+    accounts.push(account.clone());
+    super::save_accounts(&accounts).await?;
+
+    Ok(account)
+}

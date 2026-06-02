@@ -32,7 +32,7 @@
       </div>
 
       <div v-else class="flex flex-col items-center">
-        <span class="text-xs text-gray-500 dark:text-gray-400 mb-1">不安装</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('install.uninstalled') }}</span>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 dark:text-gray-400"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
       </div>
     </div>
@@ -41,6 +41,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 interface Props {
   title: string;

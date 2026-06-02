@@ -5,7 +5,7 @@ use uuid::Uuid;
 pub mod microsoft;
 pub mod authlib;
 
-pub use microsoft::{poll_microsoft_token, refresh_microsoft_token, start_microsoft_login, LoginInitResponse};
+pub use microsoft::{poll_microsoft_token, refresh_microsoft_token, start_microsoft_login, login_microsoft_oauth, LoginInitResponse};
 pub use authlib::{add_authlib_account, get_authlib_meta, fetch_authlib_servers, add_authlib_server, remove_authlib_server};
 
 /// Account types supported by the launcher.

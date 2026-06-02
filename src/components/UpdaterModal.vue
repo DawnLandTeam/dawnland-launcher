@@ -105,7 +105,7 @@ async function startUpdate() {
             </div>
             
             <!-- Title & Version -->
-            <h2 class="text-2xl font-bold text-neutral-900 dark:text-white mb-2 tracking-tight">发现新版本</h2>
+            <h2 class="text-2xl font-bold text-neutral-900 dark:text-white mb-2 tracking-tight">{{ $t('updater.title') }}</h2>
             <div class="inline-flex items-center justify-center px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-semibold tracking-wide mb-6 shadow-sm">
               v{{ updateInfo.version }}
             </div>
@@ -114,14 +114,14 @@ async function startUpdate() {
             <div class="text-left bg-white/50 dark:bg-black/20 rounded-2xl p-5 mb-6 border border-black/5 dark:border-white/5 max-h-52 overflow-y-auto custom-scrollbar shadow-inner backdrop-blur-sm">
               <h3 class="text-sm font-bold text-neutral-800 dark:text-neutral-200 mb-3 flex items-center gap-2">
                 <span class="w-1 h-4 bg-primary rounded-full"></span>
-                更新日志
+                {{ $t('updater.releaseNotes') }}
               </h3>
               <ul class="space-y-2">
                 <li v-for="(line, i) in releaseNotes" :key="i" class="text-sm text-neutral-600 dark:text-neutral-400 flex items-start gap-2.5 leading-relaxed">
                   <span class="text-primary/60 mt-1.5 shrink-0 text-[10px]">●</span>
                   <span>{{ line }}</span>
                 </li>
-                <li v-if="releaseNotes.length === 0" class="text-sm text-neutral-500 italic">暂无更新说明。</li>
+                <li v-if="releaseNotes.length === 0" class="text-sm text-neutral-500 italic">{{ $t('updater.noNotes') }}</li>
               </ul>
             </div>
             
@@ -129,7 +129,7 @@ async function startUpdate() {
             <div v-if="isDownloading" class="mb-6 bg-white/50 dark:bg-black/20 p-5 rounded-2xl border border-black/5 dark:border-white/5 backdrop-blur-sm shadow-inner">
               <div class="flex justify-between text-sm mb-3 font-semibold">
                 <span class="text-neutral-800 dark:text-neutral-200">
-                  {{ isFinished ? '准备重启...' : '正在下载更新...' }}
+                  {{ isFinished ? $t('updater.preparingRestart') : $t('updater.downloading') }}
                 </span>
                 <span class="text-primary">{{ downloadProgress }}%</span>
               </div>
@@ -142,14 +142,14 @@ async function startUpdate() {
                 </div>
               </div>
               <div class="flex justify-between text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                <span>{{ formatBytes(downloadedBytes) }} / {{ totalBytes > 0 ? formatBytes(totalBytes) : '未知' }}</span>
+                <span>{{ formatBytes(downloadedBytes) }} / {{ totalBytes > 0 ? formatBytes(totalBytes) : $t('updater.unknownSize') }}</span>
               </div>
             </div>
             
             <!-- Error Alert -->
             <div v-if="error" class="mb-6 p-4 bg-red-50/80 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-2xl text-left backdrop-blur-sm">
               <p class="text-sm font-bold text-red-600 dark:text-red-400 mb-1 flex items-center gap-2">
-                <X class="w-4 h-4" /> 更新失败
+                <X class="w-4 h-4" /> {{ $t('updater.updateFailed') }}
               </p>
               <p class="text-xs text-red-500 dark:text-red-400/80 break-words leading-relaxed">{{ error }}</p>
             </div>
@@ -161,7 +161,7 @@ async function startUpdate() {
                 :disabled="isDownloading"
                 class="flex-1 py-3 px-4 text-sm font-semibold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 dark:bg-zinc-800/80 dark:hover:bg-zinc-700 dark:text-neutral-300 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
-                稍后再说
+                {{ $t('updater.remindLater') }}
               </button>
               <button 
                 @click="startUpdate" 
@@ -171,7 +171,7 @@ async function startUpdate() {
                 <Loader2 v-if="isDownloading && !isFinished" class="w-4 h-4 animate-spin" />
                 <CheckCircle2 v-else-if="isFinished" class="w-4 h-4" />
                 <Download v-else class="w-4 h-4" />
-                {{ isDownloading ? (isFinished ? '正在重启...' : '更新中') : '立即更新' }}
+                {{ isDownloading ? (isFinished ? $t('updater.restarting') : $t('updater.updating')) : $t('updater.updateNow') }}
               </button>
             </div>
             
