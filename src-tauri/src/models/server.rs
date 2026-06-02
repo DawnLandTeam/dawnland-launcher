@@ -25,6 +25,10 @@ pub struct Server {
     pub icon_url: String,
     pub email: String,
     pub is_active: bool,
+    pub tags: Option<String>,
+    pub description: Option<String>,
+    pub contact_group: Option<String>,
+    pub contact_owner: Option<String>,
 }
 
 /// Input for creating a new server.
@@ -46,6 +50,10 @@ pub struct CreateServerInput {
     pub pack_source: Option<String>,
     pub icon_url: String,
     pub email: String,
+    pub tags: Option<String>,
+    pub description: Option<String>,
+    pub contact_group: Option<String>,
+    pub contact_owner: Option<String>,
 }
 
 /// Input for updating a server (all fields optional).
@@ -68,6 +76,10 @@ pub struct UpdateServerInput {
     pub icon_url: Option<String>,
     pub email: Option<String>,
     pub is_active: Option<bool>,
+    pub tags: Option<String>,
+    pub description: Option<String>,
+    pub contact_group: Option<String>,
+    pub contact_owner: Option<String>,
 }
 
 /// Response from pack file upload

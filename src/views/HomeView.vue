@@ -515,7 +515,7 @@ function loaderBadgeClass(loaderType: string): string {
                     <ChevronDown class="h-5 w-5 text-muted-foreground shrink-0 ml-2" />
                   </button>
                 </template>
-                <div class="max-h-60 overflow-y-auto bg-background rounded-xl p-1 shadow-xl border">
+                <div class="max-h-60 overflow-y-auto">
                   <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="selectedInstanceId = instance.id" class="flex items-center gap-3 p-2 rounded-lg cursor-pointer">
                     <Package class="h-4 w-4 shrink-0 text-muted-foreground" />
                     <span class="truncate font-medium">{{ instance.name }}</span>
@@ -545,7 +545,7 @@ function loaderBadgeClass(loaderType: string): string {
                     <ChevronDown class="h-5 w-5 text-muted-foreground shrink-0 ml-2" />
                   </button>
                 </template>
-                <div class="bg-background max-h-60 overflow-y-auto rounded-xl p-1 shadow-xl border">
+                <div class="max-h-60 overflow-y-auto">
                   <DropdownMenuItem v-for="account in accounts" :key="account.id" @click="selectedAccountId = account.id" class="flex items-center justify-between w-full p-2 rounded-lg cursor-pointer">
                     <div class="flex items-center gap-3 overflow-hidden">
                       <MonitorCheck v-if="account.accountType === 'microsoft'" class="h-4 w-4 text-green-500 shrink-0" />
