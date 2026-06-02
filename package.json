@@ -16,6 +16,8 @@
     "@tauri-apps/plugin-opener": "^2",
     "@vueuse/core": "^14.3.0",
     "clsx": "^2.1.1",
+    "dompurify": "^3.4.7",
+    "marked": "^18.0.4",
     "tailwind-merge": "^3.6.0",
     "vue": "^3.5.13",
     "vue-i18n": "^9.14.5",
@@ -23,6 +25,8 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/dompurify": "^3.2.0",
+    "@types/marked": "^6.0.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.4.10",
     "autoprefixer": "^10.4.21",
