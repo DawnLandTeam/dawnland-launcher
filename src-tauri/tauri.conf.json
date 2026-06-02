@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Dawnland Launcher",
+  "version": "0.0.1",
+  "identifier": "com.dawnland.launcher",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Dawnland Launcher",
+        "width": 1024,
+        "height": 700,
+        "minWidth": 800,
+        "minHeight": 600,
+        "maxWidth": 1200,
+        "maxHeight": 800,
+        "resizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "http://localhost:3030/api/launcher/update/{{target}}/{{current_version}}",
+        "https://api.dawnland.cn/api/launcher/update/{{target}}/{{current_version}}"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUyN0FENDYyN0EyMTc1RUYKUldUdmRTRjZZdFI2VWo1bjhVbWw4a0NsUGVZbVljS00wN09Ob2xIdm5wbGVBZXRyV3B6ZVVTdWUK"
+    }
+  }
+}

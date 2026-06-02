@@ -1,0 +1,231 @@
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::auth::{get_accounts, save_accounts, Account, AccountType};
+
+#[derive(Serialize)]
+struct Agent {
+    name: String,
+    version: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthenticateRequest {
+    agent: Agent,
+    username: String,
+    password: String,
+    client_token: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct YggdrasilProfile {
+    id: String,
+    name: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct AuthenticateResponse {
+    access_token: String,
+    client_token: String,
+    available_profiles: Option<Vec<YggdrasilProfile>>,
+    selected_profile: Option<YggdrasilProfile>,
+}
+
+#[derive(Deserialize, Debug)]
+struct YggdrasilError {
+    error: Option<String>,
+    #[serde(rename = "errorMessage")]
+    error_message: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct YggdrasilMetaLinks {
+    pub homepage: Option<String>,
+    pub register: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct YggdrasilMeta {
+    pub server_name: Option<String>,
+    pub links: Option<YggdrasilMetaLinks>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct YggdrasilRootResponse {
+    pub meta: Option<YggdrasilMeta>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AuthlibServer {
+    pub url: String,
+    pub name: String,
+}
+
+pub async fn get_authlib_servers() -> Result<Vec<AuthlibServer>, String> {
+    let mut config_path = std::env::current_exe()
+        .map(|p| p.parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    config_path.push(".dawnland");
+    std::fs::create_dir_all(&config_path).map_err(|e| e.to_string())?;
+    config_path.push("authlib_servers.json");
+
+    if !config_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let contents = tokio::fs::read_to_string(&config_path).await.map_err(|e| e.to_string())?;
+    let servers: Vec<AuthlibServer> = serde_json::from_str(&contents).unwrap_or_default();
+    Ok(servers)
+}
+
+#[tauri::command]
+pub async fn fetch_authlib_servers() -> Result<Vec<AuthlibServer>, String> {
+    get_authlib_servers().await
+}
+
+#[tauri::command]
+pub async fn add_authlib_server(url: String) -> Result<AuthlibServer, String> {
+    let meta = get_authlib_meta(url.clone()).await?;
+    let name = meta.meta.and_then(|m| m.server_name).unwrap_or_else(|| "Unknown Server".to_string());
+    let server = AuthlibServer { url: url.clone(), name };
+
+    let mut servers = get_authlib_servers().await?;
+    servers.retain(|s| s.url != url);
+    servers.push(server.clone());
+
+    let mut config_path = std::env::current_exe()
+        .map(|p| p.parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    config_path.push(".dawnland");
+    std::fs::create_dir_all(&config_path).map_err(|e| e.to_string())?;
+    config_path.push("authlib_servers.json");
+
+    let json = serde_json::to_string_pretty(&servers).map_err(|e| e.to_string())?;
+    tokio::fs::write(&config_path, json).await.map_err(|e| e.to_string())?;
+
+    Ok(server)
+}
+
+#[tauri::command]
+pub async fn remove_authlib_server(url: String) -> Result<(), String> {
+    let mut servers = get_authlib_servers().await?;
+    servers.retain(|s| s.url != url);
+
+    let mut config_path = std::env::current_exe()
+        .map(|p| p.parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    config_path.push(".dawnland");
+    std::fs::create_dir_all(&config_path).map_err(|e| e.to_string())?;
+    config_path.push("authlib_servers.json");
+
+    let json = serde_json::to_string_pretty(&servers).map_err(|e| e.to_string())?;
+    tokio::fs::write(&config_path, json).await.map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_authlib_meta(url: String) -> Result<YggdrasilRootResponse, String> {
+    let client = Client::new();
+    let res = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !res.status().is_success() {
+        return Err(format!("Server returned status {}", res.status()));
+    }
+
+    let meta_res: YggdrasilRootResponse = res
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    Ok(meta_res)
+}
+
+#[tauri::command]
+pub async fn add_authlib_account(url: String, username: String, password: String) -> Result<Account, String> {
+    let client_token = Uuid::new_v4().to_string();
+    let client = Client::new();
+
+    let auth_url = if url.ends_with('/') {
+        format!("{}authserver/authenticate", url)
+    } else {
+        format!("{}/authserver/authenticate", url)
+    };
+
+    let req_body = AuthenticateRequest {
+        agent: Agent {
+            name: "Minecraft".to_string(),
+            version: 1,
+        },
+        username: username.clone(),
+        password,
+        client_token: client_token.clone(),
+    };
+
+    let res = client
+        .post(&auth_url)
+        .json(&req_body)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !res.status().is_success() {
+        let err_body = res.text().await.unwrap_or_default();
+        if let Ok(ygg_err) = serde_json::from_str::<YggdrasilError>(&err_body) {
+            return Err(ygg_err.error_message.unwrap_or_else(|| ygg_err.error.unwrap_or_else(|| "Unknown authentication error".to_string())));
+        }
+        return Err("Authentication failed".to_string());
+    }
+
+    let auth_res: AuthenticateResponse = res
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let profile = auth_res.selected_profile.or_else(|| {
+        auth_res.available_profiles.and_then(|mut profiles| if profiles.is_empty() { None } else { Some(profiles.remove(0)) })
+    }).ok_or_else(|| "No profile available for this account".to_string())?;
+
+    // Format UUID with hyphens if needed (Yggdrasil usually returns without hyphens)
+    let uuid_str = profile.id;
+    let uuid_with_hyphens = if uuid_str.len() == 32 {
+        format!("{}-{}-{}-{}-{}", &uuid_str[0..8], &uuid_str[8..12], &uuid_str[12..16], &uuid_str[16..20], &uuid_str[20..32])
+    } else {
+        uuid_str
+    };
+
+    let account = Account {
+        id: uuid_with_hyphens.clone(),
+        username: profile.name,
+        account_type: AccountType::Authlib,
+        access_token: Some(auth_res.access_token),
+        refresh_token: None, // Authlib doesn't use standard oauth refresh tokens usually, or rather it uses accessToken in /refresh
+        textures: None,
+        authlib_url: Some(url.clone()),
+        authlib_server_name: get_authlib_meta(url).await.ok().and_then(|r| r.meta.and_then(|m| m.server_name)),
+        client_token: Some(auth_res.client_token),
+    };
+
+    let mut accounts = get_accounts().await?;
+
+    // Remove existing Authlib account with same UUID if exists.
+    accounts.retain(|a| {
+        let same_type = a.account_type == AccountType::Authlib;
+        let same_id = a.id.replace("-", "").eq_ignore_ascii_case(&uuid_with_hyphens.replace("-", ""));
+        !(same_type && same_id)
+    });
+
+    accounts.push(account.clone());
+    save_accounts(&accounts).await?;
+
+    Ok(account)
+}

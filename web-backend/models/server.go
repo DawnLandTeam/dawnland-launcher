@@ -1,0 +1,87 @@
+package models
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+// Server represents a multiplayer Minecraft server entry.
+type Server struct {
+	ID             uint           `json:"id"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	UpdatedAt      time.Time      `json:"updatedAt"`
+	DeletedAt      gorm.DeletedAt `json:"deletedAt,omitempty" gorm:"index"`
+	Name           string         `json:"name"`
+	IP             string         `json:"ip" gorm:"type:varchar(255);uniqueIndex:idx_ip_port"`
+	Port           int            `json:"port" gorm:"uniqueIndex:idx_ip_port"`
+	Motd           string         `json:"motd"`
+	Version        string         `json:"version"`
+	LoaderType     string         `json:"loaderType"`             // Server loader: Vanilla, Fabric, Forge, Paper, etc.
+	ServerType     string         `json:"serverType"`             // Server category: vanilla, modded, custom
+	AuthType       string         `json:"authType"`               // Authentication type: offline, microsoft, authlib
+	AuthlibAPI     string         `json:"authlibApi,omitempty"`   // Yggdrasil API URL if authType is authlib
+	PackFileName   string         `json:"packFileName,omitempty"` // Modpack ZIP file name (for modded/custom)
+	PackFileSize   int64          `json:"packFileSize,omitempty"` // Modpack file size in bytes
+	PackProjectID  string         `json:"packProjectId,omitempty"` // CurseForge or Modrinth Project ID
+	PackVersionID  string         `json:"packVersionId,omitempty"` // CurseForge or Modrinth Version/File ID
+	PackSource     string         `json:"packSource,omitempty"`    // "curseforge" or "modrinth"
+	IconURL        string         `json:"iconUrl"`
+	Email          string         `json:"email"` // Admin email for server management
+	IsActive       bool           `json:"isActive" gorm:"default:false"`
+	IsOnline       bool           `json:"isOnline" gorm:"default:false"` // Current online status
+	CurrentPlayers int            `json:"currentPlayers" gorm:"default:0"`
+	MaxPlayers     int            `json:"maxPlayers" gorm:"default:0"`
+	Heat           int            `json:"heat" gorm:"default:0"` // Calculated heat value
+	Tags           string         `json:"tags,omitempty"`        // Comma-separated tags (e.g. "Survival,Magic")
+	Description    string         `json:"description,omitempty" gorm:"type:text"` // Markdown/HTML description
+	ContactGroup   string         `json:"contactGroup,omitempty"` // e.g. QQ Group, Discord invite
+	ContactOwner   string         `json:"contactOwner,omitempty"` // e.g. Owner QQ, Email
+}
+
+// CreateServerInput defines the input for creating a new server.
+type CreateServerInput struct {
+	Name          string `json:"name" binding:"required"`
+	IP            string `json:"ip" binding:"required"`
+	Port          int    `json:"port" binding:"required"`
+	Motd          string `json:"motd"`
+	Version       string `json:"version"`
+	LoaderType    string `json:"loaderType"`
+	ServerType    string `json:"serverType"`   // vanilla, modded, custom
+	AuthType      string `json:"authType"`     // offline, microsoft, authlib
+	AuthlibAPI    string `json:"authlibApi"`   // Optional Authlib API URL
+	PackFileName  string `json:"packFileName"` // Modpack file name (set when pack is uploaded)
+	PackProjectID string `json:"packProjectId"`
+	PackVersionID string `json:"packVersionId"`
+	PackSource    string `json:"packSource"`
+	IconURL       string `json:"iconUrl"`
+	Email         string `json:"email" binding:"required,email"` // Email is required
+	Tags          string `json:"tags"`
+	Description   string `json:"description"`
+	ContactGroup  string `json:"contactGroup"`
+	ContactOwner  string `json:"contactOwner"`
+}
+
+// UpdateServerInput defines the input for updating a server (all fields optional).
+type UpdateServerInput struct {
+	Name          *string `json:"name"`
+	IP            *string `json:"ip"`
+	Port          *int    `json:"port"`
+	Motd          *string `json:"motd"`
+	Version       *string `json:"version"`
+	LoaderType    *string `json:"loaderType"`
+	ServerType    *string `json:"serverType"`
+	AuthType      *string `json:"authType"`
+	AuthlibAPI    *string `json:"authlibApi"`
+	PackFileName  *string `json:"packFileName"`
+	PackProjectID *string `json:"packProjectId"`
+	PackVersionID *string `json:"packVersionId"`
+	PackSource    *string `json:"packSource"`
+	IconURL       *string `json:"iconUrl"`
+	Email         *string `json:"email"`
+	IsActive      *bool   `json:"isActive"`
+	Tags          *string `json:"tags"`
+	Description   *string `json:"description"`
+	ContactGroup  *string `json:"contactGroup"`
+	ContactOwner  *string `json:"contactOwner"`
+}
