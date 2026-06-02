@@ -7,9 +7,8 @@ import {
 } from "@lucide/vue";
 import { DialogContent, DialogTitle } from "../components/ui/dialog";
 import { useRouter } from "vue-router";
-
-const router = useRouter();
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
+import QrcodeVue from 'qrcode.vue';
 
 interface Account {
   id: string;
@@ -63,6 +62,7 @@ const isLoggingInMicrosoft = ref(false);
 const microsoftLoginData = ref<LoginInitResponse | null>(null);
 const loginError = ref<string | null>(null);
 const deviceCode = ref("");
+const showDeviceCodeFlow = ref(false);
 
 // Modal state
 const showAddAccountModal = ref(false);
@@ -104,6 +104,7 @@ function closeAddAccountModal(): void {
   loginError.value = null;
   microsoftLoginData.value = null;
   isLoggingInMicrosoft.value = false;
+  showDeviceCodeFlow.value = false;
 }
 
 // Add offline account
@@ -211,7 +212,27 @@ async function removeAccount(): Promise<void> {
   }
 }
 
-// Start Microsoft login
+// Seamless Microsoft login
+async function startSeamlessMicrosoftLogin(): Promise<void> {
+  isLoggingInMicrosoft.value = true;
+  loginError.value = null;
+  microsoftLoginData.value = null;
+
+  try {
+    const account = await invoke<Account>("login_microsoft_oauth");
+    if (!accounts.value) accounts.value = [];
+    accounts.value.push(account);
+    isLoggingInMicrosoft.value = false;
+    closeAddAccountModal();
+    // Notify other views to refresh accounts
+    await emit("accounts-updated");
+  } catch (err) {
+    loginError.value = typeof err === "string" ? err : String(err);
+    isLoggingInMicrosoft.value = false;
+  }
+}
+
+// Start Microsoft login (Device Code Fallback)
 async function startMicrosoftLogin(): Promise<void> {
   isLoggingInMicrosoft.value = true;
   loginError.value = null;
@@ -383,7 +404,7 @@ onMounted(() => {
               >
                 <Globe :size="24" :class="selectedAccountType === 'authlib' ? 'text-purple-600 dark:text-purple-400' : 'text-neutral-500'" />
                 <span class="text-sm font-medium" :class="selectedAccountType === 'authlib' ? 'text-purple-700 dark:text-purple-300' : ''">Authlib</span>
-                <span class="text-xs text-neutral-500">外置登录</span>
+                <span class="text-xs text-neutral-500">{{ $t('accounts.authlibTab') }}</span>
               </button>
               <button
                 class="flex-1 flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all"
@@ -422,41 +443,80 @@ onMounted(() => {
 
           <!-- Microsoft Login Form -->
           <div v-else-if="selectedAccountType === 'microsoft'" class="mt-4 space-y-3">
-            <!-- Not logging in -->
-            <div v-if="!isLoggingInMicrosoft && !microsoftLoginData">
+            <!-- Default view: One-click Login -->
+            <div v-if="!isLoggingInMicrosoft && !microsoftLoginData && !showDeviceCodeFlow" class="space-y-3">
+              <button
+                class="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+                :disabled="isLoggingInMicrosoft"
+                @click="startSeamlessMicrosoftLogin"
+              >
+                <Loader2 v-if="isLoggingInMicrosoft" :size="16" class="animate-spin" />
+                <UserPlus v-else :size="16" />
+                {{ isLoggingInMicrosoft ? $t('accounts.preparing') : $t('accounts.loginWithMs') }}
+              </button>
+              
+              <button
+                class="w-full text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors"
+                @click="showDeviceCodeFlow = true"
+              >
+                使用扫码登录 (备用方案)
+              </button>
+            </div>
+
+            <!-- Seamless logging in -->
+            <div v-else-if="isLoggingInMicrosoft && !microsoftLoginData && !showDeviceCodeFlow" class="flex flex-col items-center justify-center gap-3 py-4">
+              <Loader2 :size="24" class="animate-spin text-emerald-500" />
+              <span class="text-sm text-neutral-600 dark:text-neutral-400">正在等待浏览器授权...</span>
+            </div>
+
+            <!-- Device Code Flow (Fallback) Initial -->
+            <div v-else-if="showDeviceCodeFlow && !microsoftLoginData" class="space-y-3">
               <button
                 class="w-full flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
                 @click="startMicrosoftLogin"
               >
-                <UserPlus :size="16" />
-                {{ $t('accounts.loginWithMs') }}
+                <MonitorCheck :size="16" />
+                获取扫码登录凭证
+              </button>
+              <button
+                class="w-full text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors"
+                @click="showDeviceCodeFlow = false"
+              >
+                返回一键登录
               </button>
             </div>
 
-            <!-- Logging in - show device code -->
-            <div v-else-if="microsoftLoginData" class="space-y-3">
-              <p class="text-sm text-neutral-600 dark:text-zinc-400">
-                {{ microsoftLoginData.message }}
+            <!-- Logging in with Device Code - show QR code -->
+            <div v-else-if="microsoftLoginData" class="flex flex-col items-center space-y-4 py-2">
+              <p class="text-sm text-center text-neutral-600 dark:text-zinc-400">
+                请使用手机扫描下方二维码，或访问 <a :href="microsoftLoginData.verificationUri" target="_blank" class="text-indigo-600 hover:underline">验证链接</a>
               </p>
-              <div class="flex items-center gap-2">
-                <span class="text-2xl font-mono font-bold tracking-wider text-indigo-600 dark:text-indigo-400">
-                  {{ microsoftLoginData.userCode }}
-                </span>
-                <button
-                  class="rounded p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-zinc-800"
-                  title="Copy code"
-                  @click="copyCode"
-                >
-                  <User :size="16" />
-                </button>
+              
+              <div class="bg-white p-2 rounded-xl">
+                <qrcode-vue :value="microsoftLoginData.verificationUri" :size="180" level="M" />
               </div>
-              <a
-                :href="microsoftLoginData.verificationUri"
-                target="_blank"
-                class="text-sm text-indigo-600 hover:underline dark:text-indigo-400"
-              >
-                {{ $t('accounts.openVerify') }}
-              </a>
+
+              <div class="flex flex-col items-center">
+                <span class="text-xs text-neutral-500 mb-1">并在页面中输入以下代码：</span>
+                <div class="flex items-center gap-2">
+                  <span class="text-2xl font-mono font-bold tracking-wider text-indigo-600 dark:text-indigo-400">
+                    {{ microsoftLoginData.userCode }}
+                  </span>
+                  <button
+                    class="rounded p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-zinc-800"
+                    title="复制验证码"
+                    @click="copyCode"
+                  >
+                    <User :size="16" />
+                  </button>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-center gap-2 py-2 text-sm text-emerald-600 dark:text-emerald-400">
+                <Loader2 :size="16" class="animate-spin" />
+                等待授权完成...
+              </div>
+
               <button
                 class="w-full rounded-lg bg-neutral-200 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
                 @click="cancelMicrosoftLogin"
@@ -464,23 +524,17 @@ onMounted(() => {
                 {{ $t('accounts.cancel') }}
               </button>
             </div>
-
-            <!-- Waiting for poll -->
-            <div v-else class="flex items-center justify-center gap-2 py-2 text-sm text-neutral-500">
-              <Loader2 :size="16" class="animate-spin" />
-              {{ $t('accounts.preparing') }}
-            </div>
           </div>
 
           <!-- Authlib Account Form -->
           <div v-else-if="selectedAccountType === 'authlib'" class="mt-4 space-y-3">
             <div v-if="!authlibServers || authlibServers.length === 0" class="flex flex-col items-center justify-center p-6 border-2 border-dashed border-neutral-300 dark:border-zinc-700 rounded-lg bg-neutral-50 dark:bg-zinc-800/50">
-              <p class="text-sm text-neutral-500 mb-4 text-center">暂无已添加的认证服务器，<br>请先前往设置页面进行添加。</p>
+              <p class="text-sm text-neutral-500 mb-4 text-center whitespace-pre-wrap">{{ $t('accounts.noAuthlibServers') }}</p>
               <button 
                 class="bg-primary text-primary-foreground text-sm font-medium px-4 py-2 rounded-lg hover:bg-primary/90 transition-colors" 
                 @click="closeAddAccountModal(); router.push({ path: '/settings', query: { tab: 'authlib' } })"
               >
-                前往设置管理
+                {{ $t('accounts.goToSettings') }}
               </button>
             </div>
             
@@ -493,14 +547,14 @@ onMounted(() => {
                   </span>
                 </div>
                 <div class="flex items-center gap-2 text-xs" v-if="authlibMeta?.meta?.links">
-                  <a v-if="authlibMeta.meta.links.homepage" :href="authlibMeta.meta.links.homepage" target="_blank" class="text-blue-500 hover:underline">主页</a>
-                  <a v-if="authlibMeta.meta.links.register" :href="authlibMeta.meta.links.register" target="_blank" class="text-blue-500 hover:underline">注册</a>
-                  <a v-if="authlibMeta.meta.links.register && authlibMeta.meta.links.register.includes('/register')" :href="authlibMeta.meta.links.register.replace('/register', '/forgot')" target="_blank" class="text-blue-500 hover:underline">忘记密码</a>
+                  <a v-if="authlibMeta.meta.links.homepage" :href="authlibMeta.meta.links.homepage" target="_blank" class="text-blue-500 hover:underline">{{ $t('common.homepage', '主页') }}</a>
+                  <a v-if="authlibMeta.meta.links.register" :href="authlibMeta.meta.links.register" target="_blank" class="text-blue-500 hover:underline">{{ $t('common.register', '注册') }}</a>
+                  <a v-if="authlibMeta.meta.links.register && authlibMeta.meta.links.register.includes('/register')" :href="authlibMeta.meta.links.register.replace('/register', '/forgot')" target="_blank" class="text-blue-500 hover:underline">{{ $t('common.forgotPassword', '忘记密码') }}</a>
                 </div>
               </div>
               
               <div class="space-y-1">
-                <label class="text-sm font-medium">认证服务器</label>
+                <label class="text-sm font-medium">{{ $t('accounts.authlibServer', '认证服务器') }}</label>
                 <select
                   v-model="authlibUrl"
                   class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700 dark:bg-zinc-800"

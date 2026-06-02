@@ -70,11 +70,11 @@ async function checkForUpdates() {
       updateInfo.value = update;
       showUpdaterModal.value = true;
     } else {
-      alert("当前已是最新版本！");
+      alert(t('settings.about.upToDate'));
     }
   } catch (err) {
     console.error("Failed to check for updates:", err);
-    alert("检查更新失败: " + err);
+    alert(t('settings.about.updateFailed') + err);
   } finally {
     isCheckingUpdate.value = false;
   }
@@ -292,9 +292,7 @@ onMounted(() => {
   scanLocalJavas();
   loadAuthlibServers();
 });
-
-const { locale } = useI18n();
-
+const { t, locale } = useI18n();
 function changeLanguage(lang: string) {
   locale.value = lang;
   localStorage.setItem('language', lang);
@@ -329,7 +327,7 @@ function changeLanguage(lang: string) {
         :class="activeTab === 'authlib' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'authlib'"
       >
-        外置登录
+        {{ $t('settings.authlib.tab') }}
       </button>
       <button
         class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
@@ -526,16 +524,16 @@ function changeLanguage(lang: string) {
     <!-- Authlib Management Tab -->
     <div v-if="activeTab === 'authlib'" class="space-y-6">
       <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
-        <h2 class="text-lg font-semibold mb-4">认证服务器管理</h2>
+        <h2 class="text-lg font-semibold mb-4">{{ $t('settings.authlib.title') }}</h2>
         
         <!-- Add Server -->
         <div class="mb-6 space-y-1">
-          <label class="text-sm font-medium">添加认证服务器 (API URL)</label>
+          <label class="text-sm font-medium">{{ $t('settings.authlib.addServer') }}</label>
           <div class="flex gap-2">
             <input
               v-model="newAuthlibUrl"
               type="text"
-              placeholder="例如: https://skin.dawnland.cn/api/yggdrasil"
+              :placeholder="$t('settings.authlib.addServerPlaceholder')"
               class="flex-1 rounded-md border border-neutral-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700"
               @keyup.enter="addAuthlibServer"
             />
@@ -546,19 +544,19 @@ function changeLanguage(lang: string) {
             >
               <Loader2 v-if="isAddingAuthlibServer" :size="14" class="animate-spin" />
               <Plus v-else :size="14" />
-              添加
+              {{ $t('settings.authlib.addBtn') }}
             </button>
           </div>
         </div>
 
         <!-- Servers List -->
         <div class="space-y-2">
-          <p class="text-sm font-medium">已添加的服务器 ({{ authlibServers.length }})</p>
+          <p class="text-sm font-medium">{{ $t('settings.authlib.addedServers') }} ({{ authlibServers.length }})</p>
           <div v-if="isFetchingAuthlibServers" class="py-4 flex justify-center">
             <Loader2 class="animate-spin text-muted-foreground" :size="24" />
           </div>
           <div v-else-if="authlibServers.length === 0" class="text-sm text-muted-foreground py-2">
-            暂无已添加的认证服务器。
+            {{ $t('settings.authlib.noServers') }}
           </div>
           <div
             v-else
@@ -620,7 +618,7 @@ function changeLanguage(lang: string) {
           <button @click="checkForUpdates" :disabled="isCheckingUpdate" class="flex items-center justify-between p-3 rounded-lg border hover:bg-primary/10 hover:border-primary/30 transition-colors group text-left">
             <div class="flex items-center gap-2">
               <Download class="w-4 h-4 text-primary" />
-              <span class="text-sm font-medium text-primary">检查更新 (Check for Updates)</span>
+              <span class="text-sm font-medium text-primary">{{ $t('settings.about.checkUpdates') }}</span>
             </div>
             <span class="text-xs text-muted-foreground">
               <Loader2 v-if="isCheckingUpdate" class="w-4 h-4 animate-spin" />

@@ -61,6 +61,7 @@ pub fn run() {
             commands::start_microsoft_login,
             commands::poll_microsoft_token,
             commands::refresh_microsoft_token,
+            commands::login_microsoft_oauth,
             auth::authlib::add_authlib_account,
             auth::authlib::get_authlib_meta,
             auth::authlib::fetch_authlib_servers,

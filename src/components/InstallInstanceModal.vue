@@ -90,12 +90,18 @@ const error = ref<string | null>(null);
 // Track if we have more installation steps after current one
 const hasMoreSteps = ref<boolean>(false);
 
-// Define Conflict Matrix
 const CONFLICT_MATRIX: Record<string, string[]> = {
   'Forge': ['Fabric', 'NeoForge', 'Quilt', 'Fabric API', 'QSL/QFAPI'],
   'Fabric': ['Forge', 'NeoForge', 'Quilt', 'OptiFine'],
   'NeoForge': ['Forge', 'Fabric', 'Quilt', 'OptiFine'],
   'OptiFine': ['Fabric', 'NeoForge', 'Quilt'],
+  'Fabric API': ['Forge', 'NeoForge', 'Quilt'],
+  'QSL/QFAPI': ['Forge', 'NeoForge', 'Quilt'],
+};
+
+const DEPENDENCY_MATRIX: Record<string, string[]> = {
+  'Fabric API': ['Fabric'],
+  'QSL/QFAPI': ['Quilt'],
 };
 
 // Selected Components Matrix
@@ -110,11 +116,22 @@ const selectedComponents = reactive<Record<string, string | null>>({
 const activeConfiguringComponent = ref<string | null>(null);
 
 function getConflictReason(target: string): string | undefined {
+  // Check exclusions
   for (const [installedKey, installedValue] of Object.entries(selectedComponents)) {
     if (installedValue !== null && CONFLICT_MATRIX[installedKey]?.includes(target)) {
-      return `与 ${installedKey} 不兼容`;
+      return t('install.conflict', { component: installedKey });
     }
   }
+
+  // Check requirements
+  const reqs = DEPENDENCY_MATRIX[target];
+  if (reqs) {
+    const hasAnyReq = reqs.some(req => selectedComponents[req as keyof typeof selectedComponents] !== null);
+    if (!hasAnyReq) {
+      return t('install.requirement', { component: reqs.join(' / ') });
+    }
+  }
+
   return undefined;
 }
 
@@ -141,6 +158,19 @@ function removeComponent(target: string) {
   selectedComponents[target as keyof typeof selectedComponents] = null;
   if (activeConfiguringComponent.value === target) {
     activeConfiguringComponent.value = null;
+  }
+
+  // Cascade remove dependents whose requirements are no longer met
+  for (const [key, value] of Object.entries(selectedComponents)) {
+    if (value !== null) {
+      const reqs = DEPENDENCY_MATRIX[key];
+      if (reqs) {
+        const hasAnyReq = reqs.some(req => selectedComponents[req as keyof typeof selectedComponents] !== null);
+        if (!hasAnyReq) {
+          removeComponent(key);
+        }
+      }
+    }
   }
 }
 
@@ -506,7 +536,7 @@ async function installVersion(): Promise<void> {
       if (selectedLoaderType.value === "fabric" && selectedFabricLoader.value) {
         await invoke("install_fabric_instance", {
           mcVersion: selectedVersion.value,
-          loaderVersion: selectedFabricLoader.value,
+          fabricVersion: selectedFabricLoader.value,
           customInstanceName: customInstanceName.value,
         });
       } else if (selectedLoaderType.value === "forge" && selectedForgeLoader.value) {
@@ -741,9 +771,9 @@ onUnmounted(() => {
     <div v-if="currentStep === 2" class="space-y-4">
       <div class="flex items-center gap-2 text-lg font-medium text-neutral-900 dark:text-white">
         <Puzzle class="w-5 h-5" />
-        模块化实例装配台
+        {{ t('install.modularTitle') }}
       </div>
-      <p class="text-sm text-muted-foreground">灵活组装你的 Mod 加载器和基础组件。系统会自动校验不兼容的组合。</p>
+      <p class="text-sm text-muted-foreground">{{ t('install.modularDesc') }}</p>
 
       <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <InstallCard
@@ -778,6 +808,7 @@ onUnmounted(() => {
         />
         <InstallCard
           title="OptiFine"
+          iconUrl="/optifine.png"
           :status="getCardStatus('OptiFine')"
           :version="selectedComponents.OptiFine || undefined"
           :conflictReason="getConflictReason('OptiFine')"
@@ -787,6 +818,7 @@ onUnmounted(() => {
         />
         <InstallCard
           title="Fabric API"
+          iconUrl="/fabric-api.png"
           :status="getCardStatus('Fabric API')"
           :version="selectedComponents['Fabric API'] || undefined"
           :conflictReason="getConflictReason('Fabric API')"
@@ -799,13 +831,13 @@ onUnmounted(() => {
       <!-- Active Configurator for selected card -->
       <div v-if="activeConfiguringComponent" class="mt-4 p-4 border rounded-lg bg-neutral-50 dark:bg-zinc-800/50 animate-in fade-in slide-in-from-top-2">
         <div class="flex items-center justify-between mb-3">
-          <label class="text-sm font-medium">请选择 {{ activeConfiguringComponent }} 版本</label>
+          <label class="text-sm font-medium">{{ activeConfiguringComponent === 'Fabric' ? t('install.selectFabric') : activeConfiguringComponent === 'Forge' ? t('install.selectForge') : t('install.selectNeoForge') }}</label>
         </div>
 
         <template v-if="activeConfiguringComponent === 'Fabric'">
-          <div v-if="isLoadingFabric" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> 加载中...</div>
+          <div v-if="isLoadingFabric" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> {{ t('install.loading') }}</div>
           <select v-else v-model="selectedComponents.Fabric" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm">
-            <option value="" disabled>请选择版本</option>
+            <option value="" disabled>{{ t('install.selectVersion') }}</option>
             <optgroup v-if="stableFabricLoaders.length" label="Stable">
               <option v-for="loader in stableFabricLoaders" :key="loader" :value="loader">{{ loader }}</option>
             </optgroup>
@@ -816,23 +848,23 @@ onUnmounted(() => {
         </template>
 
         <template v-else-if="activeConfiguringComponent === 'Forge'">
-          <div v-if="isLoadingForge" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> 加载中...</div>
+          <div v-if="isLoadingForge" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> {{ t('install.loading') }}</div>
           <select v-else v-model="selectedComponents.Forge" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm">
-            <option value="" disabled>请选择版本</option>
+            <option value="" disabled>{{ t('install.selectVersion') }}</option>
             <option v-for="loader in forgeLoaders" :key="loader.version" :value="loader.version">{{ loader.version }}</option>
           </select>
         </template>
 
         <template v-else-if="activeConfiguringComponent === 'NeoForge'">
-          <div v-if="isLoadingNeoForge" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> 加载中...</div>
+          <div v-if="isLoadingNeoForge" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> {{ t('install.loading') }}</div>
           <select v-else v-model="selectedComponents.NeoForge" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm">
-            <option value="" disabled>请选择版本</option>
+            <option value="" disabled>{{ t('install.selectVersion') }}</option>
             <option v-for="loader in neoForgeLoaders" :key="loader.version" :value="loader.version">{{ loader.version }}</option>
           </select>
         </template>
         
         <template v-else>
-          <div class="text-sm text-muted-foreground">该模组暂无需配置具体版本，将在生成实例后自动下载。</div>
+          <div class="text-sm text-muted-foreground">{{ t('install.noVersionNeeded') }}</div>
         </template>
       </div>
 

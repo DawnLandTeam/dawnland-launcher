@@ -576,7 +576,7 @@ async function launchAndConnect(server: ServerInfo) {
   if (server.authType === 'authlib') {
     const matchingAccount = accounts.value.find(a => a.accountType === 'authlib' && a.authlibUrl === server.authlibApi);
     if (!matchingAccount) {
-      showAlert(`此服务器需要 Authlib 账号进行验证（API：${server.authlibApi}）。请先在账号管理中添加对应的 Authlib 账号。`);
+      showAlert(t('servers.messages.authlibRequired', { api: server.authlibApi }));
       return;
     }
   }
@@ -952,11 +952,11 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
               @click="installClient(server)"
               :disabled="installingServerId === server.id"
               class="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-bold rounded-md hover:bg-primary/90 transition-all shadow-sm active:scale-95 disabled:opacity-50 whitespace-nowrap"
-              title="{{ $t('servers.actions.installClient') }}"
+              :title="$t('servers.actions.installClient')"
             >
               <Loader2 v-if="installingServerId === server.id" class="h-4 w-4 animate-spin" />
               <Download v-else class="h-4 w-4" />
-              {{ server.serverType === 'vanilla' ? '安装实例' : 'Install' }}
+              {{ server.serverType === 'vanilla' ? $t('servers.actions.installInstance') : $t('servers.actions.install') }}
             </button>
             <button 
               v-else
@@ -972,7 +972,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
               @click="openServerDetails(server)"
               class="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-200 dark:bg-zinc-700 text-neutral-900 dark:text-white text-sm font-medium rounded-md hover:bg-neutral-300 dark:hover:bg-zinc-600 transition-all shadow-sm active:scale-95 whitespace-nowrap"
             >
-              详情
+              {{ $t('servers.actions.details') }}
             </button>
           </div>
         </div>
@@ -1019,7 +1019,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
           
           <p class="text-xs text-muted-foreground mb-4">
             {{ $t('servers.publishDialog.stepOf', { step: publishStep, total: totalSteps }) }} 
-            {{ publishStep === 1 ? $t('servers.publishDialog.steps.basicInfo') : publishStep === 2 ? '详情与联系方式 (Details)' : publishStep === 3 ? $t('servers.publishDialog.steps.versionType') : publishStep === 4 ? $t('servers.publishDialog.steps.modpack') : $t('servers.publishDialog.steps.review') }}
+            {{ publishStep === 1 ? $t('servers.publishDialog.steps.basicInfo') : publishStep === 2 ? $t('servers.publishDialog.steps.details') : publishStep === 3 ? $t('servers.publishDialog.steps.versionType') : publishStep === 4 ? $t('servers.publishDialog.steps.modpack') : $t('servers.publishDialog.steps.review') }}
           </p>
 
           <div class="space-y-4">
@@ -1044,21 +1044,21 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
             <!-- Step 2: Additional Details -->
             <template v-if="publishStep === 2">
               <div class="space-y-1">
-                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">标签/徽标 (Tags) - 逗号分隔</label>
-                <input v-model="newServer.tags" type="text" placeholder="例如: 生存, 魔法, 科技" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.tags') }}</label>
+                <input v-model="newServer.tags" type="text" :placeholder="$t('servers.publishDialog.tagsPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
               </div>
               <div class="space-y-1">
-                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">服务器详情介绍 (Description - Markdown)</label>
-                <textarea v-model="newServer.description" placeholder="支持 Markdown 格式。详细介绍您的服务器..." rows="4" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 custom-scrollbar"></textarea>
+                <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.description') }}</label>
+                <textarea v-model="newServer.description" :placeholder="$t('servers.publishDialog.descPlaceholder')" rows="4" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 custom-scrollbar"></textarea>
               </div>
               <div class="flex gap-2">
                 <div class="flex-1 space-y-1">
-                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">交流群 (Community Group)</label>
-                  <input v-model="newServer.contactGroup" type="text" placeholder="例如: QQ群 12345678" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.contactGroup') }}</label>
+                  <input v-model="newServer.contactGroup" type="text" :placeholder="$t('servers.publishDialog.contactGroupPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
                 </div>
                 <div class="flex-1 space-y-1">
-                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">服主联系方式 (Owner Contact)</label>
-                  <input v-model="newServer.contactOwner" type="text" placeholder="例如: admin@example.com" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.contactOwner') }}</label>
+                  <input v-model="newServer.contactOwner" type="text" :placeholder="$t('servers.publishDialog.contactOwnerPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
                 </div>
               </div>
             </template>

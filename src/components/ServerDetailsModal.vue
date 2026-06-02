@@ -10,6 +10,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits(['update:open']);
+import { useI18n } from 'vue-i18n';
+const { t } = useI18n();
 
 const copiedIp = ref(false);
 
@@ -32,7 +34,7 @@ const tags = computed(() => {
 });
 
 const renderedDescription = computed(() => {
-  if (!props.server?.description) return '<p class="text-muted-foreground text-sm italic">暂无介绍 (No description provided)</p>';
+  if (!props.server?.description) return '<p class="text-muted-foreground text-sm italic">' + t('servers.details.noDescription') + '</p>';
   const rawHtml = marked(props.server.description, { breaks: true }) as string;
   return DOMPurify.sanitize(rawHtml);
 });
@@ -70,7 +72,7 @@ DOMPurify.setConfig({
                   MC {{ server?.version }}
                 </span>
                 <span class="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-semibold text-neutral-800 dark:bg-zinc-800 dark:text-neutral-300">
-                  {{ server?.serverType === 'vanilla' ? '原版 (Vanilla)' : server?.serverType === 'modded' ? '模组 (Modded)' : '自定义 (Custom)' }}
+                  {{ server?.serverType === 'vanilla' ? t('servers.details.vanilla') : server?.serverType === 'modded' ? t('servers.details.modded') : t('servers.details.custom', '自定义 (Custom)') }}
                 </span>
                 <span v-if="server?.loaderType" class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
                   {{ server.loaderType }}
@@ -97,7 +99,7 @@ DOMPurify.setConfig({
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- IP & Connection -->
             <div class="p-4 bg-neutral-50 dark:bg-zinc-800/50 rounded-xl border border-neutral-100 dark:border-zinc-800 flex flex-col justify-center">
-              <p class="text-sm font-medium text-neutral-500 dark:text-neutral-400 mb-1">连接地址 (Server Address)</p>
+              <p class="text-sm font-medium text-neutral-500 dark:text-neutral-400 mb-1">{{ t('servers.details.serverAddress') }}</p>
               <div class="flex items-center gap-2">
                 <code class="text-lg font-mono font-bold text-neutral-900 dark:text-white select-all">{{ server?.ip }}:{{ server?.port }}</code>
                 <button @click="copyIp" class="p-1.5 text-neutral-500 hover:text-primary dark:text-neutral-400 dark:hover:text-primary transition-colors rounded-md hover:bg-neutral-200 dark:hover:bg-zinc-700">
@@ -109,29 +111,29 @@ DOMPurify.setConfig({
 
             <!-- MOTD & Auth -->
             <div class="p-4 bg-neutral-50 dark:bg-zinc-800/50 rounded-xl border border-neutral-100 dark:border-zinc-800 flex flex-col justify-center">
-              <p class="text-sm font-medium text-neutral-500 dark:text-neutral-400 mb-1">MOTD & 验证 (Auth)</p>
+              <p class="text-sm font-medium text-neutral-500 dark:text-neutral-400 mb-1">{{ t('servers.details.auth') }}</p>
               <div class="text-neutral-900 dark:text-white font-medium truncate" :title="server?.motd">{{ server?.motd || '-' }}</div>
               <div class="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                验证方式: {{ server?.authType === 'microsoft' ? '正版验证 (Microsoft)' : server?.authType === 'offline' ? '离线 (Offline)' : '外置登录 (Authlib)' }}
+                {{ server?.authType === 'microsoft' ? t('servers.details.authMicrosoft') : server?.authType === 'offline' ? t('servers.details.authOffline', '验证方式: 离线 (Offline)') : t('servers.details.authAuthlib') }}
               </div>
             </div>
           </div>
 
           <!-- Contact Info -->
           <div v-if="server?.contactGroup || server?.contactOwner" class="p-4 bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-xl">
-            <h3 class="text-sm font-bold text-blue-900 dark:text-blue-300 mb-3 uppercase tracking-wider">联系方式 (Contact)</h3>
+            <h3 class="text-sm font-bold text-blue-900 dark:text-blue-300 mb-3 uppercase tracking-wider">{{ t('servers.details.contact') }}</h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div v-if="server?.contactGroup" class="flex items-start gap-3">
                 <MessageSquare class="w-5 h-5 text-blue-500 mt-0.5 shrink-0" />
                 <div class="min-w-0">
-                  <p class="text-sm font-medium text-neutral-900 dark:text-white">交流群 (Community Group)</p>
+                  <p class="text-sm font-medium text-neutral-900 dark:text-white">{{ t('servers.details.communityGroup') }}</p>
                   <p class="text-sm text-neutral-600 dark:text-neutral-400 select-all truncate">{{ server.contactGroup }}</p>
                 </div>
               </div>
               <div v-if="server?.contactOwner" class="flex items-start gap-3">
                 <Users class="w-5 h-5 text-blue-500 mt-0.5 shrink-0" />
                 <div class="min-w-0">
-                  <p class="text-sm font-medium text-neutral-900 dark:text-white">服主联系方式 (Owner Contact)</p>
+                  <p class="text-sm font-medium text-neutral-900 dark:text-white">{{ t('servers.details.ownerContact') }}</p>
                   <p class="text-sm text-neutral-600 dark:text-neutral-400 select-all truncate">{{ server.contactOwner }}</p>
                 </div>
               </div>
@@ -140,7 +142,7 @@ DOMPurify.setConfig({
 
           <!-- Description (Markdown Rendered) -->
           <div class="flex flex-col gap-2">
-            <h3 class="text-lg font-bold text-neutral-900 dark:text-white border-b border-neutral-200 dark:border-zinc-800 pb-2">服务器详情 (Description)</h3>
+            <h3 class="text-lg font-bold text-neutral-900 dark:text-white border-b border-neutral-200 dark:border-zinc-800 pb-2">{{ t('servers.details.description') }}</h3>
             <div class="prose dark:prose-invert max-w-none text-sm leading-relaxed" v-html="renderedDescription"></div>
           </div>
 
