@@ -609,15 +609,15 @@ function changeLanguage(lang: string) {
         <div class="mt-8 pt-6 border-t border-neutral-200 dark:border-zinc-800 w-full flex flex-col gap-3 max-w-md">
           <a href="https://github.com/DawnLandTeam/dawnland-launcher" target="_blank" class="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors group">
             <span class="text-sm font-medium">{{ $t('settings.about.github') }}</span>
-            <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">Visit Repository &rarr;</span>
+            <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">{{ $t('settings.about.visitRepo') }} &rarr;</span>
           </a>
           <a href="https://github.com/DawnLandTeam/dawnland-launcher/issues" target="_blank" class="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors group">
             <span class="text-sm font-medium">{{ $t('settings.about.reportBug') }}</span>
-            <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">Submit Issue &rarr;</span>
+            <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">{{ $t('settings.about.submitIssue') }} &rarr;</span>
           </a>
           <a href="https://github.com/DawnLandTeam/dawnland-launcher/issues/new" target="_blank" class="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors group">
             <span class="text-sm font-medium">{{ $t('settings.about.featureReq') }}</span>
-            <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">Suggest Feature &rarr;</span>
+            <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">{{ $t('settings.about.suggestFeature') }} &rarr;</span>
           </a>
           
           <button @click="checkForUpdates" :disabled="isCheckingUpdate" class="flex items-center justify-between p-3 rounded-lg border hover:bg-primary/10 hover:border-primary/30 transition-colors group text-left">

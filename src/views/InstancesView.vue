@@ -323,9 +323,9 @@ function loaderBadgeClass(loaderType: string): string {
         <Package class="h-10 w-10 text-muted-foreground" />
       </div>
       <div class="text-center space-y-1">
-        <h2 class="text-xl font-semibold">No instances yet</h2>
+        <h2 class="text-xl font-semibold">{{ $t('instances.noInstances') }}</h2>
         <p class="text-sm text-muted-foreground">
-          Install a Minecraft version to get started.
+          {{ $t('instances.noInstancesDesc') }}
         </p>
       </div>
       <div class="flex items-center gap-3">
@@ -334,14 +334,14 @@ function loaderBadgeClass(loaderType: string): string {
           class="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           <Plus class="h-4 w-4" />
-          Install Instance
+          {{ $t('instances.installInstance') }}
         </button>
         <button
           @click="router.push('/modpack-install')"
           class="flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
         >
           <Package class="h-4 w-4" />
-          Install Modpack
+          {{ $t('instances.installModpack') }}
         </button>
       </div>
     </div>
@@ -365,7 +365,7 @@ function loaderBadgeClass(loaderType: string): string {
             class="flex items-center gap-2 rounded-md bg-secondary px-3 py-1.5 text-sm font-medium text-secondary-foreground hover:bg-secondary/90 transition-colors"
           >
             <Package class="h-4 w-4" />
-            {{ $t('install.modpackTitle', 'Install Modpack') }}
+            {{ $t('instances.installModpack') }}
           </button>
           <button
             @click="showInstallModal = true"
@@ -436,7 +436,7 @@ function loaderBadgeClass(loaderType: string): string {
                 @click="openInstanceFolder(instance.id)"
               >
                 <Folder class="h-4 w-4" />
-                Open Folder
+                {{ $t('instances.openFolder') }}
               </DropdownMenuItem>
               <DropdownMenuItem
                 @click="updateModpack(instance)"
@@ -479,32 +479,32 @@ function loaderBadgeClass(loaderType: string): string {
 
     <!-- Instance Settings Modal -->
     <DialogContent :open="showSettingsModal" @update:open="showSettingsModal = $event" class="max-w-md">
-        <DialogTitle>Instance Settings</DialogTitle>
+        <DialogTitle>{{ $t('instances.settingsDialog.title') }}</DialogTitle>
         <DialogDescription>
           {{ settingsInstanceName }}
         </DialogDescription>
 
           <!-- Java Path -->
           <div class="space-y-2">
-            <label class="text-sm font-medium">Java Version</label>
+            <label class="text-sm font-medium">{{ $t('instances.settingsDialog.javaVersion') }}</label>
             <select
               v-model="settingsConfig.javaPath"
               class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
             >
-              <option value="">Default (Auto-detect)</option>
+              <option value="">{{ $t('instances.settingsDialog.defaultAuto') }}</option>
               <option v-for="java in installedJavas" :key="java.path" :value="java.path">
                 Java {{ java.majorVersion }} ({{ java.vendor }}) - {{ java.versionString }}
               </option>
             </select>
             <p class="text-xs text-muted-foreground">
-              MC 1.20.5+ requires Java 21. Leave Default to use the system default Java or recommended version. If your desired Java is not listed, you can add it in Settings > Java Management.
+              {{ $t('instances.settingsDialog.javaWarning') }}
             </p>
           </div>
 
           <!-- Max Memory -->
           <div class="space-y-2 mt-4">
             <div class="flex items-center justify-between">
-              <label class="text-sm font-medium">Max Memory (MB)</label>
+              <label class="text-sm font-medium">{{ $t('instances.settingsDialog.maxMemory') }}</label>
               <span class="text-sm font-mono text-primary"
                 >{{ settingsConfig.maxMemory }} MB</span
               >
@@ -519,18 +519,17 @@ function loaderBadgeClass(loaderType: string): string {
             />
             <div class="flex justify-between text-xs text-muted-foreground">
               <span>512 MB</span>
-              <span>System: {{ systemMemory.totalMb }} MB</span>
+              <span>{{ $t('instances.settingsDialog.systemMemory', { system: systemMemory.totalMb }) }}</span>
             </div>
             <p class="text-xs text-muted-foreground">
-              Recommended: {{ systemMemory.recommendedMaxMb }} MB (1/3 of
-              system RAM)
+              {{ $t('instances.settingsDialog.recommendedMemory', { recommended: systemMemory.recommendedMaxMb }) }}
             </p>
           </div>
 
           <!-- Extra JVM Args -->
           <div class="space-y-2 mt-4">
             <label class="text-sm font-medium"
-              >Extra JVM Arguments (advanced)</label
+              >{{ $t('instances.settingsDialog.jvmArgs') }}</label
             >
             <textarea
               v-model="settingsConfig.jvmArgsExtra"
@@ -541,17 +540,17 @@ function loaderBadgeClass(loaderType: string): string {
 
           <!-- Window Behavior -->
           <div class="space-y-2 mt-4">
-            <label class="text-sm font-medium">Window Behavior</label>
+            <label class="text-sm font-medium">{{ $t('instances.settingsDialog.windowBehavior') }}</label>
             <select
               v-model="settingsConfig.windowBehavior"
               class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
             >
-              <option value="keep">Keep visible (default)</option>
-              <option value="hide">Hide launcher</option>
-              <option value="minimize">Minimize to taskbar</option>
+              <option value="keep">{{ $t('instances.settingsDialog.keepVisible') }}</option>
+              <option value="hide">{{ $t('instances.settingsDialog.hideLauncher') }}</option>
+              <option value="minimize">{{ $t('instances.settingsDialog.minimizeTaskbar') }}</option>
             </select>
             <p class="text-xs text-muted-foreground">
-              Choose what happens to the launcher window when the game starts.
+              {{ $t('instances.settingsDialog.windowBehaviorDesc') }}
             </p>
           </div>
 
@@ -564,9 +563,9 @@ function loaderBadgeClass(loaderType: string): string {
               class="w-5 h-5 rounded border-gray-300 text-primary focus:ring-primary"
             />
             <label for="showGameLog" class="flex-1">
-              <span class="font-medium">Show Game Log on Launch</span>
+              <span class="font-medium">{{ $t('instances.settingsDialog.showGameLog') }}</span>
               <p class="text-sm text-muted-foreground">
-                Enable to automatically show the console log window when starting the instance.
+                {{ $t('instances.settingsDialog.showGameLogDesc') }}
               </p>
             </label>
           </div>
@@ -577,7 +576,7 @@ function loaderBadgeClass(loaderType: string): string {
               @click="showSettingsModal = false"
               class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
             >
-              Cancel
+              {{ $t('common.cancel', 'Cancel') }}
             </button>
             <button
               @click="saveSettings"
@@ -585,7 +584,7 @@ function loaderBadgeClass(loaderType: string): string {
               class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
             >
               <Save class="h-4 w-4" />
-              Save
+              {{ $t('common.save', 'Save') }}
             </button>
           </div>
       </DialogContent>
@@ -595,13 +594,12 @@ function loaderBadgeClass(loaderType: string): string {
       :open="showDeleteDialog"
       @update:open="showDeleteDialog = $event"
     >
-      <AlertDialogTitle class="text-xl font-semibold text-neutral-900 dark:text-white">Delete Instance?</AlertDialogTitle>
+      <AlertDialogTitle class="text-xl font-semibold text-neutral-900 dark:text-white">{{ $t('instances.settingsDialog.deleteTitle') }}</AlertDialogTitle>
       <AlertDialogDescription class="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-        Are you sure you want to delete
+        {{ $t('instances.settingsDialog.deleteDescPrefix') }}
         <strong class="text-neutral-900 dark:text-white">{{ deletingInstanceName }}</strong
-        >? This will remove all instance data including saves, mods, and
-        resource packs.
-        <span class="block mt-2 text-red-600 dark:text-red-500 font-medium">This action cannot be undone.</span>
+        >{{ $t('instances.settingsDialog.deleteDescSuffix') }}
+        <span class="block mt-2 text-red-600 dark:text-red-500 font-medium">{{ $t('instances.settingsDialog.deleteUndone') }}</span>
       </AlertDialogDescription>
       <div class="flex justify-end gap-3 mt-6">
         <button
@@ -609,7 +607,7 @@ function loaderBadgeClass(loaderType: string): string {
           class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
           :disabled="isDeletingInstance"
         >
-          Cancel
+          {{ $t('common.cancel', 'Cancel') }}
         </button>
         <button
           @click="deleteInstance"
@@ -618,7 +616,7 @@ function loaderBadgeClass(loaderType: string): string {
         >
           <Trash2 v-if="isDeletingInstance" class="h-4 w-4 animate-spin" />
           <Trash2 v-else class="h-4 w-4" />
-          Delete
+          {{ $t('instances.delete') }}
         </button>
       </div>
     </AlertDialog>
