@@ -36,3 +36,5 @@ open = "5"
 urlencoding = "2"
 sha1 = "0.10"
 craftping = { version = "0.7.0", features = ["async-tokio"] }
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.3.1"
