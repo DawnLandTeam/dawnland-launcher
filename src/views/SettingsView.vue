@@ -9,8 +9,24 @@ import { useRoute } from "vue-router";
 import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
 import UpdaterModal from "../components/UpdaterModal.vue";
+import { getVersion } from "@tauri-apps/api/app";
 
 const route = useRoute();
+
+// App version state
+const appVersion = ref('0.0.0');
+
+onMounted(async () => {
+  try {
+    appVersion.value = await getVersion();
+  } catch (err) {
+    console.error("Failed to get app version:", err);
+  }
+  await loadAuthlibServers();
+  await loadSystemMemory();
+  await scanLocalJavas();
+  await loadJavaDownloadPath();
+});
 
 interface SystemMemoryInfo {
   totalMb: number;
@@ -579,7 +595,7 @@ function changeLanguage(lang: string) {
         <div class="grid grid-cols-2 gap-4 w-full max-w-md text-left">
           <div class="p-4 rounded-lg bg-neutral-50 dark:bg-zinc-800/50 border border-neutral-100 dark:border-zinc-800">
             <h3 class="text-xs font-semibold text-muted-foreground uppercase mb-1">{{ $t('settings.about.version') }}</h3>
-            <p class="font-mono text-sm">v0.1.0-alpha</p>
+            <p class="font-mono text-sm">v{{ appVersion }}</p>
           </div>
           <div class="p-4 rounded-lg bg-neutral-50 dark:bg-zinc-800/50 border border-neutral-100 dark:border-zinc-800">
             <h3 class="text-xs font-semibold text-muted-foreground uppercase mb-1">{{ $t('settings.about.arch') }}</h3>
