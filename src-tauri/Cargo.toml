@@ -38,3 +38,5 @@ sha1 = "0.10"
 craftping = { version = "0.7.0", features = ["async-tokio"] }
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
+sha2 = "0.11.0"
+base64 = "0.22.1"

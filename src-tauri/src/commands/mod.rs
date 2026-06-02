@@ -102,3 +102,10 @@ pub async fn refresh_microsoft_token(account_id: String) -> Result<Account, Stri
     tracing::info!("Refreshing Microsoft token for account: {}", account_id);
     auth::refresh_microsoft_token(&account_id).await
 }
+
+/// Start seamless Microsoft OAuth 2.0 PKCE login flow.
+#[tauri::command]
+pub async fn login_microsoft_oauth() -> Result<Account, String> {
+    tracing::info!("Invoking seamless Microsoft OAuth login");
+    auth::login_microsoft_oauth().await
+}

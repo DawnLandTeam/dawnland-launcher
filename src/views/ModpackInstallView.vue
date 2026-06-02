@@ -271,7 +271,7 @@ const openVersionsModal = async (modpack: any) => {
 };
 
 const getVersionUpgradeStatus = (index: number) => {
-  if (!route.query.current_version) return { text: '安装', disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+  if (!route.query.current_version) return { text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
   
   const currentVersionIndex = modpackVersions.value.findIndex(v => {
     const cv = route.query.current_version as string;
@@ -281,12 +281,12 @@ const getVersionUpgradeStatus = (index: number) => {
   });
   
   if (currentVersionIndex === -1) {
-    return { text: '安装', disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+    return { text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
   }
   
-  if (index < currentVersionIndex) return { text: '升级', disabled: false, class: 'bg-blue-600 hover:bg-blue-700' };
-  if (index === currentVersionIndex) return { text: '重装', disabled: false, class: 'bg-amber-600 hover:bg-amber-700' };
-  return { text: '已过时', disabled: true, class: 'bg-gray-500' };
+  if (index < currentVersionIndex) return { text: t('modpacks.updateBtn', '升级'), disabled: false, class: 'bg-blue-600 hover:bg-blue-700' };
+  if (index === currentVersionIndex) return { text: t('modpacks.reinstallBtn', '重装'), disabled: false, class: 'bg-amber-600 hover:bg-amber-700' };
+  return { text: t('modpacks.outdatedBtn', '已过时'), disabled: true, class: 'bg-gray-500' };
 };
 
 const selectOnlineVersion = (version: any) => {
@@ -431,14 +431,14 @@ const formatDate = (dateString: string) => {
         class="px-6 py-2 rounded-md text-sm font-medium transition-all"
         :class="installMode === 'online' ? 'bg-white dark:bg-gray-800 text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
       >
-        在线搜索
+        {{ t('modpacks.searchOnline') }}
       </button>
       <button 
         @click="installMode = 'local'"
         class="px-6 py-2 rounded-md text-sm font-medium transition-all"
         :class="installMode === 'local' ? 'bg-white dark:bg-gray-800 text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
       >
-        本地上传
+        {{ t('modpacks.uploadLocal') }}
       </button>
     </div>
 
@@ -451,7 +451,7 @@ const formatDate = (dateString: string) => {
           <input 
             type="text"
             v-model="searchQuery" 
-            placeholder="搜索整合包名称 (例如: Fabulously Optimized)..." 
+            :placeholder="t('modpacks.searchPlaceholder')" 
             class="flex h-10 w-full rounded-md px-3 py-2 text-sm pl-10 bg-white dark:bg-zinc-900 border border-neutral-300 dark:border-zinc-700 text-neutral-900 dark:text-zinc-100 placeholder:text-neutral-500 dark:placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
             @keydown.enter="searchModpacks"
           />
@@ -473,7 +473,7 @@ const formatDate = (dateString: string) => {
         >
           <Loader2 v-if="isSearching" class="h-4 w-4 animate-spin mr-2" />
           <Search v-else class="h-4 w-4 mr-2" />
-          搜索
+          {{ t('modpacks.searchBtn') }}
         </button>
       </div>
 
@@ -481,7 +481,7 @@ const formatDate = (dateString: string) => {
       <div class="flex-1 overflow-y-auto pr-2 pb-4">
         <div v-if="modpacks.length === 0 && !isSearching" class="h-full flex flex-col items-center justify-center text-neutral-500 dark:text-zinc-400">
           <Package class="h-16 w-16 mb-4 opacity-20" />
-          <p>输入关键词开始搜索整合包</p>
+          <p>{{ t('modpacks.searchHint') }}</p>
         </div>
         
         <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -673,13 +673,13 @@ const formatDate = (dateString: string) => {
           <div class="flex items-center gap-4 bg-secondary/30 p-4 rounded-xl border border-white/5">
             <div class="flex-1">
               <label class="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
-                将要创建的实例名称
+                {{ t('modpacks.instanceNamePrefix') }}
               </label>
               <input 
                 type="text"
                 v-model="instanceNameInput" 
                 :disabled="!!route.query.update_id"
-                placeholder="输入安装后的游戏实例名称..." 
+                :placeholder="t('install.instanceNamePlaceholder', '输入安装后的游戏实例名称...')" 
                 class="flex h-10 w-full rounded-md border border-input px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-medium bg-background" 
               />
             </div>
@@ -688,23 +688,23 @@ const formatDate = (dateString: string) => {
           <div class="flex-1 overflow-hidden border rounded-xl bg-background/50 flex flex-col">
             <!-- Table Header -->
             <div class="grid grid-cols-12 gap-4 p-3 bg-secondary/50 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b shrink-0">
-              <div class="col-span-4 pl-2">整合包版本</div>
-              <div class="col-span-2">游戏版本</div>
-              <div class="col-span-2">加载器</div>
-              <div class="col-span-2">发布日期</div>
-              <div class="col-span-2 text-right pr-2">操作</div>
+              <div class="col-span-4 pl-2">{{ t('modpacks.packVersion') }}</div>
+              <div class="col-span-2">{{ t('modpacks.gameVersion') }}</div>
+              <div class="col-span-2">{{ t('modpacks.loader') }}</div>
+              <div class="col-span-2">{{ t('modpacks.publishDate') }}</div>
+              <div class="col-span-2 text-right pr-2">{{ t('modpacks.actions') }}</div>
             </div>
             
             <!-- Table Body -->
             <div class="overflow-y-auto flex-1 p-2 space-y-1 relative min-h-[200px]">
               <div v-if="isFetchingVersions" class="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm z-10">
                 <Loader2 class="h-8 w-8 animate-spin text-emerald-500 mb-4" />
-                <p class="text-sm text-muted-foreground font-medium animate-pulse">正在获取版本列表...</p>
+                <p class="text-sm text-muted-foreground font-medium animate-pulse">{{ t('install.loading', '加载中...') }}</p>
               </div>
               
               <div v-else-if="modpackVersions.length === 0" class="flex flex-col items-center justify-center h-full text-muted-foreground opacity-60">
                 <Package class="h-12 w-12 mb-3" />
-                <p>该整合包暂无可用版本</p>
+                <p>{{ t('modpacks.noVersions', '该整合包暂无可用版本') }}</p>
               </div>
 
               <div 
@@ -714,8 +714,8 @@ const formatDate = (dateString: string) => {
               >
                 <div class="col-span-4 font-medium pl-2 flex items-center gap-2 line-clamp-1" :title="version.name">
                   <span class="truncate">{{ version.name }}</span>
-                  <span v-if="getVersionUpgradeStatus(index).text === '重装'" class="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                    当前版本
+                  <span v-if="getVersionUpgradeStatus(index).text === t('modpacks.reinstallBtn', '重装')" class="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                    {{ t('install.currentVersion', '当前版本') }}
                   </span>
                 </div>
                 <div class="col-span-2">

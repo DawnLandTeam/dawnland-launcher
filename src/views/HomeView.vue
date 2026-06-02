@@ -20,7 +20,7 @@ import {
 } from "@lucide/vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
-
+import { useI18n } from "vue-i18n";
 // Types
 interface InstanceItem {
   id: string;
@@ -60,6 +60,7 @@ const route = useRoute();
 
 // State
 const installedInstances = ref<InstanceItem[]>([]);
+const { t } = useI18n();
 const accounts = ref<Account[]>([]);
 const selectedInstanceId = ref<string>("");
 const selectedAccountId = ref<string>("");
@@ -290,7 +291,7 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
     if (matchingInstance) {
       selectedInstanceId.value = matchingInstance.id;
     } else {
-      alert(`没有找到匹配的实例 (No installed instance found for server ${serverName || 'Unknown'}). 请先安装它。`);
+      alert(t('home.noInstanceFound', { name: serverName || 'Unknown' }));
       router.replace({ query: {} });
       return;
     }
@@ -315,7 +316,7 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
     if (matchingAccount) {
       selectedAccountId.value = matchingAccount.id;
     } else {
-      alert(`没有找到可用账号 (No account found). 请在设置中添加账号。`);
+      alert(t('home.noAccountFound'));
       router.replace({ query: {} });
       return;
     }
@@ -334,7 +335,7 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
     } catch (e) {
       console.error("Failed to launch auto instance:", e);
       launchingInstances.value.delete(selectedInstanceId.value);
-      alert(`启动失败 (Failed to launch): ${e}`);
+      alert(t('home.launchFailed', { error: e }));
     }
     
     // Clean up query
@@ -375,8 +376,8 @@ async function loadAccounts() {
 async function handlePrimaryAction() {
   if (isRunning.value) {
     const confirmed = await confirm(
-      "你确定要强制结束正在运行的游戏进程吗？",
-      { title: "强制停止游戏", kind: "warning" }
+      t('home.stopGameConfirm'),
+      { title: t('home.stopGameConfirmTitle'), kind: "warning" }
     );
     if (confirmed) {
       try {
@@ -384,7 +385,7 @@ async function handlePrimaryAction() {
         intentionallyKilledInstances.value.add(selectedInstanceId.value);
       } catch (e) {
         console.error("Failed to kill instance:", e);
-        alert(`停止游戏失败: ${e}`);
+        alert(t('home.stopGameFailed', { error: e }));
       }
     }
     return;
@@ -565,7 +566,7 @@ function loaderBadgeClass(loaderType: string): string {
                     <div class="flex items-center justify-center w-4 h-4 rounded-full bg-primary/10 shrink-0">
                       <Plus class="h-3 w-3 text-primary" />
                     </div>
-                    <span class="font-medium text-sm">添加新账号</span>
+                    <span class="font-medium text-sm">{{ $t('home.addAccount') }}</span>
                   </router-link>
                 </div>
               </DropdownMenu>
@@ -636,17 +637,17 @@ function loaderBadgeClass(loaderType: string): string {
           <div class="relative z-10 w-full max-w-md bg-white dark:bg-zinc-900 border rounded-2xl p-6 shadow-2xl space-y-4 pointer-events-auto">
             <div class="flex items-center gap-3">
               <Loader2 class="h-6 w-6 animate-spin text-primary" />
-              <h3 class="text-xl font-bold">正在校验与修复 Mod...</h3>
+              <h3 class="text-xl font-bold">{{ $t('home.repairing') }}</h3>
             </div>
             
             <p class="text-sm text-muted-foreground">
-              检测到 {{ repairTotalFiles }} 个文件缺失或损坏，正在自动重新下载。
+              {{ $t('home.repairFound', { total: repairTotalFiles }) }}
             </p>
 
             <!-- Progress Bar -->
             <div class="space-y-2">
               <div class="flex justify-between text-xs font-medium">
-                <span>{{ repairCompletedFiles }} / {{ repairTotalFiles }} 文件</span>
+                <span>{{ $t('home.repairProgress', { completed: repairCompletedFiles, total: repairTotalFiles }) }}</span>
                 <span>{{ (repairDownloadSpeed / 1024 / 1024).toFixed(2) }} MB/s</span>
               </div>
               <div class="h-2 w-full overflow-hidden rounded-full bg-secondary">

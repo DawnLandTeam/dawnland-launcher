@@ -20,7 +20,18 @@
     "launching": "启动中...",
     "gameOutput": "游戏输出日志",
     "waitingOutput": "等待游戏输出...",
-    "marquee": "欢迎使用 Dawnland 启动器 v1.0.0 · 全新：自动 Java 管理"
+    "marquee": "欢迎使用 Dawnland 启动器 v1.0.0 · 全新：自动 Java 管理",
+    "noInstanceFound": "没有找到匹配的实例 (No installed instance found for server {name}). 请先安装它。",
+    "noAccountFound": "没有找到可用账号 (No account found). 请在设置中添加账号。",
+    "launchFailed": "启动失败 (Failed to launch): {error}",
+    "stopGame": "停止运行",
+    "stopGameConfirmTitle": "强制停止游戏",
+    "stopGameConfirm": "你确定要强制结束正在运行的游戏进程吗？",
+    "stopGameFailed": "停止游戏失败: {error}",
+    "addAccount": "添加新账号",
+    "repairing": "正在校验与修复 Mod...",
+    "repairFound": "检测到 {total} 个文件缺失或损坏，正在自动重新下载。",
+    "repairProgress": "{completed} / {total} 文件"
   },
   "instances": {
     "title": "实例",
@@ -91,7 +102,9 @@
     "actions": {
       "installClient": "通过整合包安装客户端",
       "install": "安装",
-      "copyIp": "复制 IP"
+      "copyIp": "复制 IP",
+      "installInstance": "安装实例",
+      "details": "详情"
     },
     "publishDialog": {
       "stepOf": "步骤 {step} / {total}:",
@@ -99,7 +112,8 @@
         "basicInfo": "基本信息",
         "versionType": "版本与类型",
         "modpack": "整合包 (可选)",
-        "review": "检查并提交"
+        "review": "检查并提交",
+        "details": "详情与联系方式 (Details)"
       },
       "serverName": "服务器名称",
       "serverNamePlaceholder": "我的超酷服务器",
@@ -133,14 +147,36 @@
       "back": "上一步",
       "next": "下一步",
       "submitting": "正在提交...",
-      "submit": "提交服务器"
+      "submit": "提交服务器",
+      "tags": "标签/徽标 (Tags) - 逗号分隔",
+      "tagsPlaceholder": "例如: 生存, 魔法, 科技",
+      "description": "服务器详情介绍 (Description - Markdown)",
+      "descPlaceholder": "支持 Markdown 格式。详细介绍您的服务器...",
+      "contactGroup": "交流群 (Community Group)",
+      "contactGroupPlaceholder": "例如: QQ群 12345678",
+      "contactOwner": "服主联系方式 (Owner Contact)",
+      "contactOwnerPlaceholder": "例如: admin@example.com"
     },
     "messages": {
       "submitted": "服务器已提交审核！通过后即可显示。",
       "enterInstanceName": "请输入新实例的名称：",
       "installSuccess": "整合包已成功安装至：\n{path}",
       "installFailed": "整合包安装失败：{error}",
-      "noModpack": "此服务器没有可用的整合包"
+      "noModpack": "此服务器没有可用的整合包",
+      "authlibRequired": "此服务器需要 Authlib 账号进行验证（API：{api}）。请先在账号管理中添加对应的 Authlib 账号。"
+    },
+    "details": {
+      "vanilla": "原版 (Vanilla)",
+      "serverAddress": "连接地址 (Server Address)",
+      "auth": "MOTD & 验证 (Auth)",
+      "authMicrosoft": "验证方式: 正版验证 (Microsoft)",
+      "contact": "联系方式 (Contact)",
+      "communityGroup": "交流群 (Community Group)",
+      "ownerContact": "服主联系方式 (Owner Contact)",
+      "description": "服务器详情 (Description)",
+      "modded": "模组 (Modded)",
+      "noDescription": "暂无介绍 (No description provided)",
+      "authAuthlib": "验证方式: 外置登录 (Authlib)"
     }
   },
   "accounts": {
@@ -168,7 +204,10 @@
     "deleteTitle": "删除账号？",
     "deleteUndone": "此操作无法撤销",
     "deleteConfirm": "您确定要删除账号 <strong>{name}</strong> 吗？",
-    "delete": "删除"
+    "delete": "删除",
+    "noAuthlibServers": "暂无已添加的认证服务器，\n请先前往设置页面进行添加。",
+    "authlibTab": "外置登录",
+    "goToSettings": "前往设置管理"
   },
   "settings": {
     "title": "设置",
@@ -207,11 +246,25 @@
       "github": "开源代码库 & GitHub",
       "reportBug": "报告 Bug",
       "featureReq": "提交功能建议",
+      "checkUpdates": "检查更新",
+      "upToDate": "当前已是最新版本！",
+      "updateFailed": "检查更新失败: ",
       "footer": "由 Dawnland Team 用 ❤️ 制作。并非 Minecraft 官方产品。"
+    },
+    "authlib": {
+      "tab": "外置登录",
+      "title": "认证服务器管理",
+      "addServer": "添加认证服务器 (API URL)",
+      "addServerPlaceholder": "例如: https://skin.dawnland.cn/api/yggdrasil",
+      "addBtn": "添加",
+      "addedServers": "已添加的服务器",
+      "noServers": "暂无已添加的认证服务器。"
     }
   },
   "install": {
     "title": "安装新实例",
+    "conflict": "与 {component} 不兼容",
+    "requirement": "需要先安装 {component}",
     "subtitle": "渐进式安装向导",
     "step1": "1",
     "step2": "2",
@@ -219,7 +272,7 @@
     "step1Title": "选择原版 Minecraft 版本",
     "mcVersion": "Minecraft 版本",
     "refresh": "刷新",
-    "selectVersion": "请选择一个版本...",
+    "selectVersion": "请选择版本",
     "releases": "正式版",
     "snapshots": "快照版",
     "other": "其他",
@@ -235,7 +288,7 @@
     "unstable": "测试版",
     "latest": "最新版本",
     "forgeVersion": "Forge 版本",
-    "selectForge": "请选择 Forge 版本...",
+    "selectForge": "请选择 Forge 版本",
     "availableVersions": "可用版本",
     "neoforgeVersion": "NeoForge 版本",
     "selectNeoforge": "请选择 NeoForge 版本...",
@@ -260,7 +313,14 @@
       "installingBase": "正在安装基础 Minecraft...",
       "downloadingForge": "正在下载 Forge 安装器...",
       "runningProcessors": "正在运行 Forge 处理器（这可能需要一些时间）..."
-    }
+    },
+    "modularTitle": "模块化实例装配台",
+    "modularDesc": "灵活组装你的 Mod 加载器和基础组件。系统会自动校验不兼容的组合。",
+    "uninstalled": "不安装",
+    "selectFabric": "请选择 Fabric 版本",
+    "selectNeoForge": "请选择 NeoForge 版本",
+    "loading": "加载中...",
+    "noVersionNeeded": "该模组暂无需配置具体版本，将在生成实例后自动下载。"
   },
   "mods": {
     "title": "探索 Mod",
@@ -302,11 +362,40 @@
     "exitCode": "退出代码",
     "viewLog": "查看日志",
     "copy": "复制",
+    "copyLogs": "复制日志",
+    "copied": "已复制！",
     "close": "关闭"
+  },
+  "updater": {
+    "title": "发现新版本",
+    "releaseNotes": "更新日志",
+    "noNotes": "暂无更新说明。",
+    "preparingRestart": "准备重启...",
+    "downloading": "正在下载更新...",
+    "unknownSize": "未知",
+    "updateFailed": "更新失败",
+    "remindLater": "稍后再说",
+    "restarting": "正在重启...",
+    "updating": "更新中",
+    "updateNow": "立即更新"
   },
   "titlebar": {
     "minimize": "最小化",
     "maximize": "最大化",
     "close": "关闭"
+  },
+  "modpacks": {
+    "searchPlaceholder": "搜索整合包名称...",
+    "searchOnline": "在线搜索",
+    "uploadLocal": "本地上传",
+    "searchBtn": "搜索",
+    "searchHint": "输入关键词开始搜索整合包",
+    "instanceNamePrefix": "将要创建的实例名称",
+    "packVersion": "整合包版本",
+    "gameVersion": "游戏版本",
+    "loader": "加载器",
+    "publishDate": "发布日期",
+    "actions": "操作",
+    "installBtn": "安装"
   }
 }
