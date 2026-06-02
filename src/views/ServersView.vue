@@ -715,7 +715,8 @@ async function installClient(server: ServerInfo) {
     queryParams.version_id = server.packVersionId;
   } else if (server.packFileName) {
     // Local zip pack
-    queryParams.online_url = `http://localhost:3030/api/servers/${server.id}/pack`;
+    const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
+    queryParams.online_url = `${backendUrl}/api/servers/${server.id}/pack`;
     queryParams.pack_file_name = server.packFileName;
   }
   
