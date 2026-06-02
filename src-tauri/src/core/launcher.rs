@@ -1431,15 +1431,10 @@ pub async fn launch_instance(
             tracing::info!("Java version check output: {}", stderr_output.lines().next().unwrap_or("unknown"));
             
             // Try to extract major version from output like "openjdk version \"21.0.8\""
-            if let Some(line) = stderr_output.lines().next() {
-                if let Some(version_str) = line.split('"').nth(1) {
-                    if let Some(major_str) = version_str.split('.').next() {
-                        if let Ok(major) = major_str.parse::<u32>() {
-                            java_major_version = major;
-                            tracing::info!("Detected Java Major Version: {}", java_major_version);
-                        }
-                    }
-                }
+            let major_version = crate::core::java::extract_major_version(&stderr_output);
+            if major_version > 0 {
+                java_major_version = major_version;
+                tracing::info!("Detected Java Major Version: {}", java_major_version);
             }
         }
         Ok(output) => {
@@ -1458,7 +1453,13 @@ pub async fn launch_instance(
     }
 
     // Validate Java version compatibility
-    let mc_version_for_check = version_meta.inherits_from.as_ref().unwrap_or(&version_meta.id);
+    // Use asset_index.id if available (e.g. "1.20", "1.16") to better guess MC version for custom pack names
+    let mc_version_for_check = if let Some(asset_index) = &version_meta.asset_index {
+        &asset_index.id
+    } else {
+        version_meta.inherits_from.as_ref().unwrap_or(&version_meta.id)
+    };
+    
     let required_java = crate::core::java::get_recommended_java(mc_version_for_check);
     if java_major_version < required_java {
         return Err(format!(
