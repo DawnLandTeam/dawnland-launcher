@@ -5,7 +5,7 @@ use super::modrinth::{UnifiedModProject, UnifiedModFile, OnlineModpackVersion};
 /// Get the web backend URL from environment or use default.
 fn get_web_backend_url() -> String {
     option_env!("WEB_BACKEND_URL")
-        .unwrap_or("http://localhost:8080")
+        .unwrap_or("http://localhost:3030")
         .to_string()
 }
 

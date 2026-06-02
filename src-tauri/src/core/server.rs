@@ -7,7 +7,7 @@ use tokio::task;
 /// Get the web backend URL from environment or use default.
 fn get_web_backend_url() -> String {
     option_env!("WEB_BACKEND_URL")
-        .unwrap_or("http://localhost:8080")
+        .unwrap_or("http://localhost:3030")
         .to_string()
 }
 
@@ -524,9 +524,10 @@ pub async fn install_server_modpack(
     }
 
     // Get the instances directory path
-    let app_data_dir = dirs::data_local_dir()
-        .ok_or_else(|| "Could not find app data directory".to_string())?;
-    let instances_dir = app_data_dir.join("Dawnland Launcher").join("instances");
+    let base = std::env::current_exe()
+        .map(|p| p.parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let instances_dir = base.join(".dawnland").join("instances");
     
     // Create the instance directory
     let instance_dir = instances_dir.join(&instance_name);

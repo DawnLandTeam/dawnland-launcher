@@ -15,7 +15,8 @@ import {
   MonitorCheck,
   WifiOff,
   Square,
-  Globe
+  Globe,
+  Plus
 } from "@lucide/vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
@@ -557,6 +558,15 @@ function loaderBadgeClass(loaderType: string): string {
                       {{ account.accountType === 'microsoft' ? $t('accounts.microsoft') : (account.accountType === 'authlib' ? $t('accounts.authlib') : $t('accounts.offline')) }}
                     </span>
                   </DropdownMenuItem>
+
+                  <div v-if="accounts.length > 0" class="h-px bg-border my-1 mx-2"></div>
+                  
+                  <router-link to="/accounts" class="flex items-center gap-2 w-full p-2 rounded-lg cursor-pointer hover:bg-muted text-primary transition-colors">
+                    <div class="flex items-center justify-center w-4 h-4 rounded-full bg-primary/10 shrink-0">
+                      <Plus class="h-3 w-3 text-primary" />
+                    </div>
+                    <span class="font-medium text-sm">添加新账号</span>
+                  </router-link>
                 </div>
               </DropdownMenu>
             </div>

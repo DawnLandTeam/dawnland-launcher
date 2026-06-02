@@ -715,7 +715,7 @@ async function installClient(server: ServerInfo) {
     queryParams.version_id = server.packVersionId;
   } else if (server.packFileName) {
     // Local zip pack
-    queryParams.online_url = `http://localhost:8080/api/servers/${server.id}/pack`;
+    queryParams.online_url = `http://localhost:3030/api/servers/${server.id}/pack`;
     queryParams.pack_file_name = server.packFileName;
   }
   

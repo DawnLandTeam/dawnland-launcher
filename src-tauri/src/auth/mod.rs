@@ -49,10 +49,10 @@ pub struct Account {
 
 /// Get the accounts file path.
 fn accounts_file_path() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .ok_or_else(|| "Could not determine local data directory".to_string())?;
-    Ok(base.join("dawnland").join("accounts.json"))
+    let base = std::env::current_exe()
+        .map(|p| p.parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| PathBuf::from("."));
+    Ok(base.join(".dawnland").join("accounts.json"))
 }
 
 /// Load all accounts from disk.
