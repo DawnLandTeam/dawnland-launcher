@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { 
   User, Trash2, Plus, UserPlus, Loader2, WifiOff, Globe, MonitorCheck
 } from "@lucide/vue";
 import { DialogContent, DialogTitle } from "../components/ui/dialog";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import QrcodeVue from 'qrcode.vue';
 
@@ -66,6 +66,9 @@ const showDeviceCodeFlow = ref(false);
 
 // Modal state
 const showAddAccountModal = ref(false);
+const router = useRouter();
+const route = useRoute();
+
 const selectedAccountType = ref<AccountType>("microsoft");
 const showDeleteDialog = ref(false);
 const deletingAccountId = ref("");
@@ -83,9 +86,11 @@ async function loadAccounts(): Promise<void> {
 }
 
 // Open add account modal
-function openAddAccountModal(): void {
+function openAddAccountModal(type?: AccountType): void {
   showAddAccountModal.value = true;
-  selectedAccountType.value = "microsoft";
+  if (type) {
+    selectedAccountType.value = type;
+  }
   newUsername.value = "";
   loginError.value = null;
   microsoftLoginData.value = null;
@@ -296,6 +301,37 @@ function isAuthlibAccount(account: Account): boolean {
 onMounted(() => {
   loadAccounts();
 });
+
+watch(
+  () => route.query.addAuthlib,
+  async (newVal) => {
+    if (newVal) {
+      const url = newVal as string;
+      
+      if (authlibServers.value.length === 0) {
+        await loadAuthlibServers();
+      }
+      
+      const exists = authlibServers.value.some(s => s.url === url);
+      if (!exists) {
+        try {
+          await invoke("add_authlib_server", { url });
+          await loadAuthlibServers();
+        } catch (err) {
+          console.error("Failed to auto-add authlib server:", err);
+        }
+      }
+
+      selectedAccountType.value = "authlib";
+      authlibUrl.value = url;
+      openAddAccountModal("authlib");
+      
+      // Clean up the query so it doesn't trigger again on subsequent visits
+      router.replace({ query: { ...route.query, addAuthlib: undefined } });
+    }
+  },
+  { immediate: true }
+);
 </script>
 
 <template>
@@ -311,7 +347,7 @@ onMounted(() => {
       <h2 class="text-lg font-semibold text-neutral-900 dark:text-white">{{ $t('accounts.saved', { count: accounts?.length || 0 }) }}</h2>
       <button
         class="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-        @click="selectedAccountType = 'offline'; openAddAccountModal()"
+        @click="openAddAccountModal('microsoft')"
       >
         <Plus :size="16" />
         {{ $t('accounts.add') }}
