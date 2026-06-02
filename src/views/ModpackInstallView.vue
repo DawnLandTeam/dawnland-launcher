@@ -3,6 +3,7 @@ import { ref, computed, nextTick, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
@@ -308,11 +309,11 @@ const selectOnlineVersion = (version: any) => {
 
 const selectZip = async () => {
   try {
-    const selected = await invoke('dialog_open', {
+    const selected = await open({
       filters: [{ name: "Modpack Archives", extensions: ["zip", "mrpack"] }],
-    }) as string | null;
+    });
     
-    if (selected) {
+    if (selected && typeof selected === 'string') {
       zipPath.value = selected;
       
       // Auto-extract name if not set
@@ -575,9 +576,9 @@ const formatDate = (dateString: string) => {
           <div v-if="isUpdate" class="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/50 rounded-lg flex items-start gap-3">
             <div class="mt-0.5 text-yellow-600 dark:text-yellow-400 font-bold">!</div>
             <div>
-              <h4 class="text-sm font-semibold text-yellow-800 dark:text-yellow-300">Update Notice</h4>
+              <h4 class="text-sm font-semibold text-yellow-800 dark:text-yellow-300">{{ t('install.updateNoticeTitle', 'Update Notice') }}</h4>
               <p class="text-sm text-yellow-700 dark:text-yellow-400/80 mt-1">
-                Updating will automatically clean up outdated modpack mods and apply the new ones. Don't worry, your manually installed mods will be preserved.
+                {{ t('install.updateNoticeDesc', 'Updating will automatically clean up outdated modpack mods and apply the new ones. Don\'t worry, your manually installed mods will be preserved.') }}
               </p>
             </div>
           </div>
