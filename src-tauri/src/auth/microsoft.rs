@@ -582,6 +582,8 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
 }
 
 /// Start Microsoft OAuth 2.0 PKCE flow
+static OAUTH_LISTENER: tokio::sync::OnceCell<tokio::net::TcpListener> = tokio::sync::OnceCell::const_new();
+
 pub async fn login_microsoft_oauth() -> Result<Account, String> {
     use sha2::{Sha256, Digest};
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -590,7 +592,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
 
     tracing::info!("Starting Microsoft OAuth login flow");
 
-    let client_id = "6a3728d6-27a3-4180-99bb-479895b8f88e";
+    let client_id = "780ab3ca-a1a0-4830-ac98-92a595e85a13";
     let redirect_uri = "http://localhost:23333/auth-callback";
     
     // 1. Generate state and code verifier
@@ -613,8 +615,10 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
     );
 
     // 4. Start local HTTP server
-    let listener = TcpListener::bind("127.0.0.1:23333").await
-        .map_err(|e| format!("Failed to bind local server on port 23333: {}", e))?;
+    // Reuse the listener so multiple clicks don't cause port binding errors
+    let listener = OAUTH_LISTENER.get_or_try_init(|| async {
+        tokio::net::TcpListener::bind("127.0.0.1:23333").await
+    }).await.map_err(|e| format!("Failed to bind local server on port 23333: {}", e))?;
 
     // 5. Open browser
     open::that(auth_url).map_err(|e| format!("Failed to open browser: {}", e))?;
@@ -639,9 +643,9 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
                                     let kv: Vec<&str> = param.split('=').collect();
                                     if kv.len() == 2 {
                                         if kv[0] == "code" {
-                                            code = kv[1].to_string();
+                                            code = urlencoding::decode(kv[1]).map(|c| c.into_owned()).unwrap_or_else(|_| kv[1].to_string());
                                         } else if kv[0] == "state" {
-                                            returned_state = kv[1].to_string();
+                                            returned_state = urlencoding::decode(kv[1]).map(|c| c.into_owned()).unwrap_or_else(|_| kv[1].to_string());
                                         }
                                     }
                                 }
@@ -684,6 +688,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
     ];
 
     let response = client.post(token_url)
+        .header("Origin", "http://localhost:23333")
         .form(&params)
         .send()
         .await

@@ -253,7 +253,7 @@ fn extract_version_string(output: &str) -> String {
 }
 
 /// Extract major version number.
-fn extract_major_version(output: &str) -> u32 {
+pub fn extract_major_version(output: &str) -> u32 {
     for line in output.lines() {
         if line.contains("version") {
             // Check for "1.8.0" format (Java 8)
@@ -472,21 +472,33 @@ pub fn get_recommended_java(mc_version: &str) -> u32 {
     // MC 1.17+ requires Java 17+
     // MC 1.20.5+ requires Java 21
     let version_parts: Vec<&str> = mc_version.split('.').collect();
-    if version_parts.len() >= 2 {
-        let major: u32 = version_parts[1].parse().unwrap_or(0);
-        let minor: u32 = if version_parts.len() >= 3 { version_parts[2].parse().unwrap_or(0) } else { 0 };
-        
-        if major > 20 || (major == 20 && minor >= 5) {
-            // 1.20.5+ requires Java 21
-            return 21;
-        } else if major >= 17 {
-            // 1.17.x - 1.20.4 requires Java 17
-            return 17;
-        } else if major >= 8 {
-            // 1.8.x - 1.16.x requires Java 8
-            return 8;
-        }
+    
+    // Determine if the version starts with "1." (classic format) or uses a new format (e.g. "26.1.2")
+    let is_classic = version_parts.get(0) == Some(&"1");
+    
+    let major: u32 = if is_classic {
+        version_parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0)
+    } else {
+        version_parts.get(0).and_then(|v| v.parse().ok()).unwrap_or(0)
+    };
+    
+    let minor: u32 = if is_classic {
+        version_parts.get(2).and_then(|v| v.parse().ok()).unwrap_or(0)
+    } else {
+        version_parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0)
+    };
+    
+    if major > 20 || (major == 20 && minor >= 5) {
+        // 1.20.5+ (or 21+) requires Java 21
+        return 21;
+    } else if major >= 17 {
+        // 1.17.x - 1.20.4 requires Java 17
+        return 17;
+    } else if major >= 8 {
+        // 1.8.x - 1.16.x requires Java 8
+        return 8;
     }
+    
     // Default to Java 8 for older versions
     8
 }
