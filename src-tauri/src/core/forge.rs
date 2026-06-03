@@ -911,7 +911,7 @@ pub async fn install_forge_instance(
         }
     }
 
-    let mut child = match tokio::process::Command::new(&java_exec)
+    let mut child = match crate::core::utils::create_hidden_command(&java_exec)
         .arg("-jar")
         .arg(&installer_path)
         .arg("--installClient")
