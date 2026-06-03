@@ -104,7 +104,7 @@ const repairProgressPercentage = computed(() => {
 });
 
 // ---------------------------------------------------------------------------
-const announcementText = ref("");
+const announcements = ref<string[]>([]);
 
 // Computed
 // ---------------------------------------------------------------------------
@@ -155,8 +155,8 @@ onMounted(async () => {
     const res = await fetch(`${backendUrl}/api/launcher/announcement`);
     if (res.ok) {
       const data = await res.json();
-      if (data.text) {
-        announcementText.value = data.text;
+      if (data.announcements && data.announcements.length > 0) {
+        announcements.value = data.announcements;
       }
     }
   } catch (err) {
@@ -510,13 +510,23 @@ function loaderBadgeClass(loaderType: string): string {
 
     <!-- Marquee Notice Bar -->
     <div class="relative z-10 w-full overflow-hidden bg-gradient-to-r from-blue-600/80 via-purple-600/80 to-pink-600/80 py-2 backdrop-blur-sm border-b border-white/10 shadow-sm">
-      <div class="whitespace-nowrap animate-marquee">
+      <div class="whitespace-nowrap" :class="{'animate-marquee': announcements.length > 1}">
         <span class="inline-block px-8 text-white font-medium">
-          {{ announcementText || $t('home.marquee') }} · 
-          {{ announcementText || $t('home.marquee') }} · 
-          {{ announcementText || $t('home.marquee') }} · 
-          {{ announcementText || $t('home.marquee') }} · 
-          {{ announcementText || $t('home.marquee') }}
+          <template v-if="announcements.length === 0">
+            {{ $t('home.marquee') }}
+          </template>
+          <template v-else>
+            <span v-for="(announcement, index) in announcements" :key="index">
+              {{ announcement }}
+              <span v-if="index < announcements.length - 1"> · </span>
+            </span>
+            <!-- Duplicate for seamless looping only if there are multiple announcements -->
+            <span v-if="announcements.length > 1">
+              <span v-for="(announcement, index) in announcements" :key="'dup-'+index">
+                · {{ announcement }}
+              </span>
+            </span>
+          </template>
         </span>
       </div>
     </div>
