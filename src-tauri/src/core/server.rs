@@ -77,8 +77,7 @@ pub async fn get_servers(
     tracing::debug!("Server API URL: {}", url);
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .header("Accept", "application/json")
         .send()
         .await
@@ -114,8 +113,7 @@ pub async fn get_recommended_servers() -> Result<Vec<Server>, String> {
     tracing::debug!("Server API URL: {}", url);
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .header("Accept", "application/json")
         .send()
         .await
@@ -144,8 +142,7 @@ pub async fn get_filter_options() -> Result<FilterOptionsResponse, String> {
 
     let url = build_server_url("/filter-options", None);
     let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .header("Accept", "application/json")
         .send()
         .await

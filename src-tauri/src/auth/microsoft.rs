@@ -59,8 +59,7 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
 
     let url = format!("{}/api/microsoft/devicecode", get_web_backend_url());
 
-    let response = client
-        .post(&url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::POST, &url, "")
         .send()
         .await
         .map_err(|e| format!("Failed to request device code: {e:?}"))?;
@@ -110,10 +109,10 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
 
         let url = format!("{}/api/microsoft/token", get_web_backend_url());
 
-        let response = client
-            .post(&url)
+        let body_str = serde_json::to_string(&payload).unwrap_or_default();
+        let response = crate::core::security::secure_request(&client, reqwest::Method::POST, &url, &body_str)
             .header("Content-Type", "application/json")
-            .json(&payload)
+            .body(body_str)
             .send()
             .await
             .map_err(|e| format!("Token request failed: {e:?}"))?;
@@ -559,10 +558,10 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
 
     let url = format!("{}/api/microsoft/refresh", get_web_backend_url());
 
-    let response = client
-        .post(&url)
+    let body_str = serde_json::to_string(&payload).unwrap_or_default();
+    let response = crate::core::security::secure_request(&client, reqwest::Method::POST, &url, &body_str)
         .header("Content-Type", "application/json")
-        .json(&payload)
+        .body(body_str)
         .send()
         .await
         .map_err(|e| format!("Token refresh request failed: {:?}", e))?;

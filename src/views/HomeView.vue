@@ -21,6 +21,7 @@ import {
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
 import { useI18n } from "vue-i18n";
+import { fetchApi } from "../utils/api";
 // Types
 interface InstanceItem {
   id: string;
@@ -152,7 +153,7 @@ onMounted(async () => {
   // Fetch announcement
   try {
     const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-    const res = await fetch(`${backendUrl}/api/launcher/announcement`);
+    const res = await fetchApi(`${backendUrl}/api/launcher/announcement`);
     if (res.ok) {
       const data = await res.json();
       if (data.announcements && data.announcements.length > 0) {
