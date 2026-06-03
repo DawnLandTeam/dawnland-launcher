@@ -19,7 +19,10 @@ pub struct JavaSettings {
 }
 
 fn get_java_config_path() -> PathBuf {
-    get_minecraft_base().join("java_config.json")
+    get_minecraft_base()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("java_config.json")
 }
 
 pub async fn load_java_config() -> JavaSettings {
@@ -112,7 +115,7 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
     let mut search_paths = get_java_search_paths();
 
     // Add default launcher runtimes dir
-    search_paths.push(get_minecraft_base().join("runtimes"));
+    search_paths.push(get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join("runtimes"));
 
     // Add custom download path if set
     if let Some(custom_path) = &config.custom_download_path {
@@ -365,7 +368,12 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
     let runtimes_dir = config
         .custom_download_path
         .map(PathBuf::from)
-        .unwrap_or_else(|| get_minecraft_base().join("runtimes"));
+        .unwrap_or_else(|| {
+            get_minecraft_base()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("runtimes")
+        });
 
     tokio::fs::create_dir_all(&runtimes_dir)
         .await
