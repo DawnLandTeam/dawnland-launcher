@@ -586,17 +586,8 @@ pub fn build_classpath(
         .join("versions")
         .join(jar_version)
         .join(format!("{}.jar", jar_version));
-    let is_bootstrap_launcher =
-        version_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher");
-
     if client_jar.exists() {
-        if !is_bootstrap_launcher {
-            classpath.push(client_jar);
-        } else {
-            tracing::info!(
-                "Skipping client.jar in classpath for BootstrapLauncher to avoid module conflicts"
-            );
-        }
+        classpath.push(client_jar);
     } else {
         // Try to find patched client JAR in libraries directory as fallback
         let mc_version = jar_version;
@@ -670,7 +661,7 @@ pub fn build_classpath(
 /// Pre-flight check: verify merged libraries and client.jar exist.
 /// Returns a vector of (local_path, download_url) for missing files.
 pub async fn verify_and_collect_missing_files(
-    libraries: &[Library],
+    version_meta: &crate::core::mojang::VersionMeta,
     client_jar_version: &str,
 ) -> Result<Vec<DownloadTask>, String> {
     use crate::core::mojang::get_library_download_info_from_json;
@@ -680,6 +671,8 @@ pub async fn verify_and_collect_missing_files(
 
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
+
+    let libraries = version_meta.libraries.as_deref().unwrap_or(&[]);
 
     for lib in libraries {
         // Skip libraries not applicable to current platform
@@ -783,6 +776,58 @@ pub async fn verify_and_collect_missing_files(
         }
     }
 
+    // ========== Verify Assets ==========
+    if let Some(asset_index) = &version_meta.asset_index {
+        let asset_index_id = &asset_index.id;
+        let asset_index_path = base_dir.join("assets").join("indexes").join(format!("{}.json", asset_index_id));
+        
+        let mut asset_index_content = None;
+        if asset_index_path.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&asset_index_path).await {
+                asset_index_content = Some(content);
+            }
+        }
+        
+        if asset_index_content.is_none() {
+            // Need to download asset index first
+            if let Some(url) = &asset_index.url {
+                tracing::info!("Downloading missing asset index: {}", url);
+                if let Ok(resp) = reqwest::get(url).await {
+                    if let Ok(text) = resp.text().await {
+                        let _ = tokio::fs::create_dir_all(asset_index_path.parent().unwrap()).await;
+                        let _ = tokio::fs::write(&asset_index_path, &text).await;
+                        asset_index_content = Some(text);
+                    }
+                }
+            }
+        }
+        
+        if let Some(content) = asset_index_content {
+            if let Ok(meta) = serde_json::from_str::<crate::core::mojang::AssetIndexMeta>(&content) {
+                if let Some(objects) = meta.objects {
+                    for (_path, obj) in objects {
+                        if let Some(hash) = obj.hash {
+                            if hash.is_empty() { continue; }
+                            let hash_prefix = &hash[..2];
+                            let dest_path = format!("assets/objects/{}/{}", hash_prefix, hash);
+                            let dest = base_dir.join(&dest_path);
+                            
+                            if !dest.exists() {
+                                let url = format!("https://resources.download.minecraft.net/{}/{}", hash_prefix, hash);
+                                missing_tasks.push(DownloadTask::new(
+                                    url,
+                                    dest.to_string_lossy().to_string(),
+                                    Some(hash),
+                                    obj.size,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     tracing::info!(
         "Pre-flight check: {} missing files to download",
         missing_tasks.len()
@@ -865,6 +910,15 @@ pub fn parse_jvm_arguments(
             .replace("${classpath_separator}", CLASSPATH_SEPARATOR)
             .replace("${ignore_list}", "")
             .replace("${ignoreList}", "");
+
+        // Inject the base vanilla jar into ignoreList for FML (e.g. NeoForge 1.20.6+)
+        if arg.starts_with("-DignoreList=") {
+            let jar_version = version_meta.inherits_from.as_deref().unwrap_or(&config.version_id);
+            let jar_name = format!("{}.jar", jar_version);
+            if !arg.contains(&jar_name) {
+                *arg = format!("{},{}", arg, jar_name);
+            }
+        }
     }
 
     // Add default JVM args if not present
@@ -1132,6 +1186,97 @@ fn apply_rules(rule_obj: &serde_json::Map<String, serde_json::Value>) -> Result<
     Ok(allowed)
 }
 
+/// Auto-repair a missing instance by inferring its type and reinstalling it
+async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Result<(), String> {
+    tracing::info!("Attempting to auto-repair missing instance JSON for: {}", version_id);
+
+    // Notify frontend
+    let _ = app.emit(
+        "launch-status",
+        serde_json::json!({
+            "status": "repairing_dependency",
+            "version": version_id
+        }),
+    );
+
+    // Try to parse the existing JSON if available to get the mc_version
+    let base_dir = crate::core::mojang::get_minecraft_base();
+    let json_path = base_dir.join("versions").join(version_id).join(format!("{}.json", version_id));
+    let mut mc_version_from_json = None;
+    if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
+        if let Ok(meta) = serde_json::from_str::<crate::core::mojang::VersionMeta>(&content) {
+            mc_version_from_json = meta.inherits_from.clone();
+        }
+    }
+
+    // Parse the version ID to determine the type
+    if version_id.starts_with("fabric-loader-") {
+        // Format: fabric-loader-{loader_version}-{mc_version}
+        let parts: Vec<&str> = version_id.split('-').collect();
+        let (loader_version, mc_version) = if parts.len() >= 4 {
+            (parts[2].to_string(), parts[3..].join("-"))
+        } else {
+            let l_version = parts[2..].join("-");
+            let m_version = mc_version_from_json.clone().unwrap_or_else(|| "unknown".to_string());
+            (l_version, m_version)
+        };
+
+        crate::core::fabric::install_fabric_instance(
+            mc_version,
+            loader_version,
+            version_id.to_string(), // use the same ID as the folder name
+            Some(true),
+            app.clone(),
+        ).await?;
+        return Ok(());
+    } else if version_id.starts_with("forge-") || version_id.starts_with("neoforge-") {
+        let parts: Vec<&str> = version_id.split('-').collect();
+        let loader_type = parts[0].to_string();
+        
+        let (mc_version, loader_version) = if parts.len() >= 3 {
+            // Format: {loader_type}-{mc_version}-{loader_version}
+            (parts[1].to_string(), parts[2..].join("-"))
+        } else {
+            // Format: {loader_type}-{loader_version} (like neoforge-21.1.227)
+            let l_version = parts[1..].join("-");
+            let m_version = mc_version_from_json.clone().unwrap_or_else(|| {
+                // Heuristic fallback for NeoForge 20.5+ if JSON is missing
+                let v_parts: Vec<&str> = l_version.split('.').collect();
+                if v_parts.len() >= 2 {
+                    format!("1.{}.{}", v_parts[0], v_parts[1])
+                } else {
+                    "unknown".to_string()
+                }
+            });
+            (m_version, l_version)
+        };
+
+        crate::core::forge::install_forge_instance(
+            mc_version,
+            loader_version,
+            loader_type,
+            version_id.to_string(), // use the same ID
+            Some(true),
+            app.clone(),
+        ).await?;
+        return Ok(());
+    } else {
+        // Assume Vanilla
+        let vanilla_versions = crate::core::mojang::get_vanilla_versions().await?;
+        if let Some(version) = vanilla_versions.iter().find(|v| v.id == version_id) {
+            crate::core::mojang::install_vanilla_version(
+                version_id.to_string(),
+                version.url.clone(),
+                Some(true),
+                app.clone(),
+            ).await?;
+            return Ok(());
+        }
+    }
+
+    Err(format!("Could not determine how to auto-repair missing instance JSON: {}", version_id))
+}
+
 // ============ Process Launching ============
 
 /// Verify instance integrity (check modpack tasks) and auto-repair if necessary
@@ -1314,9 +1459,16 @@ pub async fn launch_instance(
         .join(&version_id)
         .join(format!("{}.json", version_id));
 
-    let version_json_content = fs::read_to_string(&version_json_path)
-        .await
-        .map_err(|e| format!("Failed to read version JSON: {e}"))?;
+    let mut version_json_content = match tokio::fs::read_to_string(&version_json_path).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to read version JSON for {}, attempting auto-repair... ({})", version_id, e);
+            auto_repair_missing_instance(&app, &version_id).await?;
+            tokio::fs::read_to_string(&version_json_path)
+                .await
+                .map_err(|e| format!("Auto-repair succeeded but failed to read JSON again: {}", e))?
+        }
+    };
 
     let mut version_meta: VersionMeta = serde_json::from_str(&version_json_content)
         .map_err(|e| format!("Failed to parse version JSON: {e}"))?;
@@ -1326,6 +1478,12 @@ pub async fn launch_instance(
 
     let mut current_inherits = version_meta.inherits_from.clone();
     let mut final_base_version = version_id.clone();
+    let mut forge_version_id = None;
+
+    if version_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher") 
+       || version_meta.main_class.as_deref().unwrap_or("").contains("forge") {
+        forge_version_id = Some(version_id.clone());
+    }
 
     // Handle inheritsFrom recursively (used by Modpacks, Fabric, Forge, etc.)
     while let Some(parent_version) = current_inherits.take() {
@@ -1334,17 +1492,29 @@ pub async fn launch_instance(
             parent_version
         );
 
-        let parent_json_path = base_dir
-            .join("versions")
-            .join(&parent_version)
-            .join(format!("{}.json", parent_version));
+        let parent_dir = base_dir.join("versions").join(&parent_version);
+        verify_instance_integrity(&app, &parent_dir).await?;
 
-        let parent_content = fs::read_to_string(&parent_json_path)
-            .await
-            .map_err(|e| format!("Failed to read parent version JSON: {}", e))?;
+        let parent_json_path = parent_dir.join(format!("{}.json", parent_version));
+
+        let parent_content = match tokio::fs::read_to_string(&parent_json_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Failed to read parent JSON for {}, attempting auto-repair... ({})", parent_version, e);
+                auto_repair_missing_instance(&app, &parent_version).await?;
+                tokio::fs::read_to_string(&parent_json_path)
+                    .await
+                    .map_err(|e| format!("Auto-repair succeeded but failed to read JSON again: {}", e))?
+            }
+        };
 
         let mut parent_meta: VersionMeta = serde_json::from_str(&parent_content)
             .map_err(|e| format!("Failed to parse parent version JSON: {e}"))?;
+
+        if parent_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher") 
+           || parent_meta.main_class.as_deref().unwrap_or("").contains("forge") {
+            forge_version_id = Some(parent_version.clone());
+        }
 
         merged_libraries.extend(parent_meta.libraries.clone().unwrap_or_default());
 
@@ -1467,12 +1637,54 @@ pub async fn launch_instance(
     // ========== Pre-flight Check: Verify and Auto-repair Missing Files ==========
     let jar_version = version_meta.inherits_from.as_deref().unwrap_or(&version_id);
 
-    let missing_files = verify_and_collect_missing_files(libraries, jar_version).await?;
+    let missing_files = verify_and_collect_missing_files(&version_meta, jar_version).await?;
 
-    if !missing_files.is_empty() {
+    let mut requires_forge_repair = false;
+    if forge_version_id.is_some() {
+        if let Some(args) = &version_meta.arguments {
+            if let Some(game_args) = &args.game {
+                if let Some(arr) = game_args.as_array() {
+                    let mut is_forge_arg = false;
+                    for arg in arr {
+                        if let Some(s) = arg.as_str() {
+                            if s == "--fml.neoForgeVersion" || s == "--fml.forgeVersion" {
+                                is_forge_arg = true;
+                                continue;
+                            }
+                            if is_forge_arg {
+                                let neoforge_dir = base_dir.join("libraries").join("net").join("neoforged").join("neoforge").join(s);
+                                let mut forge_found = false;
+                                
+                                let forge_base = base_dir.join("libraries").join("net").join("minecraftforge").join("forge");
+                                if forge_base.exists() {
+                                    if let Ok(entries) = std::fs::read_dir(&forge_base) {
+                                        for entry in entries.flatten() {
+                                            if entry.file_name().to_string_lossy().contains(s) {
+                                                forge_found = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                if !neoforge_dir.exists() && !forge_found {
+                                    tracing::warn!("Forge/NeoForge core directory for version {} is missing!", s);
+                                    requires_forge_repair = true;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !missing_files.is_empty() || requires_forge_repair {
         tracing::info!(
-            "Detected {} missing libraries. Starting auto-repair...",
-            missing_files.len()
+            "Detected {} missing libraries and forge_repair={}. Starting auto-repair...",
+            missing_files.len(),
+            requires_forge_repair
         );
 
         // Notify frontend: entering repairing state
@@ -1485,9 +1697,18 @@ pub async fn launch_instance(
             }),
         );
 
-        // Download missing files
-        let app_for_download = app.clone();
-        run_batch_download(missing_files, app_for_download).await;
+        if !missing_files.is_empty() {
+            // Download missing files
+            let app_for_download = app.clone();
+            run_batch_download(missing_files, app_for_download).await;
+        }
+
+        if requires_forge_repair {
+            if let Some(forge_id) = forge_version_id {
+                tracing::warn!("Forge/NeoForge core files were missing. Re-running FML installer for safety...");
+                auto_repair_missing_instance(&app, &forge_id).await?;
+            }
+        }
 
         // Notify frontend: repairing complete
         let _ = app.emit(
