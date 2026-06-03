@@ -48,6 +48,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             greet,
+            core::security::generate_api_signature,
             commands::get_system_info,
             commands::get_system_memory,
             commands::batch_download,
