@@ -38,6 +38,11 @@ pub async fn save_java_config(config: &JavaSettings) -> Result<(), String> {
     let config_path = get_java_config_path();
     let content = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize Java config: {}", e))?;
+        
+    if let Some(parent) = config_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+        
     tokio::fs::write(&config_path, content)
         .await
         .map_err(|e| format!("Failed to write Java config: {}", e))?;
