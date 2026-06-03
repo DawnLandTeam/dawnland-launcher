@@ -95,6 +95,8 @@ const repairTotalFiles = ref(0);
 const repairCompletedFiles = ref(0);
 const repairDownloadSpeed = ref(0);
 const repairActiveTasks = ref(new Map<string, DownloadProgress>());
+const repairingDependencyName = ref("");
+const repairPhase = ref("");
 
 const repairProgressPercentage = computed(() => {
   if (repairTotalFiles.value === 0) return 0;
@@ -187,12 +189,16 @@ onMounted(async () => {
 
       repairingInstances.value.delete(versionId);
       isRepairing.value = false;
+      repairingDependencyName.value = "";
+      repairPhase.value = "";
     } else if (status === "exited") {
       jvmSpawnedInstances.value.delete(versionId);
       runningInstances.value.delete(versionId);
       launchingInstances.value.delete(versionId);
       repairingInstances.value.delete(versionId);
       isRepairing.value = false;
+      repairingDependencyName.value = "";
+      repairPhase.value = "";
 
       // Check if this was an intentional kill
       const wasIntentionallyKilled = intentionallyKilledInstances.value.has(versionId);
@@ -226,8 +232,31 @@ onMounted(async () => {
       repairCompletedFiles.value = 0;
       repairDownloadSpeed.value = 0;
       repairActiveTasks.value.clear();
+      repairingDependencyName.value = "";
+      repairPhase.value = "";
+    } else if (payload.status === "repairing_dependency") {
+      isRepairing.value = true;
+      repairTotalFiles.value = 0;
+      repairCompletedFiles.value = 0;
+      repairDownloadSpeed.value = 0;
+      repairActiveTasks.value.clear();
+      repairingDependencyName.value = payload.version || "";
+      repairPhase.value = "";
     } else if (payload.status === "repairing_complete") {
       isRepairing.value = false;
+      repairingDependencyName.value = "";
+    }
+  });
+
+  // Listen to install-progress during dependency repair
+  listen("install-progress", (event: any) => {
+    if (!isRepairing.value || !repairingDependencyName.value) return;
+    const payload = event.payload;
+    if (payload.phase) {
+      repairPhase.value = payload.phase;
+    }
+    if (payload.phase === "downloading" && payload.totalTasks) {
+       repairTotalFiles.value = payload.totalTasks;
     }
   });
 
@@ -335,6 +364,7 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
     } catch (e) {
       console.error("Failed to launch auto instance:", e);
       launchingInstances.value.delete(selectedInstanceId.value);
+      isRepairing.value = false;
       alert(t('home.launchFailed', { error: e }));
     }
     
@@ -416,6 +446,7 @@ async function handlePrimaryAction() {
   } catch (e) {
     console.error("Failed to launch instance:", e);
     launchingInstances.value.delete(selectedInstanceId.value);
+    isRepairing.value = false;
     alert(`Failed to launch: ${e}`);
   }
 }
@@ -637,24 +668,33 @@ function loaderBadgeClass(loaderType: string): string {
           <div class="relative z-10 w-full max-w-md bg-white dark:bg-zinc-900 border rounded-2xl p-6 shadow-2xl space-y-4 pointer-events-auto">
             <div class="flex items-center gap-3">
               <Loader2 class="h-6 w-6 animate-spin text-primary" />
-              <h3 class="text-xl font-bold">{{ $t('home.repairing') }}</h3>
+              <h3 class="text-xl font-bold" v-if="!repairingDependencyName">{{ $t('home.repairing') }}</h3>
+              <h3 class="text-xl font-bold" v-else>{{ $t('home.repairingDepTitle') }}</h3>
             </div>
             
-            <p class="text-sm text-muted-foreground">
+            <p class="text-sm text-muted-foreground" v-if="!repairingDependencyName">
               {{ $t('home.repairFound', { total: repairTotalFiles }) }}
+            </p>
+            <p class="text-sm text-muted-foreground" v-else>
+              {{ $t('home.repairingDependency', { version: repairingDependencyName }) }}
             </p>
 
             <!-- Progress Bar -->
-            <div class="space-y-2">
+            <div class="space-y-2" v-if="repairPhase !== 'running_processors'">
               <div class="flex justify-between text-xs font-medium">
-                <span>{{ $t('home.repairProgress', { completed: repairCompletedFiles, total: repairTotalFiles }) }}</span>
+                <span>{{ repairCompletedFiles }} / {{ repairTotalFiles }} files</span>
                 <span>{{ (repairDownloadSpeed / 1024 / 1024).toFixed(2) }} MB/s</span>
               </div>
-              <div class="h-2 w-full overflow-hidden rounded-full bg-secondary">
-                <div
-                  class="h-full bg-primary transition-all duration-300 ease-out"
-                  :style="{ width: `${repairProgressPercentage}%` }"
-                ></div>
+              <div class="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                <div class="h-full bg-primary transition-all duration-300 ease-out" :style="{ width: `${repairProgressPercentage}%` }" />
+              </div>
+            </div>
+            <div class="space-y-2" v-else>
+              <div class="flex justify-center text-sm font-medium text-amber-500">
+                {{ $t('install.status.runningProcessors') }}
+              </div>
+              <div class="h-2 w-full bg-secondary rounded-full overflow-hidden animate-pulse">
+                <div class="h-full bg-amber-500 w-full" />
               </div>
             </div>
           </div>
