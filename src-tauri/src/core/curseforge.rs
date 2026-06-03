@@ -154,8 +154,7 @@ pub async fn search_curseforge(
     tracing::info!("Proxy URL: {}", proxy_url);
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&proxy_url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
         .header("Accept", "application/json")
         .send()
         .await
@@ -259,8 +258,7 @@ pub async fn get_cf_mod_files(
     tracing::info!("Proxy URL: {}", proxy_url);
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&proxy_url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
         .header("Accept", "application/json")
         .send()
         .await
@@ -344,8 +342,8 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
     let request_body = CfBatchFilesRequest { file_ids };
 
     let client = reqwest::Client::new();
-    let response = client
-        .post(&proxy_url)
+    let body_str = serde_json::to_string(&request_body).unwrap_or_default();
+    let response = crate::core::security::secure_request(&client, reqwest::Method::POST, &proxy_url, &body_str)
         .header("Accept", "application/json")
         .json(&request_body)
         .send()
@@ -411,8 +409,7 @@ pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject,
     tracing::info!("Proxy URL: {}", proxy_url);
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&proxy_url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
         .header("Accept", "application/json")
         .send()
         .await
@@ -483,8 +480,7 @@ pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModP
     let proxy_url = build_proxy_url("/mods/search", Some(&query_string));
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&proxy_url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
         .header("Accept", "application/json")
         .send()
         .await
@@ -573,8 +569,7 @@ pub async fn get_curseforge_modpack_versions(
     let proxy_url = build_proxy_url(&format!("/mods/{}/files", project_id), None);
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&proxy_url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
         .header("Accept", "application/json")
         .send()
         .await

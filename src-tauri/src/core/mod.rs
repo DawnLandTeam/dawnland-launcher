@@ -16,3 +16,4 @@ pub use crate::core::mojang::{InstallState, VanillaVersion};
 
 // Re-export modrinth types
 pub use crate::core::modrinth::{OnlineModpackVersion, UnifiedModFile, UnifiedModProject};
+pub mod security;
