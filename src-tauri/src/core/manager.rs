@@ -44,7 +44,7 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
     }
 
     let mut instances = Vec::new();
-    
+
     let mut entries = tokio::fs::read_dir(&versions_dir)
         .await
         .map_err(|e| format!("Failed to read versions directory: {}", e))?;
@@ -69,7 +69,9 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
 
                 if config_path.exists() {
                     if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-                        if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                        if let Ok(config) =
+                            serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
+                        {
                             is_hidden = config.hidden;
                             server_id = config.server_id;
                             pack_version_id = config.pack_version_id;
@@ -86,17 +88,28 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                 match tokio::fs::read_to_string(&json_path).await {
                     Ok(content) => {
                         // Parse basic info from JSON
-                        let (mut mc_version, loader_type, modpack_version, modpack_type, modpack_project_id) = parse_version_json(&content, &id);
-                        
+                        let (
+                            mut mc_version,
+                            loader_type,
+                            modpack_version,
+                            modpack_type,
+                            modpack_project_id,
+                        ) = parse_version_json(&content, &id);
+
                         // Resolve actual MC version if it's pointing to a loader instance
                         if !mc_version.starts_with("1.") {
                             let mut current_version = mc_version.clone();
                             let mut depth = 0;
                             let mut reached_root = false;
                             while !current_version.starts_with("1.") && depth < 5 {
-                                let inherited_path = versions_dir.join(&current_version).join(format!("{}.json", current_version));
-                                if let Ok(inherited_content) = tokio::fs::read_to_string(&inherited_path).await {
-                                    let (real_mc, ..) = parse_version_json(&inherited_content, &current_version);
+                                let inherited_path = versions_dir
+                                    .join(&current_version)
+                                    .join(format!("{}.json", current_version));
+                                if let Ok(inherited_content) =
+                                    tokio::fs::read_to_string(&inherited_path).await
+                                {
+                                    let (real_mc, ..) =
+                                        parse_version_json(&inherited_content, &current_version);
                                     if real_mc == current_version || real_mc.is_empty() {
                                         reached_root = true;
                                         break;
@@ -107,12 +120,15 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                                 }
                                 depth += 1;
                             }
-                            
+
                             if current_version.starts_with("1.") || reached_root {
                                 mc_version = current_version;
-                            } else if let Some(extracted) = extract_mc_version_from_id(&current_version) {
+                            } else if let Some(extracted) =
+                                extract_mc_version_from_id(&current_version)
+                            {
                                 mc_version = extracted;
-                            } else if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
+                            } else if let Some(extracted) = extract_mc_version_from_id(&mc_version)
+                            {
                                 mc_version = extracted;
                             }
                         }
@@ -136,7 +152,8 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                         instances.push(InstanceItem {
                             id: id.clone(),
                             name: id.clone(),
-                            mc_version: extract_mc_version_from_id(&id).unwrap_or_else(|| id.clone()),
+                            mc_version: extract_mc_version_from_id(&id)
+                                .unwrap_or_else(|| id.clone()),
                             loader_type: "Vanilla".to_string(),
                             modpack_version: None,
                             modpack_type: None,
@@ -159,35 +176,51 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
 }
 
 /// Parse version JSON content to extract Minecraft version and loader type.
-fn parse_version_json(content: &str, id: &str) -> (String, String, Option<String>, Option<String>, Option<String>) {
+fn parse_version_json(
+    content: &str,
+    id: &str,
+) -> (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     // Try to parse as JSON
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(json) => {
             // Determine loader type based on id first, then inheritsFrom, then mainClass
             let id_lower = id.to_lowercase();
-            let inherits_from = json.get("inheritsFrom").and_then(|v| v.as_str()).unwrap_or("");
+            let inherits_from = json
+                .get("inheritsFrom")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let inherits_lower = inherits_from.to_lowercase();
-            
-            let loader_type = if id_lower.contains("neoforge") || inherits_lower.contains("neoforge") {
-                "NeoForge"
-            } else if id_lower.contains("forge") || inherits_lower.contains("forge") {
-                "Forge"
-            } else if id_lower.contains("fabric") || inherits_lower.contains("fabric") {
-                "Fabric"
-            } else if let Some(main_class) = json.get("mainClass").and_then(|v| v.as_str()) {
-                let mc_lower = main_class.to_lowercase();
-                if mc_lower.contains("fabric") {
-                    "Fabric"
-                } else if mc_lower.contains("neoforge") {
+
+            let loader_type =
+                if id_lower.contains("neoforge") || inherits_lower.contains("neoforge") {
                     "NeoForge"
-                } else if mc_lower.contains("forge") || mc_lower.contains("fml") || mc_lower.contains("bootstraplauncher") {
+                } else if id_lower.contains("forge") || inherits_lower.contains("forge") {
                     "Forge"
+                } else if id_lower.contains("fabric") || inherits_lower.contains("fabric") {
+                    "Fabric"
+                } else if let Some(main_class) = json.get("mainClass").and_then(|v| v.as_str()) {
+                    let mc_lower = main_class.to_lowercase();
+                    if mc_lower.contains("fabric") {
+                        "Fabric"
+                    } else if mc_lower.contains("neoforge") {
+                        "NeoForge"
+                    } else if mc_lower.contains("forge")
+                        || mc_lower.contains("fml")
+                        || mc_lower.contains("bootstraplauncher")
+                    {
+                        "Forge"
+                    } else {
+                        "Vanilla"
+                    }
                 } else {
                     "Vanilla"
-                }
-            } else {
-                "Vanilla"
-            };
+                };
 
             // Extract Minecraft version
             // For Fabric/Forge, inheritsFrom contains the base version
@@ -196,22 +229,37 @@ fn parse_version_json(content: &str, id: &str) -> (String, String, Option<String
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .or_else(|| {
-                    json.get("clientVersion").and_then(|v| v.as_str()).map(String::from)
+                    json.get("clientVersion")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
                 })
-                .or_else(|| {
-                    json.get("id").and_then(|v| v.as_str()).map(String::from)
-                })
+                .or_else(|| json.get("id").and_then(|v| v.as_str()).map(String::from))
                 .unwrap_or_else(|| {
                     // Fallback to folder name if nothing else works
                     extract_mc_version_from_id(id).unwrap_or_else(|| id.to_string())
                 });
 
             // Extract Modpack Info
-            let modpack_version = json.get("modpackVersion").and_then(|v| v.as_str()).map(String::from);
-            let modpack_type = json.get("modpackType").and_then(|v| v.as_str()).map(String::from);
-            let modpack_project_id = json.get("modpackProjectId").and_then(|v| v.as_str()).map(String::from);
+            let modpack_version = json
+                .get("modpackVersion")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let modpack_type = json
+                .get("modpackType")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let modpack_project_id = json
+                .get("modpackProjectId")
+                .and_then(|v| v.as_str())
+                .map(String::from);
 
-            (mc_version, loader_type.to_string(), modpack_version, modpack_type, modpack_project_id)
+            (
+                mc_version,
+                loader_type.to_string(),
+                modpack_version,
+                modpack_type,
+                modpack_project_id,
+            )
         }
         Err(_) => {
             // Fallback: extract from id
@@ -240,7 +288,7 @@ fn extract_mc_version_from_id(id: &str) -> Option<String> {
     // Common patterns: "1.20.1", "1.20.1-Fabric", "Fabric-1.20.1-0.15.11"
     // Match version pattern like "1.20.1" or "1.20"
     let parts: Vec<&str> = id.split(|c: char| c == '-' || c == '_').collect();
-    
+
     for part in parts {
         // Check if it looks like a version (starts with digit, contains dots)
         // Ensure it starts with "1." to filter out Forge/NeoForge version numbers like 26.1.2 or 47.1.0
@@ -252,7 +300,7 @@ fn extract_mc_version_from_id(id: &str) -> Option<String> {
             }
         }
     }
-    
+
     None
 }
 
@@ -273,14 +321,18 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         .await
         .map_err(|e| format!("Failed to read version JSON: {}", e))?;
 
-    let (mut mc_version, loader_type, modpack_version, modpack_type, modpack_project_id) = parse_version_json(&content, &version_id);
+    let (mut mc_version, loader_type, modpack_version, modpack_type, modpack_project_id) =
+        parse_version_json(&content, &version_id);
 
     // Resolve actual MC version
     if !mc_version.starts_with("1.") {
         let mut current_version = mc_version.clone();
         let mut depth = 0;
         while !current_version.starts_with("1.") && depth < 5 {
-            let inherited_path = base_dir.join("versions").join(&current_version).join(format!("{}.json", current_version));
+            let inherited_path = base_dir
+                .join("versions")
+                .join(&current_version)
+                .join(format!("{}.json", current_version));
             if let Ok(inherited_content) = tokio::fs::read_to_string(&inherited_path).await {
                 let (real_mc, ..) = parse_version_json(&inherited_content, &current_version);
                 if real_mc == current_version || real_mc.is_empty() {
@@ -292,7 +344,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
             }
             depth += 1;
         }
-        
+
         if current_version.starts_with("1.") {
             mc_version = current_version;
         } else if let Some(extracted) = extract_mc_version_from_id(&current_version) {
@@ -303,14 +355,19 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
     }
 
     // Read dlml.json for bindings
-    let config_path = base_dir.join("versions").join(&version_id).join("dlml.json");
+    let config_path = base_dir
+        .join("versions")
+        .join(&version_id)
+        .join("dlml.json");
     let mut server_id = None;
     let mut pack_version_id = None;
     let mut pack_file_name = None;
 
     if config_path.exists() {
         if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-            if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+            if let Ok(config) =
+                serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
+            {
                 server_id = config.server_id;
                 pack_version_id = config.pack_version_id;
                 pack_file_name = config.pack_file_name;
@@ -416,12 +473,14 @@ pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>,
         .map_err(|e| format!("Failed to read directory entry: {}", e))?
     {
         let path = entry.path();
-        
+
         // Only process .jar files (enabled mods)
         if path.extension().and_then(|s| s.to_str()) == Some("jar") {
             let filename = entry.file_name().to_string_lossy().to_string();
-            let metadata = tokio::fs::metadata(&path).await.map_err(|e| e.to_string())?;
-            
+            let metadata = tokio::fs::metadata(&path)
+                .await
+                .map_err(|e| e.to_string())?;
+
             mods.push(LocalModItem {
                 filename: filename.clone(),
                 enabled: true,
@@ -431,7 +490,11 @@ pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>,
     }
 
     // Also check for disabled mods (.jar.disabled)
-    let disabled_dir = base_dir.join("versions").join(&version_id).join("mods").join("disabled");
+    let disabled_dir = base_dir
+        .join("versions")
+        .join(&version_id)
+        .join("mods")
+        .join("disabled");
     if disabled_dir.exists() {
         let mut entries = tokio::fs::read_dir(&disabled_dir)
             .await
@@ -443,14 +506,16 @@ pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>,
             .map_err(|e| format!("Failed to read directory entry: {}", e))?
         {
             let path = entry.path();
-            
+
             if path.extension().and_then(|s| s.to_str()) == Some("jar") {
                 let filename = entry.file_name().to_string_lossy().to_string();
-                let metadata = tokio::fs::metadata(&path).await.map_err(|e| e.to_string())?;
-                
+                let metadata = tokio::fs::metadata(&path)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
                 // Remove .disabled extension for display
                 let display_name = filename.trim_end_matches(".disabled");
-                
+
                 mods.push(LocalModItem {
                     filename: display_name.to_string(),
                     enabled: false,
@@ -522,7 +587,10 @@ pub async fn toggle_mod_status(
 
     // Check if destination already exists
     if dst_file.exists() {
-        return Err(format!("Mod already exists in target location: {}", filename));
+        return Err(format!(
+            "Mod already exists in target location: {}",
+            filename
+        ));
     }
 
     // Rename/move the file
@@ -542,18 +610,14 @@ pub async fn toggle_mod_status(
 /// Delete a local mod file
 #[tauri::command]
 pub async fn delete_local_mod(version_id: String, filename: String) -> Result<(), String> {
-    tracing::info!(
-        "Deleting mod {} from instance {}",
-        filename,
-        version_id
-    );
+    tracing::info!("Deleting mod {} from instance {}", filename, version_id);
 
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
     // Check in main mods directory
     let mod_file = mods_dir.join(&filename);
-    
+
     // Check in disabled directory
     let disabled_file = mods_dir.join("disabled").join(&filename);
 
@@ -577,7 +641,7 @@ pub async fn delete_local_mod(version_id: String, filename: String) -> Result<()
 #[tauri::command]
 pub async fn install_mod_to_instance(
     version_id: String,
-    mod_source: String,     // "modrinth" or "curseforge"
+    mod_source: String, // "modrinth" or "curseforge"
     project_id: String,
     file_id: String,
     download_url: String,
@@ -608,7 +672,10 @@ pub async fn install_mod_to_instance(
         .map_err(|e| format!("Failed to download mod: {}", e))?;
 
     if !response.status().is_success() {
-        return Err(format!("Download failed with status: {}", response.status()));
+        return Err(format!(
+            "Download failed with status: {}",
+            response.status()
+        ));
     }
 
     // Extract filename from URL or use project_id
@@ -620,7 +687,7 @@ pub async fn install_mod_to_instance(
         .next()
         .unwrap_or_default()
         .to_string();
-    
+
     let filename = if url_filename.is_empty() || !url_filename.ends_with(".jar") {
         format!("{}.jar", project_id)
     } else {
@@ -659,18 +726,24 @@ pub async fn bind_instance_to_server(
 ) -> Result<(), String> {
     tracing::info!(
         "Binding instance {} to server {} (packVersionId: {:?}, packFileName: {:?})",
-        instance_id, server_id, pack_version_id, pack_file_name
+        instance_id,
+        server_id,
+        pack_version_id,
+        pack_file_name
     );
 
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_id);
-    
+
     if !instance_dir.exists() {
-        return Err(format!("Instance directory does not exist: {}", instance_id));
+        return Err(format!(
+            "Instance directory does not exist: {}",
+            instance_id
+        ));
     }
-    
+
     let config_path = instance_dir.join("dlml.json");
-    
+
     let mut config = if config_path.exists() {
         let content = tokio::fs::read_to_string(&config_path)
             .await
@@ -679,17 +752,17 @@ pub async fn bind_instance_to_server(
     } else {
         crate::core::launcher::InstanceConfig::default()
     };
-    
+
     config.server_id = Some(server_id);
     config.pack_version_id = pack_version_id;
     config.pack_file_name = pack_file_name;
-    
+
     let json_str = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize dlml.json: {}", e))?;
-        
+
     tokio::fs::write(&config_path, json_str)
         .await
         .map_err(|e| format!("Failed to write dlml.json: {}", e))?;
-        
+
     Ok(())
-}
+}

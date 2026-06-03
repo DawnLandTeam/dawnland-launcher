@@ -3,8 +3,8 @@
 
 use crate::core::mojang::get_minecraft_base;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
@@ -63,7 +63,6 @@ pub struct JavaInfo {
 /// Scan all locally installed Java versions.
 #[tauri::command]
 pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
-
     // Check cache first
     {
         let cache = CACHED_JAVAS.lock().await;
@@ -106,10 +105,10 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
 
     // 3. Scan common installation directories based on OS + launcher runtimes
     let mut search_paths = get_java_search_paths();
-    
+
     // Add default launcher runtimes dir
     search_paths.push(get_minecraft_base().join("runtimes"));
-    
+
     // Add custom download path if set
     if let Some(custom_path) = &config.custom_download_path {
         search_paths.push(PathBuf::from(custom_path));
@@ -149,8 +148,8 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
     }
 
     // Sort by major version descending
-        javas.sort_by(|a, b| b.major_version.cmp(&a.major_version));
-    
+    javas.sort_by(|a, b| b.major_version.cmp(&a.major_version));
+
     // Update cache
     *CACHED_JAVAS.lock().await = Some(javas.clone());
 
@@ -191,12 +190,29 @@ fn get_java_search_paths() -> Vec<PathBuf> {
     if let Ok(home) = std::env::var("HOME") {
         #[cfg(target_os = "windows")]
         {
-            paths.push(PathBuf::from(&home).join("AppData").join("Local").join("Programs").join("Java"));
-            paths.push(PathBuf::from(&home).join("AppData").join("Local").join("Programs").join("Eclipse Adoptium"));
+            paths.push(
+                PathBuf::from(&home)
+                    .join("AppData")
+                    .join("Local")
+                    .join("Programs")
+                    .join("Java"),
+            );
+            paths.push(
+                PathBuf::from(&home)
+                    .join("AppData")
+                    .join("Local")
+                    .join("Programs")
+                    .join("Eclipse Adoptium"),
+            );
         }
         #[cfg(target_os = "macos")]
         {
-            paths.push(PathBuf::from(&home).join("Library").join("Java").join("JavaVirtualMachines"));
+            paths.push(
+                PathBuf::from(&home)
+                    .join("Library")
+                    .join("Java")
+                    .join("JavaVirtualMachines"),
+            );
         }
         #[cfg(target_os = "linux")]
         {
@@ -326,7 +342,11 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
         return Err("Unsupported OS".to_string());
     };
 
-    let extension = if cfg!(target_os = "windows") { "zip" } else { "tar.gz" };
+    let extension = if cfg!(target_os = "windows") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
 
     let url = format!(
         "https://api.adoptium.net/v3/binary/latest/{}/ga/{}/{}/jdk/hotspot/normal/eclipse",
@@ -352,11 +372,14 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let redirect_res = client.get(&url).send().await
+    let redirect_res = client
+        .get(&url)
+        .send()
+        .await
         .map_err(|e| format!("Failed to resolve Adoptium API: {}", e))?;
 
     let mut final_url = url.clone();
-    
+
     // If it's a redirect, get the Location header
     if redirect_res.status().is_redirection() {
         if let Some(loc) = redirect_res.headers().get(reqwest::header::LOCATION) {
@@ -369,18 +392,25 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
     } else if redirect_res.status().is_success() {
         tracing::info!("No redirect needed.");
     } else {
-        return Err(format!("Adoptium API returned error: {}", redirect_res.status()));
+        return Err(format!(
+            "Adoptium API returned error: {}",
+            redirect_res.status()
+        ));
     }
 
     // Download the file from the final URL
     let download_client = reqwest::Client::new();
-    let response = download_client.get(&final_url)
+    let response = download_client
+        .get(&final_url)
         .send()
         .await
         .map_err(|e| format!("Failed to download Java: {}", e))?;
 
     if !response.status().is_success() {
-        return Err(format!("Failed to download Java: HTTP {}", response.status()));
+        return Err(format!(
+            "Failed to download Java: HTTP {}",
+            response.status()
+        ));
     }
 
     let filename = format!("jdk-{}.{}", major_version, extension);
@@ -400,7 +430,7 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
 
     // Extract the archive
     let extract_dir = runtimes_dir.join(format!("jdk-{}", major_version));
-    
+
     if cfg!(target_os = "windows") {
         // Use PowerShell to extract zip on Windows
         let ps_command = format!(
@@ -472,22 +502,34 @@ pub fn get_recommended_java(mc_version: &str) -> u32 {
     // MC 1.17+ requires Java 17+
     // MC 1.20.5+ requires Java 21
     let version_parts: Vec<&str> = mc_version.split('.').collect();
-    
+
     // Determine if the version starts with "1." (classic format) or uses a new format (e.g. "26.1.2")
     let is_classic = version_parts.get(0) == Some(&"1");
-    
+
     let major: u32 = if is_classic {
-        version_parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0)
+        version_parts
+            .get(1)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
     } else {
-        version_parts.get(0).and_then(|v| v.parse().ok()).unwrap_or(0)
+        version_parts
+            .get(0)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
     };
-    
+
     let minor: u32 = if is_classic {
-        version_parts.get(2).and_then(|v| v.parse().ok()).unwrap_or(0)
+        version_parts
+            .get(2)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
     } else {
-        version_parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0)
+        version_parts
+            .get(1)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
     };
-    
+
     if major > 20 || (major == 20 && minor >= 5) {
         // 1.20.5+ (or 21+) requires Java 21
         return 21;
@@ -498,7 +540,7 @@ pub fn get_recommended_java(mc_version: &str) -> u32 {
         // 1.8.x - 1.16.x requires Java 8
         return 8;
     }
-    
+
     // Default to Java 8 for older versions
     8
 }
@@ -511,7 +553,8 @@ pub async fn add_manual_java(path: String) -> Result<JavaInfo, String> {
         return Err("Java path does not exist".to_string());
     }
 
-    let mut java_info = probe_java(&java_path).await
+    let mut java_info = probe_java(&java_path)
+        .await
         .ok_or_else(|| "Failed to probe Java. Is this a valid Java executable?".to_string())?;
 
     let mut config = load_java_config().await;
@@ -528,7 +571,7 @@ pub async fn add_manual_java(path: String) -> Result<JavaInfo, String> {
 pub async fn remove_java(path: String) -> Result<(), String> {
     *CACHED_JAVAS.lock().await = None;
     let mut config = load_java_config().await;
-    
+
     // Check if it's in manual paths
     if let Some(pos) = config.manual_paths.iter().position(|p| p == &path) {
         config.manual_paths.remove(pos);
@@ -539,8 +582,14 @@ pub async fn remove_java(path: String) -> Result<(), String> {
 
     // Check if it's a downloaded Java in runtimes or custom download path
     let is_managed = {
-        let runtimes_dir = get_minecraft_base().join("runtimes").to_string_lossy().to_string();
-        let custom_dir = config.custom_download_path.as_deref().unwrap_or(&runtimes_dir);
+        let runtimes_dir = get_minecraft_base()
+            .join("runtimes")
+            .to_string_lossy()
+            .to_string();
+        let custom_dir = config
+            .custom_download_path
+            .as_deref()
+            .unwrap_or(&runtimes_dir);
         path.starts_with(&runtimes_dir) || path.starts_with(custom_dir)
     };
 
@@ -551,7 +600,8 @@ pub async fn remove_java(path: String) -> Result<(), String> {
         if let Some(bin_dir) = java_path.parent() {
             if let Some(jdk_dir) = bin_dir.parent() {
                 if jdk_dir.exists() {
-                    tokio::fs::remove_dir_all(jdk_dir).await
+                    tokio::fs::remove_dir_all(jdk_dir)
+                        .await
                         .map_err(|e| format!("Failed to delete Java directory: {}", e))?;
                     tracing::info!("Deleted managed Java at: {}", jdk_dir.display());
                     return Ok(());
@@ -561,7 +611,10 @@ pub async fn remove_java(path: String) -> Result<(), String> {
         return Err("Could not determine JDK root directory for deletion".to_string());
     }
 
-    Err("Cannot remove this Java. It is neither manually added nor managed by the launcher.".to_string())
+    Err(
+        "Cannot remove this Java. It is neither manually added nor managed by the launcher."
+            .to_string(),
+    )
 }
 
 #[tauri::command]
@@ -582,7 +635,7 @@ pub async fn set_java_download_path(path: Option<String>) -> Result<(), String> 
 pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
     *CACHED_JAVAS.lock().await = None;
     tracing::info!("Starting full disk scan for Java...");
-    
+
     // Spawn blocking so we don't hang the async executor
     tokio::task::spawn_blocking(move || {
         let drives = if cfg!(target_os = "windows") {
@@ -595,7 +648,9 @@ pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
 
         for drive in drives {
             let root = PathBuf::from(drive);
-            if !root.exists() { continue; }
+            if !root.exists() {
+                continue;
+            }
 
             // Limit depth to 5 to avoid infinite/long loops in deeply nested dirs,
             // and filter out some obvious system directories that are huge and won't contain user-installed Java.
@@ -605,10 +660,10 @@ pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
                 .filter_entry(|e| {
                     let name = e.file_name().to_string_lossy().to_lowercase();
                     // Skip common heavy directories that likely don't have Java
-                    !name.contains("windows") && 
-                    !name.contains("system32") && 
-                    !name.contains("node_modules") &&
-                    !name.contains(".git")
+                    !name.contains("windows")
+                        && !name.contains("system32")
+                        && !name.contains("node_modules")
+                        && !name.contains(".git")
                 });
 
             for entry in walker.filter_map(|e| e.ok()) {
@@ -618,11 +673,14 @@ pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
                         let name_str = file_name.to_string_lossy().to_lowercase();
                         if name_str == "java.exe" || name_str == "java" {
                             // Let the UI know we are scanning
-                            let _ = app.emit("java-scan-progress", serde_json::json!({
-                                "status": "scanning",
-                                "currentPath": path.to_string_lossy()
-                            }));
-                            
+                            let _ = app.emit(
+                                "java-scan-progress",
+                                serde_json::json!({
+                                    "status": "scanning",
+                                    "currentPath": path.to_string_lossy()
+                                }),
+                            );
+
                             found_paths.push(path.to_string_lossy().to_string());
                         }
                     }
@@ -636,7 +694,7 @@ pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
         runtime.block_on(async {
             let mut config = load_java_config().await;
             let mut updated = false;
-            
+
             for path in found_paths {
                 if !config.manual_paths.contains(&path) {
                     // Quick probe
@@ -647,20 +705,22 @@ pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
                     }
                 }
             }
-            
+
             if updated {
                 let _ = save_java_config(&config).await;
             }
         });
 
-        let _ = app.emit("java-scan-progress", serde_json::json!({
-            "status": "complete"
-        }));
+        let _ = app.emit(
+            "java-scan-progress",
+            serde_json::json!({
+                "status": "complete"
+            }),
+        );
     });
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -675,8 +735,14 @@ mod tests {
 
     #[test]
     fn test_extract_version_string() {
-        assert_eq!(extract_version_string("java version \"1.8.0_392\""), "1.8.0_392");
-        assert_eq!(extract_version_string("openjdk version \"17.0.2\""), "17.0.2");
+        assert_eq!(
+            extract_version_string("java version \"1.8.0_392\""),
+            "1.8.0_392"
+        );
+        assert_eq!(
+            extract_version_string("openjdk version \"17.0.2\""),
+            "17.0.2"
+        );
     }
 
     #[test]

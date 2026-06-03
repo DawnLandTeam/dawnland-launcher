@@ -1,9 +1,9 @@
-use crate::core::modpack::{parse_modpack_manifest, extract_zip, copy_overrides, ModpackType};
 use crate::core::curseforge::get_cf_files_batch;
+use crate::core::modpack::{copy_overrides, extract_zip, parse_modpack_manifest, ModpackType};
 use crate::core::mojang::get_minecraft_base;
 use crate::downloader::{run_batch_download, DownloadTask};
-use tauri::{AppHandle, Emitter};
 use std::path::PathBuf;
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 #[tauri::command]
@@ -14,17 +14,24 @@ pub async fn install_modpack(
     project_id: Option<String>,
     app: AppHandle,
 ) -> Result<(), String> {
-    tracing::info!("Starting modpack installation: {} -> {}", zip_path, instance_name);
+    tracing::info!(
+        "Starting modpack installation: {} -> {}",
+        zip_path,
+        instance_name
+    );
 
     let base_dir = get_minecraft_base();
     let temp_dir = base_dir.join("temp").join(Uuid::new_v4().to_string());
     let instance_dir = base_dir.join("versions").join(&instance_name);
 
     // 1. Emit phase 1: Extracting
-    let _ = app.emit("modpack-install-status", serde_json::json!({
-        "phase": "extracting",
-        "message": "Extracting modpack archive..."
-    }));
+    let _ = app.emit(
+        "modpack-install-status",
+        serde_json::json!({
+            "phase": "extracting",
+            "message": "Extracting modpack archive..."
+        }),
+    );
 
     tokio::task::spawn_blocking({
         let zip = PathBuf::from(zip_path);
@@ -35,10 +42,13 @@ pub async fn install_modpack(
     .map_err(|e| format!("Task join error: {}", e))??;
 
     // 2. Parse Manifest
-    let _ = app.emit("modpack-install-status", serde_json::json!({
-        "phase": "parsing",
-        "message": "Reading modpack manifest..."
-    }));
+    let _ = app.emit(
+        "modpack-install-status",
+        serde_json::json!({
+            "phase": "parsing",
+            "message": "Reading modpack manifest..."
+        }),
+    );
 
     let modpack = parse_modpack_manifest(&temp_dir)?;
 
@@ -49,28 +59,41 @@ pub async fn install_modpack(
 
     let (mc_version, loader, tasks, overrides_folder, modpack_version) = match modpack {
         ModpackType::CurseForge(manifest) => {
-            let _ = app.emit("modpack-install-status", serde_json::json!({
-                "phase": "resolving_urls",
-                "message": "Resolving CurseForge download links..."
-            }));
+            let _ = app.emit(
+                "modpack-install-status",
+                serde_json::json!({
+                    "phase": "resolving_urls",
+                    "message": "Resolving CurseForge download links..."
+                }),
+            );
 
             let mc_version = manifest.minecraft.version.clone();
-            let loader = manifest.minecraft.mod_loaders.first().map(|l| l.id.clone()).unwrap_or_default();
+            let loader = manifest
+                .minecraft
+                .mod_loaders
+                .first()
+                .map(|l| l.id.clone())
+                .unwrap_or_default();
             let mp_version = manifest.version.clone();
-            
+
             let file_ids: Vec<u32> = manifest.files.iter().map(|f| f.file_id).collect();
-            
+
             // Get URLs from Proxy
             let resolved_files = get_cf_files_batch(file_ids).await?;
 
             let mut tasks = Vec::new();
             for file in resolved_files {
                 let dest = instance_dir.join("mods").join(&file.filename);
-                tasks.push(DownloadTask::new(file.download_url, dest.to_string_lossy().to_string(), file.hash, file.file_size));
+                tasks.push(DownloadTask::new(
+                    file.download_url,
+                    dest.to_string_lossy().to_string(),
+                    file.hash,
+                    file.file_size,
+                ));
             }
 
             (mc_version, loader, tasks, manifest.overrides, mp_version)
-        },
+        }
         ModpackType::Modrinth(manifest) => {
             let mc_version = manifest.dependencies.minecraft.clone();
             let mut loader = String::new();
@@ -88,19 +111,33 @@ pub async fn install_modpack(
                 if let Some(url) = file.downloads.first() {
                     let dest = instance_dir.join(&file.path);
                     let hash = file.hashes.get("sha1").cloned();
-                    tasks.push(DownloadTask::new(url.clone(), dest.to_string_lossy().to_string(), hash, Some(file.file_size)));
+                    tasks.push(DownloadTask::new(
+                        url.clone(),
+                        dest.to_string_lossy().to_string(),
+                        hash,
+                        Some(file.file_size),
+                    ));
                 }
             }
 
-            (mc_version, loader, tasks, "overrides".to_string(), mp_version)
+            (
+                mc_version,
+                loader,
+                tasks,
+                "overrides".to_string(),
+                mp_version,
+            )
         }
     };
 
     // 3. Setup Instance
-    let _ = app.emit("modpack-install-status", serde_json::json!({
-        "phase": "setup_instance",
-        "message": format!("Preparing instance {}...", instance_name)
-    }));
+    let _ = app.emit(
+        "modpack-install-status",
+        serde_json::json!({
+            "phase": "setup_instance",
+            "message": format!("Preparing instance {}...", instance_name)
+        }),
+    );
 
     ensure_dependencies(&mc_version, &loader, app.clone()).await?;
 
@@ -118,12 +155,13 @@ pub async fn install_modpack(
 
     std::fs::write(
         instance_dir.join(format!("{}.json", instance_name)),
-        serde_json::to_string_pretty(&version_json).unwrap()
-    ).map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&version_json).unwrap(),
+    )
+    .map_err(|e| e.to_string())?;
 
     // Smart Cleanup if is_update is true
     let modpack_files_path = instance_dir.join("modpack_files.json");
-    
+
     let mut expected_mod_filenames = std::collections::HashSet::new();
     for task in &tasks {
         if let Some(filename) = std::path::Path::new(&task.dest_path).file_name() {
@@ -132,10 +170,13 @@ pub async fn install_modpack(
     }
 
     if is_update {
-        let _ = app.emit("modpack-install-status", serde_json::json!({
-            "phase": "cleaning",
-            "message": "Cleaning up outdated mods..."
-        }));
+        let _ = app.emit(
+            "modpack-install-status",
+            serde_json::json!({
+                "phase": "cleaning",
+                "message": "Cleaning up outdated mods..."
+            }),
+        );
 
         if let Ok(old_files_json) = tokio::fs::read_to_string(&modpack_files_path).await {
             if let Ok(old_files) = serde_json::from_str::<Vec<String>>(&old_files_json) {
@@ -146,8 +187,13 @@ pub async fn install_modpack(
                             if file_type.is_file() {
                                 let filename = entry.file_name().to_string_lossy().to_string();
                                 // If it was part of the OLD modpack, but NOT in the NEW modpack, DELETE it.
-                                if old_files.contains(&filename) && !expected_mod_filenames.contains(&filename) {
-                                    tracing::info!("Update cleanup: Deleting outdated modpack mod {}", filename);
+                                if old_files.contains(&filename)
+                                    && !expected_mod_filenames.contains(&filename)
+                                {
+                                    tracing::info!(
+                                        "Update cleanup: Deleting outdated modpack mod {}",
+                                        filename
+                                    );
                                     let _ = tokio::fs::remove_file(entry.path()).await;
                                 }
                             }
@@ -158,22 +204,27 @@ pub async fn install_modpack(
         }
     }
 
-
     // 4. Download Mods
-    let _ = app.emit("modpack-install-status", serde_json::json!({
-        "phase": "downloading_mods",
-        "message": format!("Downloading {} mods...", tasks.len()),
-        "totalTasks": tasks.len()
-    }));
+    let _ = app.emit(
+        "modpack-install-status",
+        serde_json::json!({
+            "phase": "downloading_mods",
+            "message": format!("Downloading {} mods...", tasks.len()),
+            "totalTasks": tasks.len()
+        }),
+    );
 
     // Run batch download
     run_batch_download(tasks.clone(), app.clone()).await;
 
     // 5. Copy Overrides
-    let _ = app.emit("modpack-install-status", serde_json::json!({
-        "phase": "copying_overrides",
-        "message": "Applying modpack overrides..."
-    }));
+    let _ = app.emit(
+        "modpack-install-status",
+        serde_json::json!({
+            "phase": "copying_overrides",
+            "message": "Applying modpack overrides..."
+        }),
+    );
 
     tokio::task::spawn_blocking({
         let temp = temp_dir.clone();
@@ -199,48 +250,68 @@ pub async fn install_modpack(
     // Clean up
     let _ = std::fs::remove_dir_all(&temp_dir);
 
-    let _ = app.emit("modpack-install-status", serde_json::json!({
-        "phase": "complete",
-        "message": "Modpack installation complete!"
-    }));
+    let _ = app.emit(
+        "modpack-install-status",
+        serde_json::json!({
+            "phase": "complete",
+            "message": "Modpack installation complete!"
+        }),
+    );
 
     Ok(())
 }
 
 async fn ensure_dependencies(mc_version: &str, loader: &str, app: AppHandle) -> Result<(), String> {
     let base_dir = crate::core::mojang::get_minecraft_base();
-    
+
     // Check if loader is empty -> means only vanilla
     if loader.is_empty() {
-        let vanilla_json = base_dir.join("versions").join(mc_version).join(format!("{}.json", mc_version));
+        let vanilla_json = base_dir
+            .join("versions")
+            .join(mc_version)
+            .join(format!("{}.json", mc_version));
         if !vanilla_json.exists() {
-            let _ = app.emit("modpack-install-status", serde_json::json!({
-                "phase": "installing_dependency",
-                "message": format!("Installing Minecraft {}...", mc_version)
-            }));
-            
+            let _ = app.emit(
+                "modpack-install-status",
+                serde_json::json!({
+                    "phase": "installing_dependency",
+                    "message": format!("Installing Minecraft {}...", mc_version)
+                }),
+            );
+
             let versions = crate::core::mojang::get_vanilla_versions().await?;
-            let version_info = versions.into_iter().find(|v| v.id == mc_version)
-                .ok_or_else(|| format!("Minecraft version {} not found in Mojang API", mc_version))?;
-            
+            let version_info = versions
+                .into_iter()
+                .find(|v| v.id == mc_version)
+                .ok_or_else(|| {
+                    format!("Minecraft version {} not found in Mojang API", mc_version)
+                })?;
+
             crate::core::mojang::install_vanilla_version(
-                mc_version.to_string(), 
-                version_info.url.clone(), 
+                mc_version.to_string(),
+                version_info.url.clone(),
                 Some(true),
-                app.clone()
-            ).await?;
+                app.clone(),
+            )
+            .await?;
         }
         return Ok(());
     }
 
     // Loader is present
-    let loader_json = base_dir.join("versions").join(loader).join(format!("{}.json", loader));
+    let loader_json = base_dir
+        .join("versions")
+        .join(loader)
+        .join(format!("{}.json", loader));
     if !loader_json.exists() {
-        let _ = app.emit("modpack-install-status", serde_json::json!({
-            "phase": "installing_dependency",
-            "message": format!("Installing dependency {}...", loader)
-        }));
-        
+        let _ = app.emit(
+            "modpack-install-status",
+            serde_json::json!({
+                "phase": "installing_dependency",
+                "message": format!("Installing dependency {}...", loader)
+            }),
+        );
+
         if loader.starts_with("fabric-") {
             let loader_version = loader.strip_prefix("fabric-").unwrap().to_string();
             crate::core::fabric::install_fabric_instance(
@@ -248,8 +319,9 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, app: AppHandle) -> 
                 loader_version,
                 loader.to_string(),
                 Some(true),
-                app.clone()
-            ).await?;
+                app.clone(),
+            )
+            .await?;
         } else if loader.starts_with("forge-") {
             let loader_version = loader.strip_prefix("forge-").unwrap().to_string();
             crate::core::forge::install_forge_instance(
@@ -258,8 +330,9 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, app: AppHandle) -> 
                 "forge".to_string(),
                 loader.to_string(),
                 Some(true),
-                app.clone()
-            ).await?;
+                app.clone(),
+            )
+            .await?;
         } else if loader.starts_with("neoforge-") {
             let loader_version = loader.strip_prefix("neoforge-").unwrap().to_string();
             crate::core::forge::install_forge_instance(
@@ -268,24 +341,25 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, app: AppHandle) -> 
                 "neoforge".to_string(),
                 loader.to_string(),
                 Some(true),
-                app.clone()
-            ).await?;
+                app.clone(),
+            )
+            .await?;
         } else {
             return Err(format!("Unsupported loader type: {}", loader));
         }
     }
-    
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn get_modpack_name(zip_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&zip_path)
-            .map_err(|e| format!("Failed to open zip: {}", e))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| format!("Failed to read zip: {}", e))?;
-        
+        let file =
+            std::fs::File::open(&zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
+        let mut archive =
+            zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {}", e))?;
+
         // Check for CurseForge manifest
         if let Ok(mut manifest_file) = archive.by_name("manifest.json") {
             let mut contents = String::new();
@@ -300,7 +374,7 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, String> {
                 }
             }
         }
-        
+
         // Check for Modrinth manifest
         if let Ok(mut manifest_file) = archive.by_name("modrinth.index.json") {
             let mut contents = String::new();
@@ -313,7 +387,7 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, String> {
                 }
             }
         }
-        
+
         Err("Could not find manifest.json or modrinth.index.json with a valid name".to_string())
     })
     .await
@@ -328,18 +402,25 @@ pub async fn download_and_install_online_modpack(
     is_update: bool,
     app: AppHandle,
 ) -> Result<(), String> {
-    tracing::info!("Downloading online modpack from {} to {}", url, instance_name);
+    tracing::info!(
+        "Downloading online modpack from {} to {}",
+        url,
+        instance_name
+    );
 
     let base_dir = crate::core::mojang::get_minecraft_base();
     let temp_dir = base_dir.join("temp");
     std::fs::create_dir_all(&temp_dir).unwrap_or_default();
     let temp_zip_path = temp_dir.join(format!("{}.zip", uuid::Uuid::new_v4()));
 
-    let _ = app.emit("modpack-install-status", serde_json::json!({
-        "phase": "downloading_archive",
-        "message": "Downloading modpack archive...",
-        "progress": 0.0
-    }));
+    let _ = app.emit(
+        "modpack-install-status",
+        serde_json::json!({
+            "phase": "downloading_archive",
+            "message": "Downloading modpack archive...",
+            "progress": 0.0
+        }),
+    );
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
@@ -358,10 +439,10 @@ pub async fn download_and_install_online_modpack(
 
     let total_size = response.content_length().unwrap_or(0);
     let mut downloaded: u64 = 0;
-    
+
     use futures_util::StreamExt;
     use tokio::io::AsyncWriteExt;
-    
+
     let mut file = tokio::fs::File::create(&temp_zip_path)
         .await
         .map_err(|e| format!("Failed to create temp file: {}", e))?;
@@ -388,23 +469,29 @@ pub async fn download_and_install_online_modpack(
             let total_mb = total_size as f64 / 1024.0 / 1024.0;
             let speed_mb = current_speed / 1024.0 / 1024.0;
 
-            let _ = app.emit("modpack-install-status", serde_json::json!({
-                "phase": "downloading_archive",
-                "message": "Downloading modpack archive...",
-                "progress": progress,
-                "speedMb": speed_mb,
-                "totalMb": total_mb,
-                "downloadedMb": downloaded_mb
-            }));
+            let _ = app.emit(
+                "modpack-install-status",
+                serde_json::json!({
+                    "phase": "downloading_archive",
+                    "message": "Downloading modpack archive...",
+                    "progress": progress,
+                    "speedMb": speed_mb,
+                    "totalMb": total_mb,
+                    "downloadedMb": downloaded_mb
+                }),
+            );
             last_emit_time = tokio::time::Instant::now();
         }
     }
 
-    let _ = app.emit("modpack-install-status", serde_json::json!({
-        "phase": "downloading_archive",
-        "message": "Download complete. Starting installation...",
-        "progress": 100.0
-    }));
+    let _ = app.emit(
+        "modpack-install-status",
+        serde_json::json!({
+            "phase": "downloading_archive",
+            "message": "Download complete. Starting installation...",
+            "progress": 100.0
+        }),
+    );
 
     // Call existing install_modpack
     let result = install_modpack(
@@ -413,6 +500,7 @@ pub async fn download_and_install_online_modpack(
         is_update,
         project_id,
         app,
-    ).await;
+    )
+    .await;
     result
 }

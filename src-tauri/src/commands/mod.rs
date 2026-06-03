@@ -13,9 +13,7 @@ pub fn get_system_info() -> Result<String, String> {
     let arch = consts::ARCH;
     let family = consts::FAMILY;
 
-    let info = format!(
-        "Operating System: {os} | Architecture: {arch} | Family: {family}"
-    );
+    let info = format!("Operating System: {os} | Architecture: {arch} | Family: {family}");
 
     tracing::info!("System info requested: {}", info);
     Ok(info)
@@ -36,9 +34,13 @@ pub fn get_system_memory() -> Result<SystemMemoryInfo, String> {
     let total_bytes = sys.total_memory();
     let total_mb = (total_bytes / (1024 * 1024)) as u32;
     let recommended_max_mb = (total_mb / 3).max(1024).min(16384);
-    
-    tracing::info!("System memory: {} MB, recommended max: {} MB", total_mb, recommended_max_mb);
-    
+
+    tracing::info!(
+        "System memory: {} MB, recommended max: {} MB",
+        total_mb,
+        recommended_max_mb
+    );
+
     Ok(SystemMemoryInfo {
         total_mb,
         recommended_max_mb,

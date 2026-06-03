@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::auth::{get_accounts, save_accounts, Account, AccountType};
+use serde::{Deserialize, Serialize};
 
 /// Device code flow response from Microsoft.
 #[derive(Debug, Deserialize)]
@@ -72,17 +72,26 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
     }
 
     // Debug: print raw response body
-    let raw_text = response.text().await.map_err(|e| format!("Failed to read response: {e}"))?;
+    let raw_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {e}"))?;
     tracing::info!("Raw Device Code Response: {}", raw_text);
 
-    let device_code: DeviceCodeResponse = serde_json::from_str(&raw_text)
-        .map_err(|e| format!("Failed to parse device code response: {e}. Raw: {}", raw_text))?;
+    let device_code: DeviceCodeResponse = serde_json::from_str(&raw_text).map_err(|e| {
+        format!(
+            "Failed to parse device code response: {e}. Raw: {}",
+            raw_text
+        )
+    })?;
 
     Ok(LoginInitResponse {
         user_code: device_code.user_code,
         device_code: device_code.device_code,
         verification_uri: device_code.verification_uri,
-        message: device_code.message.unwrap_or_else(|| "Please enter the code on the website.".to_string()),
+        message: device_code
+            .message
+            .unwrap_or_else(|| "Please enter the code on the website.".to_string()),
     })
 }
 
@@ -97,9 +106,7 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
     let client = http_client();
 
     loop {
-        let payload = TokenPayload {
-            device_code,
-        };
+        let payload = TokenPayload { device_code };
 
         let url = format!("{}/api/microsoft/token", get_web_backend_url());
 
@@ -111,8 +118,11 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
             .await
             .map_err(|e| format!("Token request failed: {e:?}"))?;
 
-        let raw_text = response.text().await.map_err(|e| format!("Failed to read token response: {e}"))?;
-        
+        let raw_text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read token response: {e}"))?;
+
         #[derive(Deserialize)]
         struct TokenResponse {
             access_token: Option<String>,
@@ -145,7 +155,11 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
             if error == "expired_token" {
                 return Err("Device code flow expired. Please try again.".to_string());
             }
-            return Err(format!("Token error: {} - {}", error, token_resp.error_description.unwrap_or_default()));
+            return Err(format!(
+                "Token error: {} - {}",
+                error,
+                token_resp.error_description.unwrap_or_default()
+            ));
         }
 
         // No access_token and no error - wait and continue
@@ -213,8 +227,10 @@ async fn get_xbox_live_token(ms_token: &str) -> Result<String, String> {
     let xbl_resp: XboxLiveAuthResponse = serde_json::from_str(&raw_text)
         .map_err(|e| format!("Failed to parse Xbox Live response: {e}. Raw: {}", raw_text))?;
 
-    let xbl_token = xbl_resp.token.ok_or_else(|| "No Xbox Live token in response".to_string())?;
-    
+    let xbl_token = xbl_resp
+        .token
+        .ok_or_else(|| "No Xbox Live token in response".to_string())?;
+
     tracing::info!("Received Xbox Live token");
     Ok(xbl_token)
 }
@@ -276,7 +292,7 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
             #[serde(rename = "Message")]
             message: Option<String>,
         }
-        
+
         if let Ok(xerr_resp) = serde_json::from_str::<XErrResponse>(&raw_text) {
             if let Some(xerr) = xerr_resp.xerr {
                 let detailed_error = match xerr {
@@ -315,7 +331,9 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
     let xsts_resp: XSTSAuthResponse = serde_json::from_str(&raw_text)
         .map_err(|e| format!("Failed to parse XSTS response: {e}. Raw: {}", raw_text))?;
 
-    let token = xsts_resp.token.ok_or_else(|| "No XSTS token in response".to_string())?;
+    let token = xsts_resp
+        .token
+        .ok_or_else(|| "No XSTS token in response".to_string())?;
 
     // Get UHS from display claims.
     let uhs = xsts_resp
@@ -370,15 +388,25 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, Stri
         error_message: Option<String>,
     }
 
-    let mc_resp: MCAuthResponse = serde_json::from_str(&raw_text)
-        .map_err(|e| format!("Failed to parse Minecraft auth response: {e}. Raw: {}", raw_text))?;
+    let mc_resp: MCAuthResponse = serde_json::from_str(&raw_text).map_err(|e| {
+        format!(
+            "Failed to parse Minecraft auth response: {e}. Raw: {}",
+            raw_text
+        )
+    })?;
 
     if let Some(error) = mc_resp.error {
-        return Err(format!("Minecraft auth error: {} - {}", error, mc_resp.error_message.unwrap_or_default()));
+        return Err(format!(
+            "Minecraft auth error: {} - {}",
+            error,
+            mc_resp.error_message.unwrap_or_default()
+        ));
     }
 
-    let token = mc_resp.access_token.ok_or_else(|| "No Minecraft access token in response".to_string())?;
-    
+    let token = mc_resp
+        .access_token
+        .ok_or_else(|| "No Minecraft access token in response".to_string())?;
+
     tracing::info!("Received Minecraft access token");
     Ok(token)
 }
@@ -400,10 +428,20 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), Strin
     if !status.is_success() {
         if status.as_u16() == 404 {
             tracing::error!("Account does not own Minecraft Java Edition");
-            return Err("Account does not own Minecraft Java Edition. Please purchase the game first.".to_string());
+            return Err(
+                "Account does not own Minecraft Java Edition. Please purchase the game first."
+                    .to_string(),
+            );
         }
-        tracing::error!("Minecraft profile request failed: {} - {}", status, raw_text);
-        return Err(format!("Minecraft profile request failed: {} - {}", status, raw_text));
+        tracing::error!(
+            "Minecraft profile request failed: {} - {}",
+            status,
+            raw_text
+        );
+        return Err(format!(
+            "Minecraft profile request failed: {} - {}",
+            status, raw_text
+        ));
     }
 
     #[derive(Deserialize)]
@@ -417,8 +455,12 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), Strin
     let profile: MCProfileResponse = serde_json::from_str(&raw_text)
         .map_err(|e| format!("Failed to parse Minecraft profile: {e}. Raw: {}", raw_text))?;
 
-    let uuid = profile.id.ok_or_else(|| "No UUID in profile response".to_string())?;
-    let username = profile.name.ok_or_else(|| "No name in profile response".to_string())?;
+    let uuid = profile
+        .id
+        .ok_or_else(|| "No UUID in profile response".to_string())?;
+    let username = profile
+        .name
+        .ok_or_else(|| "No name in profile response".to_string())?;
 
     tracing::info!("Received Minecraft profile: {} ({})", username, uuid);
     Ok((uuid, username))
@@ -467,7 +509,9 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, String> 
     // Remove existing Microsoft account with same UUID if exists (ignore case and hyphens just in case).
     accounts.retain(|a| {
         let same_type = a.account_type == AccountType::Microsoft;
-        let same_id = a.id.replace("-", "").eq_ignore_ascii_case(&account.id.replace("-", ""));
+        let same_id =
+            a.id.replace("-", "")
+                .eq_ignore_ascii_case(&account.id.replace("-", ""));
         !(same_type && same_id)
     });
 
@@ -486,7 +530,9 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
     let mut accounts = get_accounts().await?;
 
     // Find the account
-    let account_pos = accounts.iter().position(|a| a.id == account_id)
+    let account_pos = accounts
+        .iter()
+        .position(|a| a.id == account_id)
         .ok_or_else(|| "Account not found".to_string())?;
 
     let account = &mut accounts[account_pos];
@@ -496,7 +542,9 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
         return Err("Account is not a Microsoft account".to_string());
     }
 
-    let refresh_token = account.refresh_token.as_ref()
+    let refresh_token = account
+        .refresh_token
+        .as_ref()
         .ok_or_else(|| "No refresh token available for this account".to_string())?;
 
     // Step 1: Refresh Microsoft access token
@@ -507,9 +555,7 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
         refresh_token: &'a str,
     }
 
-    let payload = RefreshPayload {
-        refresh_token,
-    };
+    let payload = RefreshPayload { refresh_token };
 
     let url = format!("{}/api/microsoft/refresh", get_web_backend_url());
 
@@ -521,7 +567,10 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
         .await
         .map_err(|e| format!("Token refresh request failed: {:?}", e))?;
 
-    let raw_text = response.text().await.map_err(|e| format!("Failed to read refresh response: {e}"))?;
+    let raw_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read refresh response: {e}"))?;
 
     #[derive(Deserialize)]
     struct RefreshResponse {
@@ -537,19 +586,24 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
     if let Some(error) = &refresh_resp.error {
         let error_desc = refresh_resp.error_description.clone().unwrap_or_default();
         tracing::error!("Token refresh failed: {} - {}", error, error_desc);
-        
+
         // If refresh token is invalid/expired, user needs to re-authenticate
-        if error == "invalid_grant" || error == "refresh_token_expired" || error == "invalid_request" {
+        if error == "invalid_grant"
+            || error == "refresh_token_expired"
+            || error == "invalid_request"
+        {
             return Err("REAUTH_REQUIRED".to_string());
         }
-        
+
         return Err(format!("Token refresh error: {} - {}", error, error_desc));
     }
 
-    let new_ms_token = refresh_resp.access_token
+    let new_ms_token = refresh_resp
+        .access_token
         .ok_or_else(|| "No access token in refresh response".to_string())?;
 
-    let new_refresh_token = refresh_resp.refresh_token
+    let new_refresh_token = refresh_resp
+        .refresh_token
         .unwrap_or_else(|| refresh_token.to_string()); // Use old one if not returned
 
     tracing::info!("Microsoft token refreshed successfully");
@@ -582,24 +636,26 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
 }
 
 /// Start Microsoft OAuth 2.0 PKCE flow
-static OAUTH_LISTENER: tokio::sync::OnceCell<tokio::net::TcpListener> = tokio::sync::OnceCell::const_new();
+static OAUTH_LISTENER: tokio::sync::OnceCell<tokio::net::TcpListener> =
+    tokio::sync::OnceCell::const_new();
 
 pub async fn login_microsoft_oauth() -> Result<Account, String> {
-    use sha2::{Sha256, Digest};
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-    use tokio::net::TcpListener;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use sha2::{Digest, Sha256};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     tracing::info!("Starting Microsoft OAuth login flow");
 
     let client_id = "780ab3ca-a1a0-4830-ac98-92a595e85a13";
     let redirect_uri = "http://localhost:23333/auth-callback";
-    
+
     // 1. Generate state and code verifier
     let state = uuid::Uuid::new_v4().simple().to_string();
-    let code_verifier = format!("{}{}{}", 
-        uuid::Uuid::new_v4().simple().to_string(), 
-        uuid::Uuid::new_v4().simple().to_string(), 
+    let code_verifier = format!(
+        "{}{}{}",
+        uuid::Uuid::new_v4().simple().to_string(),
+        uuid::Uuid::new_v4().simple().to_string(),
         uuid::Uuid::new_v4().simple().to_string()
     );
 
@@ -616,9 +672,10 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
 
     // 4. Start local HTTP server
     // Reuse the listener so multiple clicks don't cause port binding errors
-    let listener = OAUTH_LISTENER.get_or_try_init(|| async {
-        tokio::net::TcpListener::bind("127.0.0.1:23333").await
-    }).await.map_err(|e| format!("Failed to bind local server on port 23333: {}", e))?;
+    let listener = OAUTH_LISTENER
+        .get_or_try_init(|| async { tokio::net::TcpListener::bind("127.0.0.1:23333").await })
+        .await
+        .map_err(|e| format!("Failed to bind local server on port 23333: {}", e))?;
 
     // 5. Open browser
     open::that(auth_url).map_err(|e| format!("Failed to open browser: {}", e))?;
@@ -666,7 +723,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
             }
         }
     }).await;
-    
+
     let code = match callback_result {
         Ok(Ok(c)) => c,
         Ok(Err(e)) => return Err(e),
@@ -678,7 +735,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
     // 7. Exchange code for token
     let client = reqwest::Client::new();
     let token_url = "https://login.live.com/oauth20_token.srf";
-    
+
     let params = [
         ("client_id", client_id),
         ("code", &code),
@@ -687,14 +744,18 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
         ("code_verifier", &code_verifier),
     ];
 
-    let response = client.post(token_url)
+    let response = client
+        .post(token_url)
         .header("Origin", "http://localhost:23333")
         .form(&params)
         .send()
         .await
         .map_err(|e| format!("Token request failed: {}", e))?;
 
-    let raw_text = response.text().await.map_err(|e| format!("Failed to read token response: {}", e))?;
+    let raw_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read token response: {}", e))?;
 
     #[derive(Deserialize)]
     struct TokenResponse {
@@ -708,10 +769,16 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
         .map_err(|e| format!("Failed to parse token response: {}. Raw: {}", e, raw_text))?;
 
     if let Some(error) = token_resp.error {
-        return Err(format!("Token error: {} - {}", error, token_resp.error_description.unwrap_or_default()));
+        return Err(format!(
+            "Token error: {} - {}",
+            error,
+            token_resp.error_description.unwrap_or_default()
+        ));
     }
 
-    let ms_token = token_resp.access_token.ok_or_else(|| "No access token in response".to_string())?;
+    let ms_token = token_resp
+        .access_token
+        .ok_or_else(|| "No access token in response".to_string())?;
     let refresh_token = token_resp.refresh_token.unwrap_or_default();
 
     tracing::info!("Received Microsoft access token from OAuth flow");
@@ -738,7 +805,9 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
     let mut accounts = get_accounts().await?;
     accounts.retain(|a| {
         let same_type = a.account_type == AccountType::Microsoft;
-        let same_id = a.id.replace("-", "").eq_ignore_ascii_case(&account.id.replace("-", ""));
+        let same_id =
+            a.id.replace("-", "")
+                .eq_ignore_ascii_case(&account.id.replace("-", ""));
         !(same_type && same_id)
     });
 

@@ -13,11 +13,14 @@ function getBrowserLanguage(): string {
     return savedLang;
   }
   
-  const lang = navigator.language;
-  if (lang.startsWith('zh')) {
-    return 'zh-CN';
-  }
-  return 'en';
+  // Use Intl.DateTimeFormat to get the system locale which bypasses WebView2's en-US default bug
+  const lang = Intl.DateTimeFormat().resolvedOptions().locale || navigator.language;
+  const detectedLang = lang.startsWith('zh') ? 'zh-CN' : 'en';
+  
+  // Save it immediately so it doesn't try to detect again
+  localStorage.setItem('language', detectedLang);
+  
+  return detectedLang;
 }
 
 const i18n = createI18n({

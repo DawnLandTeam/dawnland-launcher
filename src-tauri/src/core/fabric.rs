@@ -52,7 +52,7 @@ pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, 
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
     let url = format!("{}/versions/loader/{}", FABRIC_META_BASE, mc_version);
-    
+
     let response = client
         .get(&url)
         .send()
@@ -74,7 +74,7 @@ pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, 
     // Separate stable and unstable versions
     let mut stable_versions: Vec<String> = Vec::new();
     let mut unstable_versions: Vec<String> = Vec::new();
-    
+
     for loader in &loaders {
         if loader.loader.stable {
             stable_versions.push(loader.loader.version.clone());
@@ -82,14 +82,19 @@ pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, 
             unstable_versions.push(loader.loader.version.clone());
         }
     }
-    
+
     // Sort both lists: numerically descending (newest first)
     stable_versions.sort_by(|a, b| compare_versions(b, a));
     unstable_versions.sort_by(|a, b| compare_versions(b, a));
-    
-    tracing::info!("Found {} stable + {} unstable = {} total Fabric loader versions for MC {}", 
-        stable_versions.len(), unstable_versions.len(), stable_versions.len() + unstable_versions.len(), mc_version);
-    
+
+    tracing::info!(
+        "Found {} stable + {} unstable = {} total Fabric loader versions for MC {}",
+        stable_versions.len(),
+        unstable_versions.len(),
+        stable_versions.len() + unstable_versions.len(),
+        mc_version
+    );
+
     Ok(FabricLoaderList {
         stable: stable_versions,
         unstable: unstable_versions,
@@ -107,7 +112,9 @@ pub async fn install_fabric_instance(
 ) -> Result<(), String> {
     tracing::info!(
         "Installing Fabric instance: {} (MC {} + Loader {})",
-        custom_instance_name, mc_version, fabric_version
+        custom_instance_name,
+        mc_version,
+        fabric_version
     );
 
     let base_dir = get_minecraft_base();
@@ -123,13 +130,19 @@ pub async fn install_fabric_instance(
 
     if !base_client_jar.exists() || !base_version_json.exists() {
         // Need to install base vanilla version first
-        tracing::info!("Base Minecraft {} not installed, installing first...", mc_version);
-        
-        let _ = app.emit("install-progress", serde_json::json!({
-            "phase": "resolving_version",
-            "versionId": mc_version,
-            "currentFile": "Fetching Minecraft version manifest..."
-        }));
+        tracing::info!(
+            "Base Minecraft {} not installed, installing first...",
+            mc_version
+        );
+
+        let _ = app.emit(
+            "install-progress",
+            serde_json::json!({
+                "phase": "resolving_version",
+                "versionId": mc_version,
+                "currentFile": "Fetching Minecraft version manifest..."
+            }),
+        );
 
         // Get version JSON URL from Mojang
         let manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
@@ -146,7 +159,9 @@ pub async fn install_fabric_instance(
         let version_url = manifest["versions"]
             .as_array()
             .and_then(|versions| {
-                versions.iter().find(|v| v["id"].as_str() == Some(&mc_version))
+                versions
+                    .iter()
+                    .find(|v| v["id"].as_str() == Some(&mc_version))
             })
             .and_then(|v| v["url"].as_str())
             .ok_or_else(|| format!("Version {} not found in manifest", mc_version))?;
@@ -165,7 +180,7 @@ pub async fn install_fabric_instance(
         tokio::fs::create_dir_all(&base_version_dir)
             .await
             .map_err(|e| format!("Failed to create version directory: {}", e))?;
-        
+
         tokio::fs::write(&base_version_json, &version_json_content)
             .await
             .map_err(|e| format!("Failed to write version JSON: {}", e))?;
@@ -190,10 +205,13 @@ pub async fn install_fabric_instance(
             .map_err(|e| format!("Failed to parse version JSON: {}", e))?;
 
         // Emit progress
-        let _ = app.emit("install-progress", serde_json::json!({
-            "phase": "resolving_libraries",
-            "versionId": mc_version,
-        }));
+        let _ = app.emit(
+            "install-progress",
+            serde_json::json!({
+                "phase": "resolving_libraries",
+                "versionId": mc_version,
+            }),
+        );
 
         // Build download tasks for vanilla
         let mut tasks: Vec<crate::downloader::DownloadTask> = Vec::new();
@@ -207,7 +225,10 @@ pub async fn install_fabric_instance(
                     tasks.push(crate::downloader::DownloadTask::new(
                         url.to_string(),
                         dest.to_string_lossy().to_string(),
-                        client.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                        client
+                            .get("sha1")
+                            .and_then(|s| s.as_str())
+                            .map(String::from),
                         client.get("size").and_then(|s| s.as_u64()),
                     ));
                 }
@@ -225,7 +246,10 @@ pub async fn install_fabric_instance(
                                 tasks.push(crate::downloader::DownloadTask::new(
                                     url.to_string(),
                                     dest.to_string_lossy().to_string(),
-                                    artifact.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                                    artifact
+                                        .get("sha1")
+                                        .and_then(|s| s.as_str())
+                                        .map(String::from),
                                     artifact.get("size").and_then(|s| s.as_u64()),
                                 ));
                             }
@@ -239,7 +263,10 @@ pub async fn install_fabric_instance(
         if let Some(asset_index) = version_meta.get("assetIndex") {
             if let Some(url) = asset_index.get("url").and_then(|u| u.as_str()) {
                 if let Some(id) = asset_index.get("id").and_then(|i| i.as_str()) {
-                    let index_path = base_dir.join("assets").join("indexes").join(format!("{}.json", id));
+                    let index_path = base_dir
+                        .join("assets")
+                        .join("indexes")
+                        .join(format!("{}.json", id));
                     tasks.push(crate::downloader::DownloadTask::new(
                         url.to_string(),
                         index_path.to_string_lossy().to_string(),
@@ -254,11 +281,14 @@ pub async fn install_fabric_instance(
         tracing::info!("Resolved {} files for vanilla base", total_tasks);
 
         // Emit downloading progress
-        let _ = app.emit("install-progress", serde_json::json!({
-            "phase": "downloading",
-            "versionId": mc_version,
-            "totalTasks": total_tasks,
-        }));
+        let _ = app.emit(
+            "install-progress",
+            serde_json::json!({
+                "phase": "downloading",
+                "versionId": mc_version,
+                "totalTasks": total_tasks,
+            }),
+        );
 
         // Download all files
         let app_clone = app.clone();
@@ -270,10 +300,13 @@ pub async fn install_fabric_instance(
     }
 
     // Step 2: Install Fabric profile
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "resolving_version",
-        "versionId": custom_instance_name,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "resolving_version",
+            "versionId": custom_instance_name,
+        }),
+    );
 
     // Fetch Fabric profile JSON
     let fabric_url = format!(
@@ -300,7 +333,7 @@ pub async fn install_fabric_instance(
     if let Some(obj) = profile.as_object_mut() {
         obj.insert("id".to_string(), serde_json::json!(custom_instance_name));
         obj.insert("inheritsFrom".to_string(), serde_json::json!(mc_version));
-        
+
         // Update logging file reference
         if let Some(logging) = obj.get_mut("logging") {
             if let Some(log_obj) = logging.as_object_mut() {
@@ -320,7 +353,7 @@ pub async fn install_fabric_instance(
 
     // Save Fabric profile
     let version_dir = base_dir.join("versions").join(&custom_instance_name);
-    
+
     tokio::fs::create_dir_all(&version_dir)
         .await
         .map_err(|e| format!("Failed to create version directory: {}", e))?;
@@ -336,12 +369,16 @@ pub async fn install_fabric_instance(
     tracing::info!("Saved Fabric profile to: {:?}", version_json_path);
 
     // Step 3: Download Fabric libraries
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "resolving_libraries",
-        "versionId": custom_instance_name,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "resolving_libraries",
+            "versionId": custom_instance_name,
+        }),
+    );
 
-    let libraries: &[serde_json::Value] = match profile.get("libraries").and_then(|l| l.as_array()) {
+    let libraries: &[serde_json::Value] = match profile.get("libraries").and_then(|l| l.as_array())
+    {
         Some(libs) => libs,
         None => &[],
     };
@@ -350,9 +387,15 @@ pub async fn install_fabric_instance(
 
     for lib in libraries {
         // Use the helper function that handles both Mojang format and Maven coordinates
-        if let Some((download_url, relative_path)) = crate::core::mojang::get_library_download_info_from_json(lib) {
+        if let Some((download_url, relative_path)) =
+            crate::core::mojang::get_library_download_info_from_json(lib)
+        {
             let dest = base_dir.join("libraries").join(&relative_path);
-            tracing::debug!("Added Fabric library: {} -> {}", relative_path, download_url);
+            tracing::debug!(
+                "Added Fabric library: {} -> {}",
+                relative_path,
+                download_url
+            );
             tasks.push(crate::downloader::DownloadTask::new(
                 download_url,
                 dest.to_string_lossy().to_string(),
@@ -365,11 +408,14 @@ pub async fn install_fabric_instance(
     let total_tasks = tasks.len();
     tracing::info!("Resolved {} Fabric library files", total_tasks);
 
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "downloading",
-        "versionId": custom_instance_name,
-        "totalTasks": total_tasks,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "downloading",
+            "versionId": custom_instance_name,
+            "totalTasks": total_tasks,
+        }),
+    );
 
     if !tasks.is_empty() {
         let app_clone = app.clone();
@@ -379,7 +425,9 @@ pub async fn install_fabric_instance(
     // Step 4: Create default dlml.json config
     let config_path = version_dir.join("dlml.json");
     let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
-        let content = tokio::fs::read_to_string(&config_path).await.unwrap_or_else(|_| "{}".to_string());
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .unwrap_or_else(|_| "{}".to_string());
         serde_json::from_str(&content).unwrap_or_default()
     } else {
         crate::core::launcher::InstanceConfig {
@@ -394,12 +442,12 @@ pub async fn install_fabric_instance(
             pack_file_name: None,
         }
     };
-    
+
     config.hidden = is_dependency.unwrap_or(false);
 
     let config_json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
-    
+
     tokio::fs::write(&config_path, config_json)
         .await
         .map_err(|e| format!("Failed to write instance config: {}", e))?;
@@ -407,12 +455,18 @@ pub async fn install_fabric_instance(
     tracing::info!("Created instance config at: {:?}", config_path);
 
     // Emit complete
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "complete",
-        "versionId": custom_instance_name,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "complete",
+            "versionId": custom_instance_name,
+        }),
+    );
 
-    tracing::info!("Fabric instance '{}' installed successfully!", custom_instance_name);
+    tracing::info!(
+        "Fabric instance '{}' installed successfully!",
+        custom_instance_name
+    );
     Ok(())
 }
 
@@ -424,7 +478,7 @@ pub async fn check_vanilla_installed(mc_version: String) -> Result<bool, String>
         .join("versions")
         .join(&mc_version)
         .join(format!("{}.jar", mc_version));
-    
+
     let installed = client_jar.exists();
     tracing::info!("Vanilla {} installed: {}", mc_version, installed);
     Ok(installed)

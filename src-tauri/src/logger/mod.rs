@@ -15,12 +15,8 @@ pub fn init() -> Result<(), String> {
     let log_dir = log_dir()?;
 
     // Ensure the log directory exists
-    std::fs::create_dir_all(&log_dir).map_err(|e| {
-        format!(
-            "Failed to create log directory {}: {e}",
-            log_dir.display()
-        )
-    })?;
+    std::fs::create_dir_all(&log_dir)
+        .map_err(|e| format!("Failed to create log directory {}: {e}", log_dir.display()))?;
 
     let file_appender = tracing_appender::rolling::daily(&log_dir, "dawnland.log");
     let (non_blocking_file, _guard) = tracing_appender::non_blocking(file_appender);
@@ -30,8 +26,7 @@ pub fn init() -> Result<(), String> {
     // outlive all other references to the non-blocking writer.
     std::mem::forget(_guard);
 
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
         .with(env_filter)

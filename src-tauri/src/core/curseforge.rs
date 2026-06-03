@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use super::modrinth::{UnifiedModProject, UnifiedModFile, OnlineModpackVersion};
+use super::modrinth::{OnlineModpackVersion, UnifiedModFile, UnifiedModProject};
 
 /// Get the web backend URL from environment or use default.
 fn get_web_backend_url() -> String {
@@ -45,7 +45,10 @@ fn get_fallback_download_url(file_id: i64, file_name: &str) -> String {
     let part1 = file_id / 1000;
     let part2 = file_id % 1000;
     let encoded_name = urlencoding::encode(file_name);
-    format!("https://edge.forgecdn.net/files/{}/{:03}/{}", part1, part2, encoded_name)
+    format!(
+        "https://edge.forgecdn.net/files/{}/{:03}/{}",
+        part1, part2, encoded_name
+    )
 }
 // ============================================================================
 // CurseForge API Response Types
@@ -244,15 +247,15 @@ pub async fn get_cf_mod_files(
 
     // Build query string
     let query_string = if cf_loader_type != 0 {
-        format!("gameVersion={}&modLoaderType={}", mc_version, cf_loader_type)
+        format!(
+            "gameVersion={}&modLoaderType={}",
+            mc_version, cf_loader_type
+        )
     } else {
         format!("gameVersion={}", mc_version)
     };
 
-    let proxy_url = build_proxy_url(
-        &format!("/mods/{}/files", project_id),
-        Some(&query_string),
-    );
+    let proxy_url = build_proxy_url(&format!("/mods/{}/files", project_id), Some(&query_string));
     tracing::info!("Proxy URL: {}", proxy_url);
 
     let client = reqwest::Client::new();
@@ -280,7 +283,9 @@ pub async fn get_cf_mod_files(
     let mut compatible_files = Vec::new();
 
     for file in sorted_files {
-        let download_url = file.download_url.unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name));
+        let download_url = file
+            .download_url
+            .unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name));
         let release_str = match file.release_type {
             1 => "Release",
             2 => "Beta",
@@ -329,10 +334,13 @@ struct CfBatchFilesRequest {
 /// Get multiple mod files from CurseForge via the web backend proxy using a batch request.
 #[tauri::command]
 pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile>, String> {
-    tracing::info!("Getting CF mod files batch via proxy for {} files", file_ids.len());
+    tracing::info!(
+        "Getting CF mod files batch via proxy for {} files",
+        file_ids.len()
+    );
 
     let proxy_url = build_proxy_url("/mods/files", None);
-    
+
     let request_body = CfBatchFilesRequest { file_ids };
 
     let client = reqwest::Client::new();
@@ -359,7 +367,9 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
     let mut compatible_files = Vec::new();
 
     for file in files_result.data {
-        let download_url = file.download_url.unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name));
+        let download_url = file
+            .download_url
+            .unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name));
         let release_str = match file.release_type {
             1 => "Release",
             2 => "Beta",
@@ -392,7 +402,10 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
 /// Get detailed information about a specific mod via the web backend proxy.
 #[tauri::command]
 pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject, String> {
-    tracing::info!("Getting CF mod details via proxy: project_id={}", project_id);
+    tracing::info!(
+        "Getting CF mod details via proxy: project_id={}",
+        project_id
+    );
 
     let proxy_url = build_proxy_url(&format!("/mods/{}", project_id), None);
     tracing::info!("Proxy URL: {}", proxy_url);
@@ -545,8 +558,13 @@ pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModP
 }
 
 #[tauri::command]
-pub async fn get_curseforge_modpack_versions(project_id: String) -> Result<Vec<OnlineModpackVersion>, String> {
-    tracing::info!("Getting CurseForge modpack versions: project_id={}", project_id);
+pub async fn get_curseforge_modpack_versions(
+    project_id: String,
+) -> Result<Vec<OnlineModpackVersion>, String> {
+    tracing::info!(
+        "Getting CurseForge modpack versions: project_id={}",
+        project_id
+    );
 
     let query_string = format!("modId={}", project_id);
     // Use /mods/{modId}/files to get versions. The proxy might just expect /mods/files or something?
@@ -581,11 +599,12 @@ pub async fn get_curseforge_modpack_versions(project_id: String) -> Result<Vec<O
     for file in files.data {
         let mut mc_versions = Vec::new();
         let mut loaders = file.loaders.clone().unwrap_or_default();
-        
+
         if let Some(gv) = &file.game_versions {
             for v in gv {
                 let lower = v.to_lowercase();
-                if ["forge", "fabric", "quilt", "neoforge", "liteloader"].contains(&lower.as_str()) {
+                if ["forge", "fabric", "quilt", "neoforge", "liteloader"].contains(&lower.as_str())
+                {
                     if !loaders.contains(v) {
                         loaders.push(v.clone());
                     }
@@ -600,7 +619,9 @@ pub async fn get_curseforge_modpack_versions(project_id: String) -> Result<Vec<O
             name: file.display_name,
             mc_version: mc_versions.join(", "),
             loaders,
-            download_url: file.download_url.unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name)),
+            download_url: file
+                .download_url
+                .unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name)),
             date: file.file_date,
         });
     }

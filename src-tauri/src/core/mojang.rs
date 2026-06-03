@@ -6,7 +6,7 @@ use tokio::fs;
 use tokio::sync::Mutex;
 
 // Re-export downloader types (from parent module)
-use crate::downloader::{DownloadTask, run_batch_download};
+use crate::downloader::{run_batch_download, DownloadTask};
 
 // ============ Global State ============
 
@@ -266,7 +266,7 @@ pub fn maven_name_to_path(name: &str) -> Option<String> {
         } else {
             String::new()
         };
-        
+
         Some(format!(
             "{}/{}/{}/{}-{}{}.jar",
             group, artifact, version, artifact, version, classifier
@@ -280,7 +280,7 @@ pub fn maven_name_to_path(name: &str) -> Option<String> {
 pub fn get_library_download_info_from_json(lib: &serde_json::Value) -> Option<(String, String)> {
     // Get the library name
     let name = lib.get("name")?.as_str()?;
-    
+
     // Try standard downloads.artifact first
     if let Some(downloads) = lib.get("downloads") {
         if let Some(artifact) = downloads.get("artifact") {
@@ -291,17 +291,18 @@ pub fn get_library_download_info_from_json(lib: &serde_json::Value) -> Option<(S
             }
         }
     }
-    
+
     // Fallback to Maven coordinate format (Fabric/Forge style)
     let path = maven_name_to_path(name)?;
-    
+
     // Determine base URL from lib.url or use default
-    let base_url = lib.get("url")
+    let base_url = lib
+        .get("url")
         .and_then(|u| u.as_str())
         .unwrap_or("https://libraries.minecraft.net/");
-    
+
     let download_url = format!("{}{}", base_url, path);
-    
+
     Some((download_url, format!("libraries/{}", path)))
 }
 
@@ -466,10 +467,13 @@ pub async fn install_vanilla_version(
     }
 
     // Emit initial state.
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "resolving_version",
-        "versionId": version_id,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "resolving_version",
+            "versionId": version_id,
+        }),
+    );
 
     let base_dir = get_minecraft_base();
     let client = reqwest::Client::builder()
@@ -511,9 +515,12 @@ pub async fn install_vanilla_version(
         let mut state = get_global_install_state().lock().await;
         state.phase = InstallPhase::ResolvingLibraries;
     }
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "resolving_libraries",
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "resolving_libraries",
+        }),
+    );
 
     // Step B: Build libraries download queue.
     let mut tasks: Vec<DownloadTask> = Vec::new();
@@ -529,7 +536,7 @@ pub async fn install_vanilla_version(
 
     for lib in libraries {
         let lib_name = lib.name.as_deref().unwrap_or("unknown");
-        
+
         if !should_download_library(lib) {
             tracing::debug!("Skipping library (rules): {}", lib_name);
             continue;
@@ -537,17 +544,16 @@ pub async fn install_vanilla_version(
 
         if let Some(ref downloads) = lib.downloads {
             if let Some(ref artifact) = downloads.artifact {
-                let path = artifact.path.as_ref()
+                let path = artifact
+                    .path
+                    .as_ref()
                     .map(|p| format!("libraries/{}", p))
                     .unwrap_or_else(|| "libraries/unknown".to_string());
                 let dest = base_dir.join(&path);
-                
-                let url = artifact.url.as_ref()
-                    .cloned()
-                    .unwrap_or_default();
-                let hash = artifact.sha1.as_ref()
-                    .cloned();
-                
+
+                let url = artifact.url.as_ref().cloned().unwrap_or_default();
+                let hash = artifact.sha1.as_ref().cloned();
+
                 if !url.is_empty() {
                     tasks.push(DownloadTask::new(
                         url,
@@ -569,17 +575,16 @@ pub async fn install_vanilla_version(
                 };
 
                 if let Some(ref classifier) = classifiers.get(os_key) {
-                    let path = classifier.path.as_ref()
+                    let path = classifier
+                        .path
+                        .as_ref()
                         .map(|p| format!("libraries/{}", p))
                         .unwrap_or_else(|| "libraries/unknown".to_string());
                     let dest = base_dir.join(&path);
-                    
-                    let url = classifier.url.as_ref()
-                        .cloned()
-                        .unwrap_or_default();
-                    let hash = classifier.sha1.as_ref()
-                        .cloned();
-                    
+
+                    let url = classifier.url.as_ref().cloned().unwrap_or_default();
+                    let hash = classifier.sha1.as_ref().cloned();
+
                     if !url.is_empty() {
                         tasks.push(DownloadTask::new(
                             url,
@@ -603,14 +608,11 @@ pub async fn install_vanilla_version(
             return Err("Version JSON missing downloads section".to_string());
         }
     };
-    
+
     if let Some(ref client_download) = downloads.client {
-        let url = client_download.url.as_ref()
-            .cloned()
-            .unwrap_or_default();
-        let hash = client_download.sha1.as_ref()
-            .cloned();
-        
+        let url = client_download.url.as_ref().cloned().unwrap_or_default();
+        let hash = client_download.sha1.as_ref().cloned();
+
         if !url.is_empty() {
             let path = format!("versions/{}/{}.jar", version_id, version_id);
             let dest = base_dir.join(&path);
@@ -629,9 +631,12 @@ pub async fn install_vanilla_version(
         let mut state = get_global_install_state().lock().await;
         state.phase = InstallPhase::ResolvingAssets;
     }
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "resolving_assets",
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "resolving_assets",
+        }),
+    );
 
     // Step D: Download and parse asset index.
     let asset_index = match &version_meta.asset_index {
@@ -641,7 +646,7 @@ pub async fn install_vanilla_version(
             return Err("Version JSON missing assetIndex".to_string());
         }
     };
-    
+
     let asset_index_url = match &asset_index.url {
         Some(url) if !url.is_empty() => url.clone(),
         _ => {
@@ -649,7 +654,7 @@ pub async fn install_vanilla_version(
             return Err("Version JSON missing asset index URL".to_string());
         }
     };
-    
+
     tracing::info!("Downloading asset index: {}", asset_index_url);
 
     let asset_index_content = client
@@ -678,7 +683,9 @@ pub async fn install_vanilla_version(
         .map_err(|e| format!("Failed to parse asset index: {e}"))?;
 
     // Build assets download queue.
-    let total_assets = asset_index.objects.as_ref()
+    let total_assets = asset_index
+        .objects
+        .as_ref()
         .map(|obj| obj.len())
         .unwrap_or(0);
     tracing::info!("Resolved {} asset objects", total_assets);
@@ -686,14 +693,12 @@ pub async fn install_vanilla_version(
     if let Some(objects) = &asset_index.objects {
         for (path, obj) in objects {
             // Path format: objects/<hash_prefix>/<hash>
-            let hash = obj.hash.as_ref()
-                .unwrap_or(&"".to_string())
-                .clone();
-            
+            let hash = obj.hash.as_ref().unwrap_or(&"".to_string()).clone();
+
             if hash.is_empty() {
                 continue;
             }
-            
+
             let hash_prefix = &hash[..2];
             let url = format!(
                 "https://resources.download.minecraft.net/{}/{}",
@@ -718,20 +723,26 @@ pub async fn install_vanilla_version(
         state.phase = InstallPhase::Downloading;
         state.set_total_tasks(total_tasks);
     }
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "downloading",
-        "totalTasks": total_tasks,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "downloading",
+            "totalTasks": total_tasks,
+        }),
+    );
 
-tracing::info!("Starting download of {} files...", total_tasks);
+    tracing::info!("Starting download of {} files...", total_tasks);
 
     // Debug: check if tasks is empty
     if total_tasks == 0 {
         tracing::warn!("No download tasks to process!");
-        let _ = app.emit("install-progress", serde_json::json!({
-            "phase": "error",
-            "error": "No files to download",
-        }));
+        let _ = app.emit(
+            "install-progress",
+            serde_json::json!({
+                "phase": "error",
+                "error": "No files to download",
+            }),
+        );
         return Ok(());
     }
 
@@ -748,26 +759,31 @@ tracing::info!("Starting download of {} files...", total_tasks);
         state.phase = InstallPhase::Complete;
     }
 
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "complete",
-        "versionId": version_id,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "complete",
+            "versionId": version_id,
+        }),
+    );
 
     tracing::info!("Installation complete!");
 
     // Save dlml.json with hidden state if needed
     let version_dir = base_dir.join("versions").join(&version_id);
     let config_path = version_dir.join("dlml.json");
-    
+
     let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
-        let content = tokio::fs::read_to_string(&config_path).await.unwrap_or_else(|_| "{}".to_string());
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .unwrap_or_else(|_| "{}".to_string());
         serde_json::from_str(&content).unwrap_or_default()
     } else {
         Default::default()
     };
-    
+
     config.hidden = is_dependency.unwrap_or(false);
-    
+
     if let Ok(config_json) = serde_json::to_string_pretty(&config) {
         let _ = tokio::fs::write(&config_path, config_json).await;
     }
@@ -827,14 +843,20 @@ pub async fn get_installed_versions() -> Result<Vec<String>, String> {
     }
 
     let mut versions = Vec::new();
-    
+
     let entries = fs::read_dir(&versions_dir)
         .await
         .map_err(|e| format!("Failed to read versions directory: {e}"))?;
 
-    let mut dir = tokio::fs::read_dir(&versions_dir).await.map_err(|e| format!("Failed to read versions dir: {e}"))?;
-    
-    while let Some(entry) = dir.next_entry().await.map_err(|e| format!("Failed to read entry: {e}"))? {
+    let mut dir = tokio::fs::read_dir(&versions_dir)
+        .await
+        .map_err(|e| format!("Failed to read versions dir: {e}"))?;
+
+    while let Some(entry) = dir
+        .next_entry()
+        .await
+        .map_err(|e| format!("Failed to read entry: {e}"))?
+    {
         let path = entry.path();
         if path.is_dir() {
             if let Some(name) = path.file_name() {
