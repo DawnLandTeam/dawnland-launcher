@@ -32,6 +32,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Setting version to $VERSION"
           export VERSION
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -84,3 +85,12 @@ jobs:
           prerelease: false
           uploadPlainBinary: true
           args: ${{ matrix.args }}
+
+      - name: Upload portable executable (Green version)
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${{ env.VERSION }}" src-tauri/target/release/DLML.exe --clobber
+        shell: bash
+
