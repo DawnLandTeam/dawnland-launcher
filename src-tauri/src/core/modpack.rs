@@ -98,28 +98,37 @@ pub enum ModpackType {
 
 /// Helper function to extract a ZIP file to a target directory using `zip-rs`.
 pub fn extract_zip<P: AsRef<Path>>(zip_path: P, extract_dir: P) -> Result<(), String> {
-    let zip_file = std::fs::File::open(zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
-    let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| format!("Failed to read zip archive: {}", e))?;
+    let zip_file =
+        std::fs::File::open(zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(zip_file).map_err(|e| format!("Failed to read zip archive: {}", e))?;
 
-    std::fs::create_dir_all(&extract_dir).map_err(|e| format!("Failed to create extract directory: {}", e))?;
+    std::fs::create_dir_all(&extract_dir)
+        .map_err(|e| format!("Failed to create extract directory: {}", e))?;
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| format!("Failed to access file in zip: {}", e))?;
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to access file in zip: {}", e))?;
         let outpath = match file.enclosed_name() {
             Some(path) => extract_dir.as_ref().join(path),
             None => continue,
         };
 
         if file.name().ends_with('/') {
-            std::fs::create_dir_all(&outpath).map_err(|e| format!("Failed to create directory from zip: {}", e))?;
+            std::fs::create_dir_all(&outpath)
+                .map_err(|e| format!("Failed to create directory from zip: {}", e))?;
         } else {
             if let Some(p) = outpath.parent() {
                 if !p.exists() {
-                    std::fs::create_dir_all(&p).map_err(|e| format!("Failed to create parent directory: {}", e))?;
+                    std::fs::create_dir_all(&p)
+                        .map_err(|e| format!("Failed to create parent directory: {}", e))?;
                 }
             }
-            let mut outfile = std::fs::File::create(&outpath).map_err(|e| format!("Failed to create output file: {}", e))?;
-            std::io::copy(&mut file, &mut outfile).map_err(|e| format!("Failed to extract file: {}", e))?;
+            let mut outfile = std::fs::File::create(&outpath)
+                .map_err(|e| format!("Failed to create output file: {}", e))?;
+            std::io::copy(&mut file, &mut outfile)
+                .map_err(|e| format!("Failed to extract file: {}", e))?;
         }
     }
 
@@ -132,7 +141,8 @@ pub fn parse_modpack_manifest(extract_dir: &PathBuf) -> Result<ModpackType, Stri
     if cf_manifest_path.exists() {
         tracing::info!("Found CurseForge manifest.json");
         let content = std::fs::read_to_string(&cf_manifest_path).map_err(|e| e.to_string())?;
-        let manifest: CfManifest = serde_json::from_str(&content).map_err(|e| format!("Invalid CF manifest: {}", e))?;
+        let manifest: CfManifest =
+            serde_json::from_str(&content).map_err(|e| format!("Invalid CF manifest: {}", e))?;
         return Ok(ModpackType::CurseForge(manifest));
     }
 
@@ -140,7 +150,8 @@ pub fn parse_modpack_manifest(extract_dir: &PathBuf) -> Result<ModpackType, Stri
     if mr_manifest_path.exists() {
         tracing::info!("Found Modrinth modrinth.index.json");
         let content = std::fs::read_to_string(&mr_manifest_path).map_err(|e| e.to_string())?;
-        let manifest: ModrinthManifest = serde_json::from_str(&content).map_err(|e| format!("Invalid Modrinth index: {}", e))?;
+        let manifest: ModrinthManifest =
+            serde_json::from_str(&content).map_err(|e| format!("Invalid Modrinth index: {}", e))?;
         return Ok(ModpackType::Modrinth(manifest));
     }
 
@@ -148,18 +159,32 @@ pub fn parse_modpack_manifest(extract_dir: &PathBuf) -> Result<ModpackType, Stri
 }
 
 /// Copies the overrides folder from the extracted modpack to the instance root.
-pub fn copy_overrides(extract_dir: &PathBuf, instance_dir: &PathBuf, overrides_folder: &str) -> Result<(), String> {
+pub fn copy_overrides(
+    extract_dir: &PathBuf,
+    instance_dir: &PathBuf,
+    overrides_folder: &str,
+) -> Result<(), String> {
     let overrides_path = extract_dir.join(overrides_folder);
     if !overrides_path.exists() || !overrides_path.is_dir() {
-        tracing::warn!("Overrides folder '{}' not found or is not a directory. Skipping.", overrides_folder);
+        tracing::warn!(
+            "Overrides folder '{}' not found or is not a directory. Skipping.",
+            overrides_folder
+        );
         return Ok(());
     }
 
-    tracing::info!("Copying overrides from {:?} to {:?}", overrides_path, instance_dir);
+    tracing::info!(
+        "Copying overrides from {:?} to {:?}",
+        overrides_path,
+        instance_dir
+    );
 
-    for entry in WalkDir::new(&overrides_path).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(&overrides_path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
-        
+
         if path.is_file() {
             let relative_path = path.strip_prefix(&overrides_path).unwrap();
             let dest_path = instance_dir.join(relative_path);
@@ -168,7 +193,8 @@ pub fn copy_overrides(extract_dir: &PathBuf, instance_dir: &PathBuf, overrides_f
                 let _ = std::fs::create_dir_all(parent);
             }
 
-            std::fs::copy(path, &dest_path).map_err(|e| format!("Failed to copy override file {:?}: {}", path, e))?;
+            std::fs::copy(path, &dest_path)
+                .map_err(|e| format!("Failed to copy override file {:?}: {}", path, e))?;
         }
     }
 

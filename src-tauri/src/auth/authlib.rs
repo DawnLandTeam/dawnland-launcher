@@ -78,7 +78,9 @@ pub async fn get_authlib_servers() -> Result<Vec<AuthlibServer>, String> {
         return Ok(Vec::new());
     }
 
-    let contents = tokio::fs::read_to_string(&config_path).await.map_err(|e| e.to_string())?;
+    let contents = tokio::fs::read_to_string(&config_path)
+        .await
+        .map_err(|e| e.to_string())?;
     let servers: Vec<AuthlibServer> = serde_json::from_str(&contents).unwrap_or_default();
     Ok(servers)
 }
@@ -91,8 +93,14 @@ pub async fn fetch_authlib_servers() -> Result<Vec<AuthlibServer>, String> {
 #[tauri::command]
 pub async fn add_authlib_server(url: String) -> Result<AuthlibServer, String> {
     let meta = get_authlib_meta(url.clone()).await?;
-    let name = meta.meta.and_then(|m| m.server_name).unwrap_or_else(|| "Unknown Server".to_string());
-    let server = AuthlibServer { url: url.clone(), name };
+    let name = meta
+        .meta
+        .and_then(|m| m.server_name)
+        .unwrap_or_else(|| "Unknown Server".to_string());
+    let server = AuthlibServer {
+        url: url.clone(),
+        name,
+    };
 
     let mut servers = get_authlib_servers().await?;
     servers.retain(|s| s.url != url);
@@ -106,7 +114,9 @@ pub async fn add_authlib_server(url: String) -> Result<AuthlibServer, String> {
     config_path.push("authlib_servers.json");
 
     let json = serde_json::to_string_pretty(&servers).map_err(|e| e.to_string())?;
-    tokio::fs::write(&config_path, json).await.map_err(|e| e.to_string())?;
+    tokio::fs::write(&config_path, json)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(server)
 }
@@ -124,7 +134,9 @@ pub async fn remove_authlib_server(url: String) -> Result<(), String> {
     config_path.push("authlib_servers.json");
 
     let json = serde_json::to_string_pretty(&servers).map_err(|e| e.to_string())?;
-    tokio::fs::write(&config_path, json).await.map_err(|e| e.to_string())?;
+    tokio::fs::write(&config_path, json)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -151,7 +163,11 @@ pub async fn get_authlib_meta(url: String) -> Result<YggdrasilRootResponse, Stri
 }
 
 #[tauri::command]
-pub async fn add_authlib_account(url: String, username: String, password: String) -> Result<Account, String> {
+pub async fn add_authlib_account(
+    url: String,
+    username: String,
+    password: String,
+) -> Result<Account, String> {
     let client_token = Uuid::new_v4().to_string();
     let client = Client::new();
 
@@ -181,7 +197,11 @@ pub async fn add_authlib_account(url: String, username: String, password: String
     if !res.status().is_success() {
         let err_body = res.text().await.unwrap_or_default();
         if let Ok(ygg_err) = serde_json::from_str::<YggdrasilError>(&err_body) {
-            return Err(ygg_err.error_message.unwrap_or_else(|| ygg_err.error.unwrap_or_else(|| "Unknown authentication error".to_string())));
+            return Err(ygg_err.error_message.unwrap_or_else(|| {
+                ygg_err
+                    .error
+                    .unwrap_or_else(|| "Unknown authentication error".to_string())
+            }));
         }
         return Err("Authentication failed".to_string());
     }
@@ -191,14 +211,30 @@ pub async fn add_authlib_account(url: String, username: String, password: String
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    let profile = auth_res.selected_profile.or_else(|| {
-        auth_res.available_profiles.and_then(|mut profiles| if profiles.is_empty() { None } else { Some(profiles.remove(0)) })
-    }).ok_or_else(|| "No profile available for this account".to_string())?;
+    let profile = auth_res
+        .selected_profile
+        .or_else(|| {
+            auth_res.available_profiles.and_then(|mut profiles| {
+                if profiles.is_empty() {
+                    None
+                } else {
+                    Some(profiles.remove(0))
+                }
+            })
+        })
+        .ok_or_else(|| "No profile available for this account".to_string())?;
 
     // Format UUID with hyphens if needed (Yggdrasil usually returns without hyphens)
     let uuid_str = profile.id;
     let uuid_with_hyphens = if uuid_str.len() == 32 {
-        format!("{}-{}-{}-{}-{}", &uuid_str[0..8], &uuid_str[8..12], &uuid_str[12..16], &uuid_str[16..20], &uuid_str[20..32])
+        format!(
+            "{}-{}-{}-{}-{}",
+            &uuid_str[0..8],
+            &uuid_str[8..12],
+            &uuid_str[12..16],
+            &uuid_str[16..20],
+            &uuid_str[20..32]
+        )
     } else {
         uuid_str
     };
@@ -211,7 +247,10 @@ pub async fn add_authlib_account(url: String, username: String, password: String
         refresh_token: None, // Authlib doesn't use standard oauth refresh tokens usually, or rather it uses accessToken in /refresh
         textures: None,
         authlib_url: Some(url.clone()),
-        authlib_server_name: get_authlib_meta(url).await.ok().and_then(|r| r.meta.and_then(|m| m.server_name)),
+        authlib_server_name: get_authlib_meta(url)
+            .await
+            .ok()
+            .and_then(|r| r.meta.and_then(|m| m.server_name)),
         client_token: Some(auth_res.client_token),
     };
 
@@ -220,7 +259,9 @@ pub async fn add_authlib_account(url: String, username: String, password: String
     // Remove existing Authlib account with same UUID if exists.
     accounts.retain(|a| {
         let same_type = a.account_type == AccountType::Authlib;
-        let same_id = a.id.replace("-", "").eq_ignore_ascii_case(&uuid_with_hyphens.replace("-", ""));
+        let same_id =
+            a.id.replace("-", "")
+                .eq_ignore_ascii_case(&uuid_with_hyphens.replace("-", ""));
         !(same_type && same_id)
     });
 

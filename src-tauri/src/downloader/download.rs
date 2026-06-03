@@ -17,23 +17,24 @@ const PROGRESS_THROTTLE_MS: u64 = 500;
 /// Compute SHA-1 hash of a file
 pub fn compute_sha1_sync(path: &std::path::Path) -> Result<String, String> {
     use std::io::Read;
-    
-    let file = std::fs::File::open(path)
-        .map_err(|e| format!("Failed to open file for hashing: {}", e))?;
-    
+
+    let file =
+        std::fs::File::open(path).map_err(|e| format!("Failed to open file for hashing: {}", e))?;
+
     let mut reader = std::io::BufReader::new(file);
     let mut hasher = Sha1::new();
     let mut buffer = [0u8; 8192];
-    
+
     loop {
-        let bytes_read = reader.read(&mut buffer)
+        let bytes_read = reader
+            .read(&mut buffer)
             .map_err(|e| format!("Failed to read file: {}", e))?;
         if bytes_read == 0 {
             break;
         }
         hasher.update(&buffer[..bytes_read]);
     }
-    
+
     // Finalize and get the hash as hex string
     let result = hasher.finalize();
     Ok(format!("{:x}", result))
@@ -64,40 +65,58 @@ async fn download_file(
         if let Some(expected_hash) = &task.hash {
             tracing::debug!("Checking existing file hash: {}", dest_path.display());
             let dest_path_clone = dest_path.clone();
-            match tokio::task::spawn_blocking(move || compute_sha1_sync(&dest_path_clone)).await.map_err(|e| e.to_string())? {
+            match tokio::task::spawn_blocking(move || compute_sha1_sync(&dest_path_clone))
+                .await
+                .map_err(|e| e.to_string())?
+            {
                 Ok(actual_hash) => {
                     if actual_hash.eq_ignore_ascii_case(expected_hash) {
-                        tracing::debug!("File exists and hash matches, skipping: {}", dest_path.display());
+                        tracing::debug!(
+                            "File exists and hash matches, skipping: {}",
+                            dest_path.display()
+                        );
                         return Ok(());
                     } else {
                         tracing::debug!(
                             "Hash mismatch. Expected {}, got {}. Re-downloading...",
-                            expected_hash, actual_hash
+                            expected_hash,
+                            actual_hash
                         );
                         let _ = tokio::fs::remove_file(&dest_path).await;
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to compute hash for existing file, re-downloading: {}", e);
+                    tracing::warn!(
+                        "Failed to compute hash for existing file, re-downloading: {}",
+                        e
+                    );
                 }
             }
         } else if let Some(expected_size) = task.expected_size {
             // No hash, but we have expected size
             if let Ok(metadata) = tokio::fs::metadata(&dest_path).await {
                 if metadata.len() == expected_size {
-                    tracing::debug!("File exists and size matches ({} bytes), skipping: {}", expected_size, dest_path.display());
+                    tracing::debug!(
+                        "File exists and size matches ({} bytes), skipping: {}",
+                        expected_size,
+                        dest_path.display()
+                    );
                     return Ok(());
                 } else {
                     tracing::debug!(
                         "Size mismatch. Expected {}, got {}. Re-downloading...",
-                        expected_size, metadata.len()
+                        expected_size,
+                        metadata.len()
                     );
                     let _ = tokio::fs::remove_file(&dest_path).await;
                 }
             }
         } else {
             // No hash and no size available - for safety, download anyway since we can't verify
-            tracing::debug!("File exists but no hash or size available, re-downloading: {}", dest_path.display());
+            tracing::debug!(
+                "File exists but no hash or size available, re-downloading: {}",
+                dest_path.display()
+            );
         }
     }
 
@@ -153,13 +172,11 @@ async fn download_file(
                     };
 
                     // Emit progress (don't fail on emit error).
-                    let mut progress = DownloadProgress::progress(
-                        task.id.clone(),
-                        downloaded,
-                        total,
-                        speed,
-                    );
-                    progress.file_name = std::path::Path::new(&task.dest_path).file_name().map(|f| f.to_string_lossy().to_string());
+                    let mut progress =
+                        DownloadProgress::progress(task.id.clone(), downloaded, total, speed);
+                    progress.file_name = std::path::Path::new(&task.dest_path)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string());
                     let _ = app.emit("download-progress", &progress);
 
                     last_emit_time = std::time::Instant::now();
@@ -194,7 +211,7 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle) {
     // Create a single shared HTTP client with connection pooling.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
-        .pool_max_idle_per_host(16)  // Keep connections alive
+        .pool_max_idle_per_host(16) // Keep connections alive
         .http2_adaptive_window(true)
         .build()
         .expect("Failed to create HTTP client");
@@ -216,20 +233,22 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle) {
                 let _permit = semaphore.acquire().await.expect("Semaphore closed");
 
                 tracing::info!("Downloading: {}", dest_path);
-                
+
                 // Execute download and handle errors gracefully.
                 match download_file(task, &client, &app).await {
                     Ok(()) => {
                         // Emit completion.
                         tracing::info!("Emitting completed for task: {}", task_id);
                         let mut progress = DownloadProgress::completed(task_id);
-                        progress.file_name = std::path::Path::new(&dest_path).file_name().map(|f| f.to_string_lossy().to_string());
+                        progress.file_name = std::path::Path::new(&dest_path)
+                            .file_name()
+                            .map(|f| f.to_string_lossy().to_string());
                         let _ = app.emit("download-progress", &progress);
                     }
                     Err(err) => {
                         // Log error but don't propagate - single failure shouldn't crash queue.
                         tracing::error!("Download failed: {} - {}", dest_path, err);
-                        
+
                         // Emit error progress so frontend knows.
                         let progress = DownloadProgress::failed(task_id, err);
                         let _ = app.emit("download-progress", &progress);
@@ -255,8 +274,11 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle) {
     }
 
     // Emit final completion event.
-    let _ = app.emit("download-batch-complete", serde_json::json!({
-        "total": total_tasks,
-        "errors": error_count,
-    }));
+    let _ = app.emit(
+        "download-batch-complete",
+        serde_json::json!({
+            "total": total_tasks,
+            "errors": error_count,
+        }),
+    );
 }

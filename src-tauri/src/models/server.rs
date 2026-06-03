@@ -14,11 +14,11 @@ pub struct Server {
     pub motd: String,
     pub version: String,
     pub loader_type: String,
-    pub server_type: String,        // "vanilla", "modded", "custom"
-    pub auth_type: String,          // "offline", "online", "authlib"
+    pub server_type: String, // "vanilla", "modded", "custom"
+    pub auth_type: String,   // "offline", "online", "authlib"
     pub authlib_api: Option<String>,
-    pub pack_file_name: Option<String>, // Modpack ZIP file name
-    pub pack_file_size: Option<i64>,    // Modpack file size in bytes
+    pub pack_file_name: Option<String>,  // Modpack ZIP file name
+    pub pack_file_size: Option<i64>,     // Modpack file size in bytes
     pub pack_project_id: Option<String>, // CurseForge or Modrinth Project ID
     pub pack_version_id: Option<String>, // CurseForge or Modrinth Version/File ID
     pub pack_source: Option<String>,     // "curseforge" or "modrinth"
@@ -41,8 +41,8 @@ pub struct CreateServerInput {
     pub motd: String,
     pub version: String,
     pub loader_type: String,
-    pub server_type: String,          // "vanilla", "modded", "custom"
-    pub auth_type: String,            // "offline", "online", "authlib"
+    pub server_type: String, // "vanilla", "modded", "custom"
+    pub auth_type: String,   // "offline", "online", "authlib"
     pub authlib_api: Option<String>,
     pub pack_file_name: Option<String>, // Set after pack is uploaded
     pub pack_project_id: Option<String>,

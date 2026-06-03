@@ -47,7 +47,7 @@ pub struct UnifiedModFile {
 /// Online Modpack Version representing a modpack file to download
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnlineModpackVersion {
-    pub id: String, // Version ID or File ID
+    pub id: String,   // Version ID or File ID
     pub name: String, // E.g., "1.19.2 - v1.0.0"
     pub mc_version: String,
     pub loaders: Vec<String>,
@@ -164,7 +164,7 @@ pub async fn search_modrinth(
 
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    
+
     if !status.is_success() {
         tracing::error!("Modrinth API error: {} - {}", status, body);
         return Err(format!("Modrinth API error: {} - {}", status, body));
@@ -173,8 +173,13 @@ pub async fn search_modrinth(
     // Debug: print the response body
     tracing::debug!("Modrinth response: {}", &body[..body.len().min(500)]);
 
-    let search_result: ModrinthSearchResult = serde_json::from_str(&body)
-        .map_err(|e| format!("Failed to parse response: {} - body: {}", e, &body[..body.len().min(200)]))?;
+    let search_result: ModrinthSearchResult = serde_json::from_str(&body).map_err(|e| {
+        format!(
+            "Failed to parse response: {} - body: {}",
+            e,
+            &body[..body.len().min(200)]
+        )
+    })?;
 
     let mut projects: Vec<UnifiedModProject> = search_result
         .hits
@@ -203,20 +208,18 @@ pub async fn search_modrinth(
             }
             true
         })
-        .map(|p| {
-            UnifiedModProject {
-                source: "modrinth".to_string(),
-                project_id: p.project_id,
-                title: p.title,
-                description: p.description,
-                icon_url: p.icon_url,
-                downloads: p.downloads,
-                author: p.author,
-                mc_versions: p.game_versions.unwrap_or_default(),
-                loaders: p.loaders.unwrap_or_default(),
-                download_url: None,
-                file_id: None,
-            }
+        .map(|p| UnifiedModProject {
+            source: "modrinth".to_string(),
+            project_id: p.project_id,
+            title: p.title,
+            description: p.description,
+            icon_url: p.icon_url,
+            downloads: p.downloads,
+            author: p.author,
+            mc_versions: p.game_versions.unwrap_or_default(),
+            loaders: p.loaders.unwrap_or_default(),
+            download_url: None,
+            file_id: None,
         })
         .collect();
 
@@ -306,7 +309,12 @@ pub async fn get_modrinth_mod_files(
     }
 
     if compatible_files.is_empty() {
-        tracing::error!("No compatible version found for project_id={}, target_version={}, target_loader={}", project_id, mc_version, target_loader);
+        tracing::error!(
+            "No compatible version found for project_id={}, target_version={}, target_loader={}",
+            project_id,
+            mc_version,
+            target_loader
+        );
         return Err("No compatible version found".to_string());
     }
 
@@ -316,10 +324,7 @@ pub async fn get_modrinth_mod_files(
 /// Get detailed information about a specific mod from Modrinth
 #[tauri::command]
 pub async fn get_modrinth_mod_details(project_id: String) -> Result<UnifiedModProject, String> {
-    tracing::info!(
-        "Getting Modrinth mod details: project_id={}",
-        project_id
-    );
+    tracing::info!("Getting Modrinth mod details: project_id={}", project_id);
 
     let project_url = format!("{}/project/{}", MODRINTH_BASE_URL, project_id);
 
@@ -360,10 +365,7 @@ pub async fn get_modrinth_mod_details(project_id: String) -> Result<UnifiedModPr
 /// Get all available versions for a Modrinth project
 #[tauri::command]
 pub async fn get_modrinth_mod_versions(project_id: String) -> Result<Vec<String>, String> {
-    tracing::info!(
-        "Getting Modrinth mod versions: project_id={}",
-        project_id
-    );
+    tracing::info!("Getting Modrinth mod versions: project_id={}", project_id);
 
     let versions_url = format!("{}/project/{}/version", MODRINTH_BASE_URL, project_id);
 
@@ -397,7 +399,14 @@ pub async fn get_modrinth_mod_versions(project_id: String) -> Result<Vec<String>
     // Return version info as JSON string
     let version_list: Vec<String> = versions
         .iter()
-        .map(|v| format!("{} ({} | {:?})", v.version_number, v.game_versions.join(", "), v.loaders))
+        .map(|v| {
+            format!(
+                "{} ({} | {:?})",
+                v.version_number,
+                v.game_versions.join(", "),
+                v.loaders
+            )
+        })
         .collect();
 
     Ok(version_list)
@@ -431,8 +440,8 @@ pub async fn search_modrinth_modpacks(query: String) -> Result<Vec<UnifiedModPro
     }
 
     let body = response.text().await.unwrap_or_default();
-    let search_result: ModrinthSearchResult = serde_json::from_str(&body)
-        .map_err(|e| format!("Failed to parse response: {:?}", e))?;
+    let search_result: ModrinthSearchResult =
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse response: {:?}", e))?;
 
     let projects: Vec<UnifiedModProject> = search_result
         .hits
@@ -462,8 +471,13 @@ pub async fn search_modrinth_modpacks(query: String) -> Result<Vec<UnifiedModPro
 }
 
 #[tauri::command]
-pub async fn get_modrinth_modpack_versions(project_id: String) -> Result<Vec<OnlineModpackVersion>, String> {
-    tracing::info!("Getting Modrinth modpack versions: project_id={}", project_id);
+pub async fn get_modrinth_modpack_versions(
+    project_id: String,
+) -> Result<Vec<OnlineModpackVersion>, String> {
+    tracing::info!(
+        "Getting Modrinth modpack versions: project_id={}",
+        project_id
+    );
 
     let versions_url = format!("{}/project/{}/version", MODRINTH_BASE_URL, project_id);
 
