@@ -6,52 +6,68 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   publish-tauri:
-    permissions:
-      contents: write
+    environment: release
+    env:
+      VITE_WEB_BACKEND_URL: ${{ vars.VITE_WEB_BACKEND_URL }}
+      LAUNCHER_API_SECRET: ${{ secrets.LAUNCHER_API_SECRET }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
-          - platform: 'macos-latest'
-            args: '--target x86_64-apple-darwin'
-          - platform: 'ubuntu-22.04'
-            args: ''
-          - platform: 'windows-latest'
+          # 1. Windows 任务 -> 路由给 Windows 机器
+          - platform: 'windows-x86_64'
+            runner: [ 'self-hosted', 'Windows' ] # 必须匹配你在 Windows 节点设置的 Label
             args: ''
 
-    runs-on: self-hosted
+          # 2. Linux 任务 -> 路由给 NAS
+          - platform: 'ubuntu-22_04'
+            runner: [ 'self-hosted', 'Linux' ]   # 必须匹配你在 Docker compose 里设置的 Label
+            args: ''
+
+    runs-on: ${{ matrix.runner }}
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Update version based on tag
         if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Setting version to $VERSION"
-          export VERSION
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          node -e "
+        uses: actions/github-script@v7
+        with:
+          script: |
             const fs = require('fs');
+            // 从 refs/tags/v1.0.0 中精准提取 1.0.0
+            const version = context.ref.replace('refs/tags/v', '');
+            console.log(`Setting version to ${version}`);
+            
+            // 将 VERSION 注入到 GITHUB_ENV 中，供最后一步的 exe 上传使用
+            core.exportVariable('VERSION', version);
+            
+            // 1. 修改 package.json
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = process.env.VERSION;
+            pkg.version = version;
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            
+            // 2. 修改 tauri.conf.json
             const tauri = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
-            tauri.version = process.env.VERSION;
+            tauri.version = version;
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(tauri, null, 2) + '\n');
+            
+            // 3. 修改 Cargo.toml
             let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
-            cargo = cargo.replace(/^version\s*=\s*\".*?\"/m, \`version = \"\${process.env.VERSION}\"\`);
+            cargo = cargo.replace(/^version\s*=\s*".*?"/m, `version = "${version}"`);
             fs.writeFileSync('src-tauri/Cargo.toml', cargo);
-          "
-        shell: bash
+
+      # 注意这里：修复了 platform 的匹配名字
       - name: Install dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-22_04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -64,10 +80,31 @@ jobs:
           node-version: lts/*
           cache: 'pnpm'
 
-      - name: Install Rust stable
+      # 1：专门给 Mac 和 Linux 节点使用的官方插件（屏蔽 Windows）
+      - name: Install Rust (Mac & Linux)
+        if: matrix.platform != 'windows-x86_64'
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin, x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-aarch64' && 'aarch64-apple-darwin' || matrix.platform == 'macos-x86_64' && 'x86_64-apple-darwin' || '' }}
+
+      # 2. 针对 Windows 节点：智能检测并安装 Rust
+      - name: Install Rust (Windows Self-Hosted)
+        if: matrix.platform == 'windows-x86_64'
+        shell: powershell
+        run: |
+          # 智能检测：如果系统中已经存在 cargo，则直接跳过下载安装
+          if (Get-Command cargo -ErrorAction SilentlyContinue) {
+            Write-Host "🎉 完美！检测到本地 Windows 已存在 Rust 环境，跳过安装环节！"
+            cargo --version
+          } else {
+            Write-Host "未检测到 Rust，开始全自动下载并安装 rustup-init.exe..."
+            Invoke-WebRequest -Uri https://win.rustup.rs/ -OutFile rustup-init.exe
+            .\rustup-init.exe -y --default-toolchain stable --profile default
+          }
+
+          # 关键指令：不论是新装的还是原有的，每次 CI 运行都需要向 GitHub 环境注入 PATH，否则下一步找不到 cargo
+          Write-Host "向当前 GitHub 工作流注入 Cargo PATH..."
+          echo "${env:USERPROFILE}\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Install frontend dependencies
         run: pnpm install
@@ -88,10 +125,9 @@ jobs:
           args: ${{ matrix.args }}
 
       - name: Upload portable executable (Green version)
-        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')
+        if: matrix.platform == 'windows-x86_64' && startsWith(github.ref, 'refs/tags/v')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: powershell
         run: |
           gh release upload "v${{ env.VERSION }}" src-tauri/target/release/DLML.exe --clobber
-        shell: bash
-
