@@ -29,8 +29,10 @@
     "stopGameConfirm": "Are you sure you want to force kill the running game process?",
     "stopGameFailed": "Failed to stop game: {error}",
     "addAccount": "Add New Account",
-    "repairing": "Verifying & Repairing Mods...",
-    "repairFound": "Detected {total} missing or corrupted files, re-downloading automatically.",
+    "repairing": "Verifying & Repairing Resources...",
+    "repairFound": "Detected {total} missing or corrupted resources/libraries, re-downloading automatically.",
+    "repairingDependency": "Automatically repairing and downloading missing dependency: {version} ...",
+    "repairingDepTitle": "Repairing Dependency...",
     "repairProgress": "{completed} / {total} files"
   },
   "instances": {

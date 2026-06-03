@@ -29,8 +29,10 @@
     "stopGameConfirm": "你确定要强制结束正在运行的游戏进程吗？",
     "stopGameFailed": "停止游戏失败: {error}",
     "addAccount": "添加新账号",
-    "repairing": "正在校验与修复 Mod...",
-    "repairFound": "检测到 {total} 个文件缺失或损坏，正在自动重新下载。",
+    "repairing": "校验并修复资源与核心...",
+    "repairFound": "发现 {total} 个核心库或原版资源文件缺失/损坏，正在自动重下。",
+    "repairingDependency": "正在自动修复缺失的底层依赖: {version} ...",
+    "repairingDepTitle": "正在修复依赖实例...",
     "repairProgress": "{completed} / {total} 文件"
   },
   "instances": {
