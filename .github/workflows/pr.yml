@@ -11,16 +11,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
-          - platform: 'macos-latest'
-            args: '--target x86_64-apple-darwin'
-          - platform: 'ubuntu-22.04'
-            args: ''
-          - platform: 'windows-latest'
+          # 1. Windows 任务 -> 路由给 Windows 机器
+          - platform: 'windows-x86_64'
+            runner: [ 'self-hosted', 'Windows' ] # 必须匹配你在 Windows 节点设置的 Label
             args: ''
 
-    runs-on: self-hosted
+          # 2. Linux 任务 -> 路由给 NAS
+          - platform: 'linux-x86_64'
+            runner: [ 'self-hosted', 'Linux' ]   # 必须匹配你在 Docker compose 里设置的 Label
+            args: ''
+
+    runs-on: ${{ matrix.runner }}
+
     steps:
       - uses: actions/checkout@v4
 
