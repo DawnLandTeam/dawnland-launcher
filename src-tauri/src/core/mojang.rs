@@ -19,7 +19,7 @@ pub fn get_minecraft_base() -> &'static PathBuf {
         let base = std::env::current_exe()
             .map(|p| p.parent().unwrap().to_path_buf())
             .unwrap_or_else(|_| PathBuf::from("."));
-        base.join(".dawnland").join(".minecraft")
+        base.join(".minecraft")
     })
 }
 
