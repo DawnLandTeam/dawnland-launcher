@@ -21,7 +21,7 @@ pub async fn install_modpack(
     );
 
     let base_dir = get_minecraft_base();
-    let temp_dir = base_dir.join("temp").join(Uuid::new_v4().to_string());
+    let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp").join(Uuid::new_v4().to_string());
     let instance_dir = base_dir.join("versions").join(&instance_name);
 
     // 1. Emit phase 1: Extracting
@@ -409,7 +409,7 @@ pub async fn download_and_install_online_modpack(
     );
 
     let base_dir = crate::core::mojang::get_minecraft_base();
-    let temp_dir = base_dir.join("temp");
+    let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp");
     std::fs::create_dir_all(&temp_dir).unwrap_or_default();
     let temp_zip_path = temp_dir.join(format!("{}.zip", uuid::Uuid::new_v4()));
 
