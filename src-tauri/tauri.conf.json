@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Dawnland Launcher",
+  "productName": "DLML",
   "version": "0.0.1",
   "identifier": "com.dawnland.launcher",
   "build": {
