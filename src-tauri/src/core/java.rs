@@ -709,6 +709,9 @@ pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
             if updated {
                 let _ = save_java_config(&config).await;
             }
+            
+            // Clear the cache AFTER the scan so the frontend will fetch the newly found Javas
+            *CACHED_JAVAS.lock().await = None;
         });
 
         let _ = app.emit(
