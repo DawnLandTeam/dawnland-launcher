@@ -30,3 +30,25 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     // If all compared parts are equal, shorter version comes first
     a_parts.len().cmp(&b_parts.len())
 }
+
+/// Create a tokio Command that hides the console window on Windows.
+pub fn create_hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
+    let mut std_cmd = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        std_cmd.creation_flags(0x08000000);
+    }
+    tokio::process::Command::from(std_cmd)
+}
+
+/// Create a std Command that hides the console window on Windows.
+pub fn create_hidden_std_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process::Command {
+    let mut std_cmd = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        std_cmd.creation_flags(0x08000000);
+    }
+    std_cmd
+}

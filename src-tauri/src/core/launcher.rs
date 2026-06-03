@@ -31,7 +31,7 @@ pub async fn kill_instance(
     if let Some(pid) = pid {
         #[cfg(windows)]
         {
-            let output = std::process::Command::new("taskkill")
+            let output = crate::core::utils::create_hidden_std_command("taskkill")
                 .args(["/F", "/T", "/PID", &pid.to_string()])
                 .output()
                 .map_err(|e| e.to_string())?;
@@ -42,7 +42,7 @@ pub async fn kill_instance(
         }
         #[cfg(not(windows))]
         {
-            let output = std::process::Command::new("kill")
+            let output = crate::core::utils::create_hidden_std_command("kill")
                 .args(["-9", &pid.to_string()])
                 .output()
                 .map_err(|e| e.to_string())?;
@@ -1577,7 +1577,7 @@ pub async fn launch_instance(
     tracing::info!("Using Java executable: {}", java_executable);
 
     // ========== Pre-flight Check: Validate Java & Detect Version ==========
-    let java_check = tokio::process::Command::new(&java_executable)
+    let java_check = crate::core::utils::create_hidden_command(&java_executable)
         .arg("-version")
         .output()
         .await;
@@ -1778,7 +1778,7 @@ pub async fn launch_instance(
     tracing::info!("Game args count: {}", game_args.len());
     tracing::info!("Classpath entries: {}", classpath.len());
 
-    let mut child = Command::new(&java_executable)
+    let mut child = crate::core::utils::create_hidden_command(&java_executable)
         .current_dir(&game_dir)
         .args(&jvm_args)
         .arg(&main_class)
