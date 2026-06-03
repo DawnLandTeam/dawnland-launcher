@@ -226,7 +226,7 @@ fn get_java_search_paths() -> Vec<PathBuf> {
 
 /// Probe a Java executable to get its version information.
 async fn probe_java(java_path: &PathBuf) -> Option<JavaInfo> {
-    let output = tokio::process::Command::new(java_path)
+    let output = crate::core::utils::create_hidden_command(java_path)
         .arg("-version")
         .output()
         .await
@@ -438,14 +438,14 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
             download_path.display(),
             runtimes_dir.display()
         );
-        tokio::process::Command::new("powershell")
+        crate::core::utils::create_hidden_command("powershell")
             .args(["-Command", &ps_command])
             .output()
             .await
             .map_err(|e| format!("Failed to extract archive: {}", e))?;
     } else {
         // Use tar on macOS/Linux
-        let output = tokio::process::Command::new("tar")
+        let output = crate::core::utils::create_hidden_command("tar")
             .args(["-xzf", &download_path.to_string_lossy()])
             .current_dir(&runtimes_dir)
             .output()
