@@ -4,7 +4,11 @@ version = "0.0.1"
 description = "A modern, cross-platform Minecraft launcher"
 authors = ["Dawnland"]
 edition = "2021"
-default-run = "dawnland-launcher"
+default-run = "DLML"
+
+[[bin]]
+name = "DLML"
+path = "src/main.rs"
 
 [lib]
 name = "dawnland_launcher_lib"
