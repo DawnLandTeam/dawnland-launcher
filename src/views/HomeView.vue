@@ -104,6 +104,8 @@ const repairProgressPercentage = computed(() => {
 });
 
 // ---------------------------------------------------------------------------
+const announcementText = ref("");
+
 // Computed
 // ---------------------------------------------------------------------------
 const selectedInstance = computed(() => {
@@ -146,6 +148,20 @@ const isRunning = computed(() => {
 onMounted(async () => {
   await loadInstances();
   await loadAccounts();
+
+  // Fetch announcement
+  try {
+    const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
+    const res = await fetch(`${backendUrl}/api/launcher/announcement`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.text) {
+        announcementText.value = data.text;
+      }
+    }
+  } catch (err) {
+    console.error("Failed to fetch announcement:", err);
+  }
 
   // Listen for accounts changes from other pages (e.g., AccountsView)
   listen("accounts-updated", async () => {
@@ -496,11 +512,11 @@ function loaderBadgeClass(loaderType: string): string {
     <div class="relative z-10 w-full overflow-hidden bg-gradient-to-r from-blue-600/80 via-purple-600/80 to-pink-600/80 py-2 backdrop-blur-sm border-b border-white/10 shadow-sm">
       <div class="whitespace-nowrap animate-marquee">
         <span class="inline-block px-8 text-white font-medium">
-          {{ $t('home.marquee') }} · 
-          {{ $t('home.marquee') }} · 
-          {{ $t('home.marquee') }} · 
-          {{ $t('home.marquee') }} · 
-          {{ $t('home.marquee') }}
+          {{ announcementText || $t('home.marquee') }} · 
+          {{ announcementText || $t('home.marquee') }} · 
+          {{ announcementText || $t('home.marquee') }} · 
+          {{ announcementText || $t('home.marquee') }} · 
+          {{ announcementText || $t('home.marquee') }}
         </span>
       </div>
     </div>
