@@ -525,11 +525,11 @@ watch(
             <!-- Logging in with Device Code - show QR code -->
             <div v-else-if="microsoftLoginData" class="flex flex-col items-center space-y-4 py-2">
               <p class="text-sm text-center text-neutral-600 dark:text-zinc-400">
-                请使用手机扫描下方二维码，或访问 <a :href="microsoftLoginData.verificationUri" target="_blank" class="text-indigo-600 hover:underline">验证链接</a>
+                请使用手机扫描下方二维码，或访问 <a :href="microsoftLoginData.verificationUri + '?otc=' + microsoftLoginData.userCode" target="_blank" class="text-indigo-600 hover:underline">验证链接</a>
               </p>
               
               <div class="bg-white p-2 rounded-xl">
-                <qrcode-vue :value="microsoftLoginData.verificationUri" :size="180" level="M" />
+                <qrcode-vue :value="microsoftLoginData.verificationUri + '?otc=' + microsoftLoginData.userCode" :size="180" level="M" />
               </div>
 
               <div class="flex flex-col items-center">
