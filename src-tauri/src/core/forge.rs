@@ -1,6 +1,6 @@
 //! Forge & NeoForge Mod Loader Integration
 //! Provides commands for fetching available Forge/NeoForge versions and installing them.
-//! 
+//!
 //! Uses the "silent installer" approach: downloads the official installer JAR,
 //! extracts the necessary files, and uses them to create a launchable instance.
 
@@ -147,7 +147,7 @@ fn parse_forge_version(version: &str) -> Option<(String, String)> {
     if let Some(dash_idx) = version.rfind('-') {
         let mc_version = version[..dash_idx].to_string();
         let forge_version = version[dash_idx + 1..].to_string();
-        
+
         // Validate MC version format (should start with a number)
         if mc_version.starts_with('1') || mc_version.starts_with('0') {
             return Some((mc_version, forge_version));
@@ -165,13 +165,16 @@ async fn fetch_forge_versions(maven_base: &str) -> Result<Vec<String>, String> {
 
     // Try XML metadata first (more reliable for Maven)
     let url = format!("{}/maven-metadata.xml", maven_base);
-    
+
     let response = match client.get(&url).send().await {
         Ok(resp) if resp.status().is_success() => resp,
         _ => {
             // Try alternative URL format
             let alt_url = format!("{}/maven-metadata.xml", maven_base.trim_end_matches("/"));
-            client.get(&alt_url).send().await
+            client
+                .get(&alt_url)
+                .send()
+                .await
                 .map_err(|e| format!("Failed to fetch version list: {}", e))?
         }
     };
@@ -202,7 +205,10 @@ async fn fetch_forge_versions(maven_base: &str) -> Result<Vec<String>, String> {
 /// Uses BMCLAPI for stable and fast access in China
 #[tauri::command]
 pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, String> {
-    tracing::info!("Fetching Forge loaders for Minecraft {} via BMCLAPI", mc_version);
+    tracing::info!(
+        "Fetching Forge loaders for Minecraft {} via BMCLAPI",
+        mc_version
+    );
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -212,14 +218,14 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
     // Use BMCLAPI for stable access - correct path includes /minecraft/
     let url = format!("{}/minecraft/{}", BMCLAPI_FORGE_BASE, mc_version);
     tracing::info!("Requesting Forge versions from BMCLAPI: {}", url);
-    
+
     // Add User-Agent to avoid WAF blocking
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .user_agent("Dawnland-Launcher/1.0")
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
+
     let response = match client.get(&url).send().await {
         Ok(resp) => resp,
         Err(e) => {
@@ -229,7 +235,10 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
     };
 
     if !response.status().is_success() {
-        tracing::warn!("BMCLAPI returned error status for Forge: {}", response.status());
+        tracing::warn!(
+            "BMCLAPI returned error status for Forge: {}",
+            response.status()
+        );
         return Ok(LoaderVersionList { versions: vec![] });
     }
 
@@ -267,7 +276,9 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
         mc_version
     );
 
-    Ok(LoaderVersionList { versions: loader_versions })
+    Ok(LoaderVersionList {
+        versions: loader_versions,
+    })
 }
 
 /// Fetch available NeoForge versions, filtered by Minecraft version
@@ -283,7 +294,10 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
     // Use correct BMCLAPI NeoForge endpoint
-    let url = format!("https://bmclapi2.bangbang93.com/neoforge/list/{}", mc_version);
+    let url = format!(
+        "https://bmclapi2.bangbang93.com/neoforge/list/{}",
+        mc_version
+    );
     tracing::info!("Requesting NeoForge versions from BMCLAPI: {}", url);
 
     let response = match client.get(&url).send().await {
@@ -329,24 +343,25 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
     // Sort to have latest version first using numeric comparison
     versions.sort_by(|a, b| compare_versions(b, a));
 
-    tracing::info!("Found {} NeoForge versions for MC {}", versions.len(), mc_version);
+    tracing::info!(
+        "Found {} NeoForge versions for MC {}",
+        versions.len(),
+        mc_version
+    );
 
     // Convert to LoaderVersion format
     let loader_versions: Vec<LoaderVersion> = versions
         .into_iter()
-        .map(|v| {
-            LoaderVersion {
-                version: v.clone(),
-                mc_version: mc_version.clone(),
-                installer_url: format!(
-                    "{}/{}/forge-{}-installer.jar",
-                    NEOFORGE_MAVEN, v, v
-                ),
-            }
+        .map(|v| LoaderVersion {
+            version: v.clone(),
+            mc_version: mc_version.clone(),
+            installer_url: format!("{}/{}/forge-{}-installer.jar", NEOFORGE_MAVEN, v, v),
         })
         .collect();
 
-    Ok(LoaderVersionList { versions: loader_versions })
+    Ok(LoaderVersionList {
+        versions: loader_versions,
+    })
 }
 
 /// Extract files from a ZIP (JAR) archive - synchronous version to avoid Send issues
@@ -355,11 +370,10 @@ fn extract_zip_entry_sync(
     entry_name: &str,
     dest_path: &PathBuf,
 ) -> Result<(), String> {
-    let file = std::fs::File::open(zip_path)
-        .map_err(|e| format!("Failed to open ZIP: {}", e))?;
-    
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read ZIP archive: {}", e))?;
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("Failed to open ZIP: {}", e))?;
+
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Failed to read ZIP archive: {}", e))?;
 
     let mut entry = archive
         .by_name(entry_name)
@@ -392,12 +406,10 @@ async fn extract_zip_entry(
     let zip_path = zip_path.clone();
     let entry_name = entry_name.to_string();
     let dest_path = dest_path.clone();
-    
-    tokio::task::spawn_blocking(move || {
-        extract_zip_entry_sync(&zip_path, &entry_name, &dest_path)
-    })
-    .await
-    .map_err(|e| format!("Task join error: {}", e))?
+
+    tokio::task::spawn_blocking(move || extract_zip_entry_sync(&zip_path, &entry_name, &dest_path))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Check if a library should be downloaded based on rules
@@ -466,7 +478,7 @@ fn maven_name_to_path(name: &str) -> Option<String> {
         } else {
             String::new()
         };
-        
+
         Some(format!(
             "{}/{}/{}/{}-{}{}.jar",
             group, artifact, version, artifact, version, classifier
@@ -500,7 +512,7 @@ fn get_library_download_info_json(lib: &serde_json::Value) -> Option<(String, St
     // Handle special cases like "net.minecraft:client:1.20.1:patched"
     let name = lib.get("name")?.as_str()?;
     let path = maven_name_to_path(name)?;
-    
+
     // Get base URL - for Minecraft libraries use Mojang Maven
     let group = name.split(':').next().unwrap_or("");
     let base_url = if group == "net.minecraft" {
@@ -514,9 +526,9 @@ fn get_library_download_info_json(lib: &serde_json::Value) -> Option<(String, St
             .and_then(|u| u.as_str())
             .unwrap_or("https://libraries.minecraft.net/")
     };
-    
+
     let download_url = format!("{}{}", base_url, path);
-    
+
     Some((download_url, format!("libraries/{}", path)))
 }
 
@@ -532,7 +544,10 @@ pub async fn install_forge_instance(
 ) -> Result<(), String> {
     tracing::info!(
         "Installing {} instance: {} (MC {} + Loader {})",
-        loader_type, custom_instance_name, mc_version, loader_version
+        loader_type,
+        custom_instance_name,
+        mc_version,
+        loader_version
     );
 
     let base_dir = get_minecraft_base();
@@ -553,13 +568,19 @@ pub async fn install_forge_instance(
     let base_version_json = base_version_dir.join(format!("{}.json", mc_version));
 
     if !base_client_jar.exists() || !base_version_json.exists() {
-        tracing::info!("Base Minecraft {} not installed, installing first...", mc_version);
-        
-        let _ = app.emit("install-progress", serde_json::json!({
-            "phase": "resolving_version",
-            "versionId": mc_version,
-            "currentFile": "Installing base Minecraft..."
-        }));
+        tracing::info!(
+            "Base Minecraft {} not installed, installing first...",
+            mc_version
+        );
+
+        let _ = app.emit(
+            "install-progress",
+            serde_json::json!({
+                "phase": "resolving_version",
+                "versionId": mc_version,
+                "currentFile": "Installing base Minecraft..."
+            }),
+        );
 
         // Get version JSON URL from Mojang
         let manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
@@ -576,7 +597,9 @@ pub async fn install_forge_instance(
         let version_url = manifest["versions"]
             .as_array()
             .and_then(|versions| {
-                versions.iter().find(|v| v["id"].as_str() == Some(&mc_version))
+                versions
+                    .iter()
+                    .find(|v| v["id"].as_str() == Some(&mc_version))
             })
             .and_then(|v| v["url"].as_str())
             .ok_or_else(|| format!("Version {} not found in manifest", mc_version))?;
@@ -595,7 +618,7 @@ pub async fn install_forge_instance(
         fs::create_dir_all(&base_version_dir)
             .await
             .map_err(|e| format!("Failed to create version directory: {}", e))?;
-        
+
         fs::write(&base_version_json, &version_json_content)
             .await
             .map_err(|e| format!("Failed to write version JSON: {}", e))?;
@@ -631,7 +654,10 @@ pub async fn install_forge_instance(
                     tasks.push(crate::downloader::DownloadTask::new(
                         url.to_string(),
                         dest.to_string_lossy().to_string(),
-                        client.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                        client
+                            .get("sha1")
+                            .and_then(|s| s.as_str())
+                            .map(String::from),
                         client.get("size").and_then(|s| s.as_u64()),
                     ));
                 }
@@ -649,7 +675,10 @@ pub async fn install_forge_instance(
                                 tasks.push(crate::downloader::DownloadTask::new(
                                     url.to_string(),
                                     dest.to_string_lossy().to_string(),
-                                    artifact.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                                    artifact
+                                        .get("sha1")
+                                        .and_then(|s| s.as_str())
+                                        .map(String::from),
                                     artifact.get("size").and_then(|s| s.as_u64()),
                                 ));
                             }
@@ -663,7 +692,10 @@ pub async fn install_forge_instance(
         if let Some(asset_index) = version_meta.get("assetIndex") {
             if let Some(url) = asset_index.get("url").and_then(|u| u.as_str()) {
                 if let Some(id) = asset_index.get("id").and_then(|i| i.as_str()) {
-                    let index_path = base_dir.join("assets").join("indexes").join(format!("{}.json", id));
+                    let index_path = base_dir
+                        .join("assets")
+                        .join("indexes")
+                        .join(format!("{}.json", id));
                     tasks.push(crate::downloader::DownloadTask::new(
                         url.to_string(),
                         index_path.to_string_lossy().to_string(),
@@ -677,12 +709,15 @@ pub async fn install_forge_instance(
         let total_tasks = tasks.len();
         tracing::info!("Resolved {} files for vanilla base", total_tasks);
 
-        let _ = app.emit("install-progress", serde_json::json!({
-            "phase": "downloading",
-            "versionId": mc_version,
-            "totalTasks": total_tasks,
-            "completedTasks": 0,
-        }));
+        let _ = app.emit(
+            "install-progress",
+            serde_json::json!({
+                "phase": "downloading",
+                "versionId": mc_version,
+                "totalTasks": total_tasks,
+                "completedTasks": 0,
+            }),
+        );
 
         let app_clone = app.clone();
         crate::downloader::run_batch_download(tasks, app_clone).await;
@@ -693,13 +728,20 @@ pub async fn install_forge_instance(
     }
 
     // ========== Step 2: Download and extract Forge installer ==========
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "resolving_version",
-        "versionId": custom_instance_name,
-        "currentFile": "Downloading Forge installer..."
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "resolving_version",
+            "versionId": custom_instance_name,
+            "currentFile": "Downloading Forge installer..."
+        }),
+    );
 
-    let prefix = if loader_type == "neoforge" { "neoforge" } else { "forge" };
+    let prefix = if loader_type == "neoforge" {
+        "neoforge"
+    } else {
+        "forge"
+    };
     let installer_url = format!(
         "{}/{}/{}-{}-installer.jar",
         maven_base, loader_version, prefix, loader_version
@@ -712,10 +754,10 @@ pub async fn install_forge_instance(
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
     let installer_path = temp_dir.join(format!("{}-{}-installer.jar", prefix, loader_version));
-    
+
     // Download installer
     tracing::info!("Downloading Forge installer from: {}", installer_url);
-    
+
     let response = client
         .get(&installer_url)
         .send()
@@ -723,7 +765,11 @@ pub async fn install_forge_instance(
         .map_err(|e| format!("Failed to download installer: {}", e))?;
 
     if !response.status().is_success() {
-        return Err(format!("Installer download failed with status: {}. URL: {}", response.status(), installer_url));
+        return Err(format!(
+            "Installer download failed with status: {}. URL: {}",
+            response.status(),
+            installer_url
+        ));
     }
 
     let installer_bytes = response
@@ -768,21 +814,31 @@ pub async fn install_forge_instance(
     let mut version_json: serde_json::Value = serde_json::from_str(&version_json_content)
         .map_err(|e| format!("Failed to parse version JSON: {}", e))?;
 
-    let original_id = version_json.get("id").and_then(|id| id.as_str()).unwrap_or("").to_string();
+    let original_id = version_json
+        .get("id")
+        .and_then(|id| id.as_str())
+        .unwrap_or("")
+        .to_string();
     tracing::info!("Parsed Forge version JSON, original id: {:?}", original_id);
 
     // ========== Step 3: Download Forge libraries ==========
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "resolving_libraries",
-        "versionId": custom_instance_name,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "resolving_libraries",
+            "versionId": custom_instance_name,
+        }),
+    );
 
     let mut tasks: Vec<crate::downloader::DownloadTask> = Vec::new();
 
     // Add libraries from the version JSON
     if let Some(libraries) = version_json.get("libraries").and_then(|l| l.as_array()) {
-        tracing::info!("Processing {} libraries from Forge version JSON", libraries.len());
-        
+        tracing::info!(
+            "Processing {} libraries from Forge version JSON",
+            libraries.len()
+        );
+
         for lib in libraries {
             // Debug: log library name
             if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
@@ -790,7 +846,7 @@ pub async fn install_forge_instance(
                     tracing::debug!("Processing client/patched library: {}", name);
                 }
             }
-            
+
             if !should_download_library_json(lib) {
                 continue;
             }
@@ -811,12 +867,15 @@ pub async fn install_forge_instance(
     let total_tasks = tasks.len();
     tracing::info!("Resolved {} Forge library files", total_tasks);
 
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "downloading",
-        "versionId": custom_instance_name,
-        "totalTasks": total_tasks,
-        "completedTasks": 0,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "downloading",
+            "versionId": custom_instance_name,
+            "totalTasks": total_tasks,
+            "completedTasks": 0,
+        }),
+    );
 
     if !tasks.is_empty() {
         let app_clone = app.clone();
@@ -824,11 +883,14 @@ pub async fn install_forge_instance(
     }
 
     // ========== Step 3.5: Run Forge Installer Processors ==========
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "running_processors",
-        "versionId": custom_instance_name,
-        "currentFile": "Running Forge processors (this may take a while)..."
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "running_processors",
+            "versionId": custom_instance_name,
+            "currentFile": "Running Forge processors (this may take a while)..."
+        }),
+    );
 
     tracing::info!("Running Forge installer processors...");
 
@@ -860,7 +922,10 @@ pub async fn install_forge_instance(
     {
         Ok(c) => c,
         Err(e) => {
-            let err_msg = format!("Failed to execute Forge installer: {}. Make sure Java is installed.", e);
+            let err_msg = format!(
+                "Failed to execute Forge installer: {}. Make sure Java is installed.",
+                e
+            );
             tracing::warn!("{}", err_msg);
             return Err(err_msg);
         }
@@ -875,16 +940,23 @@ pub async fn install_forge_instance(
 
     let app_clone1 = app.clone();
     let instance_name_clone1 = custom_instance_name.clone();
-    
+
     let stdout_task = tokio::spawn(async move {
         while let Ok(Some(line)) = stdout_reader.next_line().await {
             tracing::debug!("Forge stdout: {}", line);
-            let display_line = if line.len() > 120 { format!("{}...", &line[..120]) } else { line };
-            let _ = app_clone1.emit("install-progress", serde_json::json!({
-                "phase": "running_processors",
-                "versionId": instance_name_clone1,
-                "currentFile": display_line
-            }));
+            let display_line = if line.len() > 120 {
+                format!("{}...", &line[..120])
+            } else {
+                line
+            };
+            let _ = app_clone1.emit(
+                "install-progress",
+                serde_json::json!({
+                    "phase": "running_processors",
+                    "versionId": instance_name_clone1,
+                    "currentFile": display_line
+                }),
+            );
         }
     });
 
@@ -893,22 +965,35 @@ pub async fn install_forge_instance(
     let stderr_task = tokio::spawn(async move {
         while let Ok(Some(line)) = stderr_reader.next_line().await {
             tracing::warn!("Forge stderr: {}", line);
-            let display_line = if line.len() > 120 { format!("{}...", &line[..120]) } else { line };
-            let _ = app_clone2.emit("install-progress", serde_json::json!({
-                "phase": "running_processors",
-                "versionId": instance_name_clone2,
-                "currentFile": display_line
-            }));
+            let display_line = if line.len() > 120 {
+                format!("{}...", &line[..120])
+            } else {
+                line
+            };
+            let _ = app_clone2.emit(
+                "install-progress",
+                serde_json::json!({
+                    "phase": "running_processors",
+                    "versionId": instance_name_clone2,
+                    "currentFile": display_line
+                }),
+            );
         }
     });
 
-    let status = child.wait().await.map_err(|e| format!("Failed to wait on Forge installer: {}", e))?;
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("Failed to wait on Forge installer: {}", e))?;
 
     let _ = stdout_task.await;
     let _ = stderr_task.await;
 
     if !status.success() {
-        let err_msg = format!("Forge installer failed to run processors with exit code: {:?}", status.code());
+        let err_msg = format!(
+            "Forge installer failed to run processors with exit code: {:?}",
+            status.code()
+        );
         tracing::error!("{}", err_msg);
         return Err(err_msg);
     } else {
@@ -917,7 +1002,7 @@ pub async fn install_forge_instance(
 
     // ========== Step 4: Create the final version JSON ==========
     let version_dir = base_dir.join("versions").join(&custom_instance_name);
-    
+
     fs::create_dir_all(&version_dir)
         .await
         .map_err(|e| format!("Failed to create version directory: {}", e))?;
@@ -927,7 +1012,7 @@ pub async fn install_forge_instance(
         obj.insert("id".to_string(), serde_json::json!(custom_instance_name));
         // Point to base version for inheritsFrom
         obj.insert("inheritsFrom".to_string(), serde_json::json!(mc_version));
-        
+
         // Fix logging file reference
         if let Some(logging) = obj.get_mut("logging") {
             if let Some(log_obj) = logging.as_object_mut() {
@@ -953,12 +1038,17 @@ pub async fn install_forge_instance(
         .await
         .map_err(|e| format!("Failed to write version JSON: {}", e))?;
 
-    tracing::info!("Saved Forge version profile to: {:?}", final_version_json_path);
+    tracing::info!(
+        "Saved Forge version profile to: {:?}",
+        final_version_json_path
+    );
 
     // ========== Step 5: Create default dlml.json config ==========
     let config_path = version_dir.join("dlml.json");
     let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
-        let content = tokio::fs::read_to_string(&config_path).await.unwrap_or_else(|_| "{}".to_string());
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .unwrap_or_else(|_| "{}".to_string());
         serde_json::from_str(&content).unwrap_or_default()
     } else {
         crate::core::launcher::InstanceConfig {
@@ -973,12 +1063,12 @@ pub async fn install_forge_instance(
             pack_file_name: None,
         }
     };
-    
+
     config.hidden = is_dependency.unwrap_or(false);
 
     let config_json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
-    
+
     fs::write(&config_path, config_json)
         .await
         .map_err(|e| format!("Failed to write instance config: {}", e))?;
@@ -995,19 +1085,31 @@ pub async fn install_forge_instance(
         let installer_generated_dir = base_dir.join("versions").join(&original_id);
         if installer_generated_dir.exists() {
             let _ = fs::remove_dir_all(&installer_generated_dir).await;
-            tracing::info!("Cleaned up installer-generated directory: {:?}", installer_generated_dir);
+            tracing::info!(
+                "Cleaned up installer-generated directory: {:?}",
+                installer_generated_dir
+            );
         }
     }
 
     // Emit complete
-    let _ = app.emit("install-progress", serde_json::json!({
-        "phase": "complete",
-        "versionId": custom_instance_name,
-    }));
+    let _ = app.emit(
+        "install-progress",
+        serde_json::json!({
+            "phase": "complete",
+            "versionId": custom_instance_name,
+        }),
+    );
 
-    tracing::info!("{} instance '{}' installed successfully!", 
-        if loader_type == "neoforge" { "NeoForge" } else { "Forge" },
-        custom_instance_name);
-    
+    tracing::info!(
+        "{} instance '{}' installed successfully!",
+        if loader_type == "neoforge" {
+            "NeoForge"
+        } else {
+            "Forge"
+        },
+        custom_instance_name
+    );
+
     Ok(())
 }

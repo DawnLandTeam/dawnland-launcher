@@ -1,6 +1,8 @@
 //! Server management commands that proxy requests to the Go web backend.
 
-use crate::models::{CreateServerInput, FilterOptionsResponse, PackFileResponse, Server, UpdateServerInput};
+use crate::models::{
+    CreateServerInput, FilterOptionsResponse, PackFileResponse, Server, UpdateServerInput,
+};
 use serde::{Deserialize, Serialize};
 use tokio::task;
 
@@ -47,14 +49,16 @@ pub async fn get_servers(
 ) -> Result<ServerListResponse, String> {
     tracing::info!(
         "Fetching servers: page={}, pageSize={}, search={}, version={}, serverType={}, authType={}",
-        page, page_size, search, version, server_type, auth_type
+        page,
+        page_size,
+        search,
+        version,
+        server_type,
+        auth_type
     );
 
     // Build query parameters
-    let mut query_parts = vec![
-        format!("page={}", page),
-        format!("pageSize={}", page_size),
-    ];
+    let mut query_parts = vec![format!("page={}", page), format!("pageSize={}", page_size)];
     if !search.is_empty() {
         query_parts.push(format!("search={}", urlencoding::encode(&search)));
     }
@@ -92,7 +96,12 @@ pub async fn get_servers(
         .await
         .map_err(|e| format!("Failed to parse server response: {}", e))?;
 
-    tracing::info!("Fetched {} servers (page {}/{})", result.data.len(), result.page, result.total_pages);
+    tracing::info!(
+        "Fetched {} servers (page {}/{})",
+        result.data.len(),
+        result.page,
+        result.total_pages
+    );
     Ok(result)
 }
 
@@ -312,8 +321,15 @@ pub struct PendingServerListResponse {
 
 /// Fetch all pending servers awaiting approval.
 #[tauri::command]
-pub async fn get_pending_servers(page: u32, page_size: u32) -> Result<PendingServerListResponse, String> {
-    tracing::info!("Fetching pending servers: page={}, pageSize={}", page, page_size);
+pub async fn get_pending_servers(
+    page: u32,
+    page_size: u32,
+) -> Result<PendingServerListResponse, String> {
+    tracing::info!(
+        "Fetching pending servers: page={}, pageSize={}",
+        page,
+        page_size
+    );
 
     let query_string = format!("page={}&pageSize={}", page, page_size);
     let url = build_server_url("/pending", Some(&query_string));
@@ -410,10 +426,14 @@ pub async fn upload_pack_file(
     server_id: String,
     file_path: String,
 ) -> Result<PackFileResponse, String> {
-    tracing::info!("Uploading pack file for server {}: {}", server_id, file_path);
+    tracing::info!(
+        "Uploading pack file for server {}: {}",
+        server_id,
+        file_path
+    );
 
     let url = build_server_url(&format!("/{}/pack", server_id), None);
-    
+
     // Read file
     let file_content = tokio::fs::read(&file_path)
         .await
@@ -431,8 +451,7 @@ pub async fn upload_pack_file(
         .mime_str("application/zip")
         .map_err(|e| format!("Failed to create multipart part: {}", e))?;
 
-    let form = reqwest::multipart::Form::new()
-        .part("packFile", form);
+    let form = reqwest::multipart::Form::new().part("packFile", form);
 
     let response = client
         .post(&url)
@@ -463,7 +482,11 @@ pub async fn download_pack_file(
     server_id: String,
     destination_path: String,
 ) -> Result<String, String> {
-    tracing::info!("Downloading pack file for server {} to {}", server_id, destination_path);
+    tracing::info!(
+        "Downloading pack file for server {} to {}",
+        server_id,
+        destination_path
+    );
 
     let url = build_server_url(&format!("/{}/pack", server_id), None);
 
@@ -500,7 +523,11 @@ pub async fn download_pack_file(
         .await
         .map_err(|e| format!("Failed to save pack file: {}", e))?;
 
-    tracing::info!("Pack file downloaded: {} ({} bytes)", destination_path, bytes.len());
+    tracing::info!(
+        "Pack file downloaded: {} ({} bytes)",
+        destination_path,
+        bytes.len()
+    );
     Ok(destination_path)
 }
 
@@ -510,13 +537,19 @@ pub async fn install_server_modpack(
     server_id: String,
     instance_name: String,
 ) -> Result<String, String> {
-    tracing::info!("Installing modpack from server {} as instance '{}'", server_id, instance_name);
+    tracing::info!(
+        "Installing modpack from server {} as instance '{}'",
+        server_id,
+        instance_name
+    );
 
     // First get the server info to check if it has a pack file
     let server = get_server(server_id.clone()).await?;
 
     // Check if server has a pack file
-    let pack_file_name = server.pack_file_name.as_ref()
+    let pack_file_name = server
+        .pack_file_name
+        .as_ref()
         .ok_or_else(|| "This server does not have a modpack file".to_string())?;
 
     if pack_file_name.is_empty() {
@@ -528,11 +561,11 @@ pub async fn install_server_modpack(
         .map(|p| p.parent().unwrap().to_path_buf())
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
     let instances_dir = base.join(".dawnland").join("instances");
-    
+
     // Create the instance directory
     let instance_dir = instances_dir.join(&instance_name);
     let instance_dir_clone = instance_dir.clone();
-    
+
     tokio::fs::create_dir_all(&instance_dir)
         .await
         .map_err(|e| format!("Failed to create instance directory: {}", e))?;
@@ -541,24 +574,29 @@ pub async fn install_server_modpack(
     let pack_zip_path = instance_dir.join("modpack.zip");
     let pack_zip_path_clone = pack_zip_path.clone();
     let server_id_clone = server_id.clone();
-    
-    download_pack_file(server_id_clone, pack_zip_path_clone.to_string_lossy().to_string()).await?;
+
+    download_pack_file(
+        server_id_clone,
+        pack_zip_path_clone.to_string_lossy().to_string(),
+    )
+    .await?;
 
     // Extract the ZIP file using spawn_blocking for blocking I/O
     let instance_dir_for_blocking = instance_dir_clone.clone();
     let pack_zip_path_for_blocking = pack_zip_path_clone.clone();
-    
+
     tokio::task::spawn_blocking(move || {
         let file = std::fs::File::open(&pack_zip_path_for_blocking)
             .map_err(|e| format!("Failed to open pack file: {}", e))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| format!("Failed to read ZIP archive: {}", e))?;
+        let mut archive =
+            zip::ZipArchive::new(file).map_err(|e| format!("Failed to read ZIP archive: {}", e))?;
 
         // Extract all files
         for i in 0..archive.len() {
-            let mut file = archive.by_index(i)
+            let mut file = archive
+                .by_index(i)
                 .map_err(|e| format!("Failed to read ZIP entry: {}", e))?;
-            
+
             let outpath = match file.enclosed_name() {
                 Some(path) => instance_dir_for_blocking.join(path),
                 None => continue,
@@ -574,17 +612,17 @@ pub async fn install_server_modpack(
                     std::fs::create_dir_all(parent)
                         .map_err(|e| format!("Failed to create parent directory: {}", e))?;
                 }
-                
+
                 let mut outfile = std::fs::File::create(&outpath)
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
             }
         }
-        
+
         // Clean up the ZIP file after extraction
         let _ = std::fs::remove_file(&pack_zip_path_for_blocking);
-        
+
         Ok::<(), String>(())
     })
     .await
@@ -593,9 +631,10 @@ pub async fn install_server_modpack(
     // Try to read manifest.json to get version info
     let manifest_path = instance_dir.join("manifest.json");
     let version = if manifest_path.exists() {
-        let content = tokio::fs::read_to_string(&manifest_path).await
+        let content = tokio::fs::read_to_string(&manifest_path)
+            .await
             .map_err(|e| format!("Failed to read manifest: {}", e))?;
-        
+
         #[derive(Deserialize)]
         struct Manifest {
             #[serde(rename = "minecraft")]
@@ -603,7 +642,7 @@ pub async fn install_server_modpack(
             #[serde(rename = "manifestType")]
             manifest_type: Option<String>,
         }
-        
+
         #[derive(Deserialize)]
         struct ManifestMinecraft {
             #[serde(rename = "version")]
@@ -611,7 +650,8 @@ pub async fn install_server_modpack(
         }
 
         if let Ok(manifest) = serde_json::from_str::<Manifest>(&content) {
-            manifest.minecraft
+            manifest
+                .minecraft
                 .and_then(|m| m.version)
                 .unwrap_or_else(|| "unknown".to_string())
         } else {
@@ -637,6 +677,9 @@ pub async fn install_server_modpack(
         .await
         .map_err(|e| format!("Failed to save instance config: {}", e))?;
 
-    tracing::info!("Modpack installed successfully to: {}", instance_dir.display());
+    tracing::info!(
+        "Modpack installed successfully to: {}",
+        instance_dir.display()
+    );
     Ok(instance_dir.to_string_lossy().to_string())
 }

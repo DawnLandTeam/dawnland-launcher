@@ -23,7 +23,12 @@ pub struct DownloadTask {
 }
 
 impl DownloadTask {
-    pub fn new(url: String, dest_path: String, hash: Option<String>, expected_size: Option<u64>) -> Self {
+    pub fn new(
+        url: String,
+        dest_path: String,
+        hash: Option<String>,
+        expected_size: Option<u64>,
+    ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             url,

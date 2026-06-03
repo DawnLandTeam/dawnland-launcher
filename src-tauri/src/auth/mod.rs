@@ -2,11 +2,17 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-pub mod microsoft;
 pub mod authlib;
+pub mod microsoft;
 
-pub use microsoft::{poll_microsoft_token, refresh_microsoft_token, start_microsoft_login, login_microsoft_oauth, LoginInitResponse};
-pub use authlib::{add_authlib_account, get_authlib_meta, fetch_authlib_servers, add_authlib_server, remove_authlib_server};
+pub use authlib::{
+    add_authlib_account, add_authlib_server, fetch_authlib_servers, get_authlib_meta,
+    remove_authlib_server,
+};
+pub use microsoft::{
+    login_microsoft_oauth, poll_microsoft_token, refresh_microsoft_token, start_microsoft_login,
+    LoginInitResponse,
+};
 
 /// Account types supported by the launcher.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -98,7 +104,8 @@ pub async fn save_accounts(accounts: &[Account]) -> Result<(), String> {
 /// Uses "OfflinePlayer:" namespace as per Minecraft convention.
 pub fn generate_offline_uuid(username: &str) -> String {
     // Namespace UUID for offline players (Mojang convention)
-    let namespace_uuid = Uuid::parse_str("068e7e19-b9f9-4e11-a3d7-0050c06a030c").expect("Valid UUID");
+    let namespace_uuid =
+        Uuid::parse_str("068e7e19-b9f9-4e11-a3d7-0050c06a030c").expect("Valid UUID");
     Uuid::new_v3(&namespace_uuid, username.as_bytes()).to_string()
 }
 
@@ -111,7 +118,10 @@ pub async fn add_offline_account(username: &str) -> Result<Account, String> {
     let mut accounts = load_accounts().await?;
 
     // Check if account already exists.
-    if accounts.iter().any(|a| a.username == username && a.account_type == AccountType::Offline) {
+    if accounts
+        .iter()
+        .any(|a| a.username == username && a.account_type == AccountType::Offline)
+    {
         return Err("Offline account already exists".to_string());
     }
 

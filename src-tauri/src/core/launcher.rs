@@ -3,23 +3,26 @@
 
 use crate::auth::Account;
 use crate::core::mojang::{get_minecraft_base, maven_name_to_path, Library, Rule, VersionMeta};
-use crate::downloader::{DownloadTask, run_batch_download};
+use crate::downloader::{run_batch_download, DownloadTask};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use sysinfo::System;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use std::sync::Arc;
-use std::collections::HashMap;
 
 pub struct RunningInstances(pub Arc<Mutex<HashMap<String, u32>>>);
 
 #[tauri::command]
-pub async fn kill_instance(version_id: String, state: State<'_, RunningInstances>) -> Result<(), String> {
+pub async fn kill_instance(
+    version_id: String,
+    state: State<'_, RunningInstances>,
+) -> Result<(), String> {
     let pid = {
         let map = state.0.lock().await;
         map.get(&version_id).copied()
@@ -32,7 +35,7 @@ pub async fn kill_instance(version_id: String, state: State<'_, RunningInstances
                 .args(["/F", "/T", "/PID", &pid.to_string()])
                 .output()
                 .map_err(|e| e.to_string())?;
-                
+
             if !output.status.success() {
                 return Err(String::from_utf8_lossy(&output.stderr).to_string());
             }
@@ -43,7 +46,7 @@ pub async fn kill_instance(version_id: String, state: State<'_, RunningInstances
                 .args(["-9", &pid.to_string()])
                 .output()
                 .map_err(|e| e.to_string())?;
-                
+
             if !output.status.success() {
                 return Err(String::from_utf8_lossy(&output.stderr).to_string());
             }
@@ -80,7 +83,7 @@ fn get_system_memory_mb() -> u32 {
 fn get_recommended_max_memory() -> u32 {
     let system_memory = get_system_memory_mb();
     let recommended = system_memory / 3;
-    
+
     // Clamp to reasonable bounds
     recommended.max(1024).min(8192)
 }
@@ -215,8 +218,8 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, S
         .await
         .map_err(|e| format!("Failed to read config: {}", e))?;
 
-    let config: InstanceConfig = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let config: InstanceConfig =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
     tracing::info!("Loaded config for {}: {:?}", version_id, config);
     Ok(config)
@@ -225,8 +228,8 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, S
 /// Save instance configuration
 #[tauri::command]
 pub async fn save_instance_config(
-    version_id: String, 
-    config: InstanceConfig
+    version_id: String,
+    config: InstanceConfig,
 ) -> Result<(), String> {
     let base_dir = get_minecraft_base();
     let version_dir = base_dir.join("versions").join(&version_id);
@@ -254,15 +257,9 @@ pub async fn save_instance_config(
 
 /// Extract native libraries for the current platform.
 /// Returns the path to the natives directory.
-pub async fn extract_natives(
-    version_id: &str,
-    libraries: &[Library],
-) -> Result<PathBuf, String> {
+pub async fn extract_natives(version_id: &str, libraries: &[Library]) -> Result<PathBuf, String> {
     let base_dir = get_minecraft_base();
-    let natives_dir = base_dir
-        .join("versions")
-        .join(version_id)
-        .join("natives");
+    let natives_dir = base_dir.join("versions").join(version_id).join("natives");
 
     // Create natives directory
     fs::create_dir_all(&natives_dir)
@@ -288,7 +285,9 @@ pub async fn extract_natives(
         // Get the native classifier for current platform
         let classifier = match (os, arch) {
             ("windows", "x86_64") => natives.get("windows").or(natives.get("natives-windows")),
-            ("windows", "x86") => natives.get("windows-x86").or(natives.get("natives-windows")),
+            ("windows", "x86") => natives
+                .get("windows-x86")
+                .or(natives.get("natives-windows")),
             ("macos", "x86_64") => natives.get("osx").or(natives.get("natives-osx")),
             ("macos", "aarch64") => natives.get("osx-arm64").or(natives.get("natives-osx")),
             ("linux", "x86_64") => natives.get("linux").or(natives.get("natives-linux")),
@@ -391,15 +390,16 @@ fn rule_applies_to_platform(rule: &Rule, os: &str, arch: &str) -> bool {
 
     // Check OS condition
     if let Some(rule_os) = &rule.os {
-        let os_match = rule_os.name.as_ref().map_or(true, |name| {
-            match name.as_str() {
+        let os_match = rule_os
+            .name
+            .as_ref()
+            .map_or(true, |name| match name.as_str() {
                 "windows" => os == "windows",
                 "osx" => os == "macos",
                 "linux" => os == "linux",
                 "freebsd" => os == "freebsd",
                 _ => false,
-            }
-        });
+            });
 
         let arch_match = rule_os.arch.as_ref().map_or(true, |arch_rule| {
             // arch can be "x86", "x64", "arm64", etc.
@@ -427,14 +427,12 @@ fn rule_applies_to_platform(rule: &Rule, os: &str, arch: &str) -> bool {
 }
 
 /// Extract a JAR file, excluding META-INF and specified patterns.
-async fn extract_jar(
-    jar_path: &Path,
-    dest_dir: &Path,
-    lib: &Library,
-) -> Result<(), String> {
+async fn extract_jar(jar_path: &Path, dest_dir: &Path, lib: &Library) -> Result<(), String> {
     let jar_path_owned = jar_path.to_path_buf();
     let dest_dir_owned = dest_dir.to_path_buf();
-    let exclude_clone = lib.extract.as_ref()
+    let exclude_clone = lib
+        .extract
+        .as_ref()
         .and_then(|e| e.exclude.clone())
         .unwrap_or_default();
 
@@ -442,11 +440,10 @@ async fn extract_jar(
     tokio::task::spawn_blocking(move || {
         use std::fs::File;
 
-        let file = File::open(&jar_path_owned)
-            .map_err(|e| format!("Failed to open JAR: {e}"))?;
+        let file = File::open(&jar_path_owned).map_err(|e| format!("Failed to open JAR: {e}"))?;
 
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| format!("Failed to read ZIP: {e}"))?;
+        let mut archive =
+            zip::ZipArchive::new(file).map_err(|e| format!("Failed to read ZIP: {e}"))?;
 
         // Get exclude patterns
         let mut exclude_patterns = vec!["META-INF/".to_string()];
@@ -496,7 +493,9 @@ async fn extract_jar(
         }
 
         Ok(())
-    }).await.map_err(|e| format!("Task join error: {e}"))?
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
 }
 
 // ============ Classpath Builder ============
@@ -509,7 +508,7 @@ pub fn build_classpath(
     libraries: &[Library],
 ) -> Result<Vec<PathBuf>, String> {
     use crate::core::mojang::maven_name_to_path;
-    
+
     let base_dir = get_minecraft_base();
     let mut classpath = Vec::new();
 
@@ -533,7 +532,7 @@ pub fn build_classpath(
                     let lib_path = base_dir.join("libraries").join(path);
                     if lib_path.exists() {
                         classpath.push(lib_path.clone());
-                        
+
                         // Check if this is the patched client JAR
                         let path_str = path.to_string();
                         if path_str.contains("client") && path_str.contains("patched") {
@@ -547,12 +546,13 @@ pub fn build_classpath(
                 }
             }
         }
-        
+
         // Fallback: use Maven coordinates (Fabric/Forge style)
         if let Some(name) = &lib.name {
             // Check for patched client JAR via Maven coordinates
             // Format: "net.minecraft:client:1.20.1:patched"
-            if name.contains("net.minecraft") && name.contains("client") && name.contains("patched") {
+            if name.contains("net.minecraft") && name.contains("client") && name.contains("patched")
+            {
                 if let Some(maven_path) = maven_name_to_path(name) {
                     let lib_path = base_dir.join("libraries").join(&maven_path);
                     if lib_path.exists() {
@@ -565,7 +565,7 @@ pub fn build_classpath(
                     }
                 }
             }
-            
+
             // Regular library fallback
             if let Some(maven_path) = maven_name_to_path(name) {
                 let lib_path = base_dir.join("libraries").join(&maven_path);
@@ -586,34 +586,51 @@ pub fn build_classpath(
         .join("versions")
         .join(jar_version)
         .join(format!("{}.jar", jar_version));
-    let is_bootstrap_launcher = version_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher");
-    
+    let is_bootstrap_launcher =
+        version_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher");
+
     if client_jar.exists() {
         if !is_bootstrap_launcher {
             classpath.push(client_jar);
         } else {
-            tracing::info!("Skipping client.jar in classpath for BootstrapLauncher to avoid module conflicts");
+            tracing::info!(
+                "Skipping client.jar in classpath for BootstrapLauncher to avoid module conflicts"
+            );
         }
     } else {
         // Try to find patched client JAR in libraries directory as fallback
         let mc_version = jar_version;
         let possible_patched_paths = [
-            base_dir.join("libraries").join("net/minecraft/client").join(mc_version).join(format!("client-{}-patched.jar", mc_version)),
-            base_dir.join("libraries").join("net/minecraft/client").join(mc_version).join(format!("client-{}-20230612.114412-patched.jar", mc_version)),
+            base_dir
+                .join("libraries")
+                .join("net/minecraft/client")
+                .join(mc_version)
+                .join(format!("client-{}-patched.jar", mc_version)),
+            base_dir
+                .join("libraries")
+                .join("net/minecraft/client")
+                .join(mc_version)
+                .join(format!("client-{}-20230612.114412-patched.jar", mc_version)),
         ];
-        
+
         let mut found_alternative = false;
         for patched_path in &possible_patched_paths {
             if patched_path.exists() {
                 classpath.push(patched_path.clone());
-                tracing::info!("Using patched client JAR from libraries: {:?}", patched_path);
+                tracing::info!(
+                    "Using patched client JAR from libraries: {:?}",
+                    patched_path
+                );
                 found_alternative = true;
                 break;
             }
         }
-        
+
         if !found_alternative {
-            return Err(format!("client.jar not found at {:?} (version: {})", client_jar, jar_version));
+            return Err(format!(
+                "client.jar not found at {:?} (version: {})",
+                client_jar, jar_version
+            ));
         }
     }
 
@@ -623,15 +640,18 @@ pub fn build_classpath(
     }
 
     tracing::info!("Built classpath with {} entries", classpath.len());
-    
+
     // Log classpath entries for debugging
     for (i, entry) in classpath.iter().enumerate() {
-        let name = entry.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+        let name = entry
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
         if name.contains("patched") || name.contains("client") {
             tracing::debug!("Classpath[{}]: {:?}", i, entry);
         }
     }
-    
+
     // Deduplicate classpath while preserving order to prevent Forge duplicate key errors
     let mut unique_classpath = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -654,7 +674,7 @@ pub async fn verify_and_collect_missing_files(
     client_jar_version: &str,
 ) -> Result<Vec<DownloadTask>, String> {
     use crate::core::mojang::get_library_download_info_from_json;
-    
+
     let base_dir = get_minecraft_base();
     let mut missing_tasks: Vec<DownloadTask> = Vec::new();
 
@@ -675,7 +695,11 @@ pub async fn verify_and_collect_missing_files(
                     if !lib_path.exists() {
                         let url = artifact.url.clone().unwrap_or_default();
                         if !url.is_empty() {
-                            tracing::info!("Missing library (Mojang): {:?} - will download from {}", lib_path, url);
+                            tracing::info!(
+                                "Missing library (Mojang): {:?} - will download from {}",
+                                lib_path,
+                                url
+                            );
                             missing_tasks.push(DownloadTask::new(
                                 url,
                                 lib_path.to_string_lossy().to_string(),
@@ -688,16 +712,23 @@ pub async fn verify_and_collect_missing_files(
                 }
             }
         }
-        
+
         // Fallback: use Maven coordinates (Fabric/Forge style)
         if let Some(name) = &lib.name {
             if let Some(maven_path) = maven_name_to_path(name) {
                 let lib_path = base_dir.join("libraries").join(&maven_path);
                 if !lib_path.exists() {
                     // Get download URL from lib.url or default
-                    let base_url = lib.url.as_deref().unwrap_or("https://libraries.minecraft.net/");
+                    let base_url = lib
+                        .url
+                        .as_deref()
+                        .unwrap_or("https://libraries.minecraft.net/");
                     let download_url = format!("{}{}", base_url, maven_path);
-                    tracing::info!("Missing library (Maven): {:?} - will download from {}", lib_path, download_url);
+                    tracing::info!(
+                        "Missing library (Maven): {:?} - will download from {}",
+                        lib_path,
+                        download_url
+                    );
                     missing_tasks.push(DownloadTask::new(
                         download_url,
                         lib_path.to_string_lossy().to_string(),
@@ -714,28 +745,36 @@ pub async fn verify_and_collect_missing_files(
         .join("versions")
         .join(client_jar_version)
         .join(format!("{}.jar", client_jar_version));
-    
+
     if !client_jar.exists() {
         // Need to download client.jar - fetch from version JSON or use known URL pattern
         let version_json_path = base_dir
             .join("versions")
             .join(client_jar_version)
             .join(format!("{}.json", client_jar_version));
-        
+
         if version_json_path.exists() {
-            let content = tokio::fs::read_to_string(&version_json_path).await
+            let content = tokio::fs::read_to_string(&version_json_path)
+                .await
                 .map_err(|e| format!("Failed to read version JSON: {}", e))?;
             let version_meta: serde_json::Value = serde_json::from_str(&content)
                 .map_err(|e| format!("Failed to parse version JSON: {}", e))?;
-            
+
             if let Some(downloads) = version_meta.get("downloads") {
                 if let Some(client) = downloads.get("client") {
                     if let Some(url) = client.get("url").and_then(|u| u.as_str()) {
-                        tracing::info!("Missing client.jar: {:?} - will download from {}", client_jar, url);
+                        tracing::info!(
+                            "Missing client.jar: {:?} - will download from {}",
+                            client_jar,
+                            url
+                        );
                         missing_tasks.push(DownloadTask::new(
                             url.to_string(),
                             client_jar.to_string_lossy().to_string(),
-                            client.get("sha1").and_then(|s| s.as_str()).map(String::from),
+                            client
+                                .get("sha1")
+                                .and_then(|s| s.as_str())
+                                .map(String::from),
                             client.get("size").and_then(|s| s.as_u64()),
                         ));
                     }
@@ -744,7 +783,10 @@ pub async fn verify_and_collect_missing_files(
         }
     }
 
-    tracing::info!("Pre-flight check: {} missing files to download", missing_tasks.len());
+    tracing::info!(
+        "Pre-flight check: {} missing files to download",
+        missing_tasks.len()
+    );
     Ok(missing_tasks)
 }
 
@@ -783,7 +825,10 @@ pub fn parse_jvm_arguments(
         .collect::<Vec<_>>()
         .join(CLASSPATH_SEPARATOR);
 
-    let libraries_dir = get_minecraft_base().join("libraries").to_string_lossy().to_string();
+    let libraries_dir = get_minecraft_base()
+        .join("libraries")
+        .to_string_lossy()
+        .to_string();
 
     for arg in &mut args {
         *arg = arg
@@ -791,11 +836,27 @@ pub fn parse_jvm_arguments(
             .replace("${version_name}", &config.version_id)
             .replace("${game_directory}", &game_dir)
             .replace("${assets_root}", &assets_dir)
-            .replace("${assets_index_name}", version_meta.assets.as_deref().unwrap_or("1.0"))
+            .replace(
+                "${assets_index_name}",
+                version_meta.assets.as_deref().unwrap_or("1.0"),
+            )
             .replace("${auth_uuid}", &config.account.id)
-            .replace("${auth_access_token}", config.account.access_token.as_deref().unwrap_or("0"))
-            .replace("${user_type}", if config.account.account_type == crate::auth::AccountType::Microsoft { "msa" } else { "mojang" })
-            .replace("${version_type}", version_meta.version_type.as_deref().unwrap_or("release"))
+            .replace(
+                "${auth_access_token}",
+                config.account.access_token.as_deref().unwrap_or("0"),
+            )
+            .replace(
+                "${user_type}",
+                if config.account.account_type == crate::auth::AccountType::Microsoft {
+                    "msa"
+                } else {
+                    "mojang"
+                },
+            )
+            .replace(
+                "${version_type}",
+                version_meta.version_type.as_deref().unwrap_or("release"),
+            )
             .replace("${natives_directory}", &natives_dir)
             .replace("${launcher_name}", LAUNCHER_NAME)
             .replace("${launcher_version}", LAUNCHER_VERSION)
@@ -845,7 +906,10 @@ pub fn parse_game_arguments(
     // Apply template substitutions
     let game_dir = config.game_directory.to_string_lossy().to_string();
     let assets_dir = config.assets_directory.to_string_lossy().to_string();
-    let libraries_dir = get_minecraft_base().join("libraries").to_string_lossy().to_string();
+    let libraries_dir = get_minecraft_base()
+        .join("libraries")
+        .to_string_lossy()
+        .to_string();
 
     for arg in &mut args {
         *arg = arg
@@ -853,11 +917,27 @@ pub fn parse_game_arguments(
             .replace("${version_name}", &config.version_id)
             .replace("${game_directory}", &game_dir)
             .replace("${assets_root}", &assets_dir)
-            .replace("${assets_index_name}", version_meta.assets.as_deref().unwrap_or("1.0"))
+            .replace(
+                "${assets_index_name}",
+                version_meta.assets.as_deref().unwrap_or("1.0"),
+            )
             .replace("${auth_uuid}", &config.account.id)
-            .replace("${auth_access_token}", config.account.access_token.as_deref().unwrap_or("0"))
-            .replace("${user_type}", if config.account.account_type == crate::auth::AccountType::Microsoft { "msa" } else { "mojang" })
-            .replace("${version_type}", version_meta.version_type.as_deref().unwrap_or("release"))
+            .replace(
+                "${auth_access_token}",
+                config.account.access_token.as_deref().unwrap_or("0"),
+            )
+            .replace(
+                "${user_type}",
+                if config.account.account_type == crate::auth::AccountType::Microsoft {
+                    "msa"
+                } else {
+                    "mojang"
+                },
+            )
+            .replace(
+                "${version_type}",
+                version_meta.version_type.as_deref().unwrap_or("release"),
+            )
             .replace("${launcher_name}", LAUNCHER_NAME)
             .replace("${launcher_version}", LAUNCHER_VERSION)
             .replace("${library_directory}", &libraries_dir)
@@ -868,8 +948,12 @@ pub fn parse_game_arguments(
 
     // Inject direct connection arguments if provided
     if let (Some(ip), Some(port)) = (&config.server_ip, config.server_port) {
-        tracing::info!("Injecting direct connection arguments: --server {} --port {}", ip, port);
-        
+        tracing::info!(
+            "Injecting direct connection arguments: --server {} --port {}",
+            ip,
+            port
+        );
+
         // For older versions (pre-1.20)
         args.push("--server".to_string());
         args.push(ip.clone());
@@ -951,7 +1035,7 @@ fn parse_argument_value(value: &serde_json::Value, args: &mut Vec<String>) -> Re
 
 /// Apply rules from a rule object.
 /// Returns true if the argument should be included (allowed).
-/// 
+///
 /// Algorithm:
 /// 1. If no rules array, default is ALLOW (for backward compatibility)
 /// 2. If rules exist, default is DISALLOW
@@ -973,7 +1057,7 @@ fn apply_rules(rule_obj: &serde_json::Map<String, serde_json::Value>) -> Result<
             .get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("allow");
-        
+
         let os_rule = rule.get("os").and_then(|v| v.as_object());
         let features = rule.get("features").and_then(|v| v.as_object());
 
@@ -992,7 +1076,7 @@ fn apply_rules(rule_obj: &serde_json::Map<String, serde_json::Value>) -> Result<
             let is_quick_play_multiplayer = false;
             let is_quick_play_realms = false;
             let has_custom_resolution = false;
-            
+
             // Check each feature requirement
             for (feature_name, required_state) in feats {
                 let actual_state = match feature_name.as_str() {
@@ -1004,13 +1088,13 @@ fn apply_rules(rule_obj: &serde_json::Map<String, serde_json::Value>) -> Result<
                     "has_custom_resolution" => has_custom_resolution,
                     _ => false, // Unknown features default to false (disabled)
                 };
-                
+
                 // If the required state doesn't match our actual state, this rule doesn't apply
                 if actual_state != *required_state {
                     break; // Will set features_ok = false
                 }
             }
-            
+
             // Verify all feature requirements are satisfied
             let mut all_satisfied = true;
             for (feature_name, required_state) in feats {
@@ -1051,19 +1135,26 @@ fn apply_rules(rule_obj: &serde_json::Map<String, serde_json::Value>) -> Result<
 // ============ Process Launching ============
 
 /// Verify instance integrity (check modpack tasks) and auto-repair if necessary
-async fn verify_instance_integrity(app: &AppHandle, instance_dir: &std::path::PathBuf) -> Result<(), String> {
+async fn verify_instance_integrity(
+    app: &AppHandle,
+    instance_dir: &std::path::PathBuf,
+) -> Result<(), String> {
     let modpack_tasks_path = instance_dir.join("modpack_tasks.json");
     if !modpack_tasks_path.exists() {
         return Ok(());
     }
 
-    let _ = app.emit("launch-status", serde_json::json!({
-        "status": "verifying_integrity"
-    }));
+    let _ = app.emit(
+        "launch-status",
+        serde_json::json!({
+            "status": "verifying_integrity"
+        }),
+    );
 
-    let content = tokio::fs::read_to_string(&modpack_tasks_path).await
+    let content = tokio::fs::read_to_string(&modpack_tasks_path)
+        .await
         .map_err(|e| format!("Failed to read modpack_tasks.json: {}", e))?;
-    
+
     let tasks: Vec<DownloadTask> = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse modpack_tasks.json: {}", e))?;
 
@@ -1071,7 +1162,7 @@ async fn verify_instance_integrity(app: &AppHandle, instance_dir: &std::path::Pa
 
     for task in tasks {
         let path = std::path::PathBuf::from(&task.dest_path);
-        
+
         // Ensure parent directories exist
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -1085,12 +1176,18 @@ async fn verify_instance_integrity(app: &AppHandle, instance_dir: &std::path::Pa
 
         // Check hash or size
         if let Some(expected_hash) = &task.hash {
-            if expected_hash.len() == 40 || expected_hash.len() == 64 { // SHA1 or SHA256 length check, we only support SHA1 locally for now
+            if expected_hash.len() == 40 || expected_hash.len() == 64 {
+                // SHA1 or SHA256 length check, we only support SHA1 locally for now
                 if expected_hash.len() == 40 {
                     match crate::downloader::download::compute_sha1_sync(&path) {
                         Ok(computed_hash) => {
                             if computed_hash.to_lowercase() != expected_hash.to_lowercase() {
-                                tracing::warn!("Hash mismatch for {:?}: expected {}, got {}", path, expected_hash, computed_hash);
+                                tracing::warn!(
+                                    "Hash mismatch for {:?}: expected {}, got {}",
+                                    path,
+                                    expected_hash,
+                                    computed_hash
+                                );
                                 let _ = std::fs::remove_file(&path);
                                 repair_tasks.push(task);
                             }
@@ -1105,37 +1202,56 @@ async fn verify_instance_integrity(app: &AppHandle, instance_dir: &std::path::Pa
             } else if let Some(expected_size) = task.expected_size {
                 if let Ok(metadata) = std::fs::metadata(&path) {
                     if metadata.len() != expected_size {
-                        tracing::warn!("Size mismatch for {:?}: expected {}, got {}", path, expected_size, metadata.len());
+                        tracing::warn!(
+                            "Size mismatch for {:?}: expected {}, got {}",
+                            path,
+                            expected_size,
+                            metadata.len()
+                        );
                         let _ = std::fs::remove_file(&path);
                         repair_tasks.push(task);
                     }
                 }
             }
         } else if let Some(expected_size) = task.expected_size {
-             if let Ok(metadata) = std::fs::metadata(&path) {
-                  if metadata.len() != expected_size {
-                      tracing::warn!("Size mismatch for {:?}: expected {}, got {}", path, expected_size, metadata.len());
-                      let _ = std::fs::remove_file(&path);
-                      repair_tasks.push(task);
-                  }
-             }
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                if metadata.len() != expected_size {
+                    tracing::warn!(
+                        "Size mismatch for {:?}: expected {}, got {}",
+                        path,
+                        expected_size,
+                        metadata.len()
+                    );
+                    let _ = std::fs::remove_file(&path);
+                    repair_tasks.push(task);
+                }
+            }
         }
     }
 
     if !repair_tasks.is_empty() {
-        tracing::info!("Found {} corrupted or missing mods. Starting auto-repair...", repair_tasks.len());
-        
-        let _ = app.emit("launch-status", serde_json::json!({
-            "status": "repairing_mods",
-            "count": repair_tasks.len()
-        }));
+        tracing::info!(
+            "Found {} corrupted or missing mods. Starting auto-repair...",
+            repair_tasks.len()
+        );
+
+        let _ = app.emit(
+            "launch-status",
+            serde_json::json!({
+                "status": "repairing_mods",
+                "count": repair_tasks.len()
+            }),
+        );
 
         crate::downloader::run_batch_download(repair_tasks, app.clone()).await;
-        
-        let _ = app.emit("launch-status", serde_json::json!({
-            "status": "repairing_complete"
-        }));
-        
+
+        let _ = app.emit(
+            "launch-status",
+            serde_json::json!({
+                "status": "repairing_complete"
+            }),
+        );
+
         tracing::info!("Auto-repair completed");
     }
 
@@ -1151,10 +1267,14 @@ pub async fn launch_instance(
     server_ip: Option<String>,
     server_port: Option<u16>,
 ) -> Result<(), String> {
-    tracing::info!("Launching instance {} with account {}", version_id, account_uuid);
+    tracing::info!(
+        "Launching instance {} with account {}",
+        version_id,
+        account_uuid
+    );
 
     let base_dir = get_minecraft_base();
-    
+
     // Version isolation: Use instance-specific directory for game data
     let instance_dir = base_dir.join("versions").join(&version_id);
 
@@ -1193,38 +1313,41 @@ pub async fn launch_instance(
         .join("versions")
         .join(&version_id)
         .join(format!("{}.json", version_id));
-    
+
     let version_json_content = fs::read_to_string(&version_json_path)
         .await
         .map_err(|e| format!("Failed to read version JSON: {e}"))?;
-    
+
     let mut version_meta: VersionMeta = serde_json::from_str(&version_json_content)
         .map_err(|e| format!("Failed to parse version JSON: {e}"))?;
 
     // Merge libraries from inheritsFrom
     let mut merged_libraries = version_meta.libraries.clone().unwrap_or_default();
-    
+
     let mut current_inherits = version_meta.inherits_from.clone();
     let mut final_base_version = version_id.clone();
 
     // Handle inheritsFrom recursively (used by Modpacks, Fabric, Forge, etc.)
     while let Some(parent_version) = current_inherits.take() {
-        tracing::info!("Version inherits from {}, loading parent...", parent_version);
-        
+        tracing::info!(
+            "Version inherits from {}, loading parent...",
+            parent_version
+        );
+
         let parent_json_path = base_dir
             .join("versions")
             .join(&parent_version)
             .join(format!("{}.json", parent_version));
-        
+
         let parent_content = fs::read_to_string(&parent_json_path)
             .await
             .map_err(|e| format!("Failed to read parent version JSON: {}", e))?;
-        
+
         let mut parent_meta: VersionMeta = serde_json::from_str(&parent_content)
             .map_err(|e| format!("Failed to parse parent version JSON: {e}"))?;
-            
+
         merged_libraries.extend(parent_meta.libraries.clone().unwrap_or_default());
-        
+
         // Merge parent data into version_meta
         // Use parent's data if current version doesn't have it
         if version_meta.main_class.is_none() {
@@ -1233,13 +1356,13 @@ pub async fn launch_instance(
         if version_meta.minecraft_arguments.is_none() {
             version_meta.minecraft_arguments = parent_meta.minecraft_arguments;
         }
-        
+
         // Deep merge arguments: parent first, then child appends
         if let Some(parent_args) = parent_meta.arguments.take() {
             if let Some(child_args) = version_meta.arguments.take() {
                 // Both have arguments - deep merge
                 let mut merged = parent_args;
-                
+
                 // Merge game args: parent first, then child
                 // Use merged.game since merged now holds parent_args
                 if let Some(parent_game) = merged.game.take() {
@@ -1247,7 +1370,10 @@ pub async fn launch_instance(
                     if let Some(child_game) = child_args.game {
                         // Extend game args - child appends after parent
                         match (game_list.clone(), child_game) {
-                            (serde_json::Value::Array(mut parent_arr), serde_json::Value::Array(child_arr)) => {
+                            (
+                                serde_json::Value::Array(mut parent_arr),
+                                serde_json::Value::Array(child_arr),
+                            ) => {
                                 parent_arr.extend(child_arr);
                                 game_list = serde_json::Value::Array(parent_arr);
                             }
@@ -1267,14 +1393,17 @@ pub async fn launch_instance(
                 } else if let Some(child_game) = child_args.game {
                     merged.game = Some(child_game);
                 }
-                
+
                 // Merge JVM args: parent first, then child
                 // Use merged.jvm since merged now holds parent_args
                 if let Some(parent_jvm) = merged.jvm.take() {
                     let mut jvm_list = parent_jvm.clone();
                     if let Some(child_jvm) = child_args.jvm {
                         match (jvm_list.clone(), child_jvm) {
-                            (serde_json::Value::Array(mut parent_arr), serde_json::Value::Array(child_arr)) => {
+                            (
+                                serde_json::Value::Array(mut parent_arr),
+                                serde_json::Value::Array(child_arr),
+                            ) => {
                                 parent_arr.extend(child_arr);
                                 jvm_list = serde_json::Value::Array(parent_arr);
                             }
@@ -1294,7 +1423,7 @@ pub async fn launch_instance(
                 } else if let Some(child_jvm) = child_args.jvm {
                     merged.jvm = Some(child_jvm);
                 }
-                
+
                 version_meta.arguments = Some(merged);
             } else {
                 // Child has no arguments, use parent's
@@ -1308,20 +1437,20 @@ pub async fn launch_instance(
         if version_meta.downloads.is_none() {
             version_meta.downloads = parent_meta.downloads;
         }
-        
+
         // Merge libraries: parent libraries + current libraries
         let mut merged_libs = parent_meta.libraries.clone().unwrap_or_default();
         if let Some(current_libs) = version_meta.libraries.take() {
             merged_libs.extend(current_libs);
         }
         version_meta.libraries = Some(merged_libs);
-        
+
         final_base_version = parent_version;
         current_inherits = parent_meta.inherits_from;
-        
+
         tracing::info!("Successfully merged parent version into {}", version_id);
     }
-    
+
     if final_base_version != version_id {
         version_meta.inherits_from = Some(final_base_version);
     }
@@ -1337,29 +1466,38 @@ pub async fn launch_instance(
 
     // ========== Pre-flight Check: Verify and Auto-repair Missing Files ==========
     let jar_version = version_meta.inherits_from.as_deref().unwrap_or(&version_id);
-    
+
     let missing_files = verify_and_collect_missing_files(libraries, jar_version).await?;
-    
+
     if !missing_files.is_empty() {
-        tracing::info!("Detected {} missing libraries. Starting auto-repair...", missing_files.len());
-        
+        tracing::info!(
+            "Detected {} missing libraries. Starting auto-repair...",
+            missing_files.len()
+        );
+
         // Notify frontend: entering repairing state
-        let _ = app.emit("instance-state-changed", serde_json::json!({
-            "versionId": version_id,
-            "status": "repairing",
-            "missingCount": missing_files.len()
-        }));
+        let _ = app.emit(
+            "instance-state-changed",
+            serde_json::json!({
+                "versionId": version_id,
+                "status": "repairing",
+                "missingCount": missing_files.len()
+            }),
+        );
 
         // Download missing files
         let app_for_download = app.clone();
         run_batch_download(missing_files, app_for_download).await;
 
         // Notify frontend: repairing complete
-        let _ = app.emit("instance-state-changed", serde_json::json!({
-            "versionId": version_id,
-            "status": "repairing_complete"
-        }));
-        
+        let _ = app.emit(
+            "instance-state-changed",
+            serde_json::json!({
+                "versionId": version_id,
+                "status": "repairing_complete"
+            }),
+        );
+
         tracing::info!("Auto-repair complete. Proceeding with launch...");
     }
 
@@ -1394,21 +1532,43 @@ pub async fn launch_instance(
     let java_executable = match &instance_config.java_path {
         Some(path) if !path.is_empty() => path.clone(),
         _ => {
-            let mc_version = version_meta.inherits_from.as_ref().unwrap_or(&version_meta.id);
+            let mc_version = version_meta
+                .inherits_from
+                .as_ref()
+                .unwrap_or(&version_meta.id);
             let recommended_major = crate::core::java::get_recommended_java(mc_version);
-            tracing::info!("Recommended Java major version for MC {}: {}", mc_version, recommended_major);
-            
+            tracing::info!(
+                "Recommended Java major version for MC {}: {}",
+                mc_version,
+                recommended_major
+            );
+
             // Try to find a scanned Java that matches the recommended version, or a newer one
-            let local_javas = crate::core::java::scan_local_javas().await.unwrap_or_default();
-            
-            let matched_java = local_javas.iter().find(|j| j.major_version == recommended_major)
-                .or_else(|| local_javas.iter().find(|j| j.major_version > recommended_major));
+            let local_javas = crate::core::java::scan_local_javas()
+                .await
+                .unwrap_or_default();
+
+            let matched_java = local_javas
+                .iter()
+                .find(|j| j.major_version == recommended_major)
+                .or_else(|| {
+                    local_javas
+                        .iter()
+                        .find(|j| j.major_version > recommended_major)
+                });
 
             if let Some(j) = matched_java {
-                tracing::info!("Found compatible Java: {} (Version {})", j.path, j.major_version);
+                tracing::info!(
+                    "Found compatible Java: {} (Version {})",
+                    j.path,
+                    j.major_version
+                );
                 j.path.clone()
             } else {
-                tracing::warn!("Could not find compatible Java >= {}, falling back to system default", recommended_major);
+                tracing::warn!(
+                    "Could not find compatible Java >= {}, falling back to system default",
+                    recommended_major
+                );
                 find_java().ok_or("Java not found. Please ensure Java is installed and in PATH.")?
             }
         }
@@ -1428,8 +1588,11 @@ pub async fn launch_instance(
         Ok(output) if output.status.success() => {
             // Parse Java version from stderr (Java prints version to stderr)
             let stderr_output = String::from_utf8_lossy(&output.stderr);
-            tracing::info!("Java version check output: {}", stderr_output.lines().next().unwrap_or("unknown"));
-            
+            tracing::info!(
+                "Java version check output: {}",
+                stderr_output.lines().next().unwrap_or("unknown")
+            );
+
             // Try to extract major version from output like "openjdk version \"21.0.8\""
             let major_version = crate::core::java::extract_major_version(&stderr_output);
             if major_version > 0 {
@@ -1457,9 +1620,12 @@ pub async fn launch_instance(
     let mc_version_for_check = if let Some(asset_index) = &version_meta.asset_index {
         &asset_index.id
     } else {
-        version_meta.inherits_from.as_ref().unwrap_or(&version_meta.id)
+        version_meta
+            .inherits_from
+            .as_ref()
+            .unwrap_or(&version_meta.id)
     };
-    
+
     let required_java = crate::core::java::get_recommended_java(mc_version_for_check);
     if java_major_version < required_java {
         return Err(format!(
@@ -1473,20 +1639,25 @@ pub async fn launch_instance(
         let injector_path = base_dir.join("authlib-injector.jar");
         if !injector_path.exists() {
             tracing::info!("Fetching latest authlib-injector...");
-            if let Ok(res) = reqwest::get("https://authlib-injector.yushi.moe/artifact/latest.json").await {
+            if let Ok(res) =
+                reqwest::get("https://authlib-injector.yushi.moe/artifact/latest.json").await
+            {
                 if let Ok(json) = res.json::<serde_json::Value>().await {
                     if let Some(download_url) = json.get("download_url").and_then(|v| v.as_str()) {
                         tracing::info!("Downloading authlib-injector from {}", download_url);
-                        let _ = app.emit("instance-state-changed", serde_json::json!({
-                            "versionId": version_id,
-                            "status": "downloading_authlib_injector"
-                        }));
+                        let _ = app.emit(
+                            "instance-state-changed",
+                            serde_json::json!({
+                                "versionId": version_id,
+                                "status": "downloading_authlib_injector"
+                            }),
+                        );
                         let mut missing = Vec::new();
                         missing.push(crate::downloader::DownloadTask::new(
                             download_url.to_string(),
                             injector_path.to_string_lossy().to_string(),
                             None,
-                            None
+                            None,
                         ));
                         crate::downloader::run_batch_download(missing, app.clone()).await;
                     }
@@ -1503,7 +1674,14 @@ pub async fn launch_instance(
         let injector_path = base_dir.join("authlib-injector.jar");
         if injector_path.exists() {
             if let Some(authlib_url) = &account.authlib_url {
-                jvm_args.insert(0, format!("-javaagent:{}={}", injector_path.to_string_lossy(), authlib_url));
+                jvm_args.insert(
+                    0,
+                    format!(
+                        "-javaagent:{}={}",
+                        injector_path.to_string_lossy(),
+                        authlib_url
+                    ),
+                );
                 tracing::info!("Injected authlib-injector for URL: {}", authlib_url);
             }
         } else {
@@ -1518,19 +1696,28 @@ pub async fn launch_instance(
         jvm_args.retain(|arg| {
             // Filter out --sun-misc-unsafe-memory-access and related parameters
             if arg.starts_with("--sun-misc-unsafe-memory-access") {
-                tracing::warn!("Filtering unsupported JVM arg for Java {}: {}", java_major_version, arg);
+                tracing::warn!(
+                    "Filtering unsupported JVM arg for Java {}: {}",
+                    java_major_version,
+                    arg
+                );
                 return false;
             }
             true
         });
-        
+
         if jvm_args.len() < original_count {
-            tracing::info!("Filtered {} JVM args not supported by Java {}", original_count - jvm_args.len(), java_major_version);
+            tracing::info!(
+                "Filtered {} JVM args not supported by Java {}",
+                original_count - jvm_args.len(),
+                java_major_version
+            );
         }
     }
 
     // Apply custom max memory if configured, otherwise use recommended default
-    let max_mem = instance_config.max_memory
+    let max_mem = instance_config
+        .max_memory
         .map(|m| m.max(512)) // At least 512MB
         .unwrap_or_else(get_recommended_max_memory);
     let min_mem = max_mem / 2;
@@ -1539,9 +1726,13 @@ pub async fn launch_instance(
     jvm_args.retain(|arg| !arg.starts_with("-Xmx") && !arg.starts_with("-Xms"));
     jvm_args.insert(0, format!("-Xmx{}M", max_mem));
     jvm_args.insert(0, format!("-Xms{}M", min_mem));
-    
-    tracing::info!("Memory allocation: -Xms{}M -Xmx{}M (system recommended: {}MB)", 
-        min_mem, max_mem, get_recommended_max_memory());
+
+    tracing::info!(
+        "Memory allocation: -Xms{}M -Xmx{}M (system recommended: {}MB)",
+        min_mem,
+        max_mem,
+        get_recommended_max_memory()
+    );
 
     // Apply extra JVM arguments if configured
     if let Some(extra_args) = &instance_config.jvm_args_extra {
@@ -1560,7 +1751,8 @@ pub async fn launch_instance(
     tracing::debug!("Game args: {:?}", game_args);
 
     // Get the main window for behavior control
-    let window = app.get_webview_window("main")
+    let window = app
+        .get_webview_window("main")
         .ok_or("Failed to get main window")?;
 
     // Determine window behavior after game starts
@@ -1576,12 +1768,16 @@ pub async fn launch_instance(
     }
 
     // Spawn the process using the resolved Java executable
-    tracing::info!("Spawning process: {} with main class: {}", java_executable, main_class);
+    tracing::info!(
+        "Spawning process: {} with main class: {}",
+        java_executable,
+        main_class
+    );
     tracing::info!("Game directory: {:?}", game_dir);
     tracing::info!("JVM args count: {}", jvm_args.len());
     tracing::info!("Game args count: {}", game_args.len());
     tracing::info!("Classpath entries: {}", classpath.len());
-    
+
     let mut child = Command::new(&java_executable)
         .current_dir(&game_dir)
         .args(&jvm_args)
@@ -1601,10 +1797,13 @@ pub async fn launch_instance(
     }
 
     // Emit "running" state to frontend
-    let _ = app.emit("instance-state-changed", serde_json::json!({
-        "versionId": version_id,
-        "status": "running"
-    }));
+    let _ = app.emit(
+        "instance-state-changed",
+        serde_json::json!({
+            "versionId": version_id,
+            "status": "running"
+        }),
+    );
 
     // Get stdout and stderr
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
@@ -1615,10 +1814,13 @@ pub async fn launch_instance(
     tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            let _ = app_clone.emit("game-log", serde_json::json!({
-                "type": "stdout",
-                "line": line
-            }));
+            let _ = app_clone.emit(
+                "game-log",
+                serde_json::json!({
+                    "type": "stdout",
+                    "line": line
+                }),
+            );
         }
     });
 
@@ -1626,10 +1828,13 @@ pub async fn launch_instance(
     tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            let _ = app_clone2.emit("game-log", serde_json::json!({
-                "type": "stderr",
-                "line": line
-            }));
+            let _ = app_clone2.emit(
+                "game-log",
+                serde_json::json!({
+                    "type": "stderr",
+                    "line": line
+                }),
+            );
         }
     });
 
@@ -1637,7 +1842,7 @@ pub async fn launch_instance(
     let app_handle_clone = app.clone();
     let version_id_clone = version_id.clone();
     let window_clone = window.clone();
-    
+
     tokio::spawn(async move {
         // Wait for process to exit
         match child.wait().await {
@@ -1651,11 +1856,14 @@ pub async fn launch_instance(
                 let _ = window_clone.set_focus();
 
                 // Notify frontend game has exited with exit code
-                let _ = app_handle_clone.emit("instance-state-changed", serde_json::json!({
-                    "versionId": version_id_clone,
-                    "status": "exited",
-                    "exitCode": exit_code
-                }));
+                let _ = app_handle_clone.emit(
+                    "instance-state-changed",
+                    serde_json::json!({
+                        "versionId": version_id_clone,
+                        "status": "exited",
+                        "exitCode": exit_code
+                    }),
+                );
 
                 if let Some(state) = app_handle_clone.try_state::<RunningInstances>() {
                     let mut map = state.0.lock().await;
@@ -1668,12 +1876,15 @@ pub async fn launch_instance(
                 let _ = window_clone.show();
                 let _ = window_clone.unminimize();
                 let _ = window_clone.set_focus();
-                
-                let _ = app_handle_clone.emit("instance-state-changed", serde_json::json!({
-                    "versionId": version_id_clone,
-                    "status": "exited",
-                    "exitCode": -1
-                }));
+
+                let _ = app_handle_clone.emit(
+                    "instance-state-changed",
+                    serde_json::json!({
+                        "versionId": version_id_clone,
+                        "status": "exited",
+                        "exitCode": -1
+                    }),
+                );
 
                 if let Some(state) = app_handle_clone.try_state::<RunningInstances>() {
                     let mut map = state.0.lock().await;
