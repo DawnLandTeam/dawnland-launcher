@@ -400,7 +400,7 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
         if let Some(loc) = redirect_res.headers().get(reqwest::header::LOCATION) {
             if let Ok(loc_str) = loc.to_str() {
                 // Apply ghproxy to GitHub release URLs for better connectivity in China
-                final_url = loc_str.replace("github.com", "mirror.ghproxy.com/github.com");
+                final_url = loc_str.replace("https://github.com", "https://ghproxy.net/https://github.com");
                 tracing::info!("Redirected and proxied to: {}", final_url);
             }
         }
