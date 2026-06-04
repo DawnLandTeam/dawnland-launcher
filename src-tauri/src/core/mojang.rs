@@ -161,6 +161,17 @@ pub struct VersionMeta {
     pub downloads: Option<Downloads>,
     // Libraries - critical for game runtime
     pub libraries: Option<Vec<Library>>,
+    // Java version requested by this profile
+    #[serde(rename = "javaVersion")]
+    pub java_version: Option<JavaVersion>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaVersion {
+    pub component: String,
+    #[serde(rename = "majorVersion")]
+    pub major_version: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
