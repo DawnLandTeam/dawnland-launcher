@@ -20,30 +20,10 @@ pub struct JavaSettings {
     pub custom_download_path: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AdoptiumReleases {
-    pub available_releases: Vec<u32>,
-    pub available_lts_releases: Vec<u32>,
-}
-
 #[tauri::command]
 pub async fn fetch_available_javas() -> Result<Vec<u32>, String> {
-    let client = reqwest::Client::new();
-    let res = client
-        .get("https://api.adoptium.net/v3/info/available_releases")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch available releases: {}", e))?;
-
-    let data: AdoptiumReleases = res
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse available releases: {}", e))?;
-
-    let mut releases = data.available_releases;
-    // Reverse to show the newest Java versions first
-    releases.reverse();
-    Ok(releases)
+    // Microsoft Build of OpenJDK provides these major versions
+    Ok(vec![25, 21, 17, 11])
 }
 
 fn get_java_config_path() -> PathBuf {
@@ -356,10 +336,10 @@ fn extract_vendor(output: &str) -> String {
     "Unknown".to_string()
 }
 
-/// Download and install a specific Java version from Adoptium.
+/// Download and install a specific Java version from Microsoft OpenJDK.
 #[tauri::command]
 pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<JavaInfo, String> {
-    tracing::info!("Downloading Java {} from Adoptium...", major_version);
+    tracing::info!("Downloading Java {} from Microsoft OpenJDK...", major_version);
 
     let arch = if cfg!(target_arch = "x86_64") {
         "x64"
@@ -372,7 +352,7 @@ pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<
     let os = if cfg!(target_os = "windows") {
         "windows"
     } else if cfg!(target_os = "macos") {
-        "mac"
+        "macos"
     } else if cfg!(target_os = "linux") {
         "linux"
     } else {
@@ -386,8 +366,8 @@ pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<
     };
 
     let url = format!(
-        "https://api.adoptium.net/v3/binary/latest/{}/ga/{}/{}/jdk/hotspot/normal/eclipse",
-        major_version, os, arch
+        "https://aka.ms/download-jdk/microsoft-jdk-{}-{}-{}.{}",
+        major_version, os, arch, extension
     );
 
     tracing::info!("Resolving Download URL: {}", url);
@@ -409,42 +389,10 @@ pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<
         .await
         .map_err(|e| format!("Failed to create runtimes directory: {}", e))?;
 
-    // Create a client that does NOT follow redirects automatically
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    let redirect_res = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to resolve Adoptium API: {}", e))?;
-
-    let mut final_url = url.clone();
-
-    // If it's a redirect, get the Location header
-    if redirect_res.status().is_redirection() {
-        if let Some(loc) = redirect_res.headers().get(reqwest::header::LOCATION) {
-            if let Ok(loc_str) = loc.to_str() {
-                // Apply ghproxy to GitHub release URLs for better connectivity in China
-                final_url = loc_str.replace("https://github.com", "https://ghproxy.net/https://github.com");
-                tracing::info!("Redirected and proxied to: {}", final_url);
-            }
-        }
-    } else if redirect_res.status().is_success() {
-        tracing::info!("No redirect needed.");
-    } else {
-        return Err(format!(
-            "Adoptium API returned error: {}",
-            redirect_res.status()
-        ));
-    }
-
-    // Download the file from the final URL
+    // Download the file from the URL directly (reqwest follows redirects automatically)
     let download_client = reqwest::Client::new();
     let response = download_client
-        .get(&final_url)
+        .get(&url)
         .send()
         .await
         .map_err(|e| format!("Failed to download Java: {}", e))?;
