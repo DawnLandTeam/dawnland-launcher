@@ -31,6 +31,7 @@ onActivated(async () => {
   await loadSystemMemory();
   await scanLocalJavas();
   await loadJavaDownloadPath();
+  await loadAvailableJavas();
 });
 
 watch(
@@ -113,7 +114,8 @@ const javaTotalBytes = ref(0);
 const javaDownloadSpeed = ref("0 B/s");
 const customJavaDownloadPath = ref<string>("");
 const selectedJavaVersion = ref<number>(21);
-const availableJavaVersions = [8, 11, 17, 21, 22, 23];
+const availableJavaVersions = ref<number[]>([8, 11, 17, 21, 23]);
+const isFetchingJavaVersions = ref(false);
 const isFullDiskScanning = ref(false);
 const fullDiskScanPath = ref("");
 
@@ -198,6 +200,24 @@ async function loadJavaDownloadPath(): Promise<void> {
     customJavaDownloadPath.value = path || "";
   } catch (err) {
     console.error("Failed to load custom Java download path:", err);
+  }
+}
+
+async function loadAvailableJavas(): Promise<void> {
+  isFetchingJavaVersions.value = true;
+  try {
+    const versions = await invoke<number[]>("fetch_available_javas");
+    if (versions && versions.length > 0) {
+      availableJavaVersions.value = versions;
+      // If 21 is available, default to it, else default to the newest LTS or first item
+      if (!versions.includes(selectedJavaVersion.value)) {
+        selectedJavaVersion.value = versions[0];
+      }
+    }
+  } catch (err) {
+    console.error("Failed to fetch available Javas from API:", err);
+  } finally {
+    isFetchingJavaVersions.value = false;
   }
 }
 
@@ -502,9 +522,11 @@ function changeLanguage(lang: string) {
         <div class="flex items-center gap-2">
           <select 
             v-model="selectedJavaVersion"
+            :disabled="isFetchingJavaVersions || isDownloadingJava"
             class="rounded-md border border-neutral-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700"
           >
-            <option v-for="v in availableJavaVersions" :key="v" :value="v">Java {{ v }}</option>
+            <option v-if="isFetchingJavaVersions" disabled>{{ $t('settings.java.scanning') }}...</option>
+            <option v-else v-for="v in availableJavaVersions" :key="v" :value="v">Java {{ v }}</option>
           </select>
           <button
             class="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
