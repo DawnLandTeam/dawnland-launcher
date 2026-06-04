@@ -4,6 +4,11 @@ import router from "./router";
 import i18n from "./i18n";
 import "./style.css";
 
+// Disable right-click context menu in production
+if (import.meta.env.PROD) {
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
 const app = createApp(App);
 
 app.use(router);
