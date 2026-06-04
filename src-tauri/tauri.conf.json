@@ -45,7 +45,7 @@
       "endpoints": [
         "https://api.dawnland.cn/api/launcher/update/{{target}}/{{current_version}}"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUyN0FENDYyN0EyMTc1RUYKUldUdmRTRjZZdFI2VWo1bjhVbWw4a0NsUGVZbVljS00wN09Ob2xIdm5wbGVBZXRyV3B6ZVVTdWUK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE5QzAyNjc0QjQ2ODRFODcKUldTSFRtaTBkQ2JBcVJ2bEdXeVgzZjduVHNlaVBZR1U3T1FocUdqVkRURDBvRWhkZXB3WnpiSU8K"
     }
   }
 }
