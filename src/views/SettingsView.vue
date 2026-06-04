@@ -339,11 +339,15 @@ function changeLanguage(lang: string) {
         {{ $t('settings.authlib.tab') }}
       </button>
       <button
-        class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
+        class="relative px-3 py-1.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5"
         :class="activeTab === 'about' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'about'"
       >
         {{ $t('settings.tabs.about') }}
+        <span v-if="hasUpdateAvailable" class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+        </span>
       </button>
     </div>
 
