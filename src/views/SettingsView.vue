@@ -108,11 +108,22 @@ const isScanningJava = ref(false);
 const isDownloadingJava = ref(false);
 const downloadingVersion = ref<number | null>(null);
 const javaDownloadProgress = ref(0);
+const javaDownloadedBytes = ref(0);
+const javaTotalBytes = ref(0);
+const javaDownloadSpeed = ref("0 B/s");
 const customJavaDownloadPath = ref<string>("");
 const selectedJavaVersion = ref<number>(21);
 const availableJavaVersions = [8, 11, 17, 21, 22, 23];
 const isFullDiskScanning = ref(false);
 const fullDiskScanPath = ref("");
+
+function formatBytes(bytes: number) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
 
 // Authlib state
 const authlibServers = ref<AuthlibServer[]>([]);
@@ -276,13 +287,31 @@ async function downloadJava(majorVersion: number): Promise<void> {
   isDownloadingJava.value = true;
   downloadingVersion.value = majorVersion;
   javaDownloadProgress.value = 0;
+  javaDownloadedBytes.value = 0;
+  javaTotalBytes.value = 0;
+  javaDownloadSpeed.value = "0 B/s";
 
   try {
+    let lastDownloaded = 0;
+    let lastTime = performance.now();
+
     // Listen for download progress
     const unlisten = await listen<DownloadProgress>("download-progress", (event) => {
       const payload = event.payload;
       if (payload.total > 0) {
         javaDownloadProgress.value = Math.round((payload.downloaded / payload.total) * 100);
+        javaDownloadedBytes.value = payload.downloaded;
+        javaTotalBytes.value = payload.total;
+
+        const now = performance.now();
+        const timeDiff = (now - lastTime) / 1000;
+        if (timeDiff >= 0.5) {
+          const bytesDiff = payload.downloaded - lastDownloaded;
+          const speed = bytesDiff / timeDiff;
+          javaDownloadSpeed.value = `${formatBytes(speed)}/s`;
+          lastDownloaded = payload.downloaded;
+          lastTime = now;
+        }
       }
     });
 
@@ -497,6 +526,10 @@ function changeLanguage(lang: string) {
               class="h-full bg-blue-500 rounded-full transition-all"
               :style="{ width: `${javaDownloadProgress}%` }"
             ></div>
+          </div>
+          <div class="flex items-center justify-between text-xs text-muted-foreground mt-1">
+            <span>{{ formatBytes(javaDownloadedBytes) }} / {{ formatBytes(javaTotalBytes) }}</span>
+            <span>{{ javaDownloadSpeed }}</span>
           </div>
         </div>
       </div>
