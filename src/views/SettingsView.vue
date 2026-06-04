@@ -10,6 +10,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
 import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
+import { setUpdateAvailable, hasUpdateAvailable } from "../composables/useUpdate";
 
 const route = useRoute();
 const router = useRouter();
@@ -88,7 +89,9 @@ async function checkForUpdates() {
     if (update) {
       updateInfo.value = update;
       showUpdaterModal.value = true;
+      setUpdateAvailable(update);
     } else {
+      setUpdateAvailable(null);
       alert(t('settings.about.upToDate'));
     }
   } catch (err) {
@@ -621,11 +624,16 @@ function changeLanguage(lang: string) {
             <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">{{ $t('settings.about.suggestFeature') }} &rarr;</span>
           </a>
           
-          <button @click="checkForUpdates" :disabled="isCheckingUpdate" class="flex items-center justify-between p-3 rounded-lg border hover:bg-primary/10 hover:border-primary/30 transition-colors group text-left">
+          <button @click="checkForUpdates" :disabled="isCheckingUpdate" class="relative flex items-center justify-between p-3 rounded-lg border hover:bg-primary/10 hover:border-primary/30 transition-colors group text-left">
             <div class="flex items-center gap-2">
               <Download class="w-4 h-4 text-primary" />
               <span class="text-sm font-medium text-primary">{{ $t('settings.about.checkUpdates') }}</span>
             </div>
+            
+            <span v-if="hasUpdateAvailable" class="absolute -top-1 -right-1 flex h-3 w-3">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+            </span>
             <span class="text-xs text-muted-foreground">
               <Loader2 v-if="isCheckingUpdate" class="w-4 h-4 animate-spin" />
               <span v-else>&rarr;</span>

@@ -6,6 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
+import { setUpdateAvailable } from "./composables/useUpdate";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<Update | null>(null);
@@ -19,6 +20,7 @@ onMounted(async () => {
       console.log(`Update available: ${update.version}`);
       updateInfo.value = update;
       isUpdateModalOpen.value = true;
+      setUpdateAvailable(update);
     }
   } catch (error) {
     console.error("Failed to check for updates:", error);
