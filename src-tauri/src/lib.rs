@@ -50,6 +50,7 @@ pub fn run() {
             greet,
             core::security::generate_api_signature,
             commands::get_system_info,
+            commands::get_updater_target,
             commands::get_system_memory,
             commands::batch_download,
             commands::modpack::install_modpack,
