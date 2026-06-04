@@ -10,6 +10,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
 import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
+import { setUpdateAvailable, hasUpdateAvailable } from "../composables/useUpdate";
 
 const route = useRoute();
 const router = useRouter();
@@ -30,6 +31,7 @@ onActivated(async () => {
   await loadSystemMemory();
   await scanLocalJavas();
   await loadJavaDownloadPath();
+  await loadAvailableJavas();
 });
 
 watch(
@@ -83,12 +85,13 @@ const updateInfo = shallowRef<Update | null>(null);
 async function checkForUpdates() {
   isCheckingUpdate.value = true;
   try {
-    const target = await invoke<string>("get_updater_target");
-    const update = await check({ target });
+    const update = await check();
     if (update) {
       updateInfo.value = update;
       showUpdaterModal.value = true;
+      setUpdateAvailable(update);
     } else {
+      setUpdateAvailable(null);
       alert(t('settings.about.upToDate'));
     }
   } catch (err) {
@@ -105,11 +108,23 @@ const isScanningJava = ref(false);
 const isDownloadingJava = ref(false);
 const downloadingVersion = ref<number | null>(null);
 const javaDownloadProgress = ref(0);
+const javaDownloadedBytes = ref(0);
+const javaTotalBytes = ref(0);
+const javaDownloadSpeed = ref("0 B/s");
 const customJavaDownloadPath = ref<string>("");
 const selectedJavaVersion = ref<number>(21);
-const availableJavaVersions = [8, 11, 17, 21, 22, 23];
+const availableJavaVersions = ref<number[]>([8, 11, 17, 21, 23]);
+const isFetchingJavaVersions = ref(false);
 const isFullDiskScanning = ref(false);
 const fullDiskScanPath = ref("");
+
+function formatBytes(bytes: number) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
 
 // Authlib state
 const authlibServers = ref<AuthlibServer[]>([]);
@@ -184,6 +199,24 @@ async function loadJavaDownloadPath(): Promise<void> {
     customJavaDownloadPath.value = path || "";
   } catch (err) {
     console.error("Failed to load custom Java download path:", err);
+  }
+}
+
+async function loadAvailableJavas(): Promise<void> {
+  isFetchingJavaVersions.value = true;
+  try {
+    const versions = await invoke<number[]>("fetch_available_javas");
+    if (versions && versions.length > 0) {
+      availableJavaVersions.value = versions;
+      // If 21 is available, default to it, else default to the newest LTS or first item
+      if (!versions.includes(selectedJavaVersion.value)) {
+        selectedJavaVersion.value = versions[0];
+      }
+    }
+  } catch (err) {
+    console.error("Failed to fetch available Javas from API:", err);
+  } finally {
+    isFetchingJavaVersions.value = false;
   }
 }
 
@@ -273,24 +306,43 @@ async function downloadJava(majorVersion: number): Promise<void> {
   isDownloadingJava.value = true;
   downloadingVersion.value = majorVersion;
   javaDownloadProgress.value = 0;
+  javaDownloadedBytes.value = 0;
+  javaTotalBytes.value = 0;
+  javaDownloadSpeed.value = "0 B/s";
 
+  let unlisten: (() => void) | null = null;
   try {
+    let lastDownloaded = 0;
+    let lastTime = performance.now();
+
     // Listen for download progress
-    const unlisten = await listen<DownloadProgress>("download-progress", (event) => {
+    unlisten = await listen<DownloadProgress>("download-progress", (event) => {
       const payload = event.payload;
       if (payload.total > 0) {
         javaDownloadProgress.value = Math.round((payload.downloaded / payload.total) * 100);
+        javaDownloadedBytes.value = payload.downloaded;
+        javaTotalBytes.value = payload.total;
+
+        const now = performance.now();
+        const timeDiff = (now - lastTime) / 1000;
+        if (timeDiff >= 0.5) {
+          const bytesDiff = payload.downloaded - lastDownloaded;
+          const speed = bytesDiff / timeDiff;
+          javaDownloadSpeed.value = `${formatBytes(speed)}/s`;
+          lastDownloaded = payload.downloaded;
+          lastTime = now;
+        }
       }
     });
 
     const javaInfo = await invoke<JavaInfo>("download_java", { majorVersion });
     installedJavas.value.unshift(javaInfo);
     
-    unlisten();
   } catch (err) {
     console.error("Failed to download Java:", err);
     alert(`Failed to download Java ${majorVersion}: ${err}`);
   } finally {
+    if (unlisten) unlisten();
     isDownloadingJava.value = false;
     downloadingVersion.value = null;
     javaDownloadProgress.value = 0;
@@ -336,11 +388,15 @@ function changeLanguage(lang: string) {
         {{ $t('settings.authlib.tab') }}
       </button>
       <button
-        class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
+        class="relative px-3 py-1.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5"
         :class="activeTab === 'about' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
         @click="activeTab = 'about'"
       >
         {{ $t('settings.tabs.about') }}
+        <span v-if="hasUpdateAvailable" class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+        </span>
       </button>
     </div>
 
@@ -465,9 +521,11 @@ function changeLanguage(lang: string) {
         <div class="flex items-center gap-2">
           <select 
             v-model="selectedJavaVersion"
+            :disabled="isFetchingJavaVersions || isDownloadingJava"
             class="rounded-md border border-neutral-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700"
           >
-            <option v-for="v in availableJavaVersions" :key="v" :value="v">Java {{ v }}</option>
+            <option v-if="isFetchingJavaVersions" disabled>{{ $t('settings.java.scanning') }}...</option>
+            <option v-else v-for="v in availableJavaVersions" :key="v" :value="v">Java {{ v }}</option>
           </select>
           <button
             class="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
@@ -490,6 +548,10 @@ function changeLanguage(lang: string) {
               class="h-full bg-blue-500 rounded-full transition-all"
               :style="{ width: `${javaDownloadProgress}%` }"
             ></div>
+          </div>
+          <div class="flex items-center justify-between text-xs text-muted-foreground mt-1">
+            <span>{{ formatBytes(javaDownloadedBytes) }} / {{ formatBytes(javaTotalBytes) }}</span>
+            <span>{{ javaDownloadSpeed }}</span>
           </div>
         </div>
       </div>
@@ -621,11 +683,16 @@ function changeLanguage(lang: string) {
             <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">{{ $t('settings.about.suggestFeature') }} &rarr;</span>
           </a>
           
-          <button @click="checkForUpdates" :disabled="isCheckingUpdate" class="flex items-center justify-between p-3 rounded-lg border hover:bg-primary/10 hover:border-primary/30 transition-colors group text-left">
+          <button @click="checkForUpdates" :disabled="isCheckingUpdate" class="relative flex items-center justify-between p-3 rounded-lg border hover:bg-primary/10 hover:border-primary/30 transition-colors group text-left">
             <div class="flex items-center gap-2">
               <Download class="w-4 h-4 text-primary" />
               <span class="text-sm font-medium text-primary">{{ $t('settings.about.checkUpdates') }}</span>
             </div>
+            
+            <span v-if="hasUpdateAvailable" class="absolute -top-1 -right-1 flex h-3 w-3">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+            </span>
             <span class="text-xs text-muted-foreground">
               <Loader2 v-if="isCheckingUpdate" class="w-4 h-4 animate-spin" />
               <span v-else>&rarr;</span>

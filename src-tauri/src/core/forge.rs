@@ -604,123 +604,13 @@ pub async fn install_forge_instance(
             .and_then(|v| v["url"].as_str())
             .ok_or_else(|| format!("Version {} not found in manifest", mc_version))?;
 
-        // Download version JSON
-        let version_json_content = client
-            .get(version_url)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to fetch version JSON: {}", e))?
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read version JSON: {}", e))?;
-
-        // Save base version JSON
-        fs::create_dir_all(&base_version_dir)
-            .await
-            .map_err(|e| format!("Failed to create version directory: {}", e))?;
-
-        fs::write(&base_version_json, &version_json_content)
-            .await
-            .map_err(|e| format!("Failed to write version JSON: {}", e))?;
-
-        // Create dlml.json for the base vanilla version to mark it as hidden if needed
-        let base_config_path = base_version_dir.join("dlml.json");
-        let base_config = crate::core::launcher::InstanceConfig {
-            hidden: is_dependency.unwrap_or(false),
-            server_id: None,
-            pack_version_id: None,
-            pack_file_name: None,
-            ..Default::default()
-        };
-        if let Ok(config_json) = serde_json::to_string_pretty(&base_config) {
-            let _ = fs::write(&base_config_path, config_json).await;
-        }
-
-        tracing::info!("Saved base version JSON to: {:?}", base_version_json);
-
-        // Parse version metadata and download libraries
-        let version_meta: serde_json::Value = serde_json::from_str(&version_json_content)
-            .map_err(|e| format!("Failed to parse version JSON: {}", e))?;
-
-        // Build download tasks for vanilla
-        let mut tasks: Vec<crate::downloader::DownloadTask> = Vec::new();
-
-        // Add client.jar
-        if let Some(downloads) = version_meta.get("downloads") {
-            if let Some(client) = downloads.get("client") {
-                if let Some(url) = client.get("url").and_then(|u| u.as_str()) {
-                    let jar_path = format!("versions/{}/{}.jar", mc_version, mc_version);
-                    let dest = base_dir.join(&jar_path);
-                    tasks.push(crate::downloader::DownloadTask::new(
-                        url.to_string(),
-                        dest.to_string_lossy().to_string(),
-                        client
-                            .get("sha1")
-                            .and_then(|s| s.as_str())
-                            .map(String::from),
-                        client.get("size").and_then(|s| s.as_u64()),
-                    ));
-                }
-            }
-        }
-
-        // Add libraries
-        if let Some(libraries) = version_meta.get("libraries").and_then(|l| l.as_array()) {
-            for lib in libraries {
-                if let Some(downloads) = lib.get("downloads") {
-                    if let Some(artifact) = downloads.get("artifact") {
-                        if let Some(url) = artifact.get("url").and_then(|u| u.as_str()) {
-                            if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
-                                let dest = base_dir.join("libraries").join(path);
-                                tasks.push(crate::downloader::DownloadTask::new(
-                                    url.to_string(),
-                                    dest.to_string_lossy().to_string(),
-                                    artifact
-                                        .get("sha1")
-                                        .and_then(|s| s.as_str())
-                                        .map(String::from),
-                                    artifact.get("size").and_then(|s| s.as_u64()),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add assets index
-        if let Some(asset_index) = version_meta.get("assetIndex") {
-            if let Some(url) = asset_index.get("url").and_then(|u| u.as_str()) {
-                if let Some(id) = asset_index.get("id").and_then(|i| i.as_str()) {
-                    let index_path = base_dir
-                        .join("assets")
-                        .join("indexes")
-                        .join(format!("{}.json", id));
-                    tasks.push(crate::downloader::DownloadTask::new(
-                        url.to_string(),
-                        index_path.to_string_lossy().to_string(),
-                        None,
-                        None,
-                    ));
-                }
-            }
-        }
-
-        let total_tasks = tasks.len();
-        tracing::info!("Resolved {} files for vanilla base", total_tasks);
-
-        let _ = app.emit(
-            "install-progress",
-            serde_json::json!({
-                "phase": "downloading",
-                "versionId": mc_version,
-                "totalTasks": total_tasks,
-                "completedTasks": 0,
-            }),
-        );
-
-        let app_clone = app.clone();
-        crate::downloader::run_batch_download(tasks, app_clone).await;
+        crate::core::mojang::install_vanilla_version(
+            mc_version.clone(),
+            version_url.to_string(),
+            Some(true),
+            app.clone(),
+        )
+        .await?;
 
         tracing::info!("Base vanilla {} installed successfully", mc_version);
     } else {

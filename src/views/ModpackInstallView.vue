@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted } from "vue";
+import { ref, computed, nextTick, onMounted, onDeactivated } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
+import { setAppBusy } from "../composables/useAppStatus";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
@@ -139,6 +140,11 @@ onMounted(() => {
     // Default to fetching trending modpacks if not an update
     searchModpacks();
   }
+});
+
+onDeactivated(() => {
+  searchQuery.value = "";
+  modpacks.value = [];
 });
 
 listen("modpack-install-status", (e: any) => {
@@ -342,6 +348,7 @@ const installModpack = async () => {
   if (!instanceName.value) return;
 
   isInstalling.value = true;
+  setAppBusy(true);
   completedMods.value.clear();
   forgeLogs.value = [];
   totalMods.value = 0;
@@ -380,11 +387,13 @@ const installModpack = async () => {
     
     console.log("Installation finished successfully. Showing success modal...");
     isInstalling.value = false;
+    setAppBusy(false);
     showSuccessModal.value = true;
   } catch (error) {
     console.error("Installation failed:", error);
     statusMessage.value = `Installation failed: ${error}`;
     isInstalling.value = false;
+    setAppBusy(false);
   }
 };
 

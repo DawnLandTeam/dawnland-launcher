@@ -3,26 +3,30 @@ import { ref, shallowRef, onMounted } from "vue";
 import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke } from "@tauri-apps/api/core";
 import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
+import { setUpdateAvailable } from "./composables/useUpdate";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<Update | null>(null);
 
-onMounted(async () => {
-  try {
-    await getCurrentWindow().show();
-    const target = await invoke<string>("get_updater_target");
-    const update = await check({ target });
-    if (update) {
-      console.log(`Update available: ${update.version}`);
-      updateInfo.value = update;
-      isUpdateModalOpen.value = true;
-    }
-  } catch (error) {
-    console.error("Failed to check for updates:", error);
-  }
+onMounted(() => {
+  // Show window
+  getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
+
+  // Delay the update check slightly to ensure network and plugins are fully initialized
+  setTimeout(() => {
+    check().then(update => {
+      if (update) {
+        console.log(`Update available: ${update.version}`);
+        updateInfo.value = update;
+        isUpdateModalOpen.value = true;
+        setUpdateAvailable(update);
+      }
+    }).catch(error => {
+      console.error("Failed to check for updates on startup:", error);
+    });
+  }, 2000);
 });
 </script>
 
