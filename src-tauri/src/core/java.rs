@@ -20,6 +20,32 @@ pub struct JavaSettings {
     pub custom_download_path: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdoptiumReleases {
+    pub available_releases: Vec<u32>,
+    pub available_lts_releases: Vec<u32>,
+}
+
+#[tauri::command]
+pub async fn fetch_available_javas() -> Result<Vec<u32>, String> {
+    let client = reqwest::Client::new();
+    let res = client
+        .get("https://api.adoptium.net/v3/info/available_releases")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch available releases: {}", e))?;
+
+    let data: AdoptiumReleases = res
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse available releases: {}", e))?;
+
+    let mut releases = data.available_releases;
+    // Reverse to show the newest Java versions first
+    releases.reverse();
+    Ok(releases)
+}
+
 fn get_java_config_path() -> PathBuf {
     get_minecraft_base()
         .parent()
