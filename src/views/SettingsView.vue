@@ -291,12 +291,13 @@ async function downloadJava(majorVersion: number): Promise<void> {
   javaTotalBytes.value = 0;
   javaDownloadSpeed.value = "0 B/s";
 
+  let unlisten: (() => void) | null = null;
   try {
     let lastDownloaded = 0;
     let lastTime = performance.now();
 
     // Listen for download progress
-    const unlisten = await listen<DownloadProgress>("download-progress", (event) => {
+    unlisten = await listen<DownloadProgress>("download-progress", (event) => {
       const payload = event.payload;
       if (payload.total > 0) {
         javaDownloadProgress.value = Math.round((payload.downloaded / payload.total) * 100);
@@ -318,11 +319,11 @@ async function downloadJava(majorVersion: number): Promise<void> {
     const javaInfo = await invoke<JavaInfo>("download_java", { majorVersion });
     installedJavas.value.unshift(javaInfo);
     
-    unlisten();
   } catch (err) {
     console.error("Failed to download Java:", err);
     alert(`Failed to download Java ${majorVersion}: ${err}`);
   } finally {
+    if (unlisten) unlisten();
     isDownloadingJava.value = false;
     downloadingVersion.value = null;
     javaDownloadProgress.value = 0;
