@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted } from "vue";
+import { ref, computed, nextTick, onMounted, onDeactivated } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -140,6 +140,11 @@ onMounted(() => {
     // Default to fetching trending modpacks if not an update
     searchModpacks();
   }
+});
+
+onDeactivated(() => {
+  searchQuery.value = "";
+  modpacks.value = [];
 });
 
 listen("modpack-install-status", (e: any) => {
