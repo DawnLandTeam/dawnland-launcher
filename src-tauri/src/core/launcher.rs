@@ -1607,6 +1607,9 @@ pub async fn launch_instance(
         if version_meta.downloads.is_none() {
             version_meta.downloads = parent_meta.downloads;
         }
+        if version_meta.java_version.is_none() {
+            version_meta.java_version = parent_meta.java_version;
+        }
 
         // Merge libraries: parent libraries + current libraries
         let mut merged_libs = parent_meta.libraries.clone().unwrap_or_default();
@@ -1753,16 +1756,30 @@ pub async fn launch_instance(
     let java_executable = match &instance_config.java_path {
         Some(path) if !path.is_empty() => path.clone(),
         _ => {
-            let mc_version = version_meta
-                .inherits_from
+            let recommended_major = version_meta
+                .java_version
                 .as_ref()
-                .unwrap_or(&version_meta.id);
-            let recommended_major = crate::core::java::get_recommended_java(mc_version);
-            tracing::info!(
-                "Recommended Java major version for MC {}: {}",
-                mc_version,
-                recommended_major
-            );
+                .map(|v| v.major_version)
+                .unwrap_or_else(|| {
+                    let mc_version = version_meta
+                        .inherits_from
+                        .as_ref()
+                        .unwrap_or(&version_meta.id);
+                    let major = crate::core::java::get_recommended_java(mc_version);
+                    tracing::info!(
+                        "Recommended Java major version for MC {}: {}",
+                        mc_version,
+                        major
+                    );
+                    major
+                });
+
+            if version_meta.java_version.is_some() {
+                tracing::info!(
+                    "Using Java major version from JSON: {}",
+                    recommended_major
+                );
+            }
 
             // Try to find a scanned Java that matches the recommended version, or a newer one
             let local_javas = crate::core::java::scan_local_javas()
@@ -1786,11 +1803,11 @@ pub async fn launch_instance(
                 );
                 j.path.clone()
             } else {
-                tracing::warn!(
-                    "Could not find compatible Java >= {}, falling back to system default",
+                tracing::error!(
+                    "Could not find compatible Java >= {}",
                     recommended_major
                 );
-                find_java().ok_or("Java not found. Please ensure Java is installed and in PATH.")?
+                return Err(format!("No compatible Java version found. This instance requires Java {} or higher. Please download Java {} in the Settings page.", recommended_major, recommended_major));
             }
         }
     };

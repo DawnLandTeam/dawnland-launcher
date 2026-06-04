@@ -10,6 +10,7 @@ import {
   DialogDescription,
 } from "./ui/dialog";
 import InstallCard from "./InstallCard.vue";
+import { setAppBusy } from "../composables/useAppStatus";
 
 // Types
 interface VanillaVersion {
@@ -500,6 +501,7 @@ async function installVersion(): Promise<void> {
   }
 
   isInstalling.value = true;
+  setAppBusy(true);
   error.value = null;
   installProgress.value = { phase: "resolving_version" };
   downloadProgress.value.clear();
@@ -559,6 +561,7 @@ async function installVersion(): Promise<void> {
   } catch (err) {
     error.value = typeof err === "string" ? err : String(err);
     isInstalling.value = false;
+    setAppBusy(false);
   }
 }
 
@@ -598,6 +601,7 @@ function handleInstallationComplete() {
   // Only finish if there are no more steps (e.g., vanilla done but Forge still pending)
   if (!hasMoreSteps.value) {
     isInstalling.value = false;
+    setAppBusy(false);
     // Emit success event to refresh parent list
     emit("installed-success");
   }
@@ -612,6 +616,7 @@ onMounted(async () => {
       handleInstallationComplete();
     } else if (event.payload.phase === "error") {
       isInstalling.value = false;
+      setAppBusy(false);
     }
   });
 

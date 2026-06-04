@@ -147,7 +147,6 @@ pub async fn install_modpack(
         "id": instance_name,
         "inheritsFrom": if loader.is_empty() { mc_version.clone() } else { loader.clone() },
         "type": "release",
-        "mainClass": if loader.contains("fabric") { "net.fabricmc.loader.impl.launch.knot.KnotClient" } else if loader.contains("forge") { "cpw.mods.bootstraplauncher.BootstrapLauncher" } else { "net.minecraft.client.main.Main" },
         "modpackVersion": modpack_version,
         "modpackType": modpack_type_str,
         "modpackProjectId": project_id
