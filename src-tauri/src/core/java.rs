@@ -442,6 +442,7 @@ pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<
 
     let mut downloaded: u64 = 0;
     let mut stream = response.bytes_stream();
+    let mut last_emit_time = tokio::time::Instant::now();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("Error downloading chunk: {}", e))?;
@@ -450,14 +451,18 @@ pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<
             .map_err(|e| format!("Failed to write to file: {}", e))?;
         downloaded += chunk.len() as u64;
 
-        let _ = app.emit(
-            "download-progress",
-            serde_json::json!({
-                "taskId": format!("java-{}", major_version),
-                "downloaded": downloaded,
-                "total": total_size,
-            }),
-        );
+        let now = tokio::time::Instant::now();
+        if now.duration_since(last_emit_time).as_millis() > 100 || downloaded == total_size {
+            let _ = app.emit(
+                "download-progress",
+                serde_json::json!({
+                    "taskId": format!("java-{}", major_version),
+                    "downloaded": downloaded,
+                    "total": total_size,
+                }),
+            );
+            last_emit_time = now;
+        }
     }
 
     tracing::info!("Downloaded Java to: {}", download_path.display());
