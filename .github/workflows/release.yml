@@ -19,14 +19,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 1. Windows 任务 -> 路由给 Windows 机器
+          # 1. Windows task -> Route to Windows machine
           - platform: 'windows-x86_64'
-            runner: [ 'self-hosted', 'Windows' ] # 必须匹配你在 Windows 节点设置的 Label
+            runner: [ 'self-hosted', 'Windows' ] # Must match the label set on Windows node
             args: ''
 
-          # 2. Linux 任务 -> 路由给 NAS
+          # 2. Linux task -> Route to NAS
           - platform: 'ubuntu-22_04'
-            runner: [ 'self-hosted', 'Linux' ]   # 必须匹配你在 Docker compose 里设置的 Label
+            runner: [ 'self-hosted', 'Linux' ]   # Must match the label set in Docker compose
             args: ''
 
     runs-on: ${{ matrix.runner }}
@@ -40,29 +40,29 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            // 从 refs/tags/v1.0.0 中精准提取 1.0.0
+            // Extract version exactly from refs/tags/v1.0.0
             const version = context.ref.replace('refs/tags/v', '');
             console.log(`Setting version to ${version}`);
             
-            // 将 VERSION 注入到 GITHUB_ENV 中，供最后一步的 exe 上传使用
+            // Export VERSION to GITHUB_ENV for the final exe upload step
             core.exportVariable('VERSION', version);
             
-            // 1. 修改 package.json
+            // 1. Update package.json
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             pkg.version = version;
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
             
-            // 2. 修改 tauri.conf.json
+            // 2. Update tauri.conf.json
             const tauri = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
             tauri.version = version;
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(tauri, null, 2) + '\n');
             
-            // 3. 修改 Cargo.toml
+            // 3. Update Cargo.toml
             let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
             cargo = cargo.replace(/^version\s*=\s*".*?"/m, `version = "${version}"`);
             fs.writeFileSync('src-tauri/Cargo.toml', cargo);
 
-      # 注意这里：修复了 platform 的匹配名字
+      # Note: fixed platform match name
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-22_04'
         run: |
@@ -80,30 +80,30 @@ jobs:
           node-version: lts/*
           cache: 'pnpm'
 
-      # 1：专门给 Mac 和 Linux 节点使用的官方插件（屏蔽 Windows）
+      # 1. Official plugin for Mac and Linux nodes (skipping Windows)
       - name: Install Rust (Mac & Linux)
         if: matrix.platform != 'windows-x86_64'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-aarch64' && 'aarch64-apple-darwin' || matrix.platform == 'macos-x86_64' && 'x86_64-apple-darwin' || '' }}
 
-      # 2. 针对 Windows 节点：智能检测并安装 Rust
+      # 2. For Windows node: Smart detect and install Rust
       - name: Install Rust (Windows Self-Hosted)
         if: matrix.platform == 'windows-x86_64'
         shell: powershell
         run: |
-          # 智能检测：如果系统中已经存在 cargo，则直接跳过下载安装
+          # Smart detect: skip download if cargo already exists in the system
           if (Get-Command cargo -ErrorAction SilentlyContinue) {
-            Write-Host "🎉 完美！检测到本地 Windows 已存在 Rust 环境，跳过安装环节！"
+            Write-Host "🎉 Perfect! Rust environment already exists on local Windows, skipping installation!"
             cargo --version
           } else {
-            Write-Host "未检测到 Rust，开始全自动下载并安装 rustup-init.exe..."
+            Write-Host "Rust not detected, starting automatic download and installation of rustup-init.exe..."
             Invoke-WebRequest -Uri https://win.rustup.rs/ -OutFile rustup-init.exe
             .\rustup-init.exe -y --default-toolchain stable --profile default
           }
 
-          # 关键指令：不论是新装的还是原有的，每次 CI 运行都需要向 GitHub 环境注入 PATH，否则下一步找不到 cargo
-          Write-Host "向当前 GitHub 工作流注入 Cargo PATH..."
+          # Key directive: always inject PATH to GitHub environment to ensure cargo is found
+          Write-Host "Injecting Cargo PATH into current GitHub workflow..."
           echo "${env:USERPROFILE}\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Install frontend dependencies
@@ -135,11 +135,11 @@ jobs:
           $exePath = "src-tauri/target/release/DLML.exe"
           $zipName = "DLML_portable_v${{ env.VERSION }}.zip"
           
-          Write-Host "打包绿色版更新包: $zipName"
-          7z a -tzip -mx0 $zipName $exePath
+          Write-Host "Packaging portable update: $zipName"
+          python -c "import zipfile; z = zipfile.ZipFile('$zipName', 'w', compression=zipfile.ZIP_STORED); z.write('$exePath', 'DLML.exe'); z.close()"
           
-          Write-Host "为绿色版更新包生成 Tauri 签名..."
+          Write-Host "Generating Tauri signature for portable update..."
           pnpm tauri signer sign $zipName
           
-          Write-Host "上传原生 exe、更新包及其签名到 Release 草稿..."
+          Write-Host "Uploading native exe, update package and its signature to Release..."
           gh release upload "v${{ env.VERSION }}" $exePath $zipName "$zipName.sig" --clobber
