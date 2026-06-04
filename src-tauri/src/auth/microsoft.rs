@@ -546,22 +546,21 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
         .as_ref()
         .ok_or_else(|| "No refresh token available for this account".to_string())?;
 
-    // Step 1: Refresh Microsoft access token
+    // Step 1: Refresh Microsoft access token directly
     let client = http_client();
+    let client_id = "780ab3ca-a1a0-4830-ac98-92a595e85a13";
+    let token_url = "https://login.live.com/oauth20_token.srf";
 
-    #[derive(Serialize)]
-    struct RefreshPayload<'a> {
-        refresh_token: &'a str,
-    }
+    let params = [
+        ("client_id", client_id),
+        ("refresh_token", refresh_token),
+        ("grant_type", "refresh_token"),
+    ];
 
-    let payload = RefreshPayload { refresh_token };
-
-    let url = format!("{}/api/microsoft/refresh", get_web_backend_url());
-
-    let body_str = serde_json::to_string(&payload).unwrap_or_default();
-    let response = crate::core::security::secure_request(&client, reqwest::Method::POST, &url, &body_str)
-        .header("Content-Type", "application/json")
-        .body(body_str)
+    let response = client
+        .post(token_url)
+        .header("Origin", "http://localhost:23333")
+        .form(&params)
         .send()
         .await
         .map_err(|e| format!("Token refresh request failed: {:?}", e))?;

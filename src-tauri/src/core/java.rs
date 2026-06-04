@@ -7,6 +7,8 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
+use futures_util::StreamExt;
+use tokio::io::AsyncWriteExt;
 
 static CACHED_JAVAS: Mutex<Option<Vec<JavaInfo>>> = Mutex::const_new(None);
 
@@ -16,6 +18,12 @@ static CACHED_JAVAS: Mutex<Option<Vec<JavaInfo>>> = Mutex::const_new(None);
 pub struct JavaSettings {
     pub manual_paths: Vec<String>,
     pub custom_download_path: Option<String>,
+}
+
+#[tauri::command]
+pub async fn fetch_available_javas() -> Result<Vec<u32>, String> {
+    // Microsoft Build of OpenJDK provides these major versions
+    Ok(vec![25, 21, 17, 11])
 }
 
 fn get_java_config_path() -> PathBuf {
@@ -328,10 +336,10 @@ fn extract_vendor(output: &str) -> String {
     "Unknown".to_string()
 }
 
-/// Download and install a specific Java version from Adoptium.
+/// Download and install a specific Java version from Microsoft OpenJDK.
 #[tauri::command]
-pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
-    tracing::info!("Downloading Java {} from Adoptium...", major_version);
+pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<JavaInfo, String> {
+    tracing::info!("Downloading Java {} from Microsoft OpenJDK...", major_version);
 
     let arch = if cfg!(target_arch = "x86_64") {
         "x64"
@@ -344,7 +352,7 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
     let os = if cfg!(target_os = "windows") {
         "windows"
     } else if cfg!(target_os = "macos") {
-        "mac"
+        "macos"
     } else if cfg!(target_os = "linux") {
         "linux"
     } else {
@@ -358,8 +366,8 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
     };
 
     let url = format!(
-        "https://api.adoptium.net/v3/binary/latest/{}/ga/{}/{}/jdk/hotspot/normal/eclipse",
-        major_version, os, arch
+        "https://aka.ms/download-jdk/microsoft-jdk-{}-{}-{}.{}",
+        major_version, os, arch, extension
     );
 
     tracing::info!("Resolving Download URL: {}", url);
@@ -381,42 +389,10 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
         .await
         .map_err(|e| format!("Failed to create runtimes directory: {}", e))?;
 
-    // Create a client that does NOT follow redirects automatically
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    let redirect_res = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to resolve Adoptium API: {}", e))?;
-
-    let mut final_url = url.clone();
-
-    // If it's a redirect, get the Location header
-    if redirect_res.status().is_redirection() {
-        if let Some(loc) = redirect_res.headers().get(reqwest::header::LOCATION) {
-            if let Ok(loc_str) = loc.to_str() {
-                // Apply ghproxy to GitHub release URLs for better connectivity in China
-                final_url = loc_str.replace("github.com", "mirror.ghproxy.com/github.com");
-                tracing::info!("Redirected and proxied to: {}", final_url);
-            }
-        }
-    } else if redirect_res.status().is_success() {
-        tracing::info!("No redirect needed.");
-    } else {
-        return Err(format!(
-            "Adoptium API returned error: {}",
-            redirect_res.status()
-        ));
-    }
-
-    // Download the file from the final URL
+    // Download the file from the URL directly (reqwest follows redirects automatically)
     let download_client = reqwest::Client::new();
     let response = download_client
-        .get(&final_url)
+        .get(&url)
         .send()
         .await
         .map_err(|e| format!("Failed to download Java: {}", e))?;
@@ -428,18 +404,40 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
         ));
     }
 
+    let total_size = response.content_length().unwrap_or(0);
+
     let filename = format!("jdk-{}.{}", major_version, extension);
     let download_path = runtimes_dir.join(&filename);
 
-    // Download to file
-    let bytes = response
-        .bytes()
+    // Download to file using streams
+    let mut file = tokio::fs::File::create(&download_path)
         .await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
+        .map_err(|e| format!("Failed to create file: {}", e))?;
 
-    tokio::fs::write(&download_path, &bytes)
-        .await
-        .map_err(|e| format!("Failed to write file: {}", e))?;
+    let mut downloaded: u64 = 0;
+    let mut stream = response.bytes_stream();
+    let mut last_emit_time = tokio::time::Instant::now();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Error downloading chunk: {}", e))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Failed to write to file: {}", e))?;
+        downloaded += chunk.len() as u64;
+
+        let now = tokio::time::Instant::now();
+        if now.duration_since(last_emit_time).as_millis() > 100 || downloaded == total_size {
+            let _ = app.emit(
+                "download-progress",
+                serde_json::json!({
+                    "taskId": format!("java-{}", major_version),
+                    "downloaded": downloaded,
+                    "total": total_size,
+                }),
+            );
+            last_emit_time = now;
+        }
+    }
 
     tracing::info!("Downloaded Java to: {}", download_path.display());
 
@@ -447,17 +445,14 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
     let extract_dir = runtimes_dir.join(format!("jdk-{}", major_version));
 
     if cfg!(target_os = "windows") {
-        // Use PowerShell to extract zip on Windows
-        let ps_command = format!(
-            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-            download_path.display(),
-            runtimes_dir.display()
-        );
-        crate::core::utils::create_hidden_command("powershell")
-            .args(["-Command", &ps_command])
-            .output()
-            .await
-            .map_err(|e| format!("Failed to extract archive: {}", e))?;
+        // Use zip-extract for Windows
+        let download_path_clone = download_path.clone();
+        let runtimes_dir_clone = runtimes_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::core::modpack::extract_zip(&download_path_clone, &runtimes_dir_clone)
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))??;
     } else {
         // Use tar on macOS/Linux
         let output = crate::core::utils::create_hidden_command("tar")

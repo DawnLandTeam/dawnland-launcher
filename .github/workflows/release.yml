@@ -142,5 +142,13 @@ jobs:
           Write-Host "Generating Tauri signature for portable update..."
           pnpm tauri signer sign $zipName
           
-          Write-Host "Uploading native exe, update package and its signature to Release..."
-          gh release upload "v${{ env.VERSION }}" $exePath $zipName "$zipName.sig" --clobber
+          Write-Host "Uploading native exe, portable update package and its signature to Release..."
+          gh release upload "v${{ env.VERSION }}" $exePath $zipName "$zipName.sig" --clobber
+          
+          Write-Host "Uploading NSIS updater artifacts to Release..."
+          $nsisZip = "src-tauri/target/release/bundle/nsis/DLML_${{ env.VERSION }}_x64-setup.nsis.zip"
+          if (Test-Path $nsisZip) {
+              gh release upload "v${{ env.VERSION }}" $nsisZip "$nsisZip.sig" --clobber
+          } else {
+              Write-Host "NSIS updater zip not found, skipping."
+          }
