@@ -141,6 +141,15 @@ watch(filterAuthType, () => {
   applyFilters();
 });
 
+onDeactivated(() => {
+  searchQuery.value = "";
+  filterMcVersion.value = "";
+  filterServerType.value = "";
+  filterAuthType.value = "";
+  onlineSearchQuery.value = "";
+  versionSearchQuery.value = "";
+});
+
 // Dialog state
 const showPublishDialog = ref(false);
 const publishStep = ref(1);

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, onDeactivated } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { Package, Search, Download, User, ExternalLink, Loader2 } from "@lucide/vue";
 
@@ -74,6 +74,13 @@ watch(selectedSource, () => {
   if (searchQuery.value.trim()) {
     searchMods();
   }
+});
+
+onDeactivated(() => {
+  searchQuery.value = "";
+  selectedMcVersion.value = "";
+  selectedLoader.value = "";
+  searchResults.value = [];
 });
 
 // Search function
