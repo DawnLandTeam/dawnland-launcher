@@ -262,7 +262,7 @@
       "refresh": "刷新",
       "customPath": "自定义下载路径",
       "defaultPath": "默认 (.dawnland/runtimes)",
-      "download": "从 Adoptium 下载 Java:",
+      "download": "从 Microsoft 下载 Java:",
       "downloadBtn": "下载",
       "downloading": "正在下载 Java {version}...",
       "installed": "已安装的 Java",
