@@ -4,6 +4,7 @@ import { RouterLink, useRoute } from "vue-router";
 import { useDark, useToggle } from "@vueuse/core";
 import { Gamepad2, Library, Server, Users, Settings, Sun, Moon } from "@lucide/vue";
 import { hasUpdateAvailable } from "../composables/useUpdate";
+import { isAppBusy } from "../composables/useAppStatus";
 
 import { useI18n } from "vue-i18n";
 
@@ -27,9 +28,12 @@ const navItems = computed(() => [
       <RouterLink
         v-for="item in navItems"
         :key="item.name"
-        :to="item.path"
-        class="relative flex h-12 w-12 items-center justify-center rounded-lg text-neutral-800 transition-colors hover:bg-black/10 hover:text-black dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white"
-        :class="{ 'bg-black/10 text-black dark:bg-white/10 dark:text-white': route.path === item.path }"
+        :to="isAppBusy ? '' : item.path"
+        class="relative flex h-12 w-12 items-center justify-center rounded-lg text-neutral-800 transition-colors"
+        :class="[
+          route.path === item.path ? 'bg-black/10 text-black dark:bg-white/10 dark:text-white' : '',
+          isAppBusy && route.path !== item.path ? 'opacity-50 cursor-not-allowed pointer-events-none' : 'hover:bg-black/10 hover:text-black dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white'
+        ]"
         :title="item.label"
       >
         <component :is="item.icon" :size="20" />
