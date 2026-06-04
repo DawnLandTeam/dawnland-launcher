@@ -107,6 +107,7 @@ pub fn run() {
             core::java::get_java_download_path,
             core::java::set_java_download_path,
             core::java::scan_full_disk,
+            core::java::fetch_available_javas,
             // CurseForge commands
             core::curseforge::search_curseforge,
             core::curseforge::get_cf_mod_files,
