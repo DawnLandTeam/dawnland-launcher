@@ -7,6 +7,8 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
+use futures_util::StreamExt;
+use tokio::io::AsyncWriteExt;
 
 static CACHED_JAVAS: Mutex<Option<Vec<JavaInfo>>> = Mutex::const_new(None);
 
@@ -330,7 +332,7 @@ fn extract_vendor(output: &str) -> String {
 
 /// Download and install a specific Java version from Adoptium.
 #[tauri::command]
-pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
+pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<JavaInfo, String> {
     tracing::info!("Downloading Java {} from Adoptium...", major_version);
 
     let arch = if cfg!(target_arch = "x86_64") {
@@ -428,18 +430,35 @@ pub async fn download_java(major_version: u32) -> Result<JavaInfo, String> {
         ));
     }
 
+    let total_size = response.content_length().unwrap_or(0);
+
     let filename = format!("jdk-{}.{}", major_version, extension);
     let download_path = runtimes_dir.join(&filename);
 
-    // Download to file
-    let bytes = response
-        .bytes()
+    // Download to file using streams
+    let mut file = tokio::fs::File::create(&download_path)
         .await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
+        .map_err(|e| format!("Failed to create file: {}", e))?;
 
-    tokio::fs::write(&download_path, &bytes)
-        .await
-        .map_err(|e| format!("Failed to write file: {}", e))?;
+    let mut downloaded: u64 = 0;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Error downloading chunk: {}", e))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Failed to write to file: {}", e))?;
+        downloaded += chunk.len() as u64;
+
+        let _ = app.emit(
+            "download-progress",
+            serde_json::json!({
+                "taskId": format!("java-{}", major_version),
+                "downloaded": downloaded,
+                "total": total_size,
+            }),
+        );
+    }
 
     tracing::info!("Downloaded Java to: {}", download_path.display());
 
