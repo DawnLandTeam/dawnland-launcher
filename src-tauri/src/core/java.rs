@@ -445,17 +445,14 @@ pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<
     let extract_dir = runtimes_dir.join(format!("jdk-{}", major_version));
 
     if cfg!(target_os = "windows") {
-        // Use PowerShell to extract zip on Windows
-        let ps_command = format!(
-            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-            download_path.display(),
-            runtimes_dir.display()
-        );
-        crate::core::utils::create_hidden_command("powershell")
-            .args(["-Command", &ps_command])
-            .output()
-            .await
-            .map_err(|e| format!("Failed to extract archive: {}", e))?;
+        // Use zip-extract for Windows
+        let download_path_clone = download_path.clone();
+        let runtimes_dir_clone = runtimes_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::core::modpack::extract_zip(&download_path_clone, &runtimes_dir_clone)
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))??;
     } else {
         // Use tar on macOS/Linux
         let output = crate::core::utils::create_hidden_command("tar")

@@ -262,7 +262,7 @@
       "refresh": "Refresh",
       "customPath": "Custom Download Location",
       "defaultPath": "Default (.dawnland/runtimes)",
-      "download": "Download Java from Adoptium:",
+      "download": "Download Java from Microsoft:",
       "downloadBtn": "Download",
       "downloading": "Downloading Java {version}...",
       "installed": "Installed Java",
