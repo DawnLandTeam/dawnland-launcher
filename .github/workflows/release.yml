@@ -139,7 +139,7 @@ jobs:
           Compress-Archive -Path $exePath -DestinationPath $zipName -Force
           
           Write-Host "为绿色版更新包生成 Tauri 签名..."
-          pnpm tauri signer sign -f $zipName
+          pnpm tauri signer sign $zipName
           
           Write-Host "上传原生 exe、更新包及其签名到 Release 草稿..."
           gh release upload "v${{ env.VERSION }}" $exePath $zipName "$zipName.sig" --clobber
