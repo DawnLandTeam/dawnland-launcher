@@ -136,7 +136,7 @@ jobs:
           $zipName = "DLML_portable_v${{ env.VERSION }}.zip"
           
           Write-Host "打包绿色版更新包: $zipName"
-          Compress-Archive -Path $exePath -DestinationPath $zipName -Force
+          7z a -tzip -mx0 $zipName $exePath
           
           Write-Host "为绿色版更新包生成 Tauri 签名..."
           pnpm tauri signer sign $zipName
