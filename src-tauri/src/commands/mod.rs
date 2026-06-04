@@ -19,6 +19,23 @@ pub fn get_system_info() -> Result<String, String> {
     Ok(info)
 }
 
+/// Returns the updater target, appending '-portable' if running as a portable executable.
+#[tauri::command]
+pub fn get_updater_target() -> String {
+    let base_target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    
+    #[cfg(target_os = "windows")]
+    if let Ok(exe_path) = std::env::current_exe() {
+        let path_str = exe_path.to_string_lossy().to_lowercase();
+        // If it's not installed in typical system paths, consider it portable
+        if !path_str.contains("program files") && !path_str.contains("appdata\\local\\programs") {
+            return format!("{}-portable", base_target);
+        }
+    }
+    
+    base_target
+}
+
 /// Get system memory info for memory slider configuration.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -83,7 +83,8 @@ const updateInfo = shallowRef<Update | null>(null);
 async function checkForUpdates() {
   isCheckingUpdate.value = true;
   try {
-    const update = await check();
+    const target = await invoke<string>("get_updater_target");
+    const update = await check({ target });
     if (update) {
       updateInfo.value = update;
       showUpdaterModal.value = true;

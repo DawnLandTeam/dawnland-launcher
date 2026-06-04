@@ -3,6 +3,7 @@ import { ref, shallowRef, onMounted } from "vue";
 import { check } from "@tauri-apps/plugin-updater";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
 
@@ -12,7 +13,8 @@ const updateInfo = shallowRef<Update | null>(null);
 onMounted(async () => {
   try {
     await getCurrentWindow().show();
-    const update = await check();
+    const target = await invoke<string>("get_updater_target");
+    const update = await check({ target });
     if (update) {
       console.log(`Update available: ${update.version}`);
       updateInfo.value = update;
