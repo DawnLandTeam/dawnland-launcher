@@ -24,6 +24,25 @@ pub async fn install_modpack(
     let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp").join(Uuid::new_v4().to_string());
     let instance_dir = base_dir.join("versions").join(&instance_name);
 
+    macro_rules! check_cancel {
+        () => {
+            if crate::core::mojang::get_cancel_flag().load(std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!("Modpack installation cancelled, cleaning up...");
+                let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+                let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+                
+                let _ = app.emit(
+                    "modpack-install-status",
+                    serde_json::json!({
+                        "phase": "error",
+                        "message": "Installation cancelled by user",
+                    }),
+                );
+                return Err("Installation cancelled by user".to_string());
+            }
+        };
+    }
+
     // 1. Emit phase 1: Extracting
     let _ = app.emit(
         "modpack-install-status",
@@ -40,6 +59,8 @@ pub async fn install_modpack(
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))??;
+
+    check_cancel!();
 
     // 2. Parse Manifest
     let _ = app.emit(
@@ -80,6 +101,8 @@ pub async fn install_modpack(
 
             // Get URLs from Proxy
             let resolved_files = get_cf_files_batch(file_ids).await?;
+
+            check_cancel!();
 
             let mut tasks = Vec::new();
             for file in resolved_files {
@@ -140,6 +163,8 @@ pub async fn install_modpack(
     );
 
     ensure_dependencies(&mc_version, &loader, app.clone()).await?;
+
+    check_cancel!();
 
     std::fs::create_dir_all(&instance_dir).map_err(|e| e.to_string())?;
 
@@ -214,7 +239,9 @@ pub async fn install_modpack(
     );
 
     // Run batch download
-    run_batch_download(tasks.clone(), app.clone()).await;
+    run_batch_download(tasks.clone(), app.clone(), crate::core::mojang::get_cancel_flag()).await;
+
+    check_cancel!();
 
     // 5. Copy Overrides
     let _ = app.emit(
@@ -412,6 +439,9 @@ pub async fn download_and_install_online_modpack(
     std::fs::create_dir_all(&temp_dir).unwrap_or_default();
     let temp_zip_path = temp_dir.join(format!("{}.zip", uuid::Uuid::new_v4()));
 
+    // Reset cancel flag at start of installation
+    crate::core::mojang::get_cancel_flag().store(false, std::sync::atomic::Ordering::SeqCst);
+
     let _ = app.emit(
         "modpack-install-status",
         serde_json::json!({
@@ -452,6 +482,19 @@ pub async fn download_and_install_online_modpack(
     let mut current_speed: f64 = 0.0;
 
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if crate::core::mojang::get_cancel_flag().load(std::sync::atomic::Ordering::Relaxed) {
+            drop(file);
+            let _ = tokio::fs::remove_file(&temp_zip_path).await;
+            let _ = app.emit(
+                "modpack-install-status",
+                serde_json::json!({
+                    "phase": "error",
+                    "message": "Installation cancelled by user",
+                }),
+            );
+            return Err("Installation cancelled by user".to_string());
+        }
+
         file.write_all(&chunk).await.map_err(|e| e.to_string())?;
         downloaded += chunk.len() as u64;
 

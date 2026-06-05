@@ -3,6 +3,43 @@
 version = 4
 
 [[package]]
+name = "DLML"
+version = "0.0.1"
+dependencies = [
+ "base64 0.22.1",
+ "craftping",
+ "dirs",
+ "futures-util",
+ "hex",
+ "hmac 0.13.0",
+ "open",
+ "reqwest 0.12.28",
+ "self-replace",
+ "serde",
+ "serde-xml-rs",
+ "serde_json",
+ "sha1",
+ "sha2 0.11.0",
+ "sys-locale",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "urlencoding",
+ "uuid",
+ "walkdir",
+ "which",
+ "zip",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -809,43 +846,6 @@ dependencies = [
  "darling_core",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "dawnland-launcher"
-version = "0.0.1"
-dependencies = [
- "base64 0.22.1",
- "craftping",
- "dirs",
- "futures-util",
- "hex",
- "hmac 0.13.0",
- "open",
- "reqwest 0.12.28",
- "self-replace",
- "serde",
- "serde-xml-rs",
- "serde_json",
- "sha1",
- "sha2 0.11.0",
- "sys-locale",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
- "walkdir",
- "which",
- "zip",
 ]
 
 [[package]]
