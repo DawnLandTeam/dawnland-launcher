@@ -148,6 +148,10 @@
       "serverNamePlaceholder": "My Awesome Server",
       "ipAddress": "IP Address",
       "ipPlaceholder": "play.myserver.net",
+      "invalidIp": "Invalid IP address or domain format",
+      "connectionFailed": "Failed to connect to the server",
+      "connectionSuccess": "Connection successful!",
+      "invalidEmail": "Invalid email format",
       "port": "Port",
       "mcVersion": "Minecraft Version",
       "searchVersions": "Search versions...",
@@ -171,7 +175,7 @@
       "type": "Type:",
       "modpack": "Modpack:",
       "adminEmail": "Admin Email",
-      "emailPlaceholder": "admin@example.com",
+      "emailPlaceholder": "admin{'@'}example.com",
       "emailDesc": "Required for server management.",
       "back": "Back",
       "next": "Next",
@@ -184,7 +188,7 @@
       "contactGroup": "Community Group",
       "contactGroupPlaceholder": "e.g. Discord link",
       "contactOwner": "Owner Contact",
-      "contactOwnerPlaceholder": "e.g. admin@example.com"
+      "contactOwnerPlaceholder": "e.g. admin{'@'}example.com"
     },
     "messages": {
       "submitted": "Server submitted for review! It will be visible after approval.",
@@ -290,7 +294,9 @@
       "addServerPlaceholder": "e.g. https://skin.dawnland.cn/api/yggdrasil",
       "addBtn": "Add",
       "addedServers": "Added Servers",
-      "noServers": "No authentication servers added yet."
+      "noServers": "No authentication servers added yet.",
+      "addSuccess": "Successfully added Authlib server: {url}",
+      "addFailed": "Failed to add Authlib server: {error}"
     }
   },
   "install": {
@@ -358,7 +364,11 @@
     "selectFabric": "Select Fabric version",
     "selectNeoForge": "Select NeoForge version",
     "loading": "Loading...",
-    "noVersionNeeded": "No specific version config needed, it will be automatically downloaded."
+    "noVersionNeeded": "No specific version config needed, it will be automatically downloaded.",
+    "cancel": "Cancel Installation",
+    "canceling": "Canceling...",
+    "cancelConfirmTitle": "Cancel Installation",
+    "cancelConfirmDesc": "Are you sure you want to cancel the installation? This will clean up all downloaded and extracted files for this instance."
   },
   "mods": {
     "title": "Discover Mods",

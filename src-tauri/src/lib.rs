@@ -73,6 +73,7 @@ pub fn run() {
             core::mojang::install_vanilla_version,
             core::mojang::fetch_install_state,
             core::mojang::get_installed_versions,
+            core::mojang::cancel_installation,
             core::launcher::launch_instance,
             core::launcher::kill_instance,
             core::launcher::get_instance_config,
