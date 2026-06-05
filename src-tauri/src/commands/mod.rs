@@ -27,8 +27,18 @@ pub fn get_updater_target() -> String {
     #[cfg(target_os = "windows")]
     if let Ok(exe_path) = std::env::current_exe() {
         let path_str = exe_path.to_string_lossy().to_lowercase();
-        // If it's not installed in typical system paths, consider it portable
-        if !path_str.contains("program files") && !path_str.contains("appdata\\local\\programs") {
+        
+        // Tauri NSIS installs to Program Files (machine-wide) or AppData/Local/{productName} (per-user)
+        let is_installed = path_str.contains("program files") 
+            || path_str.contains("appdata\\local\\dlml");
+            
+        let has_uninstaller = if let Some(parent) = exe_path.parent() {
+            parent.join("Uninstall DLML.exe").exists() || parent.join("unins000.exe").exists()
+        } else {
+            false
+        };
+
+        if !is_installed && !has_uninstaller {
             return format!("{}-portable", base_target);
         }
     }
