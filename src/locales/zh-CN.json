@@ -148,6 +148,10 @@
       "serverNamePlaceholder": "我的超酷服务器",
       "ipAddress": "IP 地址",
       "ipPlaceholder": "play.myserver.net",
+      "invalidIp": "服务器地址格式不正确",
+      "connectionFailed": "无法连接到该服务器，请检查地址或网络状态",
+      "connectionSuccess": "连接成功！",
+      "invalidEmail": "邮箱格式不正确",
       "port": "端口",
       "mcVersion": "Minecraft 版本",
       "searchVersions": "搜索版本...",
@@ -171,7 +175,7 @@
       "type": "类型:",
       "modpack": "整合包:",
       "adminEmail": "管理员邮箱",
-      "emailPlaceholder": "admin@example.com",
+      "emailPlaceholder": "admin{'@'}example.com",
       "emailDesc": "用于服务器管理。",
       "back": "上一步",
       "next": "下一步",
@@ -184,7 +188,7 @@
       "contactGroup": "交流群 (Community Group)",
       "contactGroupPlaceholder": "例如: QQ群 12345678",
       "contactOwner": "服主联系方式 (Owner Contact)",
-      "contactOwnerPlaceholder": "例如: admin@example.com"
+      "contactOwnerPlaceholder": "例如: admin{'@'}example.com"
     },
     "messages": {
       "submitted": "服务器已提交审核！通过后即可显示。",
@@ -290,7 +294,9 @@
       "addServerPlaceholder": "例如: https://skin.dawnland.cn/api/yggdrasil",
       "addBtn": "添加",
       "addedServers": "已添加的服务器",
-      "noServers": "暂无已添加的认证服务器。"
+      "noServers": "暂无已添加的认证服务器。",
+      "addSuccess": "成功添加认证服务器：{url}",
+      "addFailed": "添加认证服务器失败：{error}"
     }
   },
   "install": {
@@ -358,7 +364,11 @@
     "selectFabric": "请选择 Fabric 版本",
     "selectNeoForge": "请选择 NeoForge 版本",
     "loading": "加载中...",
-    "noVersionNeeded": "该模组暂无需配置具体版本，将在生成实例后自动下载。"
+    "noVersionNeeded": "该模组暂无需配置具体版本，将在生成实例后自动下载。",
+    "cancel": "取消安装",
+    "canceling": "取消中...",
+    "cancelConfirmTitle": "确定要取消安装吗？",
+    "cancelConfirmDesc": "这将会清理所有已下载和解压的内容，并且不可恢复。"
   },
   "mods": {
     "title": "探索 Mod",

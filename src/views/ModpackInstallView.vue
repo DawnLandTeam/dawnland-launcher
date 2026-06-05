@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onDeactivated } from "vue";
+import { ref, computed, nextTick, onMounted, onDeactivated, onActivated, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
 import { setAppBusy } from "../composables/useAppStatus";
-import { Package, UploadCloud, Loader2, Search, Download, User, Calendar } from "@lucide/vue";
+import { Package, UploadCloud, Loader2, Search, Download, User, Calendar, X } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 
@@ -25,6 +25,8 @@ const selectedVersionName = ref<string | null>(null);
 const instanceName = ref("");
 const isInstalling = ref(false);
 const showSuccessModal = ref(false);
+const showCancelConfirmModal = ref(false);
+const isCanceling = ref(false);
 
 // --- Online Search State ---
 const searchQuery = ref('');
@@ -60,7 +62,23 @@ const totalSpeedMB = computed(() => {
   return (speed / 1024 / 1024).toFixed(1);
 });
 
-onMounted(() => {
+const lastProcessedQueryStr = ref("");
+
+const initializeView = () => {
+  const currentQueryStr = JSON.stringify(route.query);
+  if (lastProcessedQueryStr.value === currentQueryStr) {
+    return;
+  }
+  lastProcessedQueryStr.value = currentQueryStr;
+
+  // Clear previous installation state in case user returns from a cancelled installation
+  zipPath.value = "";
+  onlineUrl.value = "";
+  selectedVersionName.value = null;
+  instanceName.value = "";
+  isInstalling.value = false;
+  setAppBusy(false);
+
   if (route.query.update_id) {
     instanceName.value = route.query.update_id as string;
     
@@ -140,11 +158,26 @@ onMounted(() => {
     // Default to fetching trending modpacks if not an update
     searchModpacks();
   }
+};
+
+onMounted(() => {
+  initializeView();
 });
+
+onActivated(() => {
+  initializeView();
+});
+
+watch(() => route.query, () => {
+  if (route.path === '/modpack-install') {
+    initializeView();
+  }
+}, { deep: true });
 
 onDeactivated(() => {
   searchQuery.value = "";
   modpacks.value = [];
+  lastProcessedQueryStr.value = "";
 });
 
 listen("modpack-install-status", (e: any) => {
@@ -265,7 +298,7 @@ const openVersionsModal = async (modpack: any) => {
   modpackVersions.value = [];
   
   try {
-    if (source.value === 'modrinth') {
+    if (modpack.source === 'modrinth') {
       modpackVersions.value = await invoke('get_modrinth_modpack_versions', { projectId: modpack.project_id });
     } else {
       modpackVersions.value = await invoke('get_curseforge_modpack_versions', { projectId: modpack.project_id });
@@ -344,6 +377,7 @@ const selectZip = async () => {
 };
 
 const installModpack = async () => {
+  if (isInstalling.value) return;
   if (!zipPath.value && !onlineUrl.value) return;
   if (!instanceName.value) return;
 
@@ -393,7 +427,23 @@ const installModpack = async () => {
     console.error("Installation failed:", error);
     statusMessage.value = `Installation failed: ${error}`;
     isInstalling.value = false;
+    isCanceling.value = false;
     setAppBusy(false);
+    
+    if (String(error).includes("cancelled by user") && route.query.server_id) {
+      router.push("/servers");
+    }
+  }
+};
+
+const cancelInstallation = async () => {
+  showCancelConfirmModal.value = false;
+  isCanceling.value = true;
+  try {
+    await invoke("cancel_installation");
+  } catch (e) {
+    console.error("Failed to cancel installation:", e);
+    isCanceling.value = false;
   }
 };
 
@@ -470,6 +520,7 @@ const formatDate = (dateString: string) => {
         <select 
           v-model="source" 
           @change="searchModpacks"
+          :disabled="isSearching || isInstalling"
           class="flex h-10 w-[180px] items-center justify-between rounded-md px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-neutral-300 dark:border-zinc-700 text-neutral-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
         >
           <option value="modrinth">Modrinth</option>
@@ -660,6 +711,19 @@ const formatDate = (dateString: string) => {
             </div>
           </div>
         </div>
+
+        <!-- Cancel Button -->
+        <div v-if="currentPhase !== 'error' && currentPhase !== 'complete'" class="mt-8 flex justify-center w-full">
+           <button
+              @click="showCancelConfirmModal = true"
+              :disabled="isCanceling"
+              class="px-6 py-2 rounded-lg text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 border border-red-200 dark:border-red-800 transition-colors flex items-center gap-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Loader2 v-if="isCanceling" class="w-4 h-4 animate-spin" />
+              <X v-else class="w-4 h-4" />
+              {{ isCanceling ? t('install.canceling', 'Canceling...') : t('install.cancel', 'Cancel Installation') }}
+           </button>
+        </div>
       </div>
     </template>
     
@@ -772,6 +836,32 @@ const formatDate = (dateString: string) => {
             @click="handleSuccessConfirm"
           >
             {{ t('common.confirm', 'OK') }}
+          </button>
+        </div>
+      </div>
+    </AlertDialog>
+
+    <!-- Cancel Confirmation Modal -->
+    <AlertDialog :open="showCancelConfirmModal" @update:open="val => showCancelConfirmModal = val">
+      <div class="p-2">
+        <AlertDialogTitle class="text-xl font-bold text-gray-900 dark:text-white mb-2">
+          {{ t('install.cancelConfirmTitle', 'Cancel Installation') }}
+        </AlertDialogTitle>
+        <AlertDialogDescription class="text-gray-600 dark:text-gray-300 mb-6">
+          {{ t('install.cancelConfirmDesc', 'Are you sure you want to cancel the installation? This will clean up all downloaded and extracted files for this instance.') }}
+        </AlertDialogDescription>
+        <div class="flex justify-end gap-3 mt-4">
+          <button
+            class="px-5 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg font-medium transition-colors"
+            @click="showCancelConfirmModal = false"
+          >
+            {{ t('common.cancel', 'Cancel') }}
+          </button>
+          <button
+            class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+            @click="cancelInstallation"
+          >
+            {{ t('common.confirm', 'Yes, Cancel') }}
           </button>
         </div>
       </div>

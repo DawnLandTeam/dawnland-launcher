@@ -1388,7 +1388,7 @@ async fn verify_instance_integrity(
             }),
         );
 
-        crate::downloader::run_batch_download(repair_tasks, app.clone()).await;
+        crate::downloader::run_batch_download(repair_tasks, app.clone(), crate::core::mojang::get_cancel_flag()).await;
 
         let _ = app.emit(
             "launch-status",
@@ -1703,7 +1703,7 @@ pub async fn launch_instance(
         if !missing_files.is_empty() {
             // Download missing files
             let app_for_download = app.clone();
-            run_batch_download(missing_files, app_for_download).await;
+            run_batch_download(missing_files, app_for_download, crate::core::mojang::get_cancel_flag()).await;
         }
 
         if requires_forge_repair {
@@ -1897,7 +1897,7 @@ pub async fn launch_instance(
                             None,
                             None,
                         ));
-                        crate::downloader::run_batch_download(missing, app.clone()).await;
+                        crate::downloader::run_batch_download(missing, app.clone(), crate::core::mojang::get_cancel_flag()).await;
                     }
                 }
             }
