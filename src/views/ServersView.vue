@@ -167,7 +167,7 @@ function openServerDetails(server: ServerInfo) {
 // Step validation
 const canGoToStep = (step: number): boolean => {
   if (step === 1) {
-    return newServer.value.name.trim() !== "" && newServer.value.ip.trim() !== "";
+    return newServer.value.name.trim() !== "" && newServer.value.ip.trim() !== "" && ipSuccessMsg.value !== null;
   }
   if (step === 2) {
     // Details step - no mandatory fields
@@ -222,6 +222,63 @@ const newServer = ref<CreateServerInput>({
   contactOwner: "",
 });
 
+const ipErrorMsg = ref<string | null>(null);
+const ipSuccessMsg = ref<string | null>(null);
+const emailErrorMsg = ref<string | null>(null);
+const isCheckingConnection = ref(false);
+
+const isValidDomainOrIP = (ip: string) => {
+  const re = /^[a-zA-Z0-9.-]+$/;
+  return re.test(ip);
+};
+
+const isValidEmail = (email: string) => {
+  const re = /^[a-zA-Z0-9._%+-]+@([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$/;
+  return re.test(email);
+};
+
+watch(() => newServer.value.email, (newVal) => {
+  if (!newVal.trim()) {
+    emailErrorMsg.value = null;
+  } else if (!isValidEmail(newVal.trim())) {
+    emailErrorMsg.value = t('servers.publishDialog.invalidEmail');
+  } else {
+    emailErrorMsg.value = null;
+  }
+});
+
+const checkServerConnection = async () => {
+  const ip = newServer.value.ip.trim();
+  ipSuccessMsg.value = null;
+  if (!ip) {
+    ipErrorMsg.value = null;
+    return;
+  }
+  
+  if (!isValidDomainOrIP(ip)) {
+    ipErrorMsg.value = t('servers.publishDialog.invalidIp');
+    return;
+  }
+  
+  isCheckingConnection.value = true;
+  ipErrorMsg.value = null;
+  try {
+    const port = newServer.value.port ? newServer.value.port : 25565;
+    const result = await invoke<any>("ping_server", { 
+      ip: ip, 
+      port: Number(port) 
+    });
+    if (result) {
+      ipErrorMsg.value = null;
+      ipSuccessMsg.value = t('servers.publishDialog.connectionSuccess');
+    }
+  } catch (err) {
+    ipErrorMsg.value = t('servers.publishDialog.connectionFailed');
+  } finally {
+    isCheckingConnection.value = false;
+  }
+};
+
 // Auto-split IP and Port when user pastes "domain:port"
 watch(() => newServer.value.ip, (newVal) => {
   if (newVal && newVal.includes(':')) {
@@ -234,6 +291,13 @@ watch(() => newServer.value.ip, (newVal) => {
         newServer.value.port = portNum;
       }
     }
+  }
+  // Reset error when user types
+  if (ipErrorMsg.value) {
+    ipErrorMsg.value = null;
+  }
+  if (ipSuccessMsg.value) {
+    ipSuccessMsg.value = null;
   }
 });
 
@@ -1053,7 +1117,10 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
               <div class="flex gap-2">
                 <div class="flex-1 space-y-1">
                   <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.ipAddress') }} <span class="text-red-500">*</span></label>
-                  <input v-model="newServer.ip" type="text" :placeholder="$t('servers.publishDialog.ipPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <input v-model="newServer.ip" @blur="checkServerConnection" type="text" :placeholder="$t('servers.publishDialog.ipPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <p v-if="ipErrorMsg" class="text-xs text-red-500 mt-1">{{ ipErrorMsg }}</p>
+                  <p v-else-if="ipSuccessMsg" class="text-xs text-green-500 mt-1">{{ ipSuccessMsg }}</p>
+                  <p v-else-if="isCheckingConnection" class="text-xs text-blue-500 mt-1"><Loader2 class="w-3 h-3 inline animate-spin mr-1"/>{{ $t('common.loading', 'Loading...') }}</p>
                 </div>
                 <div class="w-24 space-y-1">
                   <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.port') }}</label>
@@ -1369,6 +1436,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
                 <div class="space-y-1 pt-2 border-t">
                   <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.adminEmail') }} <span class="text-red-500">*</span></label>
                   <input v-model="newServer.email" type="email" :placeholder="$t('servers.publishDialog.emailPlaceholder')" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <p v-if="emailErrorMsg" class="text-xs text-red-500 mt-1">{{ emailErrorMsg }}</p>
                   <p class="text-xs text-muted-foreground">{{ $t('servers.publishDialog.emailDesc') }}</p>
                 </div>
                 
@@ -1405,7 +1473,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
               type="button"
               v-else
               @click="submitServer" 
-              :disabled="isSubmitting || isUploadingPack || !newServer.email"
+              :disabled="isSubmitting || isUploadingPack || !newServer.email || emailErrorMsg !== null"
               class="px-3 py-1.5 text-sm font-medium bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-md hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors disabled:opacity-50"
             >
               <Loader2 v-if="isSubmitting || isUploadingPack" class="h-4 w-4 animate-spin inline mr-2" />
