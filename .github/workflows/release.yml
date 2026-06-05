@@ -148,7 +148,7 @@ jobs:
           gh release upload "v${{ env.VERSION }}" $exePath $zipName "$zipName.sig" --clobber
           
       - name: Upload Release Artifacts to Cloudflare R2
-        if: matrix.platform == 'windows-x86_64' && startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
