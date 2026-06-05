@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, reactive } from "vue";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Download, Loader2, Check, AlertCircle, RefreshCw, Box, Puzzle } from "@lucide/vue";
+import { Download, Loader2, Check, AlertCircle, RefreshCw, Box, Puzzle, X } from "@lucide/vue";
 import {
   DialogContent,
   DialogTitle,
@@ -577,6 +577,15 @@ function formatCurrentFile(file: string): string {
   return backendMessages[file] || file;
 }
 
+// Cancel current installation
+const cancelInstallation = async () => {
+  try {
+    await invoke("cancel_installation");
+  } catch (e) {
+    console.error("Failed to cancel installation:", e);
+  }
+};
+
 // Format speed for display
 function formatSpeed(bytesPerSec: number): string {
   if (bytesPerSec < 1024) return `${bytesPerSec.toFixed(0)} B/s`;
@@ -998,6 +1007,17 @@ onUnmounted(() => {
           >Instance {{ installProgress.versionId }} installed
           successfully!</span
         >
+      </div>
+
+      <!-- Cancel Button -->
+      <div v-if="!['complete', 'error'].includes(installProgress.phase) && isInstalling" class="flex justify-end mt-2">
+        <button
+          @click="cancelInstallation"
+          class="px-3 py-1.5 text-xs text-red-500 hover:text-red-600 hover:bg-red-500/10 rounded-md transition-colors font-medium flex items-center gap-1.5"
+        >
+          <X class="w-3.5 h-3.5" />
+          {{ t("install.cancel") }}
+        </button>
       </div>
     </div>
 

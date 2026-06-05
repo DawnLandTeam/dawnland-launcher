@@ -1,6 +1,7 @@
 use crate::downloader::{DownloadProgress, DownloadTask};
 use futures_util::StreamExt;
 use sha1::{Digest, Sha1};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::fs::File;
@@ -47,6 +48,7 @@ async fn download_file(
     task: DownloadTask,
     client: &reqwest::Client,
     app: &AppHandle,
+    cancel_flag: Arc<AtomicBool>,
 ) -> Result<(), String> {
     tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
 
@@ -136,8 +138,12 @@ async fn download_file(
     // Get content length.
     let total = response.content_length().unwrap_or(0);
 
-    // Create the destination file.
-    let mut file = match File::create(&dest_path).await {
+    // Create a temporary path for the download to avoid leaving broken files
+    let file_name = dest_path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp_path = dest_path.with_file_name(format!("{}.tmp", file_name));
+
+    // Create the destination file at tmp path.
+    let mut file = match File::create(&tmp_path).await {
         Ok(f) => f,
         Err(e) => {
             return Err(format!("Failed to create file: {}", e));
@@ -151,9 +157,18 @@ async fn download_file(
     let mut last_downloaded: u64 = 0;
 
     while let Some(chunk_result) = stream.next().await {
+        if cancel_flag.load(Ordering::Relaxed) {
+            // Cancel requested: abort download and clean up temp file
+            drop(file);
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err("Cancelled".to_string());
+        }
+
         match chunk_result {
             Ok(chunk) => {
                 if let Err(e) = file.write_all(&chunk).await {
+                    drop(file);
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
                     return Err(format!("Write failed: {}", e));
                 }
 
@@ -184,6 +199,8 @@ async fn download_file(
                 }
             }
             Err(e) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(&tmp_path).await;
                 return Err(format!("Stream error: {}", e));
             }
         }
@@ -191,7 +208,16 @@ async fn download_file(
 
     // Ensure all data is flushed to disk.
     if let Err(e) = file.flush().await {
+        drop(file);
+        let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(format!("Flush failed: {}", e));
+    }
+    
+    // Rename temporary file to original destination path
+    drop(file); // Ensure file is closed before renaming
+    if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(format!("Failed to finalize file: {}", e));
     }
 
     tracing::debug!("Download completed: {}", task.dest_path);
@@ -199,7 +225,7 @@ async fn download_file(
 }
 
 /// Run batch download with multiple files concurrently.
-pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle) {
+pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle, cancel_flag: Arc<AtomicBool>) {
     if tasks.is_empty() {
         tracing::warn!("batch_download called with empty task list");
         return;
@@ -227,6 +253,7 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle) {
             let client = client.clone();
             let app = app.clone();
             let semaphore = semaphore.clone();
+            let cancel_flag = cancel_flag.clone();
 
             tokio::spawn(async move {
                 // Acquire semaphore slot for concurrency control.
@@ -235,7 +262,7 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle) {
                 tracing::info!("Downloading: {}", dest_path);
 
                 // Execute download and handle errors gracefully.
-                match download_file(task, &client, &app).await {
+                match download_file(task, &client, &app, cancel_flag).await {
                     Ok(()) => {
                         // Emit completion.
                         tracing::info!("Emitting completed for task: {}", task_id);

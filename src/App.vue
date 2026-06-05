@@ -37,7 +37,8 @@ onMounted(async () => {
     try {
       const currentVersion = await getVersion();
       const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
-      const res = await fetch(`https://api.dawnland.cn/api/launcher/update/${targetOS}/${currentVersion}`);
+      const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
+      const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${currentVersion}`);
       if (res.status === 200) {
         const data = await res.json();
         if (data.version && data.version !== currentVersion) {
