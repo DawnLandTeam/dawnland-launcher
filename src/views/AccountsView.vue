@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, onMounted, watch, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { 
@@ -300,6 +300,11 @@ function isAuthlibAccount(account: Account): boolean {
 
 onMounted(() => {
   loadAccounts();
+  window.addEventListener('authlib-servers-updated', loadAuthlibServers);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('authlib-servers-updated', loadAuthlibServers);
 });
 
 watch(

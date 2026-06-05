@@ -294,7 +294,9 @@
       "addServerPlaceholder": "例如: https://skin.dawnland.cn/api/yggdrasil",
       "addBtn": "添加",
       "addedServers": "已添加的服务器",
-      "noServers": "暂无已添加的认证服务器。"
+      "noServers": "暂无已添加的认证服务器。",
+      "addSuccess": "成功添加认证服务器：{url}",
+      "addFailed": "添加认证服务器失败：{error}"
     }
   },
   "install": {
