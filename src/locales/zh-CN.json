@@ -364,7 +364,11 @@
     "selectFabric": "请选择 Fabric 版本",
     "selectNeoForge": "请选择 NeoForge 版本",
     "loading": "加载中...",
-    "noVersionNeeded": "该模组暂无需配置具体版本，将在生成实例后自动下载。"
+    "noVersionNeeded": "该模组暂无需配置具体版本，将在生成实例后自动下载。",
+    "cancel": "取消安装",
+    "canceling": "取消中...",
+    "cancelConfirmTitle": "确定要取消安装吗？",
+    "cancelConfirmDesc": "这将会清理所有已下载和解压的内容，并且不可恢复。"
   },
   "mods": {
     "title": "探索 Mod",

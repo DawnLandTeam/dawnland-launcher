@@ -364,7 +364,11 @@
     "selectFabric": "Select Fabric version",
     "selectNeoForge": "Select NeoForge version",
     "loading": "Loading...",
-    "noVersionNeeded": "No specific version config needed, it will be automatically downloaded."
+    "noVersionNeeded": "No specific version config needed, it will be automatically downloaded.",
+    "cancel": "Cancel Installation",
+    "canceling": "Canceling...",
+    "cancelConfirmTitle": "Cancel Installation",
+    "cancelConfirmDesc": "Are you sure you want to cancel the installation? This will clean up all downloaded and extracted files for this instance."
   },
   "mods": {
     "title": "Discover Mods",

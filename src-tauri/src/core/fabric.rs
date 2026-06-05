@@ -299,7 +299,22 @@ pub async fn install_fabric_instance(
 
     if !tasks.is_empty() {
         let app_clone = app.clone();
-        crate::downloader::run_batch_download(tasks, app_clone).await;
+        crate::downloader::run_batch_download(tasks, app_clone, crate::core::mojang::get_cancel_flag()).await;
+    }
+
+    if crate::core::mojang::get_cancel_flag().load(std::sync::atomic::Ordering::Relaxed) {
+        tracing::warn!("Installation cancelled, cleaning up fabric instance directory...");
+        let version_dir = base_dir.join("versions").join(&custom_instance_name);
+        let _ = tokio::fs::remove_dir_all(&version_dir).await;
+        
+        let _ = app.emit(
+            "install-progress",
+            serde_json::json!({
+                "phase": "error",
+                "error": "Installation cancelled by user",
+            }),
+        );
+        return Err("Installation cancelled by user".to_string());
     }
 
     // Step 4: Create default dlml.json config

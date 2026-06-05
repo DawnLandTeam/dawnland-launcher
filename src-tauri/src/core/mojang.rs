@@ -4,6 +4,8 @@ use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 use tokio::fs;
 use tokio::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // Re-export downloader types (from parent module)
 use crate::downloader::{run_batch_download, DownloadTask};
@@ -28,6 +30,20 @@ static INSTALL_STATE: OnceLock<Mutex<InstallState>> = OnceLock::new();
 
 fn get_global_install_state() -> &'static Mutex<InstallState> {
     INSTALL_STATE.get_or_init(|| Mutex::new(InstallState::default()))
+}
+
+/// Global cancellation flag for installations.
+static CANCEL_FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+pub fn get_cancel_flag() -> Arc<AtomicBool> {
+    CANCEL_FLAG.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
+}
+
+#[tauri::command]
+pub async fn cancel_installation() -> Result<(), String> {
+    get_cancel_flag().store(true, Ordering::SeqCst);
+    tracing::info!("Cancellation requested for current installation.");
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -467,6 +483,9 @@ pub async fn install_vanilla_version(
 ) -> Result<(), String> {
     tracing::info!("Starting installation of version: {}", version_id);
 
+    // Reset cancel flag at start of installation.
+    get_cancel_flag().store(false, Ordering::SeqCst);
+
     // Initialize install state.
     {
         let mut state = get_global_install_state().lock().await;
@@ -761,8 +780,23 @@ pub async fn install_vanilla_version(
     // This will spawn tasks concurrently and emit progress events for each file.
     tracing::info!("Calling run_batch_download with {} tasks", total_tasks);
     let app_for_download = app.clone();
-    run_batch_download(tasks, app_for_download).await;
+    run_batch_download(tasks, app_for_download, get_cancel_flag()).await;
     tracing::info!("run_batch_download completed");
+
+    if get_cancel_flag().load(Ordering::Relaxed) {
+        tracing::warn!("Installation cancelled, cleaning up instance directory...");
+        let version_dir = base_dir.join("versions").join(&version_id);
+        let _ = tokio::fs::remove_dir_all(&version_dir).await;
+        
+        let _ = app.emit(
+            "install-progress",
+            serde_json::json!({
+                "phase": "error",
+                "error": "Installation cancelled by user",
+            }),
+        );
+        return Err("Installation cancelled by user".to_string());
+    }
 
     // Update final state after batch download completes.
     {
@@ -798,40 +832,6 @@ pub async fn install_vanilla_version(
     if let Ok(config_json) = serde_json::to_string_pretty(&config) {
         let _ = tokio::fs::write(&config_path, config_json).await;
     }
-
-    Ok(())
-}
-
-/// Download a single file with async IO.
-async fn download_single_file(client: &reqwest::Client, task: &DownloadTask) -> Result<(), String> {
-    // Create parent directories.
-    let dest_path = PathBuf::from(&task.dest_path);
-    if let Some(parent) = dest_path.parent() {
-        fs::create_dir_all(parent)
-            .await
-            .map_err(|e| format!("Failed to create directory: {e}"))?;
-    }
-
-    // Download the file.
-    let response = client
-        .get(&task.url)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!("HTTP error: {}", response.status()));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read body: {e}"))?;
-
-    // Write to file.
-    fs::write(&dest_path, &bytes)
-        .await
-        .map_err(|e| format!("Failed to write file: {e}"))?;
 
     Ok(())
 }
