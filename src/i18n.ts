@@ -9,18 +9,16 @@ const messages = {
 
 function getBrowserLanguage(): string {
   const savedLang = localStorage.getItem('language');
-  if (savedLang && Object.keys(messages).includes(savedLang)) {
+  const isUserSelected = localStorage.getItem('userSelectedLanguage');
+  
+  // Only strictly respect the saved language if the user manually selected it
+  if (savedLang && isUserSelected === 'true') {
     return savedLang;
   }
   
-  // Use Intl.DateTimeFormat to get the system locale which bypasses WebView2's en-US default bug
+  // Use Intl.DateTimeFormat as a fast initial guess, but don't cache it!
   const lang = Intl.DateTimeFormat().resolvedOptions().locale || navigator.language;
-  const detectedLang = lang.startsWith('zh') ? 'zh-CN' : 'en';
-  
-  // Save it immediately so it doesn't try to detect again
-  localStorage.setItem('language', detectedLang);
-  
-  return detectedLang;
+  return lang.startsWith('zh') ? 'zh-CN' : 'en';
 }
 
 const i18n = createI18n({
