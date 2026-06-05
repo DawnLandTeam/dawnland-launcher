@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   publish-tauri:
+    permissions:
+      contents: write
     environment: release
     env:
       VITE_WEB_BACKEND_URL: ${{ vars.VITE_WEB_BACKEND_URL }}
