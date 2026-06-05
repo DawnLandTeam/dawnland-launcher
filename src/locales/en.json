@@ -294,7 +294,9 @@
       "addServerPlaceholder": "e.g. https://skin.dawnland.cn/api/yggdrasil",
       "addBtn": "Add",
       "addedServers": "Added Servers",
-      "noServers": "No authentication servers added yet."
+      "noServers": "No authentication servers added yet.",
+      "addSuccess": "Successfully added Authlib server: {url}",
+      "addFailed": "Failed to add Authlib server: {error}"
     }
   },
   "install": {

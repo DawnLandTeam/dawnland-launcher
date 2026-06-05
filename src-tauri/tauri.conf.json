@@ -22,7 +22,8 @@
         "resizable": false,
         "fullscreen": false,
         "decorations": false,
-        "visible": false
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {
@@ -31,7 +32,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage"],
+    "targets": [
+      "appimage"
+    ],
     "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",

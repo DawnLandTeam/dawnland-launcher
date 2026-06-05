@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, onMounted } from "vue";
+import { ref, shallowRef, onMounted, onUnmounted } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
@@ -10,7 +10,7 @@ import { useI18n } from "vue-i18n";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
-const { locale } = useI18n();
+const { locale, t } = useI18n();
 
 onMounted(async () => {
   // Show window
@@ -52,6 +52,48 @@ onMounted(async () => {
       console.error("Failed to check for updates on startup:", error);
     }
   }, 2000);
+
+  const handleDrag = (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleDrop = async (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    let text = e.dataTransfer?.getData('text/plain');
+    if (!text) text = e.dataTransfer?.getData('text/html');
+    if (!text) text = e.dataTransfer?.getData('text/uri-list');
+
+    if (text) {
+      // Regex search to find the authlib string even if it's wrapped in HTML or other text
+      const match = text.match(/authlib-injector:yggdrasil-server:([^\s"']+)/);
+      if (match) {
+        const url = decodeURIComponent(match[1]);
+        try {
+          await invoke("add_authlib_server", { url: url.trim() });
+          window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
+          alert(t('settings.authlib.addSuccess', { url }));
+        } catch (err) {
+          alert(t('settings.authlib.addFailed', { error: String(err) }));
+        }
+      }
+    }
+  };
+
+  document.addEventListener('dragenter', handleDrag, true);
+  document.addEventListener('dragover', handleDrag, true);
+  document.addEventListener('drop', handleDrop, true);
+
+  onUnmounted(() => {
+    document.removeEventListener('dragenter', handleDrag, true);
+    document.removeEventListener('dragover', handleDrag, true);
+    document.removeEventListener('drop', handleDrop, true);
+  });
 });
 </script>
 
