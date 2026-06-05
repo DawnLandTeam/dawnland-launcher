@@ -105,7 +105,7 @@ const versionSearchQuery = ref("");
 
 // Filter version dropdown (separate state)
 const showFilterVersionDropdown = ref(false);
-const filterVersionSearchQuery = ref("");
+
 
 // Filter options (from API)
 const filterOptions = ref<FilterOptions>({
@@ -192,6 +192,9 @@ const canGoToStep = (step: number): boolean => {
         return selectedOnlineVersion.value !== null;
       }
     }
+    return true;
+  }
+  if (step === 5) {
     return true;
   }
   return true;
@@ -349,7 +352,7 @@ async function fetchFilterOptions() {
 
 // Grouped versions for filter dropdown (release first, then snapshot, old_beta, old_alpha)
 const groupedVersions = computed(() => {
-  const query = filterVersionSearchQuery.value.toLowerCase();
+  const query = versionSearchQuery.value.toLowerCase();
   const allVersions = mcVersions.value as VanillaVersionExtended[];
   const filtered = (allVersions || []).filter(v => 
     v.id.toLowerCase().includes(query)
@@ -1012,8 +1015,8 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
           <!-- Header with Progress -->
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-semibold text-lg text-neutral-900 dark:text-white">{{ $t('servers.publishTitle') }}</h3>
-            <button @click="closePublishDialog" class="text-muted-foreground hover:text-foreground text-lg">
-              ✕
+            <button type="button" @click="closePublishDialog" class="text-muted-foreground hover:text-foreground text-2xl leading-none">
+              &times;
             </button>
           </div>
           
@@ -1380,6 +1383,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
           <!-- Navigation Buttons -->
           <div class="flex justify-between gap-2 mt-6">
             <button 
+              type="button"
               v-if="publishStep > 1" 
               @click="publishStep--"
               class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
@@ -1389,6 +1393,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
             <div v-else></div>
             
             <button 
+              type="button"
               v-if="publishStep < 5" 
               @click="publishStep++"
               :disabled="!canGoToStep(publishStep)"
@@ -1397,6 +1402,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
               Next
             </button>
             <button 
+              type="button"
               v-else
               @click="submitServer" 
               :disabled="isSubmitting || isUploadingPack || !newServer.email"
