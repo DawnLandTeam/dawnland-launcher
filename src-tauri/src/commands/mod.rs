@@ -19,32 +19,7 @@ pub fn get_system_info() -> Result<String, String> {
     Ok(info)
 }
 
-/// Returns the updater target, appending '-portable' if running as a portable executable.
-#[tauri::command]
-pub fn get_updater_target() -> String {
-    let base_target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
-    
-    #[cfg(target_os = "windows")]
-    if let Ok(exe_path) = std::env::current_exe() {
-        let path_str = exe_path.to_string_lossy().to_lowercase();
-        
-        // Tauri NSIS installs to Program Files (machine-wide) or AppData/Local/{productName} (per-user)
-        let is_installed = path_str.contains("program files") 
-            || path_str.contains("appdata\\local\\dlml");
-            
-        let has_uninstaller = if let Some(parent) = exe_path.parent() {
-            parent.join("Uninstall DLML.exe").exists() || parent.join("unins000.exe").exists()
-        } else {
-            false
-        };
 
-        if !is_installed && !has_uninstaller {
-            return format!("{}-portable", base_target);
-        }
-    }
-    
-    base_target
-}
 
 /// Get system memory info for memory slider configuration.
 #[derive(serde::Serialize)]
@@ -141,10 +116,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
 
 // ============ Custom Updater Commands ============
 
-#[tauri::command]
-pub fn is_portable_version() -> bool {
-    get_updater_target().ends_with("-portable")
-}
+
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,9 +133,17 @@ pub struct ProgressData {
 }
 
 #[tauri::command]
-pub async fn update_portable_version(version: String, app: AppHandle) -> Result<(), String> {
-    let url = format!("https://dl.88880222.xyz/releases/v{}/DLML.exe", version);
-    tracing::info!("Starting portable update from {}", url);
+pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), String> {
+    let filename = if cfg!(target_os = "windows") {
+        "DLML.exe"
+    } else if cfg!(target_os = "linux") {
+        "amd64.AppImage"
+    } else {
+        return Err("Unsupported OS for native auto-update".to_string());
+    };
+    
+    let url = format!("https://dl.88880222.xyz/releases/v{}/{}", version, filename);
+    tracing::info!("Starting native update from {}", url);
     
     use tauri::Emitter;
     use std::io::Write;
@@ -197,6 +177,16 @@ pub async fn update_portable_version(version: String, app: AppHandle) -> Result<
     let temp_path = temp_file.into_temp_path();
     tracing::info!("Performing self-replace with downloaded file");
     
+    // Set execution permissions on Linux
+    #[cfg(target_family = "unix")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(mut perms) = std::fs::metadata(&temp_path).map(|m| m.permissions()) {
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&temp_path, perms);
+        }
+    }
+    
     self_replace::self_replace(&temp_path).map_err(|e| format!("Self-replace failed. Make sure the file is not locked: {}", e))?;
     let _ = temp_path.keep(); // Keep the file since self_replace moved it
     
@@ -205,7 +195,7 @@ pub async fn update_portable_version(version: String, app: AppHandle) -> Result<
         data: None,
     }).map_err(|e| e.to_string())?;
     
-    tracing::info!("Portable update completed successfully");
+    tracing::info!("Native update completed successfully");
     Ok(())
 }
 

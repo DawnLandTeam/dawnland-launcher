@@ -6,11 +6,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import { check } from "@tauri-apps/plugin-updater";
-import type { Update } from "@tauri-apps/plugin-updater";
 import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
-import { setUpdateAvailable, hasUpdateAvailable } from "../composables/useUpdate";
+import { setUpdateAvailable, hasUpdateAvailable, type CustomUpdate } from "../composables/useUpdate";
 
 const route = useRoute();
 const router = useRouter();
@@ -80,20 +78,24 @@ const defaultMaxMemory = ref(4096);
 // Updater state
 const isCheckingUpdate = ref(false);
 const showUpdaterModal = ref(false);
-const updateInfo = shallowRef<Update | null>(null);
+const updateInfo = shallowRef<CustomUpdate | null>(null);
 
 async function checkForUpdates() {
   isCheckingUpdate.value = true;
   try {
-    const update = await check();
-    if (update) {
-      updateInfo.value = update;
-      showUpdaterModal.value = true;
-      setUpdateAvailable(update);
-    } else {
-      setUpdateAvailable(null);
-      alert(t('settings.about.upToDate'));
+    const res = await fetch(`https://api.dawnland.cn/api/launcher/update/windows-standalone/${appVersion.value}`);
+    if (res.status === 200) {
+      const data = await res.json();
+      if (data.version && data.version !== appVersion.value) {
+        const update = { version: data.version, body: data.notes || '' };
+        updateInfo.value = update;
+        showUpdaterModal.value = true;
+        setUpdateAvailable(update);
+        return;
+      }
     }
+    setUpdateAvailable(null);
+    alert(t('settings.about.upToDate'));
   } catch (err) {
     console.error("Failed to check for updates:", err);
     alert(t('settings.about.updateFailed') + err);

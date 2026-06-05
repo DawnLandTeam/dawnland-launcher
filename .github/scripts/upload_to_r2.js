@@ -26,21 +26,10 @@ const s3 = new S3Client({
 });
 
 const filesToUpload = [
-  // Windows
+  // Windows Portable
   `src-tauri/target/release/DLML.exe`,
-  `DLML_portable_v${VERSION}.zip`,
-  `DLML_portable_v${VERSION}.zip.sig`,
-  `src-tauri/target/release/bundle/nsis/DLML_${VERSION}_x64-setup.exe`,
-  `src-tauri/target/release/bundle/nsis/DLML_${VERSION}_x64-setup.exe.sig`,
-  `src-tauri/target/release/bundle/msi/DLML_${VERSION}_x64_en-US.msi`,
-  `src-tauri/target/release/bundle/msi/DLML_${VERSION}_x64_en-US.msi.sig`,
-  // Linux
-  `src-tauri/target/release/bundle/appimage/DLML_${VERSION}_amd64.AppImage`,
-  `src-tauri/target/release/bundle/appimage/DLML_${VERSION}_amd64.AppImage.sig`,
-  `src-tauri/target/release/bundle/deb/DLML_${VERSION}_amd64.deb`,
-  `src-tauri/target/release/bundle/deb/DLML_${VERSION}_amd64.deb.sig`,
-  `src-tauri/target/release/bundle/rpm/DLML-${VERSION}-1.x86_64.rpm`,
-  `src-tauri/target/release/bundle/rpm/DLML-${VERSION}-1.x86_64.rpm.sig`
+  // Linux Portable (AppImage)
+  `src-tauri/target/release/bundle/appimage/DLML_${VERSION}_amd64.AppImage`
 ];
 
 async function uploadFiles() {
