@@ -111,21 +111,24 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Build and publish Tauri release
-        uses: tauri-apps/tauri-action@v0
+      - name: Build Tauri App
         env:
-          GITHUB_TOKEN: ${{ secrets.TAURI_TOKEN != '' && secrets.TAURI_TOKEN || secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: pnpm tauri build ${{ matrix.args }}
+
+      - name: Create GitHub Release and Upload Artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: 'Dawnland Launcher v__VERSION__'
-          releaseBody: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
-          releaseDraft: true
+          name: 'Dawnland Launcher v${{ env.VERSION }}'
+          draft: true
           prerelease: false
-          uploadPlainBinary: true
-          args: ${{ matrix.args }}
+          body: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
+          files: |
+            src-tauri/target/release/DLML.exe
+            src-tauri/target/release/bundle/appimage/*.AppImage
 
 
       - name: Upload Release Artifacts to Cloudflare R2

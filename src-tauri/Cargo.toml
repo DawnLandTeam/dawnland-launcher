@@ -1,5 +1,5 @@
 [package]
-name = "dawnland-launcher"
+name = "DLML"
 version = "0.0.1"
 description = "A modern, cross-platform Minecraft launcher"
 authors = ["Dawnland"]
