@@ -1031,8 +1031,8 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
                   'bg-muted text-muted-foreground': publishStep < step
                 }"
               >
-                <Check v-if="publishStep > step" class="w-4 h-4" />
-                <span v-else>{{ step }}</span>
+                <Check v-show="publishStep > step" class="w-4 h-4" />
+                <span v-show="publishStep <= step">{{ step }}</span>
               </div>
               <div v-if="step < totalSteps" class="h-0.5 w-8 transition-colors" :class="publishStep > step ? 'bg-primary' : 'bg-muted'"></div>
             </template>
@@ -1384,13 +1384,13 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
           <div class="flex justify-between gap-2 mt-6">
             <button 
               type="button"
-              v-if="publishStep > 1" 
+              v-show="publishStep > 1" 
               @click="publishStep--"
               class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
             >
               Back
             </button>
-            <div v-else></div>
+            <div v-show="publishStep <= 1"></div>
             
             <button 
               type="button"
