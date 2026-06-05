@@ -88,8 +88,6 @@ const isInstalling = ref(false);
 const installProgress = ref<InstallProgress | null>(null);
 const downloadProgress = ref<Map<string, DownloadProgress>>(new Map());
 const error = ref<string | null>(null);
-// Track if we have more installation steps after current one
-const hasMoreSteps = ref<boolean>(false);
 
 const CONFLICT_MATRIX: Record<string, string[]> = {
   'Forge': ['Fabric', 'NeoForge', 'Quilt', 'Fabric API', 'QSL/QFAPI'],
@@ -278,7 +276,6 @@ watch(() => props.open, async (isOpen) => {
     installProgress.value = null;
     downloadProgress.value.clear();
     isInstalling.value = false;  // Reset installation state too
-    hasMoreSteps.value = false;  // Reset steps tracking
     
     // Load versions
     if (versions.value.length === 0) {
@@ -506,10 +503,6 @@ async function installVersion(): Promise<void> {
   installProgress.value = { phase: "resolving_version" };
   downloadProgress.value.clear();
 
-  // Determine if there are more steps after vanilla
-  // (if mod loader is selected, we have more steps after vanilla completes)
-  hasMoreSteps.value = installModLoader.value;
-
   try {
     // Step 1: Install base vanilla version
     await invoke("install_vanilla_version", {
@@ -517,17 +510,8 @@ async function installVersion(): Promise<void> {
       versionJsonUrl: version.url,
     });
 
-    // Vanilla is done, but we may still have mod loader to install
-    // Update hasMoreSteps: if we have mod loader, we still have more steps
-    // But the "complete" event from vanilla should NOT finish the whole process
-    
     // Step 2: If mod loader is selected, install the appropriate loader on top
-    // Note: Don't set isInstalling = false here, let the final "complete" event do it
     if (installModLoader.value) {
-      // Clear the hasMoreSteps flag since we're about to do the final step
-      // The next "complete" event should finish everything
-      hasMoreSteps.value = false;
-      
       // Update progress
       installProgress.value = {
         ...installProgress.value,
@@ -557,7 +541,11 @@ async function installVersion(): Promise<void> {
         });
       }
     }
-    // Note: isInstalling will be set to false when "complete" event is received
+    
+    // Installation complete!
+    isInstalling.value = false;
+    setAppBusy(false);
+    emit("installed-success");
   } catch (err) {
     error.value = typeof err === "string" ? err : String(err);
     isInstalling.value = false;
@@ -596,25 +584,12 @@ function formatSpeed(bytesPerSec: number): string {
   return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
 }
 
-// Handle installation complete
-function handleInstallationComplete() {
-  // Only finish if there are no more steps (e.g., vanilla done but Forge still pending)
-  if (!hasMoreSteps.value) {
-    isInstalling.value = false;
-    setAppBusy(false);
-    // Emit success event to refresh parent list
-    emit("installed-success");
-  }
-}
-
 // Register event listeners once on mount
 onMounted(async () => {
   const un1 = await listen<InstallProgress>("install-progress", (event) => {
     installProgress.value = event.payload;
 
-    if (event.payload.phase === "complete") {
-      handleInstallationComplete();
-    } else if (event.payload.phase === "error") {
+    if (event.payload.phase === "error") {
       isInstalling.value = false;
       setAppBusy(false);
     }
