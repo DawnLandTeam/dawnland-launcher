@@ -3,6 +3,16 @@ import { ref, computed } from "vue";
 import { Download, Rocket, X, Loader2, CheckCircle2 } from "@lucide/vue";
 import { Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+
+interface UpdateProgressPayload {
+  event: string;
+  data?: {
+    contentLength?: number;
+    chunkLength?: number;
+  };
+}
 
 const props = defineProps<{
   open: boolean;
@@ -50,24 +60,53 @@ async function startUpdate() {
     let downloaded = 0;
     let contentLength = 0;
     
-    await props.updateInfo.downloadAndInstall((event) => {
-      switch (event.event) {
-        case 'Started':
-          contentLength = event.data.contentLength || 0;
-          totalBytes.value = contentLength;
-          break;
-        case 'Progress':
-          downloaded += event.data.chunkLength;
-          downloadedBytes.value = downloaded;
-          if (contentLength > 0) {
-            downloadProgress.value = Math.floor((downloaded / contentLength) * 100);
-          }
-          break;
-        case 'Finished':
-          isFinished.value = true;
-          break;
-      }
-    });
+    const isPortable = await invoke<boolean>("is_portable_version");
+    
+    if (isPortable) {
+      // Custom portable updater bypass
+      const unlisten = await listen<UpdateProgressPayload>("portable-update-progress", (event) => {
+        const payload = event.payload;
+        switch (payload.event) {
+          case 'Started':
+            contentLength = payload.data?.contentLength || 0;
+            totalBytes.value = contentLength;
+            break;
+          case 'Progress':
+            downloaded += payload.data?.chunkLength || 0;
+            downloadedBytes.value = downloaded;
+            if (contentLength > 0) {
+              downloadProgress.value = Math.floor((downloaded / contentLength) * 100);
+            }
+            break;
+          case 'Finished':
+            isFinished.value = true;
+            break;
+        }
+      });
+      
+      await invoke("update_portable_version", { version: props.updateInfo.version });
+      unlisten();
+    } else {
+      // Standard Tauri Updater for MSIs and NSIS installers
+      await props.updateInfo.downloadAndInstall((event) => {
+        switch (event.event) {
+          case 'Started':
+            contentLength = event.data.contentLength || 0;
+            totalBytes.value = contentLength;
+            break;
+          case 'Progress':
+            downloaded += event.data.chunkLength;
+            downloadedBytes.value = downloaded;
+            if (contentLength > 0) {
+              downloadProgress.value = Math.floor((downloaded / contentLength) * 100);
+            }
+            break;
+          case 'Finished':
+            isFinished.value = true;
+            break;
+        }
+      });
+    }
     
     // Update successful, restart the app
     await relaunch();

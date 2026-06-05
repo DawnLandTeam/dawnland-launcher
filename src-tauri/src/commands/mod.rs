@@ -128,3 +128,74 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
     tracing::info!("Invoking seamless Microsoft OAuth login");
     auth::login_microsoft_oauth().await
 }
+
+// ============ Custom Updater Commands ============
+
+#[tauri::command]
+pub fn is_portable_version() -> bool {
+    get_updater_target().ends_with("-portable")
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProgress {
+    event: String,
+    data: Option<ProgressData>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressData {
+    content_length: Option<u64>,
+    chunk_length: Option<usize>,
+}
+
+#[tauri::command]
+pub async fn update_portable_version(version: String, app: AppHandle) -> Result<(), String> {
+    let url = format!("https://dl.88880222.xyz/releases/v{}/DLML.exe", version);
+    tracing::info!("Starting portable update from {}", url);
+    
+    use tauri::Emitter;
+    use std::io::Write;
+
+    let mut response = reqwest::get(&url).await.map_err(|e| format!("Failed to connect: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Server returned error: {}", response.status()));
+    }
+    
+    let content_length = response.content_length();
+    
+    app.emit("portable-update-progress", UpdateProgress {
+        event: "Started".to_string(),
+        data: Some(ProgressData { content_length, chunk_length: None }),
+    }).map_err(|e| e.to_string())?;
+    
+    let mut temp_file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
+    
+    use futures_util::StreamExt;
+    while let Some(chunk) = response.chunk().await.map_err(|e| format!("Download error: {}", e))? {
+        temp_file.write_all(&chunk).map_err(|e| format!("Write error: {}", e))?;
+        app.emit("portable-update-progress", UpdateProgress {
+            event: "Progress".to_string(),
+            data: Some(ProgressData { content_length: None, chunk_length: Some(chunk.len()) }),
+        }).map_err(|e| e.to_string())?;
+    }
+    
+    temp_file.flush().map_err(|e| e.to_string())?;
+    
+    let temp_path = temp_file.into_temp_path();
+    tracing::info!("Performing self-replace with downloaded file");
+    
+    self_replace::self_replace(&temp_path).map_err(|e| format!("Self-replace failed. Make sure the file is not locked: {}", e))?;
+    let _ = temp_path.keep(); // Keep the file since self_replace moved it
+    
+    app.emit("portable-update-progress", UpdateProgress {
+        event: "Finished".to_string(),
+        data: None,
+    }).map_err(|e| e.to_string())?;
+    
+    tracing::info!("Portable update completed successfully");
+    Ok(())
+}
+
