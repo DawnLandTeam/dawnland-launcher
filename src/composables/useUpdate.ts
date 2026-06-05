@@ -1,11 +1,15 @@
 import { ref, shallowRef } from 'vue';
-import type { Update } from '@tauri-apps/plugin-updater';
+
+export interface CustomUpdate {
+  version: string;
+  body: string;
+}
 
 // Global state for update
 export const hasUpdateAvailable = ref(false);
-export const globalUpdateInfo = shallowRef<Update | null>(null);
+export const globalUpdateInfo = shallowRef<CustomUpdate | null>(null);
 
-export function setUpdateAvailable(update: Update | null) {
+export function setUpdateAvailable(update: CustomUpdate | null) {
   if (update) {
     hasUpdateAvailable.value = true;
     globalUpdateInfo.value = update;

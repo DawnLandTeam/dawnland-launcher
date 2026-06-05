@@ -45,12 +45,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().target(commands::get_updater_target()).build())
         .invoke_handler(tauri::generate_handler![
             greet,
             core::security::generate_api_signature,
             commands::get_system_info,
-            commands::get_updater_target,
             commands::get_system_memory,
             commands::batch_download,
             commands::modpack::install_modpack,
@@ -138,8 +136,7 @@ pub fn run() {
             core::server::get_filter_options,
             core::ping::ping_server,
             // Custom Updater commands
-            commands::is_portable_version,
-            commands::update_portable_version,
+            commands::update_launcher,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

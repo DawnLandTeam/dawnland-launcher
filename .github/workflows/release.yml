@@ -127,26 +127,7 @@ jobs:
           uploadPlainBinary: true
           args: ${{ matrix.args }}
 
-      - name: Package and Sign Portable Executable for Updater
-        if: matrix.platform == 'windows-x86_64' && startsWith(github.ref, 'refs/tags/v')
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        shell: powershell
-        run: |
-          $exePath = "src-tauri/target/release/DLML.exe"
-          $zipName = "DLML_portable_v${{ env.VERSION }}.zip"
-          
-          Write-Host "Packaging portable update: $zipName"
-          python -c "import zipfile; z = zipfile.ZipFile('$zipName', 'w', compression=zipfile.ZIP_STORED); z.write('$exePath', 'DLML.exe'); z.close()"
-          
-          Write-Host "Generating Tauri signature for portable update..."
-          pnpm tauri signer sign $zipName
-          
-          Write-Host "Uploading native exe, portable update package and its signature to Release..."
-          gh release upload "v${{ env.VERSION }}" $exePath $zipName "$zipName.sig" --clobber
-          
+
       - name: Upload Release Artifacts to Cloudflare R2
         if: startsWith(github.ref, 'refs/tags/v')
         env:
