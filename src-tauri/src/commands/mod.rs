@@ -19,7 +19,11 @@ pub fn get_system_info() -> Result<String, String> {
     Ok(info)
 }
 
-
+/// Returns the system locale (e.g. "zh-CN", "en-US")
+#[tauri::command]
+pub fn get_system_locale() -> Option<String> {
+    sys_locale::get_locale()
+}
 
 /// Get system memory info for memory slider configuration.
 #[derive(serde::Serialize)]

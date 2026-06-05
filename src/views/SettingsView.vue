@@ -357,6 +357,7 @@ const { t, locale } = useI18n();
 function changeLanguage(lang: string) {
   locale.value = lang;
   localStorage.setItem('language', lang);
+  localStorage.setItem('userSelectedLanguage', 'true');
 }
 </script>
 

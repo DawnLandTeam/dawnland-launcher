@@ -5,13 +5,32 @@ import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
 import { setUpdateAvailable, type CustomUpdate } from "./composables/useUpdate";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
+import { useI18n } from "vue-i18n";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
+const { locale } = useI18n();
 
-onMounted(() => {
+onMounted(async () => {
   // Show window
   getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
+
+  // Async precise locale detection from Rust
+  if (localStorage.getItem('userSelectedLanguage') !== 'true') {
+    try {
+      const sysLocale = await invoke<string | null>("get_system_locale");
+      if (sysLocale) {
+        const detected = sysLocale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+        if (locale.value !== detected) {
+          locale.value = detected;
+          localStorage.setItem('language', detected);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to get system locale from Rust:", e);
+    }
+  }
 
   // Delay the update check slightly to ensure network and plugins are fully initialized
   setTimeout(async () => {
