@@ -17,7 +17,8 @@ onMounted(() => {
   setTimeout(async () => {
     try {
       const currentVersion = await getVersion();
-      const res = await fetch(`https://api.dawnland.cn/api/launcher/update/windows-standalone/${currentVersion}`);
+      const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
+      const res = await fetch(`https://api.dawnland.cn/api/launcher/update/${targetOS}/${currentVersion}`);
       if (res.status === 200) {
         const data = await res.json();
         if (data.version && data.version !== currentVersion) {

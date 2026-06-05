@@ -83,7 +83,8 @@ const updateInfo = shallowRef<CustomUpdate | null>(null);
 async function checkForUpdates() {
   isCheckingUpdate.value = true;
   try {
-    const res = await fetch(`https://api.dawnland.cn/api/launcher/update/windows-standalone/${appVersion.value}`);
+    const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
+    const res = await fetch(`https://api.dawnland.cn/api/launcher/update/${targetOS}/${appVersion.value}`);
     if (res.status === 200) {
       const data = await res.json();
       if (data.version && data.version !== appVersion.value) {
