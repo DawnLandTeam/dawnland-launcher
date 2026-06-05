@@ -1,7 +1,7 @@
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-const fs = require('fs');
-const path = require('path');
-const mime = require('mime-types');
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import fs from 'fs';
+import path from 'path';
+import mime from 'mime-types';
 
 const {
   R2_ACCOUNT_ID,
