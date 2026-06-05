@@ -171,7 +171,7 @@
       "type": "Type:",
       "modpack": "Modpack:",
       "adminEmail": "Admin Email",
-      "emailPlaceholder": "admin@example.com",
+      "emailPlaceholder": "admin{'@'}example.com",
       "emailDesc": "Required for server management.",
       "back": "Back",
       "next": "Next",
@@ -184,7 +184,7 @@
       "contactGroup": "Community Group",
       "contactGroupPlaceholder": "e.g. Discord link",
       "contactOwner": "Owner Contact",
-      "contactOwnerPlaceholder": "e.g. admin@example.com"
+      "contactOwnerPlaceholder": "e.g. admin{'@'}example.com"
     },
     "messages": {
       "submitted": "Server submitted for review! It will be visible after approval.",
