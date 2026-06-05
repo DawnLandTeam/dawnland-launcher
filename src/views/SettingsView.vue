@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, onMounted, onActivated, watch } from "vue";
+import { ref, shallowRef, onMounted, onActivated, watch, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -22,6 +22,12 @@ onMounted(async () => {
   } catch (err) {
     console.error("Failed to get app version:", err);
   }
+
+  window.addEventListener('authlib-servers-updated', loadAuthlibServers);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('authlib-servers-updated', loadAuthlibServers);
 });
 
 onActivated(async () => {
