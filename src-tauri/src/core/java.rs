@@ -124,7 +124,9 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
     let mut search_paths = get_java_search_paths();
 
     // Add default launcher runtimes dir
-    search_paths.push(get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("runtimes"));
+    let dawnland_base = get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland");
+    search_paths.push(dawnland_base.join("runtimes"));
+    search_paths.push(dawnland_base.join("runtime"));
 
     // Add custom download path if set
     if let Some(custom_path) = &config.custom_download_path {
@@ -476,9 +478,21 @@ pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<
     let _ = tokio::fs::remove_file(&download_path).await;
 
     // Probe and return the Java info
-    probe_java(&java_path)
+    let java_info = probe_java(&java_path)
         .await
-        .ok_or_else(|| "Failed to probe downloaded Java".to_string())
+        .ok_or_else(|| "Failed to probe downloaded Java".to_string())?;
+
+    // Clear cache so it gets re-scanned
+    *CACHED_JAVAS.lock().await = None;
+
+    // Add to manual_paths in config
+    let mut config = load_java_config().await;
+    if !config.manual_paths.contains(&java_info.path) {
+        config.manual_paths.push(java_info.path.clone());
+        let _ = save_java_config(&config).await;
+    }
+
+    Ok(java_info)
 }
 
 /// Find the extracted Java executable in the runtimes directory.
@@ -648,16 +662,20 @@ pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
 
     // Spawn blocking so we don't hang the async executor
     tokio::task::spawn_blocking(move || {
-        let drives = if cfg!(target_os = "windows") {
-            vec!["C:\\", "D:\\", "E:\\", "F:\\"]
+        let mut drives = if cfg!(target_os = "windows") {
+            vec!["C:\\".to_string(), "D:\\".to_string(), "E:\\".to_string(), "F:\\".to_string()]
         } else {
-            vec!["/"]
+            vec!["/".to_string()]
         };
+
+        // Explicitly include .dawnland directory since max_depth(5) from C:\ might miss it
+        let dawnland_base = get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland");
+        drives.push(dawnland_base.to_string_lossy().to_string());
 
         let mut found_paths = Vec::new();
 
         for drive in drives {
-            let root = PathBuf::from(drive);
+            let root = PathBuf::from(&drive);
             if !root.exists() {
                 continue;
             }
