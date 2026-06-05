@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   publish-tauri:
+    permissions:
+      contents: write
     environment: release
     env:
       VITE_WEB_BACKEND_URL: ${{ vars.VITE_WEB_BACKEND_URL }}
@@ -67,7 +69,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22_04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils libfuse2 file wget
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -112,10 +114,10 @@ jobs:
       - name: Build and publish Tauri release
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.TAURI_TOKEN != '' && secrets.TAURI_TOKEN || secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPIMAGE_EXTRACT_AND_RUN: 1
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         with:
           tagName: v__VERSION__
           releaseName: 'Dawnland Launcher v__VERSION__'
@@ -145,10 +147,12 @@ jobs:
           Write-Host "Uploading native exe, portable update package and its signature to Release..."
           gh release upload "v${{ env.VERSION }}" $exePath $zipName "$zipName.sig" --clobber
           
-          Write-Host "Uploading NSIS updater artifacts to Release..."
-          $nsisZip = "src-tauri/target/release/bundle/nsis/DLML_${{ env.VERSION }}_x64-setup.nsis.zip"
-          if (Test-Path $nsisZip) {
-              gh release upload "v${{ env.VERSION }}" $nsisZip "$nsisZip.sig" --clobber
-          } else {
-              Write-Host "NSIS updater zip not found, skipping."
-          }
+      - name: Upload Release Artifacts to Cloudflare R2
+        if: matrix.platform == 'windows-x86_64' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          VERSION: ${{ env.VERSION }}
+        run: node .github/scripts/upload_to_r2.js
