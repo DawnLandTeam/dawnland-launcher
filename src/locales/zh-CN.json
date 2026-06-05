@@ -171,7 +171,7 @@
       "type": "类型:",
       "modpack": "整合包:",
       "adminEmail": "管理员邮箱",
-      "emailPlaceholder": "admin@example.com",
+      "emailPlaceholder": "admin{'@'}example.com",
       "emailDesc": "用于服务器管理。",
       "back": "上一步",
       "next": "下一步",
@@ -184,7 +184,7 @@
       "contactGroup": "交流群 (Community Group)",
       "contactGroupPlaceholder": "例如: QQ群 12345678",
       "contactOwner": "服主联系方式 (Owner Contact)",
-      "contactOwnerPlaceholder": "例如: admin@example.com"
+      "contactOwnerPlaceholder": "例如: admin{'@'}example.com"
     },
     "messages": {
       "submitted": "服务器已提交审核！通过后即可显示。",
