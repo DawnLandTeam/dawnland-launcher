@@ -90,7 +90,8 @@ async function checkForUpdates() {
   isCheckingUpdate.value = true;
   try {
     const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
-    const res = await fetch(`https://api.dawnland.cn/api/launcher/update/${targetOS}/${appVersion.value}`);
+    const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
+    const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${appVersion.value}`);
     if (res.status === 200) {
       const data = await res.json();
       if (data.version && data.version !== appVersion.value) {
