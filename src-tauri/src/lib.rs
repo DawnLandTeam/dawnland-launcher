@@ -137,6 +137,9 @@ pub fn run() {
             core::server::install_server_modpack,
             core::server::get_filter_options,
             core::ping::ping_server,
+            // Custom Updater commands
+            commands::is_portable_version,
+            commands::update_portable_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
