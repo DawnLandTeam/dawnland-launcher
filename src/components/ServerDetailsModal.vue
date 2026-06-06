@@ -2,7 +2,6 @@
 import { ref, computed } from 'vue';
 import { X, Globe, Users, Copy, Check, MessageSquare } from '@lucide/vue';
 import { marked } from 'marked';
-import DOMPurify from 'dompurify';
 
 const props = defineProps<{
   open: boolean;
@@ -35,16 +34,7 @@ const tags = computed(() => {
 
 const renderedDescription = computed(() => {
   if (!props.server?.description) return '<p class="text-muted-foreground text-sm italic">' + t('servers.details.noDescription') + '</p>';
-  const rawHtml = marked(props.server.description, { breaks: true }) as string;
-  return DOMPurify.sanitize(rawHtml);
-});
-
-// Configure DOMPurify to allow standard markdown HTML elements
-DOMPurify.setConfig({
-  ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'p', 'a', 'ul', 'ol',
-    'nl', 'li', 'b', 'i', 'strong', 'em', 'strike', 'code', 'hr', 'br', 'div',
-    'table', 'thead', 'caption', 'tbody', 'tr', 'th', 'td', 'pre', 'img'],
-  ALLOWED_ATTR: ['href', 'name', 'target', 'src', 'alt', 'class']
+  return marked(props.server.description, { breaks: true }) as string;
 });
 </script>
 
@@ -143,7 +133,7 @@ DOMPurify.setConfig({
           <!-- Description (Markdown Rendered) -->
           <div class="flex flex-col gap-2">
             <h3 class="text-lg font-bold text-neutral-900 dark:text-white border-b border-neutral-200 dark:border-zinc-800 pb-2">{{ t('servers.details.description') }}</h3>
-            <div class="prose dark:prose-invert max-w-none text-sm leading-relaxed" v-html="renderedDescription"></div>
+            <div class="prose dark:prose-invert max-w-none text-sm leading-relaxed" v-safe-html="renderedDescription"></div>
           </div>
 
         </div>
