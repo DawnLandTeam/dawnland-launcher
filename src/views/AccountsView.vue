@@ -652,7 +652,7 @@ watch(
           <AlertDialogDescription class="text-sm text-muted-foreground">{{ $t('accounts.deleteUndone') }}</AlertDialogDescription>
         </div>
       </div>
-          <p class="text-sm mb-4" v-html="$t('accounts.deleteConfirm', { name: deletingAccountName })">
+          <p class="text-sm mb-4" v-safe-html="$t('accounts.deleteConfirm', { name: deletingAccountName })">
           </p>
           <div class="flex justify-end gap-2">
             <button
