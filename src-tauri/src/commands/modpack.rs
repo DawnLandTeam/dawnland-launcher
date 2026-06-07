@@ -55,6 +55,7 @@ impl ExecutableTask for InstallModpackTask {
         let instance_dir = base_dir.join("versions").join(instance_name);
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
+        crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
 
         macro_rules! check_cancel {
             () => {
@@ -327,6 +328,7 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let instance_dir = base_dir.join("versions").join(instance_name);
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
+        crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
         
         let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp");
         std::fs::create_dir_all(&temp_dir).unwrap_or_default();
