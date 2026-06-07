@@ -130,8 +130,8 @@ impl ExecutableTask for InstallFabricTask {
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(custom_instance_name);
 
-
-
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
+    
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
