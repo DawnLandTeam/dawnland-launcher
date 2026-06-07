@@ -191,6 +191,26 @@ pub struct InstanceConfig {
     pub is_installing: bool,
 }
 
+impl InstanceConfig {
+    pub async fn ensure_installing(instance_dir: &std::path::PathBuf, is_dependency: bool) {
+        let config_path = instance_dir.join("dlml.json");
+        let mut config: Self = if config_path.exists() {
+            tokio::fs::read_to_string(&config_path)
+                .await
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default()
+        } else {
+            Self::default()
+        };
+        config.is_installing = true;
+        if is_dependency {
+            config.hidden = true;
+        }
+        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap_or_default()).await;
+    }
+}
+
 fn default_window_behavior() -> String {
     "keep".to_string()
 }
