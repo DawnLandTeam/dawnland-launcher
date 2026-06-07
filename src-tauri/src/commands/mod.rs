@@ -5,6 +5,7 @@ use sysinfo::System;
 use tauri::AppHandle;
 
 pub mod modpack;
+pub mod task;
 
 /// Returns a human-readable OS identifier string.
 #[tauri::command]
@@ -61,7 +62,7 @@ pub async fn batch_download(tasks: Vec<DownloadTask>, app: AppHandle) -> Result<
     // Spawn the download tasks without blocking the command.
     let app_clone = app.clone();
     tokio::spawn(async move {
-        run_batch_download(tasks, app_clone, crate::core::mojang::get_cancel_flag()).await;
+        let _ = run_batch_download(tasks, app_clone, crate::core::mojang::get_cancel_flag()).await;
     });
 
     // Return immediately to frontend.

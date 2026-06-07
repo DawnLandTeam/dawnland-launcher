@@ -22,6 +22,24 @@ pub fn run() {
         .manage(core::launcher::RunningInstances(std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))))
         .setup(|app| {
             use tauri::Manager;
+            let app_handle = app.handle().clone();
+            
+            let app_dir = core::mojang::get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland");
+            std::fs::create_dir_all(&app_dir).unwrap_or_default();
+            let db_path = app_dir.join("tasks.db");
+
+            tauri::async_runtime::block_on(async move {
+                match core::task::db::TaskDatabase::new(db_path).await {
+                    Ok(db) => {
+                        let manager = core::task::TaskManager::new(app_handle.clone(), db).await;
+                        app_handle.manage(manager);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to initialize task database: {}", e);
+                    }
+                }
+            });
+
             if let Some(window) = app.get_webview_window("main") {
                 if let Ok(Some(monitor)) = window.current_monitor() {
                     let size = monitor.size();
@@ -71,9 +89,9 @@ pub fn run() {
             // Core/Game commands
             core::mojang::get_vanilla_versions,
             core::mojang::install_vanilla_version,
-            core::mojang::fetch_install_state,
+            // removed fetch_install_state
             core::mojang::get_installed_versions,
-            core::mojang::cancel_installation,
+            // removed cancel_installation
             core::launcher::launch_instance,
             core::launcher::kill_instance,
             core::launcher::get_instance_config,
@@ -137,6 +155,11 @@ pub fn run() {
             core::server::install_server_modpack,
             core::server::get_filter_options,
             core::ping::ping_server,
+            // Task commands
+            commands::task::get_task_history,
+            commands::task::cancel_task,
+            commands::task::clear_task_history,
+            commands::task::retry_task,
             // Custom Updater commands
             commands::update_launcher,
         ])

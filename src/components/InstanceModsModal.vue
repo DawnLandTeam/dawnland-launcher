@@ -10,6 +10,7 @@ interface InstanceItem {
   name: string;
   mcVersion: string;
   loaderType: string;
+  isInstalling?: boolean;
 }
 
 interface LocalModItem {

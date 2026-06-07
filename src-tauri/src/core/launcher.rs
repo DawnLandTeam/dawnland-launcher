@@ -186,6 +186,9 @@ pub struct InstanceConfig {
     /// Modpack File Name for local zips (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pack_file_name: Option<String>,
+    /// Whether this instance is currently being installed
+    #[serde(default)]
+    pub is_installing: bool,
 }
 
 fn default_window_behavior() -> String {
@@ -355,29 +358,29 @@ fn should_use_library(lib: &Library, os: &str, arch: &str) -> bool {
         return true;
     }
 
-    let mut allowed = true;
-    let mut has_explicit_disallow = false;
+    let mut allowed = false;
+    if let Some(first) = rules.first() {
+        let first_action = first.action.as_deref().unwrap_or("allow");
+        if first_action == "allow" {
+            allowed = false;
+        } else if first_action == "disallow" {
+            allowed = true;
+        }
+    }
 
     for rule in rules {
         let action = rule.action.as_deref().unwrap_or("allow");
         let applies = rule_applies_to_platform(rule, os, arch);
 
         if applies {
-            if action == "disallow" {
-                allowed = false;
-                has_explicit_disallow = true;
-            } else {
+            if action == "allow" {
                 allowed = true;
+            } else if action == "disallow" {
+                allowed = false;
             }
         }
     }
 
-    // If there was an explicit disallow rule, respect it
-    if has_explicit_disallow {
-        return allowed;
-    }
-
-    // Otherwise allow if no rules blocked it
     allowed
 }
 
@@ -1388,7 +1391,9 @@ async fn verify_instance_integrity(
             }),
         );
 
-        crate::downloader::run_batch_download(repair_tasks, app.clone(), crate::core::mojang::get_cancel_flag()).await;
+        if let Err(e) = crate::downloader::run_batch_download(repair_tasks, app.clone(), crate::core::mojang::get_cancel_flag()).await {
+            return Err(format!("Auto-repair failed: {}", e));
+        }
 
         let _ = app.emit(
             "launch-status",
@@ -1703,7 +1708,9 @@ pub async fn launch_instance(
         if !missing_files.is_empty() {
             // Download missing files
             let app_for_download = app.clone();
-            run_batch_download(missing_files, app_for_download, crate::core::mojang::get_cancel_flag()).await;
+            if let Err(e) = run_batch_download(missing_files, app_for_download, crate::core::mojang::get_cancel_flag()).await {
+                return Err(format!("Failed to auto-repair missing files: {}", e));
+            }
         }
 
         if requires_forge_repair {
@@ -1897,7 +1904,9 @@ pub async fn launch_instance(
                             None,
                             None,
                         ));
-                        crate::downloader::run_batch_download(missing, app.clone(), crate::core::mojang::get_cancel_flag()).await;
+                        if let Err(e) = crate::downloader::run_batch_download(missing, app.clone(), crate::core::mojang::get_cancel_flag()).await {
+                            tracing::warn!("Failed to download authlib-injector: {}", e);
+                        }
                     }
                 }
             }
