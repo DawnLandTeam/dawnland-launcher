@@ -130,16 +130,7 @@ impl ExecutableTask for InstallFabricTask {
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(custom_instance_name);
 
-    // Pre-create instance directory and dlml.json with is_installing: true
-    tokio::fs::create_dir_all(&instance_dir)
-        .await
-        .map_err(|e| TaskError::ExecutionError(format!("Failed to create instance directory: {e}")))?;
-    
-    let config_path = instance_dir.join("dlml.json");
-    let mut pre_config = crate::core::launcher::InstanceConfig::default();
-    pre_config.is_installing = true;
-    pre_config.hidden = is_dependency.unwrap_or(false);
-    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap()).await;
+
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))

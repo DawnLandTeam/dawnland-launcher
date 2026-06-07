@@ -54,14 +54,7 @@ impl ExecutableTask for InstallModpackTask {
         let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp").join(&ctx.id);
         let instance_dir = base_dir.join("versions").join(instance_name);
 
-        // Pre-create instance directory and dlml.json with is_installing: true
-        if let Err(e) = std::fs::create_dir_all(&instance_dir) {
-            return Err(TaskError::ExecutionError(format!("Failed to create instance directory: {e}")));
-        }
-        let config_path = instance_dir.join("dlml.json");
-        let mut pre_config = crate::core::launcher::InstanceConfig::default();
-        pre_config.is_installing = true;
-        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap()).await;
+
 
         macro_rules! check_cancel {
             () => {
@@ -333,14 +326,7 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let base_dir = crate::core::mojang::get_minecraft_base();
         let instance_dir = base_dir.join("versions").join(instance_name);
 
-        // Pre-create instance directory and dlml.json with is_installing: true
-        if let Err(e) = std::fs::create_dir_all(&instance_dir) {
-            return Err(TaskError::ExecutionError(format!("Failed to create instance directory: {e}")));
-        }
-        let config_path = instance_dir.join("dlml.json");
-        let mut pre_config = crate::core::launcher::InstanceConfig::default();
-        pre_config.is_installing = true;
-        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap()).await;
+
 
         let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp");
         std::fs::create_dir_all(&temp_dir).unwrap_or_default();
