@@ -7,12 +7,19 @@ import { setUpdateAvailable, type CustomUpdate } from "./composables/useUpdate";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
+import { useTaskStore } from "./composables/useTaskStore";
+import TaskCenter from "./components/TaskCenter.vue";
+import Toaster from "./components/Toaster.vue";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
 const { locale, t } = useI18n();
+const taskStore = useTaskStore();
 
 onMounted(async () => {
+  // Initialize task center
+  await taskStore.init();
+
   // Show window
   getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
 
@@ -101,4 +108,6 @@ onMounted(async () => {
 <template>
   <MainLayout />
   <UpdaterModal v-model:open="isUpdateModalOpen" :updateInfo="updateInfo" />
+  <TaskCenter />
+  <Toaster />
 </template>

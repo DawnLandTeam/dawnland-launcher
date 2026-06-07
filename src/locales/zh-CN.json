@@ -23,6 +23,8 @@
     "marquee": "欢迎使用 Dawnland 启动器 v1.0.0 · 全新：自动 Java 管理",
     "noInstanceFound": "没有找到匹配的实例 (No installed instance found for server {name}). 请先安装它。",
     "noAccountFound": "没有找到可用账号 (No account found). 请在设置中添加账号。",
+    "sessionExpiredConfirmTitle": "登录状态已过期",
+    "sessionExpiredConfirm": "您的微软账号登录状态已过期，需要重新登录才能继续启动游戏。是否现在重新登录？",
     "launchFailed": "启动失败 (Failed to launch): {error}",
     "stopGame": "停止运行",
     "stopGameConfirmTitle": "强制停止游戏",
@@ -445,5 +447,20 @@
     "publishDate": "发布日期",
     "actions": "操作",
     "installBtn": "安装"
+  },
+  "task": {
+    "installVanilla": "安装原版 {version}",
+    "installLoader": "安装 {loader} (适用于 {version})",
+    "installModpack": "安装整合包 {name}",
+    "downloadModpack": "下载整合包 {name}",
+    "unknown": "未知任务",
+    "failedTitle": "{name} 失败",
+    "failedDesc": "由于发生错误，该任务已失败，尚未完成的实例已被安全移除。",
+    "cancelledTitle": "{name} 取消",
+    "cancelledDesc": "该任务已被您取消，尚未完成的实例已被安全移除。",
+    "completedTitle": "{name} 完成",
+    "completedDesc": "任务已成功完成！",
+    "submitted": "已提交至任务队列",
+    "checkProgress": "您可以在任务中心查看进度"
   }
 }
