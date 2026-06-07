@@ -571,6 +571,7 @@ impl ExecutableTask for InstallForgeTask {
     let instance_dir = base_dir.join("versions").join(custom_instance_name);
 
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
+    crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, is_dependency.unwrap_or(false)).await;
     
     let maven_base = if loader_type == "neoforge" {
         NEOFORGE_MAVEN

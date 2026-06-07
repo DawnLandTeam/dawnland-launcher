@@ -422,6 +422,7 @@ impl ExecutableTask for InstallVanillaTask {
         let version_dir = base_dir.join("versions").join(version_id);
 
         let _ = tokio::fs::create_dir_all(&version_dir).await;
+        crate::core::launcher::InstanceConfig::ensure_installing(&version_dir, is_dependency.unwrap_or(false)).await;
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
