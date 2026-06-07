@@ -10,9 +10,11 @@ pub mod mojang;
 pub mod ping;
 pub mod server;
 pub mod utils;
+pub mod fs_utils;
+pub mod task;
 
 // Re-export types from mojang for easier importing
-pub use crate::core::mojang::{InstallState, VanillaVersion};
+pub use crate::core::mojang::VanillaVersion;
 
 // Re-export modrinth types
 pub use crate::core::modrinth::{OnlineModpackVersion, UnifiedModFile, UnifiedModProject};

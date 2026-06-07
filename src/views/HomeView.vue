@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, onActivated, watch } from "vue";
+import { ref, onMounted, computed, onActivated, watch, onUnmounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -34,6 +34,7 @@ interface InstanceItem {
   serverId?: string;
   packVersionId?: string;
   packFileName?: string;
+  isInstalling?: boolean;
 }
 
 interface Account {
@@ -123,6 +124,8 @@ const selectedAccount = computed(() => {
 const isActionDisabled = computed(() => {
   if (!selectedInstanceId.value || !selectedAccountId.value) return true;
   
+  if (selectedInstance.value?.isInstalling) return true;
+  
   if (launchingInstances.value.has(selectedInstanceId.value) || 
       repairingInstances.value.has(selectedInstanceId.value)) {
     return true;
@@ -146,7 +149,22 @@ const isRunning = computed(() => {
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
+const handleTaskAdded = () => {
+  loadInstances();
+};
+
+const handleTaskStatusChanged = (e: Event) => {
+  const customEvent = e as CustomEvent;
+  const status = customEvent.detail?.status;
+  if (status === 'Completed' || status === 'Failed' || status === 'Cancelled') {
+    loadInstances();
+  }
+};
+
 onMounted(async () => {
+  window.addEventListener('task-added', handleTaskAdded);
+  window.addEventListener('task-status-changed', handleTaskStatusChanged);
+
   await loadInstances();
   await loadAccounts();
 
@@ -299,6 +317,11 @@ onMounted(async () => {
   });
 });
 
+onUnmounted(() => {
+  window.removeEventListener('task-added', handleTaskAdded);
+  window.removeEventListener('task-status-changed', handleTaskStatusChanged);
+});
+
 onActivated(() => {
   // Refresh instances when returning to HomeView
   loadInstances();
@@ -381,8 +404,27 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
     } catch (e) {
       console.error("Failed to launch auto instance:", e);
       launchingInstances.value.delete(selectedInstanceId.value);
+      repairingInstances.value.delete(selectedInstanceId.value);
       isRepairing.value = false;
-      alert(t('home.launchFailed', { error: e }));
+      const errorStr = String(e);
+      if (errorStr.includes("login session has expired") || errorStr.includes("REAUTH_REQUIRED")) {
+        const confirmed = await confirm(
+          t('home.sessionExpiredConfirm'),
+          { title: t('home.sessionExpiredConfirmTitle'), kind: "warning" }
+        );
+        if (confirmed) {
+          try {
+            const newAccount = await invoke<Account>("login_microsoft_oauth");
+            await loadAccounts();
+            selectedAccountId.value = newAccount.id;
+            handlePrimaryAction();
+          } catch (loginErr) {
+            console.error("Re-login failed:", loginErr);
+          }
+        }
+      } else {
+        alert(t('home.launchFailed', { error: e }));
+      }
     }
     
     // Clean up query
@@ -397,9 +439,12 @@ async function loadInstances() {
   try {
     const instances = await invoke<InstanceItem[]>("scan_installed_instances");
     installedInstances.value = instances;
-    // Auto-select first instance if none selected
+    // Auto-select first non-installing instance if none selected
     if (!selectedInstanceId.value && instances.length > 0) {
-      selectedInstanceId.value = instances[0].id;
+      const validInstance = instances.find(i => !i.isInstalling);
+      if (validInstance) {
+        selectedInstanceId.value = validInstance.id;
+      }
     }
   } catch (e) {
     console.error("Failed to load instances:", e);
@@ -463,8 +508,27 @@ async function handlePrimaryAction() {
   } catch (e) {
     console.error("Failed to launch instance:", e);
     launchingInstances.value.delete(selectedInstanceId.value);
+    repairingInstances.value.delete(selectedInstanceId.value);
     isRepairing.value = false;
-    alert(`Failed to launch: ${e}`);
+    const errorStr = String(e);
+    if (errorStr.includes("login session has expired") || errorStr.includes("REAUTH_REQUIRED")) {
+      const confirmed = await confirm(
+        t('home.sessionExpiredConfirm'),
+        { title: t('home.sessionExpiredConfirmTitle'), kind: "warning" }
+      );
+      if (confirmed) {
+        try {
+          const newAccount = await invoke<Account>("login_microsoft_oauth");
+          await loadAccounts();
+          selectedAccountId.value = newAccount.id;
+          handlePrimaryAction();
+        } catch (loginErr) {
+          console.error("Re-login failed:", loginErr);
+        }
+      }
+    } else {
+      alert(t('home.launchFailed', { error: e }));
+    }
   }
 }
 
@@ -576,9 +640,10 @@ function loaderBadgeClass(loaderType: string): string {
                   </button>
                 </template>
                 <div class="max-h-60 overflow-y-auto">
-                  <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="selectedInstanceId = instance.id" class="flex items-center gap-3 p-2 rounded-lg cursor-pointer">
+                  <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="!instance.isInstalling && (selectedInstanceId = instance.id)" class="flex items-center gap-3 p-2 rounded-lg" :class="instance.isInstalling ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'" :disabled="instance.isInstalling">
                     <Package class="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span class="truncate font-medium">{{ instance.name }}</span>
+                    <span class="truncate font-medium flex-1">{{ instance.name }}</span>
+                    <Loader2 v-if="instance.isInstalling" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                   </DropdownMenuItem>
                 </div>
               </DropdownMenu>
@@ -632,7 +697,7 @@ function loaderBadgeClass(loaderType: string): string {
 
             <!-- Action Buttons -->
             <div class="flex items-center justify-center gap-3 mt-6">
-              <button @click="openInstanceSettings" :disabled="!selectedInstanceId" class="flex items-center gap-2 px-4 py-3 border border-white/20 dark:border-zinc-700 bg-white/40 dark:bg-zinc-800/40 rounded-xl hover:bg-white/60 dark:hover:bg-zinc-700/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shadow-sm shrink-0" title="Configure instance">
+              <button @click="openInstanceSettings" :disabled="!selectedInstanceId || selectedInstance?.isInstalling" class="flex items-center gap-2 px-4 py-3 border border-white/20 dark:border-zinc-700 bg-white/40 dark:bg-zinc-800/40 rounded-xl hover:bg-white/60 dark:hover:bg-zinc-700/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shadow-sm shrink-0" title="Configure instance">
                 <Settings class="h-5 w-5" />
               </button>
               <button @click="handlePrimaryAction" :disabled="isActionDisabled" 
