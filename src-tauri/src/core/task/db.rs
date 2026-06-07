@@ -20,6 +20,8 @@ impl TaskDatabase {
                     status TEXT NOT NULL,
                     progress_current INTEGER NOT NULL,
                     progress_total INTEGER NOT NULL,
+                    progress_step INTEGER NOT NULL DEFAULT 1,
+                    progress_total_steps INTEGER NOT NULL DEFAULT 1,
                     progress_detail TEXT NOT NULL,
                     error TEXT,
                     created_at INTEGER NOT NULL,
@@ -29,9 +31,11 @@ impl TaskDatabase {
             )?;
             Ok(())
         }).await.map_err(|e| TaskError::Database(e.to_string()))?;
-        // Migration: add context_data column if it doesn't exist
+        // Migration: add columns if they don't exist
         let _ = conn.call(|conn| -> ::rusqlite::Result<()> {
             let _ = conn.execute("ALTER TABLE tasks ADD COLUMN context_data TEXT", []);
+            let _ = conn.execute("ALTER TABLE tasks ADD COLUMN progress_step INTEGER NOT NULL DEFAULT 1", []);
+            let _ = conn.execute("ALTER TABLE tasks ADD COLUMN progress_total_steps INTEGER NOT NULL DEFAULT 1", []);
             Ok(())
         }).await;
         // Cleanup interrupted tasks (tasks that were running when the app was closed)
@@ -57,14 +61,16 @@ impl TaskDatabase {
         self.conn.call(move |conn| -> ::rusqlite::Result<()> {
             conn.execute(
                 "INSERT OR REPLACE INTO tasks 
-                (id, task_type, status, progress_current, progress_total, progress_detail, error, created_at, updated_at, context_data) 
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                (id, task_type, status, progress_current, progress_total, progress_step, progress_total_steps, progress_detail, error, created_at, updated_at, context_data) 
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 (
                     &state_clone.id,
                     serde_json::to_string(&state_clone.task_type).unwrap_or_default(),
                     serde_json::to_string(&state_clone.status).unwrap_or_default(),
                     state_clone.progress.current as i64,
                     state_clone.progress.total as i64,
+                    state_clone.progress.step as i64,
+                    state_clone.progress.total_steps as i64,
                     &state_clone.progress.detail,
                     &state_clone.error,
                     state_clone.created_at,
@@ -79,20 +85,24 @@ impl TaskDatabase {
 
     pub async fn load_all_tasks(&self) -> Result<Vec<TaskState>, TaskError> {
         self.conn.call(|conn| -> ::rusqlite::Result<Vec<TaskState>> {
-            let mut stmt = conn.prepare("SELECT id, task_type, status, progress_current, progress_total, progress_detail, error, created_at, updated_at FROM tasks ORDER BY created_at DESC")?;
+            let mut stmt = conn.prepare(
+                "SELECT id, task_type, status, progress_current, progress_total, progress_step, progress_total_steps, progress_detail, error, created_at, updated_at, context_data FROM tasks ORDER BY created_at DESC"
+            )?;
             let task_iter = stmt.query_map([], |row| {
                 let id: String = row.get(0)?;
                 let task_type_str: String = row.get(1)?;
                 let status_str: String = row.get(2)?;
                 let current: i64 = row.get(3)?;
                 let total: i64 = row.get(4)?;
-                let detail: String = row.get(5)?;
-                let error: Option<String> = row.get(6)?;
-                let created_at: i64 = row.get(7)?;
-                let updated_at: i64 = row.get(8)?;
+                let step: i64 = row.get(5)?;
+                let total_steps: i64 = row.get(6)?;
+                let detail: String = row.get(7)?;
+                let error: Option<String> = row.get(8)?;
+                let created_at: i64 = row.get(9)?;
+                let updated_at: i64 = row.get(10)?;
                 
                 // Read context_data, it might be missing if older schema
-                let context_data_str: Option<String> = row.get(9).unwrap_or(None);
+                let context_data_str: Option<String> = row.get(11).unwrap_or(None);
                 let context_data = context_data_str.and_then(|s| serde_json::from_str(&s).ok());
 
                 let task_type = serde_json::from_str(&task_type_str).unwrap_or(super::state::TaskType::Generic { name: "Unknown".into() });
@@ -105,8 +115,8 @@ impl TaskDatabase {
                     progress: super::state::TaskProgress {
                         current: current as u64,
                         total: total as u64,
-                        step: 1,
-                        total_steps: 1,
+                        step: step as u32,
+                        total_steps: total_steps as u32,
                         detail,
                     },
                     error,
