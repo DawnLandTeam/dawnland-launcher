@@ -421,7 +421,7 @@ impl ExecutableTask for InstallVanillaTask {
         let base_dir = get_minecraft_base();
         let version_dir = base_dir.join("versions").join(version_id);
 
-
+        let _ = tokio::fs::create_dir_all(&version_dir).await;
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
