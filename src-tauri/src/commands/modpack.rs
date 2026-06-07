@@ -54,7 +54,7 @@ impl ExecutableTask for InstallModpackTask {
         let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp").join(&ctx.id);
         let instance_dir = base_dir.join("versions").join(instance_name);
 
-
+        let _ = tokio::fs::create_dir_all(&instance_dir).await;
 
         macro_rules! check_cancel {
             () => {
@@ -326,8 +326,8 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let base_dir = crate::core::mojang::get_minecraft_base();
         let instance_dir = base_dir.join("versions").join(instance_name);
 
-
-
+        let _ = tokio::fs::create_dir_all(&instance_dir).await;
+        
         let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp");
         std::fs::create_dir_all(&temp_dir).unwrap_or_default();
         let temp_zip_path = temp_dir.join(format!("{}.zip", ctx.id));

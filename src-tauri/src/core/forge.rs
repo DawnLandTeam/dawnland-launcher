@@ -570,8 +570,8 @@ impl ExecutableTask for InstallForgeTask {
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(custom_instance_name);
 
-
-
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
+    
     let maven_base = if loader_type == "neoforge" {
         NEOFORGE_MAVEN
     } else {
