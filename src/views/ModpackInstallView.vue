@@ -9,6 +9,7 @@ import { setAppBusy } from "../composables/useAppStatus";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar, X } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
+import { toast } from '../composables/useToast';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -392,7 +393,7 @@ const installModpack = async () => {
   try {
     if (onlineUrl.value) {
       console.log("Invoking download_and_install_online_modpack...");
-      await invoke("download_and_install_online_modpack", {
+      await invoke<string>("download_and_install_online_modpack", {
         url: onlineUrl.value,
         instanceName: instanceName.value,
         projectId: selectedModpack.value?.project_id || route.query.project_id || null,
@@ -400,7 +401,7 @@ const installModpack = async () => {
       });
     } else {
       console.log("Invoking install_modpack...");
-      await invoke("install_modpack", {
+      await invoke<string>("install_modpack", {
         zipPath: zipPath.value,
         instanceName: instanceName.value,
         isUpdate: isUpdate.value,
@@ -408,7 +409,9 @@ const installModpack = async () => {
       });
     }
     
-    // Bind to server if applicable
+    // Bind to server if applicable (we wait for bind to submit, wait, bind happens AFTER install?)
+    // Actually, bind_instance_to_server expects the instance to exist. Wait! If the install is running in the background, the instance folder might not be fully ready.
+    // However, bind_instance_to_server just writes to `servers.json` in the app data. So it's fine to do it immediately.
     if (route.query.server_id) {
       console.log("Binding instance to server...");
       await invoke("bind_instance_to_server", {
@@ -419,10 +422,12 @@ const installModpack = async () => {
       });
     }
     
-    console.log("Installation finished successfully. Showing success modal...");
+    console.log("Installation task submitted successfully. Redirecting...");
     isInstalling.value = false;
     setAppBusy(false);
-    showSuccessModal.value = true;
+    
+    toast.success(t("task.submitted"), t("task.checkProgress"));
+    router.push("/instances");
   } catch (error) {
     console.error("Installation failed:", error);
     statusMessage.value = `Installation failed: ${error}`;

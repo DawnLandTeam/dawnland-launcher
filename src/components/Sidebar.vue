@@ -2,16 +2,17 @@
 import { computed } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { useDark, useToggle } from "@vueuse/core";
-import { Gamepad2, Library, Server, Users, Settings, Sun, Moon } from "@lucide/vue";
+import { Gamepad2, Library, Server, Users, Settings, Sun, Moon, DownloadCloud } from "@lucide/vue";
 import { hasUpdateAvailable } from "../composables/useUpdate";
 import { isAppBusy } from "../composables/useAppStatus";
-
+import { useTaskStore } from "../composables/useTaskStore";
 import { useI18n } from "vue-i18n";
 
 const route = useRoute();
 const isDark = useDark();
 const toggleDark = useToggle(isDark);
 const { t } = useI18n();
+const taskStore = useTaskStore();
 
 const navItems = computed(() => [
   { name: "home", path: "/", label: t("sidebar.home"), icon: Gamepad2 },
@@ -43,6 +44,26 @@ const navItems = computed(() => [
         </span>
       </RouterLink>
     </nav>
+
+    <div class="flex flex-col items-center gap-1 py-2">
+      <button
+        class="task-center-toggle relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors"
+        :class="[
+          taskStore.isTaskCenterOpen.value ? 'bg-emerald-500/20 text-emerald-500' : 'text-neutral-800 hover:bg-black/10 hover:text-black dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white'
+        ]"
+        title="Task Center"
+        @click="taskStore.toggleTaskCenter()"
+      >
+        <DownloadCloud :size="20" />
+        <span 
+          v-if="taskStore.hasActiveTasks.value" 
+          class="absolute top-2 right-2 flex h-2 w-2"
+        >
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+        </span>
+      </button>
+    </div>
 
     <div class="border-t border-white/20 p-2 dark:border-white/10">
       <button

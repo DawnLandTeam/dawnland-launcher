@@ -23,6 +23,8 @@
     "marquee": "Welcome to Dawnland Launcher v1.0.0 · New: Auto Java Management",
     "noInstanceFound": "No installed instance found for server {name}. Please install it first.",
     "noAccountFound": "No account found. Please add an account in Settings.",
+    "sessionExpiredConfirmTitle": "Login Session Expired",
+    "sessionExpiredConfirm": "Your Microsoft login session has expired and needs to be re-authenticated to launch the game. Would you like to log in now?",
     "launchFailed": "Failed to launch: {error}",
     "stopGame": "Stop Game",
     "stopGameConfirmTitle": "Force Stop Game",
@@ -445,5 +447,20 @@
     "publishDate": "Publish Date",
     "actions": "Actions",
     "installBtn": "Install"
+  },
+  "task": {
+    "installVanilla": "Installing Vanilla {version}",
+    "installLoader": "Installing {loader} for {version}",
+    "installModpack": "Installing Modpack {name}",
+    "downloadModpack": "Downloading Modpack {name}",
+    "unknown": "Unknown Task",
+    "failedTitle": "{name} Failed",
+    "failedDesc": "Task encountered an error. The incomplete instance has been removed safely.",
+    "cancelledTitle": "{name} Cancelled",
+    "cancelledDesc": "Task was cancelled. The incomplete instance has been removed safely.",
+    "completedTitle": "{name} Completed",
+    "completedDesc": "Task finished successfully!",
+    "submitted": "Submitted to task queue",
+    "checkProgress": "You can check the progress in the task center"
   }
 }

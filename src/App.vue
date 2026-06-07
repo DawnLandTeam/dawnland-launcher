@@ -7,12 +7,19 @@ import { setUpdateAvailable, type CustomUpdate } from "./composables/useUpdate";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
+import { useTaskStore } from "./composables/useTaskStore";
+import TaskCenter from "./components/TaskCenter.vue";
+import Toaster from "./components/Toaster.vue";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
 const { locale, t } = useI18n();
+const taskStore = useTaskStore();
 
 onMounted(async () => {
+  // Initialize task center
+  await taskStore.init();
+
   // Show window
   getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
 
@@ -54,51 +61,53 @@ onMounted(async () => {
     }
   }, 2000);
 
-  const handleDrag = (e: DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.dataTransfer) {
-      e.dataTransfer.dropEffect = 'copy';
-    }
-  };
-
-  const handleDrop = async (e: DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    let text = e.dataTransfer?.getData('text/plain');
-    if (!text) text = e.dataTransfer?.getData('text/html');
-    if (!text) text = e.dataTransfer?.getData('text/uri-list');
-
-    if (text) {
-      // Regex search to find the authlib string even if it's wrapped in HTML or other text
-      const match = text.match(/authlib-injector:yggdrasil-server:([^\s"']+)/);
-      if (match) {
-        const url = decodeURIComponent(match[1]);
-        try {
-          await invoke("add_authlib_server", { url: url.trim() });
-          window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
-          alert(t('settings.authlib.addSuccess', { url }));
-        } catch (err) {
-          alert(t('settings.authlib.addFailed', { error: String(err) }));
-        }
-      }
-    }
-  };
-
   document.addEventListener('dragenter', handleDrag, true);
   document.addEventListener('dragover', handleDrag, true);
   document.addEventListener('drop', handleDrop, true);
+});
 
-  onUnmounted(() => {
-    document.removeEventListener('dragenter', handleDrag, true);
-    document.removeEventListener('dragover', handleDrag, true);
-    document.removeEventListener('drop', handleDrop, true);
-  });
+const handleDrag = (e: DragEvent) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'copy';
+  }
+};
+
+const handleDrop = async (e: DragEvent) => {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  let text = e.dataTransfer?.getData('text/plain');
+  if (!text) text = e.dataTransfer?.getData('text/html');
+  if (!text) text = e.dataTransfer?.getData('text/uri-list');
+
+  if (text) {
+    // Regex search to find the authlib string even if it's wrapped in HTML or other text
+    const match = text.match(/authlib-injector:yggdrasil-server:([^\s"']+)/);
+    if (match) {
+      const url = decodeURIComponent(match[1]);
+      try {
+        await invoke("add_authlib_server", { url: url.trim() });
+        window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
+        alert(t('settings.authlib.addSuccess', { url }));
+      } catch (err) {
+        alert(t('settings.authlib.addFailed', { error: String(err) }));
+      }
+    }
+  }
+};
+
+onUnmounted(() => {
+  document.removeEventListener('dragenter', handleDrag, true);
+  document.removeEventListener('dragover', handleDrag, true);
+  document.removeEventListener('drop', handleDrop, true);
 });
 </script>
 
 <template>
   <MainLayout />
   <UpdaterModal v-model:open="isUpdateModalOpen" :updateInfo="updateInfo" />
+  <TaskCenter />
+  <Toaster />
 </template>
