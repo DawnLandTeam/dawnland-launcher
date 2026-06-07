@@ -28,11 +28,15 @@ pub struct InstanceItem {
     pub pack_version_id: Option<String>,
     /// Modpack File Name for local zips (optional)
     pub pack_file_name: Option<String>,
+    /// Whether this instance is currently being installed
+    pub is_installing: bool,
 }
 
 /// Scan all locally installed instances from the versions directory.
 #[tauri::command]
-pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
+pub async fn scan_installed_instances(
+    task_manager: tauri::State<'_, crate::core::task::TaskManager>,
+) -> Result<Vec<InstanceItem>, String> {
     tracing::info!("Scanning installed instances...");
 
     let base_dir = get_minecraft_base();
@@ -49,6 +53,9 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
         .await
         .map_err(|e| format!("Failed to read versions directory: {}", e))?;
 
+    // Load all tasks from DB once to avoid locking inside loop
+    let tasks = task_manager.load_history().await.unwrap_or_default();
+
     while let Some(entry) = entries
         .next_entry()
         .await
@@ -58,11 +65,12 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
         if path.is_dir() {
             let id = entry.file_name().to_string_lossy().to_string();
             let json_path = path.join(format!("{}.json", id));
+            let config_path = path.join("dlml.json");
 
-            if json_path.exists() {
+            if json_path.exists() || config_path.exists() {
                 // Check if instance is hidden via dlml.json
-                let config_path = path.join("dlml.json");
                 let mut is_hidden = false;
+                let mut is_installing = false;
                 let mut server_id = None;
                 let mut pack_version_id = None;
                 let mut pack_file_name = None;
@@ -73,10 +81,30 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                             serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
                         {
                             is_hidden = config.hidden;
+                            is_installing = config.is_installing;
                             server_id = config.server_id;
                             pack_version_id = config.pack_version_id;
                             pack_file_name = config.pack_file_name;
                         }
+                    }
+                }
+
+                // If it is installing, check if its corresponding task exists and is not cancelled
+                if is_installing {
+                    let mut has_valid_task = false;
+                    for task in &tasks {
+                        if let Some(tid) = task.task_type.instance_id() {
+                            if tid == id && task.status != crate::core::task::TaskStatus::Cancelled {
+                                has_valid_task = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if !has_valid_task {
+                        tracing::info!("Cleaning up zombie installing instance: {}", id);
+                        let _ = tokio::fs::remove_dir_all(&path).await;
+                        continue;
                     }
                 }
 
@@ -144,6 +172,7 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                             server_id,
                             pack_version_id,
                             pack_file_name,
+                            is_installing,
                         });
                     }
                     Err(e) => {
@@ -161,6 +190,7 @@ pub async fn scan_installed_instances() -> Result<Vec<InstanceItem>, String> {
                             server_id,
                             pack_version_id,
                             pack_file_name,
+                            is_installing,
                         });
                     }
                 }
@@ -362,6 +392,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
     let mut server_id = None;
     let mut pack_version_id = None;
     let mut pack_file_name = None;
+    let mut is_installing = false;
 
     if config_path.exists() {
         if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
@@ -371,6 +402,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
                 server_id = config.server_id;
                 pack_version_id = config.pack_version_id;
                 pack_file_name = config.pack_file_name;
+                is_installing = config.is_installing;
             }
         }
     }
@@ -386,6 +418,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         server_id,
         pack_version_id,
         pack_file_name,
+        is_installing,
     })
 }
 

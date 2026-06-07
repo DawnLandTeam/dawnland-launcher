@@ -583,16 +583,17 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
 
     if let Some(error) = &refresh_resp.error {
         let error_desc = refresh_resp.error_description.clone().unwrap_or_default();
-        tracing::error!("Token refresh failed: {} - {}", error, error_desc);
-
+        
         // If refresh token is invalid/expired, user needs to re-authenticate
         if error == "invalid_grant"
             || error == "refresh_token_expired"
             || error == "invalid_request"
         {
+            tracing::info!("Microsoft token has expired normally ({}). User needs to re-authenticate.", error);
             return Err("REAUTH_REQUIRED".to_string());
         }
 
+        tracing::error!("Token refresh failed: {} - {}", error, error_desc);
         return Err(format!("Token refresh error: {} - {}", error, error_desc));
     }
 

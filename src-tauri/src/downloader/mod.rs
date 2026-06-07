@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 pub mod download;
 
-pub use download::run_batch_download;
+pub use download::{run_batch_download, run_batch_download_task};
 
 /// A single download task.
 #[derive(Debug, Clone, Serialize, Deserialize)]

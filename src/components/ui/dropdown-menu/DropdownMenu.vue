@@ -11,12 +11,20 @@ const props = withDefaults(defineProps<{
 // --- DropdownMenu root ---
 const open = ref(false);
 
+const emit = defineEmits<{
+  (e: "update:open", value: boolean): void;
+}>();
+
 function toggle() {
   open.value = !open.value;
+  emit("update:open", open.value);
 }
 
 function close() {
-  open.value = false;
+  if (open.value) {
+    open.value = false;
+    emit("update:open", false);
+  }
 }
 
 provide(DROPDOWN_OPEN_KEY, open);
@@ -42,7 +50,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDocClick));
     <Transition name="dropdown">
       <div
         v-if="open"
-        class="absolute z-50 mt-1 min-w-[10rem] overflow-hidden rounded-xl border border-white/20 dark:border-zinc-800/50 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl p-1 text-foreground shadow-xl"
+        class="absolute z-50 mt-1 min-w-[10rem] overflow-hidden rounded-xl border border-white/20 dark:border-zinc-800/50 bg-white dark:bg-zinc-900 p-1 text-foreground shadow-xl"
         :class="[
           props.align === 'start' ? 'left-0' : '',
           props.align === 'end' ? 'right-0' : '',
