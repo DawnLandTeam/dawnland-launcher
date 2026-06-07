@@ -1,10 +1,11 @@
 //! Fabric Mod Loader Integration
 //! Provides commands for fetching available Fabric loaders and installing Fabric instances.
 
-use crate::core::mojang::get_minecraft_base;
+use crate::core::mojang::{get_minecraft_base, InstallVanillaTask, VanillaInstallOptions};
+use crate::core::task::{ExecutableTask, TaskContext, TaskError, TaskManager, TaskType};
 use crate::core::utils::compare_versions;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Manager};
 
 // ============ Fabric API Types ============
 
@@ -101,15 +102,24 @@ pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, 
     })
 }
 
-/// Install a Fabric instance - automatically installs base vanilla first, then Fabric.
-#[tauri::command]
-pub async fn install_fabric_instance(
-    mc_version: String,
-    fabric_version: String,
-    custom_instance_name: String,
-    is_dependency: Option<bool>,
-    app: AppHandle,
-) -> Result<(), String> {
+pub struct InstallFabricOptions {
+    pub mc_version: String,
+    pub fabric_version: String,
+    pub custom_instance_name: String,
+    pub is_dependency: Option<bool>,
+}
+
+pub struct InstallFabricTask {
+    pub options: InstallFabricOptions,
+}
+
+#[async_trait::async_trait]
+impl ExecutableTask for InstallFabricTask {
+    async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
+        let mc_version = &self.options.mc_version;
+        let fabric_version = &self.options.fabric_version;
+        let custom_instance_name = &self.options.custom_instance_name;
+        let is_dependency = self.options.is_dependency;
     tracing::info!(
         "Installing Fabric instance: {} (MC {} + Loader {})",
         custom_instance_name,
@@ -118,15 +128,30 @@ pub async fn install_fabric_instance(
     );
 
     let base_dir = get_minecraft_base();
+    let instance_dir = base_dir.join("versions").join(custom_instance_name);
+
+    // Pre-create instance directory and dlml.json with is_installing: true
+    tokio::fs::create_dir_all(&instance_dir)
+        .await
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to create instance directory: {e}")))?;
+    
+    let config_path = instance_dir.join("dlml.json");
+    let mut pre_config = crate::core::launcher::InstanceConfig::default();
+    pre_config.is_installing = true;
+    pre_config.hidden = is_dependency.unwrap_or(false);
+    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap()).await;
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to create HTTP client: {e}")))?;
 
     // Step 1: Check if base vanilla version is installed
     let base_version_dir = base_dir.join("versions").join(&mc_version);
     let base_client_jar = base_version_dir.join(format!("{}.jar", mc_version));
     let base_version_json = base_version_dir.join(format!("{}.json", mc_version));
+
+    ctx.manager.wait_for_instance(&mc_version, &ctx.cancel_token).await;
 
     if !base_client_jar.exists() || !base_version_json.exists() {
         // Need to install base vanilla version first
@@ -135,14 +160,8 @@ pub async fn install_fabric_instance(
             mc_version
         );
 
-        let _ = app.emit(
-            "install-progress",
-            serde_json::json!({
-                "phase": "resolving_version",
-                "versionId": mc_version,
-                "currentFile": "Fetching Minecraft version manifest..."
-            }),
-        );
+        ctx.update_progress(0, 0, "Fetching Minecraft version manifest..."
+            ).await;
 
         // Get version JSON URL from Mojang
         let manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
@@ -150,10 +169,10 @@ pub async fn install_fabric_instance(
             .get(manifest_url)
             .send()
             .await
-            .map_err(|e| format!("Failed to fetch version manifest: {}", e))?
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to fetch version manifest: {}", e)))?
             .json()
             .await
-            .map_err(|e| format!("Failed to parse version manifest: {}", e))?;
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to parse version manifest: {}", e)))?;
 
         // Find the version URL for requested mc_version
         let version_url = manifest["versions"]
@@ -164,29 +183,36 @@ pub async fn install_fabric_instance(
                     .find(|v| v["id"].as_str() == Some(&mc_version))
             })
             .and_then(|v| v["url"].as_str())
-            .ok_or_else(|| format!("Version {} not found in manifest", mc_version))?;
+            .ok_or_else(|| TaskError::ExecutionError(format!("Version {} not found in manifest", mc_version)))?;
 
-        crate::core::mojang::install_vanilla_version(
-            mc_version.clone(),
-            version_url.to_string(),
-            Some(true),
-            app.clone(),
-        )
-        .await?;
+        let vanilla_task = InstallVanillaTask {
+            options: VanillaInstallOptions {
+                version_id: mc_version.clone(),
+                version_json_url: version_url.to_string(),
+                is_dependency: Some(true),
+            },
+        };
+        vanilla_task.execute(ctx.clone()).await?;
 
         tracing::info!("Base vanilla {} installed successfully", mc_version);
     } else {
         tracing::info!("Base Minecraft {} already installed, skipping", mc_version);
     }
 
-    // Step 2: Install Fabric profile
-    let _ = app.emit(
-        "install-progress",
-        serde_json::json!({
-            "phase": "resolving_version",
-            "versionId": custom_instance_name,
-        }),
-    );
+    
+        if ctx.is_cancelled() {
+            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+        }
+
+    let is_dep = self.options.is_dependency.unwrap_or(false);
+
+    if !is_dep {
+        ctx.set_total_steps(2).await;
+        // Step 2: Install Fabric profile
+        ctx.next_step("Fetching Fabric profile...").await;
+    } else {
+        ctx.update_progress(0, 0, "Fetching Fabric profile...").await;
+    }
 
     // Fetch Fabric profile JSON
     let fabric_url = format!(
@@ -200,14 +226,14 @@ pub async fn install_fabric_instance(
         .get(&fabric_url)
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch Fabric profile: {}", e))?
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to fetch Fabric profile: {}", e)))?
         .text()
         .await
-        .map_err(|e| format!("Failed to read Fabric profile: {}", e))?;
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to read Fabric profile: {}", e)))?;
 
     // Parse and modify the profile
     let mut profile: serde_json::Value = serde_json::from_str(&profile_json)
-        .map_err(|e| format!("Failed to parse Fabric profile JSON: {}", e))?;
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to parse Fabric profile JSON: {}", e)))?;
 
     // Modify id and set inheritsFrom
     if let Some(obj) = profile.as_object_mut() {
@@ -236,26 +262,28 @@ pub async fn install_fabric_instance(
 
     tokio::fs::create_dir_all(&version_dir)
         .await
-        .map_err(|e| format!("Failed to create version directory: {}", e))?;
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to create version directory: {}", e)))?;
 
     let version_json_path = version_dir.join(format!("{}.json", custom_instance_name));
     let updated_json = serde_json::to_string_pretty(&profile)
-        .map_err(|e| format!("Failed to serialize Fabric profile: {}", e))?;
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to serialize Fabric profile: {}", e)))?;
 
     tokio::fs::write(&version_json_path, &updated_json)
         .await
-        .map_err(|e| format!("Failed to write Fabric profile: {}", e))?;
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to write Fabric profile: {}", e)))?;
 
     tracing::info!("Saved Fabric profile to: {:?}", version_json_path);
 
+    
+        if ctx.is_cancelled() {
+            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+        }
     // Step 3: Download Fabric libraries
-    let _ = app.emit(
-        "install-progress",
-        serde_json::json!({
-            "phase": "resolving_libraries",
-            "versionId": custom_instance_name,
-        }),
-    );
+    if !is_dep {
+        ctx.next_step("Resolving Fabric libraries...").await;
+    } else {
+        ctx.update_progress(0, 0, "Resolving Fabric libraries...").await;
+    }
 
     let libraries: &[serde_json::Value] = match profile.get("libraries").and_then(|l| l.as_array())
     {
@@ -288,35 +316,28 @@ pub async fn install_fabric_instance(
     let total_tasks = tasks.len();
     tracing::info!("Resolved {} Fabric library files", total_tasks);
 
-    let _ = app.emit(
-        "install-progress",
-        serde_json::json!({
-            "phase": "downloading",
-            "versionId": custom_instance_name,
-            "totalTasks": total_tasks,
-        }),
-    );
+    
 
     if !tasks.is_empty() {
-        let app_clone = app.clone();
-        crate::downloader::run_batch_download(tasks, app_clone, crate::core::mojang::get_cancel_flag()).await;
+        if let Err(e) = crate::downloader::run_batch_download_task(tasks, ctx.clone()).await {
+            tracing::warn!("Installation failed during batch download, cleaning up...");
+            let version_dir = base_dir.join("versions").join(&custom_instance_name);
+            let _ = tokio::fs::remove_dir_all(&version_dir).await;
+            return Err(TaskError::ExecutionError(e));
+        }
     }
 
-    if crate::core::mojang::get_cancel_flag().load(std::sync::atomic::Ordering::Relaxed) {
+    if ctx.is_cancelled() {
         tracing::warn!("Installation cancelled, cleaning up fabric instance directory...");
         let version_dir = base_dir.join("versions").join(&custom_instance_name);
         let _ = tokio::fs::remove_dir_all(&version_dir).await;
-        
-        let _ = app.emit(
-            "install-progress",
-            serde_json::json!({
-                "phase": "error",
-                "error": "Installation cancelled by user",
-            }),
-        );
-        return Err("Installation cancelled by user".to_string());
+        return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
     }
 
+    
+        if ctx.is_cancelled() {
+            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+        }
     // Step 4: Create default dlml.json config
     let config_path = version_dir.join("dlml.json");
     let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
@@ -335,28 +356,23 @@ pub async fn install_fabric_instance(
             server_id: None,
             pack_version_id: None,
             pack_file_name: None,
+            is_installing: false,
         }
     };
 
     config.hidden = is_dependency.unwrap_or(false);
-
+    config.is_installing = false;
     let config_json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to serialize instance config: {}", e)))?;
 
     tokio::fs::write(&config_path, config_json)
         .await
-        .map_err(|e| format!("Failed to write instance config: {}", e))?;
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to write instance config: {}", e)))?;
 
     tracing::info!("Created instance config at: {:?}", config_path);
 
     // Emit complete
-    let _ = app.emit(
-        "install-progress",
-        serde_json::json!({
-            "phase": "complete",
-            "versionId": custom_instance_name,
-        }),
-    );
+    ctx.update_progress(0, 0, "Complete").await;
 
     tracing::info!(
         "Fabric instance '{}' installed successfully!",
@@ -364,6 +380,51 @@ pub async fn install_fabric_instance(
     );
     Ok(())
 }
+}
+
+/// Install a Fabric instance - automatically installs base vanilla first, then Fabric.
+#[tauri::command]
+pub async fn install_fabric_instance(
+    mc_version: String,
+    fabric_version: String,
+    custom_instance_name: String,
+    is_dependency: Option<bool>,
+    app: AppHandle,
+) -> Result<String, String> {
+    let task_manager = app.state::<TaskManager>().inner().clone();
+    
+    // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
+    let base_dir = crate::core::mojang::get_minecraft_base();
+    let instance_dir = base_dir.join("versions").join(&custom_instance_name);
+    let _ = std::fs::create_dir_all(&instance_dir);
+    let config_path = instance_dir.join("dlml.json");
+    let mut pre_config = crate::core::launcher::InstanceConfig::default();
+    pre_config.is_installing = true;
+    pre_config.hidden = is_dependency.unwrap_or(false);
+    let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap());
+    
+    let task = InstallFabricTask {
+        options: InstallFabricOptions {
+            mc_version: mc_version.clone(),
+            fabric_version: fabric_version.clone(),
+            custom_instance_name: custom_instance_name.clone(),
+            is_dependency,
+        },
+    };
+    
+    let task_id = task_manager
+        .spawn_task(TaskType::InstallFabric { 
+            mc_version: mc_version.clone(), 
+            fabric_version: fabric_version.clone(),
+            custom_instance_name: custom_instance_name.clone(),
+            is_dependency,
+        }, task)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(task_id)
+}
+
 
 /// Check if a base Minecraft version is installed (has client.jar).
 #[tauri::command]

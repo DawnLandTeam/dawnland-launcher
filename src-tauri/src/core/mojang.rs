@@ -1,14 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::fs;
-use tokio::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 // Re-export downloader types (from parent module)
-use crate::downloader::{run_batch_download, DownloadTask};
+use crate::downloader::{run_batch_download_task, DownloadTask};
+use crate::core::task::{ExecutableTask, TaskContext, TaskError, TaskManager, TaskType};
 
 // ============ Global State ============
 
@@ -25,89 +23,12 @@ pub fn get_minecraft_base() -> &'static PathBuf {
     })
 }
 
-/// Global installation state for progress tracking.
-static INSTALL_STATE: OnceLock<Mutex<InstallState>> = OnceLock::new();
+// Legacy INSTALL_STATE and CANCEL_FLAG have been removed.
+// We now use TaskManager and ExecutableTask.
 
-fn get_global_install_state() -> &'static Mutex<InstallState> {
-    INSTALL_STATE.get_or_init(|| Mutex::new(InstallState::default()))
-}
-
-/// Global cancellation flag for installations.
-static CANCEL_FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
-
-pub fn get_cancel_flag() -> Arc<AtomicBool> {
-    CANCEL_FLAG.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
-}
-
-#[tauri::command]
-pub async fn cancel_installation() -> Result<(), String> {
-    get_cancel_flag().store(true, Ordering::SeqCst);
-    tracing::info!("Cancellation requested for current installation.");
-    Ok(())
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum InstallPhase {
-    #[default]
-    Idle,
-    ResolvingVersion,
-    ResolvingLibraries,
-    ResolvingAssets,
-    Downloading,
-    Complete,
-    Error,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstallState {
-    pub phase: InstallPhase,
-    pub version_id: Option<String>,
-    pub total_tasks: usize,
-    pub completed_tasks: usize,
-    pub current_file: Option<String>,
-    pub error: Option<String>,
-}
-
-impl Default for InstallState {
-    fn default() -> Self {
-        Self {
-            phase: InstallPhase::Idle,
-            version_id: None,
-            total_tasks: 0,
-            completed_tasks: 0,
-            current_file: None,
-            error: None,
-        }
-    }
-}
-
-impl InstallState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn set_phase(&mut self, phase: InstallPhase) {
-        self.phase = phase;
-    }
-
-    pub fn set_total_tasks(&mut self, total: usize) {
-        self.total_tasks = total;
-    }
-
-    pub fn increment_completed(&mut self) {
-        self.completed_tasks += 1;
-    }
-
-    pub fn set_current_file(&mut self, file: Option<String>) {
-        self.current_file = file;
-    }
-
-    pub fn set_error(&mut self, error: String) {
-        self.phase = InstallPhase::Error;
-        self.error = Some(error);
-    }
+static CANCEL_FLAG: std::sync::OnceLock<std::sync::Arc<std::sync::atomic::AtomicBool>> = std::sync::OnceLock::new();
+pub fn get_cancel_flag() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    CANCEL_FLAG.get_or_init(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))).clone()
 }
 
 // ============ Mojang API Types ============
@@ -288,11 +209,15 @@ pub fn maven_name_to_path(name: &str) -> Option<String> {
         let group = parts[0].replace('.', "/");
         let artifact = parts[1];
         let version = parts[2];
-        let classifier = if parts.len() == 4 {
+        let mut classifier = if parts.len() == 4 {
             format!("-{}", parts[3])
         } else {
             String::new()
         };
+
+        if group == "net/minecraftforge" && artifact == "forge" && classifier.is_empty() {
+            classifier = "-universal".to_string();
+        }
 
         Some(format!(
             "{}/{}/{}/{}-{}{}.jar",
@@ -312,8 +237,10 @@ pub fn get_library_download_info_from_json(lib: &serde_json::Value) -> Option<(S
     if let Some(downloads) = lib.get("downloads") {
         if let Some(artifact) = downloads.get("artifact") {
             if let Some(url) = artifact.get("url").and_then(|u| u.as_str()) {
-                if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
-                    return Some((url.to_string(), path.to_string()));
+                if !url.is_empty() {
+                    if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
+                        return Some((url.to_string(), path.to_string()));
+                    }
                 }
             }
         }
@@ -356,54 +283,45 @@ pub fn should_download_library(lib: &Library) -> bool {
         None => return true,
     };
 
-    // Process rules in order (usually just one or two).
-    let mut should_allow = true;
-
-    for rule in rules {
-        let action = match &rule.action {
-            Some(a) => a.as_str(),
-            None => continue, // Skip rules without action
-        };
-
-        match action {
-            "allow" => {
-                if let Some(ref os) = rule.os {
-                    if let Some(os_name) = &os.name {
-                        if !matches_current_os(os_name) {
-                            continue; // Rule doesn't apply to this OS
-                        }
-                        if let Some(ref arch) = os.arch {
-                            if !matches_current_arch(arch) {
-                                should_allow = false;
-                                continue;
-                            }
-                        }
-                    }
-                    // If os is specified and matches, this allow rule applies
-                } else {
-                    // No OS restriction, allow everything
-                    should_allow = true;
-                }
-            }
-            "disallow" => {
-                if let Some(ref os) = rule.os {
-                    if let Some(os_name) = &os.name {
-                        if !matches_current_os(os_name) {
-                            continue;
-                        }
-                        if let Some(ref arch) = os.arch {
-                            if matches_current_arch(arch) {
-                                should_allow = false;
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
+    let mut allowed = false;
+    if let Some(first) = rules.first() {
+        let first_action = first.action.as_deref().unwrap_or("allow");
+        if first_action == "allow" {
+            allowed = false;
+        } else if first_action == "disallow" {
+            allowed = true;
         }
     }
 
-    should_allow
+    for rule in rules {
+        let action = rule.action.as_deref().unwrap_or("allow");
+        let mut applies = true;
+
+        if let Some(ref os) = rule.os {
+            if let Some(os_name) = &os.name {
+                if !matches_current_os(os_name) {
+                    applies = false;
+                }
+            }
+            if applies {
+                if let Some(ref arch) = os.arch {
+                    if !matches_current_arch(arch) {
+                        applies = false;
+                    }
+                }
+            }
+        }
+
+        if applies {
+            if action == "allow" {
+                allowed = true;
+            } else if action == "disallow" {
+                allowed = false;
+            }
+        }
+    }
+
+    allowed
 }
 
 /// Check if current OS matches the rule.
@@ -473,6 +391,277 @@ pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
     Ok(versions)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VanillaInstallOptions {
+    pub version_id: String,
+    pub version_json_url: String,
+    pub is_dependency: Option<bool>,
+}
+
+pub struct InstallVanillaTask {
+    pub options: VanillaInstallOptions,
+}
+
+#[async_trait::async_trait]
+impl ExecutableTask for InstallVanillaTask {
+    async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
+        let version_id = &self.options.version_id;
+        let version_json_url = &self.options.version_json_url;
+        let is_dependency = self.options.is_dependency;
+
+        let is_dep = is_dependency.unwrap_or(false);
+        if !is_dep {
+            ctx.set_total_steps(1).await;
+            ctx.next_step(&format!("Resolving version: {}", version_id)).await;
+        } else {
+            ctx.update_progress(0, 0, &format!("Resolving version: {}", version_id)).await;
+        }
+
+        let base_dir = get_minecraft_base();
+        let version_dir = base_dir.join("versions").join(version_id);
+
+        // Pre-create instance directory and dlml.json with is_installing: true
+        fs::create_dir_all(&version_dir)
+            .await
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to create version directory: {e}")))?;
+        
+        let config_path = version_dir.join("dlml.json");
+        let mut pre_config = crate::core::launcher::InstanceConfig::default();
+        pre_config.is_installing = true;
+        pre_config.hidden = is_dependency.unwrap_or(false);
+        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap()).await;
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to create HTTP client: {e}")))?;
+
+        // Step A: Download and save version JSON.
+        tracing::info!("Downloading version JSON from: {}", version_json_url);
+        ctx.update_progress(0, 0, "Downloading version JSON").await;
+
+        let version_json_content = client
+            .get(version_json_url)
+            .send()
+            .await
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to download version JSON: {}", e)))?
+            .text()
+            .await
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to read version JSON: {}", e)))?;
+
+        // Save version JSON.
+        let version_json_path = version_dir.join(format!("{}.json", version_id));
+        fs::write(&version_json_path, &version_json_content)
+            .await
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to write version JSON: {e}")))?;
+
+        // Parse version metadata.
+        let version_meta: VersionMeta = serde_json::from_str(&version_json_content)
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to parse version JSON: {e}")))?;
+
+        if ctx.is_cancelled() {
+            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+        }
+
+        // Step B: Build libraries download queue.
+        ctx.update_progress(0, 0, "Resolving libraries").await;
+        let mut tasks: Vec<DownloadTask> = Vec::new();
+
+        let libraries = match &version_meta.libraries {
+            Some(libs) => libs,
+            None => &vec![],
+        };
+
+        for lib in libraries {
+            if !should_download_library(lib) {
+                continue;
+            }
+
+            if let Some(ref downloads) = lib.downloads {
+                if let Some(ref artifact) = downloads.artifact {
+                    let path = artifact
+                        .path
+                        .as_ref()
+                        .map(|p| format!("libraries/{}", p))
+                        .unwrap_or_else(|| "libraries/unknown".to_string());
+                    let dest = base_dir.join(&path);
+
+                    let url = artifact.url.as_ref().cloned().unwrap_or_default();
+                    let hash = artifact.sha1.as_ref().cloned();
+
+                    if !url.is_empty() {
+                        tasks.push(DownloadTask::new(
+                            url,
+                            dest.to_string_lossy().to_string(),
+                            hash,
+                            artifact.size,
+                        ));
+                    }
+                }
+
+                if let Some(ref classifiers) = downloads.classifiers {
+                    let os_key = match std::env::consts::OS {
+                        "windows" => "natives-windows",
+                        "macos" => "natives-macos",
+                        "linux" => "natives-linux",
+                        _ => continue,
+                    };
+
+                    if let Some(ref classifier) = classifiers.get(os_key) {
+                        let path = classifier
+                            .path
+                            .as_ref()
+                            .map(|p| format!("libraries/{}", p))
+                            .unwrap_or_else(|| "libraries/unknown".to_string());
+                        let dest = base_dir.join(&path);
+
+                        let url = classifier.url.as_ref().cloned().unwrap_or_default();
+                        let hash = classifier.sha1.as_ref().cloned();
+
+                        if !url.is_empty() {
+                            tasks.push(DownloadTask::new(
+                                url,
+                                dest.to_string_lossy().to_string(),
+                                hash,
+                                classifier.size,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step C: Add client.jar to download queue.
+        let downloads = match &version_meta.downloads {
+            Some(d) => d,
+            None => {
+                return Err(TaskError::ExecutionError("Version JSON missing downloads section".to_string()));
+            }
+        };
+
+        if let Some(ref client_download) = downloads.client {
+            let url = client_download.url.as_ref().cloned().unwrap_or_default();
+            let hash = client_download.sha1.as_ref().cloned();
+
+            if !url.is_empty() {
+                let path = format!("versions/{}/{}.jar", version_id, version_id);
+                let dest = base_dir.join(&path);
+                tasks.push(DownloadTask::new(
+                    url,
+                    dest.to_string_lossy().to_string(),
+                    hash,
+                    client_download.size,
+                ));
+            }
+        }
+
+        if ctx.is_cancelled() {
+            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+        }
+
+        // Step D: Download and parse asset index.
+        ctx.update_progress(0, 0, "Resolving assets").await;
+        let asset_index = match &version_meta.asset_index {
+            Some(ai) => ai,
+            None => {
+                return Err(TaskError::ExecutionError("Version JSON missing assetIndex".to_string()));
+            }
+        };
+
+        let asset_index_url = match &asset_index.url {
+            Some(url) if !url.is_empty() => url.clone(),
+            _ => {
+                return Err(TaskError::ExecutionError("Version JSON missing asset index URL".to_string()));
+            }
+        };
+
+        let asset_index_content = client
+            .get(&asset_index_url)
+            .send()
+            .await
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to download asset index: {}", e)))?
+            .text()
+            .await
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to read asset index: {e}")))?;
+
+        let asset_index_dir = base_dir.join("assets").join("indexes");
+        fs::create_dir_all(&asset_index_dir)
+            .await
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to create asset index directory: {e}")))?;
+
+        let asset_index_id = asset_index.id.clone();
+        let asset_index_path = asset_index_dir.join(format!("{}.json", asset_index_id));
+        fs::write(&asset_index_path, &asset_index_content)
+            .await
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to write asset index: {e}")))?;
+
+        let asset_index: AssetIndexMeta = serde_json::from_str(&asset_index_content)
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to parse asset index: {e}")))?;
+
+        if let Some(objects) = &asset_index.objects {
+            for (_, obj) in objects {
+                let hash = obj.hash.as_ref().unwrap_or(&"".to_string()).clone();
+                if hash.is_empty() {
+                    continue;
+                }
+
+                let hash_prefix = &hash[..2];
+                let url = format!(
+                    "https://resources.download.minecraft.net/{}/{}",
+                    hash_prefix, hash
+                );
+                let dest_path = format!("assets/objects/{}/{}", hash_prefix, hash);
+                let dest = base_dir.join(&dest_path);
+
+                tasks.push(DownloadTask::new(
+                    url,
+                    dest.to_string_lossy().to_string(),
+                    Some(hash),
+                    obj.size,
+                ));
+            }
+        }
+
+        // Step E: Run batch download.
+        let total_tasks = tasks.len();
+        ctx.update_progress(0, total_tasks as u64, &format!("Downloading {} files", total_tasks)).await;
+        
+        if total_tasks == 0 {
+            return Err(TaskError::ExecutionError("No files to download".to_string()));
+        }
+
+        run_batch_download_task(tasks, ctx.clone()).await.map_err(|e| TaskError::ExecutionError(e))?;
+
+        if ctx.is_cancelled() {
+            let version_dir = base_dir.join("versions").join(version_id);
+            let _ = tokio::fs::remove_dir_all(&version_dir).await;
+            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+        }
+
+        ctx.update_progress(total_tasks as u64, total_tasks as u64, "Complete").await;
+
+        let version_dir = base_dir.join("versions").join(version_id);
+        let config_path = version_dir.join("dlml.json");
+        let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
+            let content = tokio::fs::read_to_string(&config_path)
+                .await
+                .unwrap_or_else(|_| "{}".to_string());
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            Default::default()
+        };
+
+        config.hidden = is_dependency.unwrap_or(false);
+        config.is_installing = false;
+        
+        let config_json = serde_json::to_string_pretty(&config)
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to serialize dlml.json: {e}")))?;
+        let _ = tokio::fs::write(&config_path, config_json).await;
+
+        Ok(())
+    }
+}
+
 /// Install a vanilla Minecraft version.
 #[tauri::command]
 pub async fn install_vanilla_version(
@@ -480,368 +669,42 @@ pub async fn install_vanilla_version(
     version_json_url: String,
     is_dependency: Option<bool>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    use tauri::Manager;
+    let task_manager = app.state::<TaskManager>().inner().clone();
+
     tracing::info!("Starting installation of version: {}", version_id);
 
-    // Reset cancel flag at start of installation.
-    get_cancel_flag().store(false, Ordering::SeqCst);
-
-    // Initialize install state.
-    {
-        let mut state = get_global_install_state().lock().await;
-        state.phase = InstallPhase::ResolvingVersion;
-        state.version_id = Some(version_id.clone());
-        state.total_tasks = 0;
-        state.completed_tasks = 0;
-        state.error = None;
-    }
-
-    // Emit initial state.
-    let _ = app.emit(
-        "install-progress",
-        serde_json::json!({
-            "phase": "resolving_version",
-            "versionId": version_id,
-        }),
-    );
-
-    let base_dir = get_minecraft_base();
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-
-    // Step A: Download and save version JSON.
-    tracing::info!("Downloading version JSON from: {}", version_json_url);
-
-    let version_json_content = client
-        .get(&version_json_url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to download version JSON: {}", e))?
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read version JSON: {}", e))?;
-
-    // Save version JSON.
+    // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
+    let base_dir = crate::core::mojang::get_minecraft_base();
     let version_dir = base_dir.join("versions").join(&version_id);
-    fs::create_dir_all(&version_dir)
-        .await
-        .map_err(|e| format!("Failed to create version directory: {e}"))?;
-
-    let version_json_path = version_dir.join(format!("{}.json", version_id));
-    fs::write(&version_json_path, &version_json_content)
-        .await
-        .map_err(|e| format!("Failed to write version JSON: {e}"))?;
-
-    tracing::info!("Saved version JSON to: {:?}", version_json_path);
-
-    // Parse version metadata.
-    let version_meta: VersionMeta = serde_json::from_str(&version_json_content)
-        .map_err(|e| format!("Failed to parse version JSON: {e}"))?;
-
-    // Update state: resolving libraries.
-    {
-        let mut state = get_global_install_state().lock().await;
-        state.phase = InstallPhase::ResolvingLibraries;
-    }
-    let _ = app.emit(
-        "install-progress",
-        serde_json::json!({
-            "phase": "resolving_libraries",
-        }),
-    );
-
-    // Step B: Build libraries download queue.
-    let mut tasks: Vec<DownloadTask> = Vec::new();
-
-    // Handle Option<Vec<Library>>
-    let libraries = match &version_meta.libraries {
-        Some(libs) => libs,
-        None => {
-            tracing::warn!("No libraries found in version JSON");
-            &vec![]
-        }
-    };
-
-    for lib in libraries {
-        let lib_name = lib.name.as_deref().unwrap_or("unknown");
-
-        if !should_download_library(lib) {
-            tracing::debug!("Skipping library (rules): {}", lib_name);
-            continue;
-        }
-
-        if let Some(ref downloads) = lib.downloads {
-            if let Some(ref artifact) = downloads.artifact {
-                let path = artifact
-                    .path
-                    .as_ref()
-                    .map(|p| format!("libraries/{}", p))
-                    .unwrap_or_else(|| "libraries/unknown".to_string());
-                let dest = base_dir.join(&path);
-
-                let url = artifact.url.as_ref().cloned().unwrap_or_default();
-                let hash = artifact.sha1.as_ref().cloned();
-
-                if !url.is_empty() {
-                    tasks.push(DownloadTask::new(
-                        url,
-                        dest.to_string_lossy().to_string(),
-                        hash,
-                        artifact.size,
-                    ));
-                }
-            }
-
-            // Handle classifiers (native libraries).
-            if let Some(ref classifiers) = downloads.classifiers {
-                // Get current OS classifier key.
-                let os_key = match std::env::consts::OS {
-                    "windows" => "natives-windows",
-                    "macos" => "natives-macos",
-                    "linux" => "natives-linux",
-                    _ => continue,
-                };
-
-                if let Some(ref classifier) = classifiers.get(os_key) {
-                    let path = classifier
-                        .path
-                        .as_ref()
-                        .map(|p| format!("libraries/{}", p))
-                        .unwrap_or_else(|| "libraries/unknown".to_string());
-                    let dest = base_dir.join(&path);
-
-                    let url = classifier.url.as_ref().cloned().unwrap_or_default();
-                    let hash = classifier.sha1.as_ref().cloned();
-
-                    if !url.is_empty() {
-                        tasks.push(DownloadTask::new(
-                            url,
-                            dest.to_string_lossy().to_string(),
-                            hash,
-                            classifier.size,
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    tracing::info!("Resolved {} library files", tasks.len());
-
-    // Step C: Add client.jar to download queue.
-    let downloads = match &version_meta.downloads {
-        Some(d) => d,
-        None => {
-            tracing::error!("No downloads section in version JSON");
-            return Err("Version JSON missing downloads section".to_string());
-        }
-    };
-
-    if let Some(ref client_download) = downloads.client {
-        let url = client_download.url.as_ref().cloned().unwrap_or_default();
-        let hash = client_download.sha1.as_ref().cloned();
-
-        if !url.is_empty() {
-            let path = format!("versions/{}/{}.jar", version_id, version_id);
-            let dest = base_dir.join(&path);
-            tasks.push(DownloadTask::new(
-                url,
-                dest.to_string_lossy().to_string(),
-                hash,
-                client_download.size,
-            ));
-            tracing::info!("Added client.jar to download queue");
-        }
-    }
-
-    // Update state: resolving assets.
-    {
-        let mut state = get_global_install_state().lock().await;
-        state.phase = InstallPhase::ResolvingAssets;
-    }
-    let _ = app.emit(
-        "install-progress",
-        serde_json::json!({
-            "phase": "resolving_assets",
-        }),
-    );
-
-    // Step D: Download and parse asset index.
-    let asset_index = match &version_meta.asset_index {
-        Some(ai) => ai,
-        None => {
-            tracing::error!("No assetIndex in version JSON");
-            return Err("Version JSON missing assetIndex".to_string());
-        }
-    };
-
-    let asset_index_url = match &asset_index.url {
-        Some(url) if !url.is_empty() => url.clone(),
-        _ => {
-            tracing::error!("No asset index URL in version JSON");
-            return Err("Version JSON missing asset index URL".to_string());
-        }
-    };
-
-    tracing::info!("Downloading asset index: {}", asset_index_url);
-
-    let asset_index_content = client
-        .get(&asset_index_url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to download asset index: {}", e))?
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read asset index: {e}"))?;
-
-    // Save asset index.
-    let asset_index_dir = base_dir.join("assets").join("indexes");
-    fs::create_dir_all(&asset_index_dir)
-        .await
-        .map_err(|e| format!("Failed to create asset index directory: {e}"))?;
-
-    let asset_index_id = asset_index.id.clone();
-    let asset_index_path = asset_index_dir.join(format!("{}.json", asset_index_id));
-    fs::write(&asset_index_path, &asset_index_content)
-        .await
-        .map_err(|e| format!("Failed to write asset index: {e}"))?;
-
-    // Parse asset index.
-    let asset_index: AssetIndexMeta = serde_json::from_str(&asset_index_content)
-        .map_err(|e| format!("Failed to parse asset index: {e}"))?;
-
-    // Build assets download queue.
-    let total_assets = asset_index
-        .objects
-        .as_ref()
-        .map(|obj| obj.len())
-        .unwrap_or(0);
-    tracing::info!("Resolved {} asset objects", total_assets);
-
-    if let Some(objects) = &asset_index.objects {
-        for (path, obj) in objects {
-            // Path format: objects/<hash_prefix>/<hash>
-            let hash = obj.hash.as_ref().unwrap_or(&"".to_string()).clone();
-
-            if hash.is_empty() {
-                continue;
-            }
-
-            let hash_prefix = &hash[..2];
-            let url = format!(
-                "https://resources.download.minecraft.net/{}/{}",
-                hash_prefix, hash
-            );
-            let dest_path = format!("assets/objects/{}/{}", hash_prefix, hash);
-            let dest = base_dir.join(&dest_path);
-
-            tasks.push(DownloadTask::new(
-                url,
-                dest.to_string_lossy().to_string(),
-                Some(hash),
-                obj.size,
-            ));
-        }
-    }
-
-    // Update state: downloading.
-    let total_tasks = tasks.len();
-    {
-        let mut state = get_global_install_state().lock().await;
-        state.phase = InstallPhase::Downloading;
-        state.set_total_tasks(total_tasks);
-    }
-    let _ = app.emit(
-        "install-progress",
-        serde_json::json!({
-            "phase": "downloading",
-            "totalTasks": total_tasks,
-        }),
-    );
-
-    tracing::info!("Starting download of {} files...", total_tasks);
-
-    // Debug: check if tasks is empty
-    if total_tasks == 0 {
-        tracing::warn!("No download tasks to process!");
-        let _ = app.emit(
-            "install-progress",
-            serde_json::json!({
-                "phase": "error",
-                "error": "No files to download",
-            }),
-        );
-        return Ok(());
-    }
-
-    // Use the batch download function which properly emits download-progress events.
-    // This will spawn tasks concurrently and emit progress events for each file.
-    tracing::info!("Calling run_batch_download with {} tasks", total_tasks);
-    let app_for_download = app.clone();
-    run_batch_download(tasks, app_for_download, get_cancel_flag()).await;
-    tracing::info!("run_batch_download completed");
-
-    if get_cancel_flag().load(Ordering::Relaxed) {
-        tracing::warn!("Installation cancelled, cleaning up instance directory...");
-        let version_dir = base_dir.join("versions").join(&version_id);
-        let _ = tokio::fs::remove_dir_all(&version_dir).await;
-        
-        let _ = app.emit(
-            "install-progress",
-            serde_json::json!({
-                "phase": "error",
-                "error": "Installation cancelled by user",
-            }),
-        );
-        return Err("Installation cancelled by user".to_string());
-    }
-
-    // Update final state after batch download completes.
-    {
-        let mut state = get_global_install_state().lock().await;
-        state.phase = InstallPhase::Complete;
-    }
-
-    let _ = app.emit(
-        "install-progress",
-        serde_json::json!({
-            "phase": "complete",
-            "versionId": version_id,
-        }),
-    );
-
-    tracing::info!("Installation complete!");
-
-    // Save dlml.json with hidden state if needed
-    let version_dir = base_dir.join("versions").join(&version_id);
+    let _ = std::fs::create_dir_all(&version_dir);
     let config_path = version_dir.join("dlml.json");
+    let mut pre_config = crate::core::launcher::InstanceConfig::default();
+    pre_config.is_installing = true;
+    pre_config.hidden = is_dependency.unwrap_or(false);
+    let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap());
 
-    let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
-        let content = tokio::fs::read_to_string(&config_path)
-            .await
-            .unwrap_or_else(|_| "{}".to_string());
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        Default::default()
+    let task = InstallVanillaTask {
+        options: VanillaInstallOptions {
+            version_id: version_id.clone(),
+            version_json_url: version_json_url.clone(),
+            is_dependency,
+        },
     };
 
-    config.hidden = is_dependency.unwrap_or(false);
+    let task_id = task_manager
+        .spawn_task(TaskType::InstallVanilla { 
+            version_id: version_id.clone(),
+            version_json_url: version_json_url.clone(),
+            is_dependency,
+        }, task)
+        .await
+        .map_err(|e| e.to_string())?;
 
-    if let Ok(config_json) = serde_json::to_string_pretty(&config) {
-        let _ = tokio::fs::write(&config_path, config_json).await;
-    }
-
-    Ok(())
+    Ok(task_id)
 }
 
-/// Get current installation state.
-#[tauri::command]
-pub async fn fetch_install_state() -> Result<InstallState, String> {
-    let state = get_global_install_state().lock().await;
-    Ok(state.clone())
-}
 
 /// Get list of installed versions.
 #[tauri::command]

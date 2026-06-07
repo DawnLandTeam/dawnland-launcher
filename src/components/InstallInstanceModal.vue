@@ -11,6 +11,7 @@ import {
 } from "./ui/dialog";
 import InstallCard from "./InstallCard.vue";
 import { setAppBusy } from "../composables/useAppStatus";
+import { toast } from '../composables/useToast';
 
 // Types
 interface VanillaVersion {
@@ -504,48 +505,42 @@ async function installVersion(): Promise<void> {
   downloadProgress.value.clear();
 
   try {
-    // Step 1: Install base vanilla version
-    await invoke("install_vanilla_version", {
-      versionId: selectedVersion.value,
-      versionJsonUrl: version.url,
-    });
-
-    // Step 2: If mod loader is selected, install the appropriate loader on top
+    // If mod loader is selected, install the appropriate loader on top
     if (installModLoader.value) {
-      // Update progress
-      installProgress.value = {
-        ...installProgress.value,
-        phase: "resolving_libraries",
-        versionId: customInstanceName.value,
-      };
-
       if (selectedLoaderType.value === "fabric" && selectedFabricLoader.value) {
-        await invoke("install_fabric_instance", {
+        await invoke<string>("install_fabric_instance", {
           mcVersion: selectedVersion.value,
           fabricVersion: selectedFabricLoader.value,
           customInstanceName: customInstanceName.value,
         });
       } else if (selectedLoaderType.value === "forge" && selectedForgeLoader.value) {
-        await invoke("install_forge_instance", {
+        await invoke<string>("install_forge_instance", {
           mcVersion: selectedVersion.value,
           loaderVersion: selectedForgeLoader.value,
           loaderType: "forge",
           customInstanceName: customInstanceName.value,
         });
       } else if (selectedLoaderType.value === "neoforge" && selectedNeoForgeLoader.value) {
-        await invoke("install_forge_instance", {
+        await invoke<string>("install_forge_instance", {
           mcVersion: selectedVersion.value,
           loaderVersion: selectedNeoForgeLoader.value,
           loaderType: "neoforge",
           customInstanceName: customInstanceName.value,
         });
       }
+    } else {
+      await invoke<string>("install_vanilla_version", {
+        versionId: selectedVersion.value,
+        versionJsonUrl: version.url,
+      });
     }
-    
-    // Installation complete!
+
     isInstalling.value = false;
     setAppBusy(false);
+    
+    toast.success(t("task.submitted"), t("task.checkProgress"));
     emit("installed-success");
+    emit("update:open", false);
   } catch (err) {
     error.value = typeof err === "string" ? err : String(err);
     isInstalling.value = false;

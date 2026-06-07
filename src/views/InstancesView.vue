@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, onActivated } from "vue";
+import { ref, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw } from "@lucide/vue";
@@ -18,6 +18,7 @@ interface InstanceItem {
   modpackVersion?: string;
   modpackType?: string;
   modpackProjectId?: string;
+  isInstalling?: boolean;
 }
 
 interface InstanceConfig {
@@ -83,6 +84,8 @@ const isDeletingInstance = ref(false);
 const showModsModal = ref(false);
 const modsInstance = ref<InstanceItem | null>(null);
 
+const openDropdownId = ref<string | null>(null);
+
 // ---------------------------------------------------------------------------
 // Deep-link: route.query.manage → auto-open settings for a specific instance
 // ---------------------------------------------------------------------------
@@ -134,7 +137,21 @@ watch(
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
+const handleTaskAdded = () => {
+  loadInstances();
+};
+
+const handleTaskStatusChanged = (e: Event) => {
+  const customEvent = e as CustomEvent;
+  const status = customEvent.detail?.status;
+  if (status === 'Completed' || status === 'Failed' || status === 'Cancelled') {
+    loadInstances();
+  }
+};
+
 onMounted(async () => {
+  window.addEventListener('task-added', handleTaskAdded);
+  window.addEventListener('task-status-changed', handleTaskStatusChanged);
   await loadInstances();
   await loadJavas();
 });
@@ -143,6 +160,11 @@ onActivated(async () => {
   await loadInstances();
   await loadSystemMemory();
   await loadJavas();
+});
+
+onUnmounted(() => {
+  window.removeEventListener('task-added', handleTaskAdded);
+  window.removeEventListener('task-status-changed', handleTaskStatusChanged);
 });
 
 // ---------------------------------------------------------------------------
@@ -382,8 +404,17 @@ function loaderBadgeClass(loaderType: string): string {
         <div
           v-for="instance in installedInstances"
           :key="instance.id"
-          class="group rounded-lg border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-all shadow-sm"
+          class="group rounded-lg border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-all shadow-sm relative hover:z-50 focus-within:z-50"
+          :class="openDropdownId === instance.id ? 'z-50' : ''"
         >
+          <!-- Installing Overlay -->
+          <div v-if="instance.isInstalling" class="absolute inset-0 z-10 bg-white/50 dark:bg-black/50 backdrop-blur-[1px] flex items-center justify-center rounded-lg">
+            <div class="bg-background/90 px-3 py-1.5 rounded-full flex items-center gap-2 shadow-sm border border-border">
+              <Loader2 class="h-4 w-4 animate-spin text-primary" />
+              <span class="text-xs font-medium">{{ $t('instances.installing', 'Installing...') }}</span>
+            </div>
+          </div>
+
           <!-- Instance info — primary visual focus -->
           <div class="flex items-start justify-between">
             <div class="min-w-0 flex items-center gap-3 flex-1">
@@ -418,11 +449,12 @@ function loaderBadgeClass(loaderType: string): string {
           </div>
 
           <!-- Management actions -->
-          <div class="mt-3 flex justify-end">
-            <DropdownMenu align="end">
+          <div class="mt-3 flex justify-end relative z-20">
+            <DropdownMenu align="end" @update:open="(val: boolean) => openDropdownId = val ? instance.id : null">
               <template #trigger>
                 <button
-                  class="flex items-center justify-center rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors"
+                  class="flex items-center justify-center rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="instance.isInstalling"
                   title="More options"
                 >
                   <MoreHorizontal class="h-4 w-4" />
@@ -439,12 +471,14 @@ function loaderBadgeClass(loaderType: string): string {
                 {{ $t('instances.openFolder') }}
               </DropdownMenuItem>
               <DropdownMenuItem
+                v-if="instance.modpackType"
                 @click="updateModpack(instance)"
               >
                 <RefreshCw class="h-4 w-4" />
                 {{ $t('instances.updateModpack', 'Update Modpack') }}
               </DropdownMenuItem>
               <DropdownMenuItem
+                v-if="instance.loaderType && instance.loaderType.toLowerCase() !== 'none' && instance.loaderType.toLowerCase() !== 'vanilla'"
                 @click="openMods(instance)"
               >
                 <Puzzle class="h-4 w-4" />

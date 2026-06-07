@@ -26,6 +26,7 @@ dist-ssr
 AGENTS.md
 AGENTS_ZH.md
 docs/ARCHITECTURE.md
+memory.md
 
 web-backend/.env
 web-backend/sqlite.db
