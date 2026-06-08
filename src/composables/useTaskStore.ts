@@ -4,7 +4,6 @@ import { listen } from '@tauri-apps/api/event';
 import type { TaskState } from '../types/task';
 import { getTaskName } from '../types/task';
 import { notificationStore } from './useNotificationStore';
-import { toast } from './useToast';
 import i18n from '../i18n';
 
 // Global state
@@ -37,43 +36,40 @@ export function useTaskStore() {
             if (updatedTask.status === 'Failed') {
               const title = i18n.global.t('task.failedTitle', { name: getTaskName(updatedTask.task_type) });
               const desc = updatedTask.error || i18n.global.t('task.failedDesc');
-              toast.error(title, desc);
               notificationStore.updateNotification(updatedTask.id, {
                 title,
                 description: desc,
                 type: 'error',
-                isPopup: false,
+                isPopup: true,
                 status: 'unread'
               });
             } else if (updatedTask.status === 'Completed') {
               const title = i18n.global.t('task.completedTitle', { name: getTaskName(updatedTask.task_type) });
               const desc = i18n.global.t('task.completedDesc');
-              toast.success(title, desc);
               notificationStore.updateNotification(updatedTask.id, {
                 title,
                 description: desc,
                 type: 'success',
-                isPopup: false,
+                isPopup: true,
                 status: 'unread'
               });
             } else if (updatedTask.status === 'Cancelled') {
               const title = i18n.global.t('task.cancelledTitle', { name: getTaskName(updatedTask.task_type) }) || 'Task Cancelled';
-              toast.info(title);
               notificationStore.updateNotification(updatedTask.id, {
                 title,
                 description: '',
                 type: 'info',
-                isPopup: false,
+                isPopup: true,
                 status: 'unread'
               });
             }
           } else if (updatedTask.status === 'Running') {
             // Silent update for running tasks - no download details in description to avoid spam
+            // We omit isPopup so it doesn't kill the initial "Started" popup or reset its timer
             notificationStore.updateNotification(updatedTask.id, {
               title: i18n.global.t('task.runningTitle', { name: getTaskName(updatedTask.task_type) }) || `Running: ${getTaskName(updatedTask.task_type)}`,
               description: '', // DO NOT UPDATE WITH DOWNLOAD DETAILS
-              type: 'info',
-              isPopup: false // Do not pop up repeatedly
+              type: 'info'
             });
           }
         } else {
@@ -81,16 +77,14 @@ export function useTaskStore() {
           window.dispatchEvent(new CustomEvent('task-added', { detail: updatedTask }));
           
           const title = i18n.global.t('task.startedTitle', { name: getTaskName(updatedTask.task_type) }) || `Task Started: ${getTaskName(updatedTask.task_type)}`;
-          // Show unified toast
-          toast.info(title);
           
-          // New task started, add to notification center without popup
+          // New task started, add to notification center and show popup
           notificationStore.addNotification({
             id: updatedTask.id,
             title,
             description: '',
             type: 'info',
-            isPopup: false,
+            isPopup: true,
             duration: 3000
           });
         }
