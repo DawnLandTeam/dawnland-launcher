@@ -1486,16 +1486,18 @@ pub async fn launch_instance(
     // Load instance configuration early to get server_id if needed
     let instance_config = get_instance_config(version_id.clone()).await.unwrap_or_default();
 
-    // If frontend didn't pass IP, but this instance is bound to a server, fetch it!
-    if server_ip.is_none() {
-        if let Some(sid) = &instance_config.server_id {
-            tracing::info!("Server IP not provided, fetching from backend for server ID: {}", sid);
-            if let Ok(server) = crate::core::server::get_server(sid.clone()).await {
+    // If this instance is bound to a server, fetch it to get IP (if missing) and Name
+    let mut actual_server_name = "Dawnland Server".to_string();
+    if let Some(sid) = &instance_config.server_id {
+        if let Ok(server) = crate::core::server::get_server(sid.clone()).await {
+            actual_server_name = server.name;
+            if server_ip.is_none() {
+                tracing::info!("Server IP not provided, fetched from backend for server ID: {}", sid);
                 server_ip = Some(server.ip);
                 server_port = Some(server.port as u16);
-            } else {
-                tracing::warn!("Failed to fetch server info for ID: {}", sid);
             }
+        } else {
+            tracing::warn!("Failed to fetch server info for ID: {}", sid);
         }
     }
 
@@ -1506,7 +1508,7 @@ pub async fn launch_instance(
         let default_options_path = game_dir.join("config").join("defaultoptions").join("servers.dat");
 
         // Inject into main servers.dat
-        if let Err(e) = inject_server_to_dat(&servers_dat_path, ip, port) {
+        if let Err(e) = inject_server_to_dat(&servers_dat_path, &actual_server_name, ip, port) {
             tracing::warn!("Failed to write servers.dat: {}", e);
         } else {
             tracing::info!("Injected server to servers.dat at {:?}", servers_dat_path);
@@ -1514,7 +1516,7 @@ pub async fn launch_instance(
 
         // Also inject into defaultoptions if the folder exists
         if default_options_path.parent().map(|p| p.exists()).unwrap_or(false) {
-            if let Err(e) = inject_server_to_dat(&default_options_path, ip, port) {
+            if let Err(e) = inject_server_to_dat(&default_options_path, &actual_server_name, ip, port) {
                 tracing::warn!("Failed to write defaultoptions/servers.dat: {}", e);
             } else {
                 tracing::info!("Injected server to defaultoptions/servers.dat");
@@ -2274,7 +2276,7 @@ struct ServerEntry {
 }
 
 /// Helper to safely inject a server into an uncompressed servers.dat NBT file
-fn inject_server_to_dat(path: &std::path::Path, ip: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+fn inject_server_to_dat(path: &std::path::Path, server_name: &str, ip: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let mut dat = ServersDat { servers: Vec::new() };
 
     if path.exists() {
@@ -2294,7 +2296,7 @@ fn inject_server_to_dat(path: &std::path::Path, ip: &str, port: u16) -> Result<(
     // Prevent duplicates
     if !dat.servers.iter().any(|s| s.ip == address_str) {
         dat.servers.push(ServerEntry {
-            name: "Dawnland Server".to_string(),
+            name: server_name.to_string(),
             ip: address_str,
             hidden: Some(0),
             icon: None,
