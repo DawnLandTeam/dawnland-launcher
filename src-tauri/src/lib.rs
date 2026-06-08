@@ -1,3 +1,4 @@
+#![allow(unused)]
 mod auth;
 mod commands;
 mod core;
