@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { Package, Search, Download, Trash2, ToggleLeft, ToggleRight, Loader2 } from "@lucide/vue";
+import { Package, Search, Download, Trash2, Loader2 } from "@lucide/vue";
 import { DialogContent, DialogTitle, DialogDescription } from "./ui/dialog";
 
 // Types
@@ -59,7 +59,14 @@ const isLoadingSearch = ref(false);
 const localMods = ref<LocalModItem[]>([]);
 const searchResults = ref<UnifiedModProject[]>([]);
 const searchQuery = ref("");
+const localSearchQuery = ref("");
 const error = ref<string | null>(null);
+
+const filteredLocalMods = computed(() => {
+  if (!localSearchQuery.value.trim()) return localMods.value;
+  const q = localSearchQuery.value.toLowerCase();
+  return localMods.value.filter(mod => mod.filename.toLowerCase().includes(q));
+});
 const installingMod = ref<string | null>(null);
 const selectedSource = ref<"modrinth" | "curseforge">("curseforge");
 
@@ -318,15 +325,26 @@ function getLoaderBadgeClass(loader: string): string {
         </div>
         
         <!-- Tab Content -->
-        <div class="flex-1 overflow-y-auto p-4">
+        <div class="flex-1 overflow-y-auto p-4 flex flex-col">
           <!-- Local Mods Tab -->
-          <div v-if="activeTab === 'local'">
-            <div v-if="isLoadingLocal" class="flex items-center justify-center py-12">
+          <div v-if="activeTab === 'local'" class="flex-1 flex flex-col">
+            <!-- Local Search Input -->
+            <div class="relative mb-4 shrink-0">
+              <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                v-model="localSearchQuery"
+                type="text"
+                :placeholder="$t('instanceMods.searchLocal', 'Search installed mods...')"
+                class="w-full pl-9 pr-4 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
+              />
+            </div>
+
+            <div v-if="isLoadingLocal" class="flex items-center justify-center py-12 flex-1">
               <Loader2 class="h-6 w-6 animate-spin text-primary" />
               <span class="ml-3 text-muted-foreground">Loading mods...</span>
             </div>
             
-            <div v-else-if="localMods.length === 0" class="flex flex-col items-center justify-center py-12 text-center">
+            <div v-else-if="localMods.length === 0" class="flex flex-col items-center justify-center py-12 text-center flex-1">
               <Package class="h-12 w-12 text-muted-foreground mb-4" />
               <h3 class="text-lg font-semibold mb-2">No mods installed</h3>
               <p class="text-sm text-muted-foreground mb-4">Switch to "Browse & Download" to find mods for this instance.</p>
@@ -337,35 +355,45 @@ function getLoaderBadgeClass(loader: string): string {
                 Browse Mods
               </button>
             </div>
+
+            <div v-else-if="filteredLocalMods.length === 0" class="flex flex-col items-center justify-center py-12 text-center flex-1">
+              <Search class="h-10 w-10 text-muted-foreground mb-4 mx-auto" />
+              <p class="text-sm text-muted-foreground">No matching mods found.</p>
+            </div>
             
-            <div v-else class="space-y-2">
+            <div v-else class="space-y-2 flex-1">
               <div
-                v-for="mod in localMods"
+                v-for="mod in filteredLocalMods"
                 :key="mod.filename"
-                class="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
+                :class="[
+                  'flex items-center justify-between p-3 rounded-lg border transition-all',
+                  mod.enabled ? 'bg-card hover:bg-muted/50' : 'bg-muted/30 border-dashed opacity-60 grayscale'
+                ]"
               >
                 <div class="flex items-center gap-3 min-w-0">
-                  <button
-                    @click="toggleMod(mod)"
-                    class="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                    :title="mod.enabled ? 'Disable mod' : 'Enable mod'"
-                  >
-                    <ToggleRight v-if="mod.enabled" class="h-5 w-5 text-green-500" />
-                    <ToggleLeft v-else class="h-5 w-5" />
-                  </button>
-                  <div class="min-w-0">
-                    <p class="font-medium text-neutral-900 dark:text-white truncate">{{ mod.filename }}</p>
+                  <Package class="h-5 w-5 text-muted-foreground shrink-0" />
+                  <div class="min-w-0" :class="!mod.enabled ? 'line-through' : ''">
+                    <p class="font-medium text-neutral-900 dark:text-white truncate" :title="mod.filename">{{ mod.filename }}</p>
                     <p class="text-xs text-muted-foreground">{{ formatSize(mod.size) }}</p>
                   </div>
                 </div>
                 
-                <button
-                  @click="deleteMod(mod)"
-                  class="shrink-0 p-2 text-muted-foreground hover:text-red-500 transition-colors"
-                  title="Delete mod"
-                >
-                  <Trash2 class="h-4 w-4" />
-                </button>
+                <div class="flex items-center gap-1 shrink-0 ml-4">
+                  <button
+                    @click="toggleMod(mod)"
+                    class="px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+                    :class="mod.enabled ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400' : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400'"
+                  >
+                    {{ mod.enabled ? $t('instanceMods.disable', 'Disable') : $t('instanceMods.enable', 'Enable') }}
+                  </button>
+                  <button
+                    @click="deleteMod(mod)"
+                    class="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 rounded-md transition-colors"
+                    title="Delete mod"
+                  >
+                    <Trash2 class="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>

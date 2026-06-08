@@ -1,51 +1,44 @@
-import { ref } from 'vue';
-
-export interface ToastMessage {
-  id: number;
-  title: string;
-  description?: string;
-  type?: 'success' | 'error' | 'info';
-}
-
-const toasts = ref<ToastMessage[]>([]);
-let nextId = 0;
+import { notificationStore } from './useNotificationStore';
 
 export const useToast = () => {
-  const addToast = (toast: Omit<ToastMessage, 'id'>) => {
-    const id = nextId++;
-    toasts.value.push({ ...toast, id });
-    setTimeout(() => {
-      removeToast(id);
-    }, 4000);
-  };
-
-  const removeToast = (id: number) => {
-    const index = toasts.value.findIndex((t) => t.id === id);
-    if (index !== -1) {
-      toasts.value.splice(index, 1);
-    }
-  };
-
   const success = (title: string, description?: string) => {
-    addToast({ title, description, type: 'success' });
+    notificationStore.addNotification({
+      title,
+      description: description || '',
+      type: 'success',
+      isPopup: true,
+      status: 'read',
+      duration: 3000
+    });
   };
 
   const error = (title: string, description?: string) => {
-    addToast({ title, description, type: 'error' });
+    notificationStore.addNotification({
+      title,
+      description: description || '',
+      type: 'error',
+      isPopup: true,
+      status: 'read',
+      duration: 3000
+    });
   };
 
   const info = (title: string, description?: string) => {
-    addToast({ title, description, type: 'info' });
+    notificationStore.addNotification({
+      title,
+      description: description || '',
+      type: 'info',
+      isPopup: true,
+      status: 'read',
+      duration: 3000
+    });
   };
 
   return {
-    toasts,
     success,
     error,
     info,
-    removeToast,
   };
 };
 
-// Global instance to be used by non-setup functions or directly imported
 export const toast = useToast();

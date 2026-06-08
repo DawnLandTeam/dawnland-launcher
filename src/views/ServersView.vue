@@ -992,6 +992,13 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
 
         <!-- Server Info -->
         <div class="flex flex-wrap gap-2 mb-3">
+          <!-- First Tag Badge -->
+          <span
+            v-if="server.tags && server.tags.trim()"
+            class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300"
+          >
+            {{ server.tags.split(',')[0].trim() }}
+          </span>
           <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-zinc-100 dark:bg-zinc-800">
             {{ server.version }}
           </span>

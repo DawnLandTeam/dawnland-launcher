@@ -176,8 +176,7 @@ pub async fn get_server(id: String) -> Result<Server, String> {
 
     let url = build_server_url(&format!("/{}", id), None);
     let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .header("Accept", "application/json")
         .send()
         .await
@@ -211,11 +210,11 @@ pub async fn create_server(input: CreateServerInput) -> Result<Server, String> {
 
     let url = build_server_url("", None);
     let client = reqwest::Client::new();
-    let response = client
-        .post(&url)
+    let body_str = serde_json::to_string(&input).unwrap_or_default();
+    let response = crate::core::security::secure_request(&client, reqwest::Method::POST, &url, &body_str)
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
-        .json(&input)
+        .body(body_str)
         .send()
         .await
         .map_err(|e| format!("Failed to create server: {}", e))?;
@@ -488,8 +487,7 @@ pub async fn download_pack_file(
     let url = build_server_url(&format!("/{}/pack", server_id), None);
 
     let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
+    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .send()
         .await
         .map_err(|e| format!("Failed to download pack file: {}", e))?;
