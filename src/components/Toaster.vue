@@ -8,7 +8,7 @@ const popups = computed(() => notificationStore.notifications.value.filter(n => 
 
 <template>
   <!-- Fixed container for toasts, high z-index to stay above everything -->
-  <div class="fixed top-4 right-4 z-[9999] flex flex-col gap-2 w-full max-w-sm pointer-events-none">
+  <div class="fixed top-12 right-4 z-[9999] flex flex-col gap-2 w-full max-w-sm pointer-events-none">
     <TransitionGroup 
       enter-active-class="transition-all duration-300 ease-out"
       enter-from-class="opacity-0 -translate-y-4 scale-95"
