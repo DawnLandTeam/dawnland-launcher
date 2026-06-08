@@ -1464,8 +1464,8 @@ pub async fn launch_instance(
     app: AppHandle,
     version_id: String,
     account_uuid: String,
-    server_ip: Option<String>,
-    server_port: Option<u16>,
+    mut server_ip: Option<String>,
+    mut server_port: Option<u16>,
 ) -> Result<(), String> {
     tracing::info!(
         "Launching instance {} with account {}",
@@ -1483,7 +1483,23 @@ pub async fn launch_instance(
     let game_dir = instance_dir.clone();
     let assets_dir = base_dir.join("assets");
 
-    // If this is a server modpack (server_ip provided), ensure servers.dat exists
+    // Load instance configuration early to get server_id if needed
+    let instance_config = get_instance_config(version_id.clone()).await.unwrap_or_default();
+
+    // If frontend didn't pass IP, but this instance is bound to a server, fetch it!
+    if server_ip.is_none() {
+        if let Some(sid) = &instance_config.server_id {
+            tracing::info!("Server IP not provided, fetching from backend for server ID: {}", sid);
+            if let Ok(server) = crate::core::server::get_server(sid.clone()).await {
+                server_ip = Some(server.ip);
+                server_port = Some(server.port as u16);
+            } else {
+                tracing::warn!("Failed to fetch server info for ID: {}", sid);
+            }
+        }
+    }
+
+    // If this is a server modpack (server_ip provided/resolved), ensure servers.dat exists
     if let Some(ip) = &server_ip {
         let servers_dat_path = game_dir.join("servers.dat");
         if !servers_dat_path.exists() {
@@ -1816,12 +1832,9 @@ pub async fn launch_instance(
         main_class: main_class.clone(),
         jvm_args: Vec::new(),
         game_args: Vec::new(),
-        server_ip,
+        server_ip: server_ip.clone(), // use the resolved mutable server_ip
         server_port,
     };
-
-    // Load instance configuration (for custom Java path)
-    let instance_config = get_instance_config(version_id.clone()).await?;
 
     // Determine Java executable path: instance config > recommended matching java > system default
     let java_executable = match &instance_config.java_path {
