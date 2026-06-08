@@ -365,30 +365,35 @@ function getLoaderBadgeClass(loader: string): string {
               <div
                 v-for="mod in filteredLocalMods"
                 :key="mod.filename"
-                class="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
+                :class="[
+                  'flex items-center justify-between p-3 rounded-lg border transition-all',
+                  mod.enabled ? 'bg-card hover:bg-muted/50' : 'bg-muted/30 border-dashed opacity-60 grayscale'
+                ]"
               >
                 <div class="flex items-center gap-3 min-w-0">
-                  <button
-                    @click="toggleMod(mod)"
-                    class="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                    :title="mod.enabled ? 'Disable mod' : 'Enable mod'"
-                  >
-                    <ToggleRight v-if="mod.enabled" class="h-5 w-5 text-green-500" />
-                    <ToggleLeft v-else class="h-5 w-5" />
-                  </button>
-                  <div class="min-w-0">
-                    <p class="font-medium text-neutral-900 dark:text-white truncate">{{ mod.filename }}</p>
+                  <Package class="h-5 w-5 text-muted-foreground shrink-0" />
+                  <div class="min-w-0" :class="!mod.enabled ? 'line-through' : ''">
+                    <p class="font-medium text-neutral-900 dark:text-white truncate" :title="mod.filename">{{ mod.filename }}</p>
                     <p class="text-xs text-muted-foreground">{{ formatSize(mod.size) }}</p>
                   </div>
                 </div>
                 
-                <button
-                  @click="deleteMod(mod)"
-                  class="shrink-0 p-2 text-muted-foreground hover:text-red-500 transition-colors"
-                  title="Delete mod"
-                >
-                  <Trash2 class="h-4 w-4" />
-                </button>
+                <div class="flex items-center gap-1 shrink-0 ml-4">
+                  <button
+                    @click="toggleMod(mod)"
+                    class="px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+                    :class="mod.enabled ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400' : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400'"
+                  >
+                    {{ mod.enabled ? $t('instanceMods.disable', 'Disable') : $t('instanceMods.enable', 'Enable') }}
+                  </button>
+                  <button
+                    @click="deleteMod(mod)"
+                    class="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 rounded-md transition-colors"
+                    title="Delete mod"
+                  >
+                    <Trash2 class="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
