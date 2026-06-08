@@ -349,6 +349,7 @@ impl ExecutableTask for InstallFabricTask {
             pack_version_id: None,
             pack_file_name: None,
             is_installing: false,
+            extra: std::collections::HashMap::new(),
         }
     };
 
