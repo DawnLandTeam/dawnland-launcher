@@ -426,7 +426,6 @@ const installModpack = async () => {
     isInstalling.value = false;
     setAppBusy(false);
     
-    toast.success(t("task.submitted"), t("task.checkProgress"));
     router.push("/instances");
   } catch (error) {
     console.error("Installation failed:", error);
