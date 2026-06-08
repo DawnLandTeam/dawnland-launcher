@@ -67,11 +67,9 @@ const accounts = ref<Account[]>([]);
 const selectedInstanceId = ref<string>("");
 const selectedAccountId = ref<string>("");
 
+import { launchingInstances, jvmSpawnedInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';
+
 // Running state
-const launchingInstances = ref<Set<string>>(new Set());
-const jvmSpawnedInstances = ref<Set<string>>(new Set());
-const runningInstances = ref<Set<string>>(new Set());
-const repairingInstances = ref<Set<string>>(new Set());
 const gameLogs = ref<string[]>([]);
 const showGameLog = ref(false);
 

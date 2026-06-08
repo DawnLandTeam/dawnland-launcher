@@ -94,6 +94,7 @@ pub fn run() {
             // removed cancel_installation
             core::launcher::launch_instance,
             core::launcher::kill_instance,
+            core::launcher::is_instance_running,
             core::launcher::get_instance_config,
             core::launcher::save_instance_config,
             // Fabric commands
