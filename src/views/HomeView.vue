@@ -643,6 +643,15 @@ function loaderBadgeClass(loaderType: string): string {
                     <span class="truncate font-medium flex-1 text-left">{{ instance.name }}</span>
                     <Loader2 v-if="instance.isInstalling" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                   </DropdownMenuItem>
+
+                  <div v-if="installedInstances.length > 0" class="h-px bg-border my-1 mx-2"></div>
+                  
+                  <router-link to="/instances" class="flex items-center gap-2 w-full p-2 rounded-lg cursor-pointer hover:bg-muted text-primary transition-colors">
+                    <div class="flex items-center justify-center w-4 h-4 rounded-full bg-primary/10 shrink-0">
+                      <Plus class="h-3 w-3 text-primary" />
+                    </div>
+                    <span class="font-medium text-sm">{{ $t('home.installInstance') }}</span>
+                  </router-link>
                 </div>
               </DropdownMenu>
             </div>
