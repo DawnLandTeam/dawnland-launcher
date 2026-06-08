@@ -1501,14 +1501,23 @@ pub async fn launch_instance(
 
     // If this is a server modpack (server_ip provided/resolved), ensure servers.dat exists
     if let Some(ip) = &server_ip {
+        let port = server_port.unwrap_or(25565);
         let servers_dat_path = game_dir.join("servers.dat");
-        if !servers_dat_path.exists() {
-            let port = server_port.unwrap_or(25565);
-            let nbt_data = create_servers_dat_nbt(ip, port);
-            if let Err(e) = std::fs::write(&servers_dat_path, nbt_data) {
-                tracing::warn!("Failed to write servers.dat for server modpack: {}", e);
+        let default_options_path = game_dir.join("config").join("defaultoptions").join("servers.dat");
+
+        // Inject into main servers.dat
+        if let Err(e) = inject_server_to_dat(&servers_dat_path, ip, port) {
+            tracing::warn!("Failed to write servers.dat: {}", e);
+        } else {
+            tracing::info!("Injected server to servers.dat at {:?}", servers_dat_path);
+        }
+
+        // Also inject into defaultoptions if the folder exists
+        if default_options_path.parent().map(|p| p.exists()).unwrap_or(false) {
+            if let Err(e) = inject_server_to_dat(&default_options_path, ip, port) {
+                tracing::warn!("Failed to write defaultoptions/servers.dat: {}", e);
             } else {
-                tracing::info!("Created servers.dat for server modpack at {:?}", servers_dat_path);
+                tracing::info!("Injected server to defaultoptions/servers.dat");
             }
         }
     }
@@ -2246,51 +2255,58 @@ fn find_java() -> Option<String> {
     None
 }
 
-/// Helper to construct a minimal valid servers.dat NBT file containing a single server.
-fn create_servers_dat_nbt(ip: &str, port: u16) -> Vec<u8> {
-    let mut data = Vec::new();
-    // TAG_Compound("")
-    data.push(0x0a);
-    data.extend_from_slice(&[0x00, 0x00]);
-    
-    // TAG_List("servers")
-    data.push(0x09);
-    data.extend_from_slice(&[0x00, 0x07]);
-    data.extend_from_slice(b"servers");
-    
-    // List type = Compound (0x0a)
-    data.push(0x0a);
-    // List length = 1
-    data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
-    
-    // TAG_String("name", "Dawnland Server")
-    data.push(0x08);
-    data.extend_from_slice(&[0x00, 0x04]);
-    data.extend_from_slice(b"name");
-    
-    let server_name = b"Dawnland Server";
-    data.extend_from_slice(&(server_name.len() as u16).to_be_bytes());
-    data.extend_from_slice(server_name);
-    
-    // TAG_String("ip", ip:port)
-    data.push(0x08);
-    data.extend_from_slice(&[0x00, 0x02]);
-    data.extend_from_slice(b"ip");
-    
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+struct ServersDat {
+    #[serde(default)]
+    servers: Vec<ServerEntry>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+struct ServerEntry {
+    name: String,
+    ip: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hidden: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon: Option<String>,
+    #[serde(rename = "acceptTextures", default, skip_serializing_if = "Option::is_none")]
+    accept_textures: Option<u8>,
+}
+
+/// Helper to safely inject a server into an uncompressed servers.dat NBT file
+fn inject_server_to_dat(path: &std::path::Path, ip: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let mut dat = ServersDat { servers: Vec::new() };
+
+    if path.exists() {
+        if let Ok(bytes) = std::fs::read(path) {
+            if let Ok(parsed) = fastnbt::from_bytes::<ServersDat>(&bytes) {
+                dat = parsed;
+            }
+        }
+    }
+
     let address_str = if port == 25565 {
         ip.to_string()
     } else {
         format!("{}:{}", ip, port)
     };
-    let address = address_str.as_bytes();
-    data.extend_from_slice(&(address.len() as u16).to_be_bytes());
-    data.extend_from_slice(address);
+
+    // Prevent duplicates
+    if !dat.servers.iter().any(|s| s.ip == address_str) {
+        dat.servers.push(ServerEntry {
+            name: "Dawnland Server".to_string(),
+            ip: address_str,
+            hidden: Some(0),
+            icon: None,
+            accept_textures: None,
+        });
+        
+        let new_bytes = fastnbt::to_bytes(&dat)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, new_bytes)?;
+    }
     
-    // TAG_End (for Compound in List)
-    data.push(0x00);
-    
-    // TAG_End (for root Compound)
-    data.push(0x00);
-    
-    data
+    Ok(())
 }
