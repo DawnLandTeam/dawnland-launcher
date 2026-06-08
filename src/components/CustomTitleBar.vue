@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X, Copy } from "@lucide/vue";
+import { Minus, Square, X, Copy, Bell } from "@lucide/vue";
+import { notificationStore } from "../composables/useNotificationStore";
 
 const appWindow = getCurrentWindow();
 const isMaximized = ref(false);
@@ -23,10 +24,25 @@ async function close(): Promise<void> {
   await appWindow.close();
 }
 
-// Start dragging using Tauri API - dual insurance with data-tauri-drag-region
-async function startDrag(e: MouseEvent): Promise<void> {
-  console.log("Mouse down detected on Header!"); // Debug log
+let isMouseDown = false;
+
+function onMouseDown(e: MouseEvent) {
   if (e.button === 0) {
+    isMouseDown = true;
+  }
+}
+
+function onMouseUp() {
+  isMouseDown = false;
+}
+
+function onMouseLeave() {
+  isMouseDown = false;
+}
+
+async function onMouseMove(e: MouseEvent): Promise<void> {
+  if (isMouseDown) {
+    isMouseDown = false; // Prevent multiple calls
     try {
       await appWindow.startDragging();
     } catch (error) {
@@ -48,8 +64,11 @@ checkMaximized();
   <header
     class="region-drag flex h-8 shrink-0 select-none items-center justify-between px-3 w-full bg-white/10 dark:bg-black/20 backdrop-blur-md border-b border-white/10"
     style="position: relative; z-index: 99999;"
-    data-tauri-drag-region
-    @mousedown="startDrag"
+    @mousedown="onMouseDown"
+    @mouseup="onMouseUp"
+    @mouseleave="onMouseLeave"
+    @mousemove="onMouseMove"
+    @dblclick.prevent
   >
     <!-- Left: App title - prevent events to allow drag on parent -->
     <div
@@ -61,6 +80,21 @@ checkMaximized();
 
     <!-- Right: Window controls - enable pointer events for button clicks -->
     <div class="flex items-center pointer-events-auto">
+      <button
+        class="notification-toggle relative inline-flex h-8 w-10 items-center justify-center transition-colors hover:bg-neutral-700 hover:text-neutral-200"
+        :class="notificationStore.isCenterOpen.value ? 'bg-neutral-700 text-neutral-200' : ''"
+        style="color: #a3a3a3;"
+        @click="notificationStore.toggleCenter()"
+      >
+        <Bell :size="14" />
+        <span 
+          v-if="notificationStore.unreadCount.value > 0" 
+          class="absolute top-2 right-2.5 flex h-1.5 w-1.5"
+        >
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500"></span>
+        </span>
+      </button>
       <button
         class="inline-flex h-8 w-10 items-center justify-center transition-colors hover:bg-neutral-700 hover:text-neutral-200"
         style="color: #a3a3a3;"

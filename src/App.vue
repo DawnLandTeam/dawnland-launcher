@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
 import { useTaskStore } from "./composables/useTaskStore";
 import TaskCenter from "./components/TaskCenter.vue";
+import NotificationCenter from "./components/NotificationCenter.vue";
 import Toaster from "./components/Toaster.vue";
 
 const isUpdateModalOpen = ref(false);
@@ -109,5 +110,6 @@ onUnmounted(() => {
   <MainLayout />
   <UpdaterModal v-model:open="isUpdateModalOpen" :updateInfo="updateInfo" />
   <TaskCenter />
+  <NotificationCenter />
   <Toaster />
 </template>
