@@ -270,3 +270,122 @@ pub async fn add_authlib_account(
 
     Ok(account)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+    use tokio::sync::Mutex;
+    use std::sync::LazyLock;
+
+    static TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    async fn clear_authlib_files() {
+        let mut config_path = std::env::current_exe()
+            .map(|p| p.parent().unwrap().to_path_buf())
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        config_path.push(".dawnland");
+        config_path.push("authlib_servers.json");
+        let _ = tokio::fs::remove_file(config_path).await;
+        
+        let _ = crate::auth::save_accounts(&[]).await;
+    }
+
+    #[tokio::test]
+    async fn test_get_authlib_meta() {
+        let mut server = Server::new_async().await;
+        let mock = server.mock("GET", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "meta": {
+                    "serverName": "Test Authlib Server",
+                    "links": {
+                        "homepage": "https://test.com",
+                        "register": "https://test.com/register"
+                    }
+                }
+            }"#)
+            .create_async().await;
+
+        let result = get_authlib_meta(server.url()).await;
+        assert!(result.is_ok());
+        let meta = result.unwrap();
+        assert_eq!(meta.meta.unwrap().server_name.unwrap(), "Test Authlib Server");
+        
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_add_remove_authlib_server() {
+        let _guard = TEST_MUTEX.lock().await;
+        clear_authlib_files().await;
+
+        let mut server = Server::new_async().await;
+        let mock = server.mock("GET", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"meta": {"serverName": "Mock Server"}}"#)
+            .create_async().await;
+
+        let url = server.url();
+
+        let add_res = add_authlib_server(url.clone()).await;
+        assert!(add_res.is_ok());
+        assert_eq!(add_res.unwrap().name, "Mock Server");
+
+        let servers = fetch_authlib_servers().await.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].url, url);
+
+        let remove_res = remove_authlib_server(url.clone()).await;
+        assert!(remove_res.is_ok());
+
+        let servers_after = fetch_authlib_servers().await.unwrap();
+        assert_eq!(servers_after.len(), 0);
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_add_authlib_account() {
+        let _guard = TEST_MUTEX.lock().await;
+        clear_authlib_files().await;
+
+        let mut server = Server::new_async().await;
+        
+        // Mock root meta
+        let mock_meta = server.mock("GET", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"meta": {"serverName": "My Authlib"}}"#)
+            .create_async().await;
+
+        // Mock authenticate
+        let mock_auth = server.mock("POST", "/authserver/authenticate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "accessToken": "mock_access_token",
+                "clientToken": "mock_client_token",
+                "selectedProfile": {
+                    "id": "1234567890abcdef1234567890abcdef",
+                    "name": "AuthlibPlayer"
+                }
+            }"#)
+            .create_async().await;
+
+        let result = add_authlib_account(server.url(), "user".to_string(), "pass".to_string()).await;
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+        let account = result.unwrap();
+
+        assert_eq!(account.username, "AuthlibPlayer");
+        // Check if hyphens were added correctly
+        assert_eq!(account.id, "12345678-90ab-cdef-1234-567890abcdef");
+        assert_eq!(account.access_token, Some("mock_access_token".to_string()));
+        assert_eq!(account.authlib_server_name, Some("My Authlib".to_string()));
+
+        mock_meta.assert_async().await;
+        mock_auth.assert_async().await;
+    }
+}

@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
 use crate::auth::{get_accounts, save_accounts, Account, AccountType};
 use serde::{Deserialize, Serialize};
 
@@ -47,10 +50,74 @@ fn http_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
+#[cfg(not(test))]
 fn get_web_backend_url() -> String {
     option_env!("VITE_WEB_BACKEND_URL")
         .unwrap_or("http://localhost:3030")
         .to_string()
+}
+
+#[cfg(test)]
+pub static MOCK_SERVER_URL: std::sync::LazyLock<std::sync::RwLock<String>> = std::sync::LazyLock::new(|| std::sync::RwLock::new("".to_string()));
+
+#[cfg(test)]
+fn get_mock_server_url() -> String {
+    MOCK_SERVER_URL.read().unwrap().clone()
+}
+
+#[cfg(test)]
+fn get_web_backend_url() -> String {
+    get_mock_server_url()
+}
+
+#[cfg(not(test))]
+fn get_xbox_live_url() -> String {
+    "https://user.auth.xboxlive.com/user/authenticate".to_string()
+}
+
+#[cfg(test)]
+fn get_xbox_live_url() -> String {
+    format!("{}/user/authenticate", get_mock_server_url())
+}
+
+#[cfg(not(test))]
+fn get_xsts_url() -> String {
+    "https://xsts.auth.xboxlive.com/xsts/authorize".to_string()
+}
+
+#[cfg(test)]
+fn get_xsts_url() -> String {
+    format!("{}/xsts/authorize", get_mock_server_url())
+}
+
+#[cfg(not(test))]
+fn get_minecraft_auth_url() -> String {
+    "https://api.minecraftservices.com/authentication/login_with_xbox".to_string()
+}
+
+#[cfg(test)]
+fn get_minecraft_auth_url() -> String {
+    format!("{}/authentication/login_with_xbox", get_mock_server_url())
+}
+
+#[cfg(not(test))]
+fn get_minecraft_profile_url() -> String {
+    "https://api.minecraftservices.com/minecraft/profile".to_string()
+}
+
+#[cfg(test)]
+fn get_minecraft_profile_url() -> String {
+    format!("{}/minecraft/profile", get_mock_server_url())
+}
+
+#[cfg(not(test))]
+fn get_oauth_token_url() -> String {
+    "https://login.live.com/oauth20_token.srf".to_string()
+}
+
+#[cfg(test)]
+fn get_oauth_token_url() -> String {
+    format!("{}/oauth20_token.srf", get_mock_server_url())
 }
 
 /// Initiate Microsoft Device Code Flow.
@@ -201,7 +268,7 @@ async fn get_xbox_live_token(ms_token: &str) -> Result<String, String> {
     };
 
     let response = client
-        .post("https://user.auth.xboxlive.com/user/authenticate")
+        .post(get_xbox_live_url())
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
         .json(&request)
@@ -267,7 +334,7 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
     tracing::info!("XSTS request JSON: {}", request_json);
 
     let response = client
-        .post("https://xsts.auth.xboxlive.com/xsts/authorize")
+        .post(get_xsts_url())
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
         .json(&request)
@@ -361,7 +428,7 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, Stri
     };
 
     let response = client
-        .post("https://api.minecraftservices.com/authentication/login_with_xbox")
+        .post(get_minecraft_auth_url())
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
         .json(&request)
@@ -415,7 +482,7 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), Strin
     let client = http_client();
 
     let response = client
-        .get("https://api.minecraftservices.com/minecraft/profile")
+        .get(get_minecraft_profile_url())
         .header("Authorization", format!("Bearer {}", mc_token))
         .send()
         .await
@@ -549,7 +616,7 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
     // Step 1: Refresh Microsoft access token directly
     let client = http_client();
     let client_id = "780ab3ca-a1a0-4830-ac98-92a595e85a13";
-    let token_url = "https://login.live.com/oauth20_token.srf";
+    let token_url = get_oauth_token_url();
 
     let params = [
         ("client_id", client_id),
@@ -733,7 +800,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
 
     // 7. Exchange code for token
     let client = reqwest::Client::new();
-    let token_url = "https://login.live.com/oauth20_token.srf";
+    let token_url = get_oauth_token_url();
 
     let params = [
         ("client_id", client_id),
@@ -814,4 +881,122 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
     super::save_accounts(&accounts).await?;
 
     Ok(account)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+    use tokio::sync::Mutex;
+    use std::sync::LazyLock;
+
+    static TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    async fn clear_accounts() {
+        let _ = crate::auth::save_accounts(&[]).await;
+    }
+
+    #[tokio::test]
+    async fn test_start_microsoft_login() {
+        let _guard = TEST_MUTEX.lock().await;
+        let mut server = Server::new_async().await;
+        
+        {
+            let mut url = MOCK_SERVER_URL.write().unwrap();
+            *url = server.url();
+        }
+
+        let mock = server.mock("POST", "/api/microsoft/devicecode")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "user_code": "ABCDEFGH",
+                "device_code": "device_code_123",
+                "verification_uri": "https://microsoft.com/link",
+                "expires_in": 900,
+                "interval": 5,
+                "message": "Enter code ABCDEFGH at https://microsoft.com/link"
+            }"#)
+            .create_async().await;
+
+        let result = start_microsoft_login().await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.user_code, "ABCDEFGH");
+        assert_eq!(response.device_code, "device_code_123");
+        
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_poll_microsoft_token_success() {
+        let _guard = TEST_MUTEX.lock().await;
+        let mut server = Server::new_async().await;
+        
+        {
+            let mut url = MOCK_SERVER_URL.write().unwrap();
+            *url = server.url();
+        }
+
+        let mock_token = server.mock("POST", "/api/microsoft/token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "access_token": "ms_access_token",
+                "refresh_token": "ms_refresh_token"
+            }"#)
+            .create_async().await;
+
+        let mock_xbl = server.mock("POST", "/user/authenticate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "Token": "xbl_token"
+            }"#)
+            .create_async().await;
+
+        let mock_xsts = server.mock("POST", "/xsts/authorize")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "Token": "xsts_token",
+                "DisplayClaims": {
+                    "xui": [{"uhs": "user_hash"}]
+                }
+            }"#)
+            .create_async().await;
+
+        let mock_mc = server.mock("POST", "/authentication/login_with_xbox")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "access_token": "mc_access_token"
+            }"#)
+            .create_async().await;
+
+        let mock_profile = server.mock("GET", "/minecraft/profile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "id": "uuid-1234",
+                "name": "TestPlayer"
+            }"#)
+            .create_async().await;
+
+        clear_accounts().await;
+
+        let result = poll_microsoft_token("dummy_device_code").await;
+        assert!(result.is_ok(), "Failed to poll microsoft token: {:?}", result.err());
+        
+        let account = result.unwrap();
+        assert_eq!(account.username, "TestPlayer");
+        assert_eq!(account.id, "uuid-1234");
+        assert_eq!(account.access_token, Some("mc_access_token".to_string()));
+
+        mock_token.assert_async().await;
+        mock_xbl.assert_async().await;
+        mock_xsts.assert_async().await;
+        mock_mc.assert_async().await;
+        mock_profile.assert_async().await;
+    }
 }
