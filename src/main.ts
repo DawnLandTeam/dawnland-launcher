@@ -4,7 +4,7 @@ import router from "./router";
 import i18n from "./i18n";
 import { safeHtml } from "./directives/safeHtml";
 import "./style.css";
-import "vue-sonner/dist/style.css";
+import "vue-sonner/style.css";
 
 // Disable right-click context menu in production
 if (import.meta.env.PROD) {
