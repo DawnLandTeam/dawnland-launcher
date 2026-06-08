@@ -57,6 +57,15 @@ pub async fn kill_instance(
     }
 }
 
+#[tauri::command]
+pub async fn is_instance_running(
+    version_id: String,
+    state: State<'_, RunningInstances>,
+) -> Result<bool, String> {
+    let map = state.0.lock().await;
+    Ok(map.contains_key(&version_id))
+}
+
 // ============ Constants ============
 
 #[cfg(target_os = "windows")]
@@ -189,6 +198,9 @@ pub struct InstanceConfig {
     /// Whether this instance is currently being installed
     #[serde(default)]
     pub is_installing: bool,
+    /// Preserve any unknown fields when modifying settings so we don't accidentally clear server bindings
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl InstanceConfig {
@@ -265,14 +277,32 @@ pub async fn save_instance_config(
             .map_err(|e| format!("Failed to create version directory: {}", e))?;
     }
 
-    let content = serde_json::to_string_pretty(&config)
+    // Read existing config so we don't overwrite backend-only fields (like server bindings or task states)
+    let mut final_config = if config_path.exists() {
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .unwrap_or_else(|_| "{}".to_string());
+        serde_json::from_str::<InstanceConfig>(&content).unwrap_or_default()
+    } else {
+        InstanceConfig::default()
+    };
+
+    // Update only the fields that are configurable via the settings UI
+    final_config.java_path = config.java_path;
+    final_config.max_memory = config.max_memory;
+    final_config.jvm_args_extra = config.jvm_args_extra;
+    final_config.window_behavior = config.window_behavior;
+    final_config.show_game_log = config.show_game_log;
+    // We intentionally do NOT copy hidden, server_id, pack_version_id, pack_file_name, or is_installing here!
+
+    let content = serde_json::to_string_pretty(&final_config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     tokio::fs::write(&config_path, content)
         .await
         .map_err(|e| format!("Failed to write config: {}", e))?;
 
-    tracing::info!("Saved config for {}: {:?}", version_id, config);
+    tracing::info!("Saved config for {}: {:?}", version_id, final_config);
     Ok(())
 }
 
@@ -1434,8 +1464,8 @@ pub async fn launch_instance(
     app: AppHandle,
     version_id: String,
     account_uuid: String,
-    server_ip: Option<String>,
-    server_port: Option<u16>,
+    mut server_ip: Option<String>,
+    mut server_port: Option<u16>,
 ) -> Result<(), String> {
     tracing::info!(
         "Launching instance {} with account {}",
@@ -1452,6 +1482,47 @@ pub async fn launch_instance(
     verify_instance_integrity(&app, &instance_dir).await?;
     let game_dir = instance_dir.clone();
     let assets_dir = base_dir.join("assets");
+
+    // Load instance configuration early to get server_id if needed
+    let instance_config = get_instance_config(version_id.clone()).await?;
+
+    // If this instance is bound to a server, fetch it to get IP (if missing) and Name
+    let mut actual_server_name = "Dawnland Server".to_string();
+    if let Some(sid) = &instance_config.server_id {
+        if let Ok(server) = crate::core::server::get_server(sid.clone()).await {
+            actual_server_name = server.name;
+            if server_ip.is_none() {
+                tracing::info!("Server IP not provided, fetched from backend for server ID: {}", sid);
+                server_ip = Some(server.ip);
+                server_port = Some(server.port as u16);
+            }
+        } else {
+            tracing::warn!("Failed to fetch server info for ID: {}", sid);
+        }
+    }
+
+    // If this is a server modpack (server_ip provided/resolved), ensure servers.dat exists
+    if let Some(ip) = &server_ip {
+        let port = server_port.unwrap_or(25565);
+        let servers_dat_path = game_dir.join("servers.dat");
+        let default_options_path = game_dir.join("config").join("defaultoptions").join("servers.dat");
+
+        // Inject into main servers.dat
+        if let Err(e) = inject_server_to_dat(&servers_dat_path, &actual_server_name, ip, port).await {
+            tracing::warn!("Failed to write servers.dat: {}", e);
+        } else {
+            tracing::info!("Injected server to servers.dat at {:?}", servers_dat_path);
+        }
+
+        // Also inject into defaultoptions if the folder exists
+        if default_options_path.parent().map(|p| p.exists()).unwrap_or(false) {
+            if let Err(e) = inject_server_to_dat(&default_options_path, &actual_server_name, ip, port).await {
+                tracing::warn!("Failed to write defaultoptions/servers.dat: {}", e);
+            } else {
+                tracing::info!("Injected server to defaultoptions/servers.dat");
+            }
+        }
+    }
 
     // Load account
     let accounts = crate::auth::load_accounts().await?;
@@ -1772,12 +1843,9 @@ pub async fn launch_instance(
         main_class: main_class.clone(),
         jvm_args: Vec::new(),
         game_args: Vec::new(),
-        server_ip,
+        server_ip: server_ip.clone(), // use the resolved mutable server_ip
         server_port,
     };
-
-    // Load instance configuration (for custom Java path)
-    let instance_config = get_instance_config(version_id.clone()).await?;
 
     // Determine Java executable path: instance config > recommended matching java > system default
     let java_executable = match &instance_config.java_path {
@@ -2187,4 +2255,66 @@ fn find_java() -> Option<String> {
     }
 
     None
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+struct ServersDat {
+    #[serde(default)]
+    servers: Vec<ServerEntry>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+struct ServerEntry {
+    name: String,
+    ip: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hidden: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon: Option<String>,
+    #[serde(rename = "acceptTextures", default, skip_serializing_if = "Option::is_none")]
+    accept_textures: Option<u8>,
+}
+
+/// Helper to safely inject a server into an uncompressed servers.dat NBT file
+async fn inject_server_to_dat(path: &std::path::Path, server_name: &str, ip: &str, port: u16) -> Result<(), String> {
+    let path_buf = path.to_path_buf();
+    let server_name = server_name.to_string();
+    let ip = ip.to_string();
+
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let mut dat = ServersDat { servers: Vec::new() };
+
+        if path_buf.exists() {
+            if let Ok(bytes) = std::fs::read(&path_buf) {
+                if let Ok(parsed) = fastnbt::from_bytes::<ServersDat>(&bytes) {
+                    dat = parsed;
+                }
+            }
+        }
+
+        let address_str = if port == 25565 {
+            ip
+        } else {
+            format!("{}:{}", ip, port)
+        };
+
+        // Prevent duplicates
+        if !dat.servers.iter().any(|s| s.ip == address_str) {
+            dat.servers.push(ServerEntry {
+                name: server_name,
+                ip: address_str,
+                hidden: Some(0),
+                icon: None,
+                accept_textures: None,
+            });
+            
+            let new_bytes = fastnbt::to_bytes(&dat).map_err(|e| e.to_string())?;
+            if let Some(parent) = path_buf.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path_buf, new_bytes).map_err(|e| e.to_string())?;
+        }
+        
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
 }

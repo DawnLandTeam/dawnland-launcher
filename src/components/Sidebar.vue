@@ -49,19 +49,17 @@ const navItems = computed(() => [
       <button
         class="task-center-toggle relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors"
         :class="[
-          taskStore.isTaskCenterOpen.value ? 'bg-emerald-500/20 text-emerald-500' : 'text-neutral-800 hover:bg-black/10 hover:text-black dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white'
+          taskStore.isTaskCenterOpen.value ? 'bg-emerald-500/20 text-emerald-500' : (taskStore.hasActiveTasks.value ? 'text-emerald-500 dark:text-emerald-400 hover:bg-emerald-500/10' : 'text-neutral-800 hover:bg-black/10 hover:text-black dark:text-zinc-300 dark:hover:bg-white/10 dark:hover:text-white')
         ]"
         title="Task Center"
         @click="taskStore.toggleTaskCenter()"
       >
-        <DownloadCloud :size="20" />
-        <span 
+        <DownloadCloud 
           v-if="taskStore.hasActiveTasks.value" 
-          class="absolute top-2 right-2 flex h-2 w-2"
-        >
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-          <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-        </span>
+          :size="20" 
+          class="animate-ping absolute opacity-75" 
+        />
+        <DownloadCloud :size="20" class="relative" />
       </button>
     </div>
 

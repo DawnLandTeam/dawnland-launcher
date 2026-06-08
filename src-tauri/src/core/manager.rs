@@ -112,6 +112,12 @@ pub async fn scan_installed_instances(
                     continue;
                 }
 
+                // An instance MUST have its basic {id}.json file unless it is currently actively installing
+                if !is_installing && !json_path.exists() {
+                    tracing::warn!("Skipping invalid/empty instance directory {}: missing {}.json", id, id);
+                    continue;
+                }
+
                 // Read version JSON to extract metadata
                 match tokio::fs::read_to_string(&json_path).await {
                     Ok(content) => {
@@ -506,55 +512,25 @@ pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>,
         .map_err(|e| format!("Failed to read directory entry: {}", e))?
     {
         let path = entry.path();
+        let filename = entry.file_name().to_string_lossy().to_string();
 
-        // Only process .jar files (enabled mods)
-        if path.extension().and_then(|s| s.to_str()) == Some("jar") {
-            let filename = entry.file_name().to_string_lossy().to_string();
-            let metadata = tokio::fs::metadata(&path)
-                .await
-                .map_err(|e| e.to_string())?;
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|e| e.to_string())?;
 
+        if filename.ends_with(".jar") {
             mods.push(LocalModItem {
                 filename: filename.clone(),
                 enabled: true,
                 size: metadata.len(),
             });
-        }
-    }
-
-    // Also check for disabled mods (.jar.disabled)
-    let disabled_dir = base_dir
-        .join("versions")
-        .join(&version_id)
-        .join("mods")
-        .join("disabled");
-    if disabled_dir.exists() {
-        let mut entries = tokio::fs::read_dir(&disabled_dir)
-            .await
-            .map_err(|e| format!("Failed to read disabled mods directory: {}", e))?;
-
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|e| format!("Failed to read directory entry: {}", e))?
-        {
-            let path = entry.path();
-
-            if path.extension().and_then(|s| s.to_str()) == Some("jar") {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                let metadata = tokio::fs::metadata(&path)
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                // Remove .disabled extension for display
-                let display_name = filename.trim_end_matches(".disabled");
-
-                mods.push(LocalModItem {
-                    filename: display_name.to_string(),
-                    enabled: false,
-                    size: metadata.len(),
-                });
-            }
+        } else if filename.ends_with(".jar.disable") {
+            let display_name = filename.trim_end_matches(".disable").to_string();
+            mods.push(LocalModItem {
+                filename: display_name,
+                enabled: false,
+                size: metadata.len(),
+            });
         }
     }
 
@@ -581,53 +557,28 @@ pub async fn toggle_mod_status(
 
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
-    let disabled_dir = mods_dir.join("disabled");
+    let enabled_file = mods_dir.join(&filename);
+    let disabled_file = mods_dir.join(format!("{}.disable", filename));
 
-    // Determine source and destination paths
-    let (src_dir, dst_dir) = if enable {
-        // Moving from disabled to enabled
-        (&disabled_dir, &mods_dir)
+    let (src_file, dst_file) = if enable {
+        (disabled_file, enabled_file)
     } else {
-        // Moving from enabled to disabled
-        (&mods_dir, &disabled_dir)
+        (enabled_file, disabled_file)
     };
 
-    let src_file = src_dir.join(&filename);
-    let dst_file = dst_dir.join(&filename);
-
-    // If enabling, also check the main mods folder (might not be in disabled folder)
-    let alt_src_file = if enable {
-        mods_dir.join(&filename)
-    } else {
-        src_file.clone()
-    };
-
-    // Check if source exists
-    let actual_src = if src_file.exists() {
-        src_file
-    } else if alt_src_file.exists() {
-        alt_src_file
-    } else {
-        return Err(format!("Mod file not found: {}", filename));
-    };
-
-    // Ensure destination directory exists
-    if !dst_dir.exists() {
-        tokio::fs::create_dir_all(&dst_dir)
-            .await
-            .map_err(|e| format!("Failed to create disabled directory: {}", e))?;
+    if !src_file.exists() {
+        if dst_file.exists() {
+            // Already in desired state
+            return Ok(());
+        }
+        return Err(format!("Mod file not found: {}", src_file.display()));
     }
 
-    // Check if destination already exists
     if dst_file.exists() {
-        return Err(format!(
-            "Mod already exists in target location: {}",
-            filename
-        ));
+        return Err(format!("Mod already exists in target location: {}", dst_file.display()));
     }
 
-    // Rename/move the file
-    tokio::fs::rename(&actual_src, &dst_dir.join(&filename))
+    tokio::fs::rename(&src_file, &dst_file)
         .await
         .map_err(|e| format!("Failed to move mod file: {}", e))?;
 
@@ -652,7 +603,7 @@ pub async fn delete_local_mod(version_id: String, filename: String) -> Result<()
     let mod_file = mods_dir.join(&filename);
 
     // Check in disabled directory
-    let disabled_file = mods_dir.join("disabled").join(&filename);
+    let disabled_file = mods_dir.join(format!("{}.disable", filename));
 
     let file_to_delete = if mod_file.exists() {
         mod_file

@@ -1,23 +1,24 @@
 <script setup lang="ts">
-import { useToast } from '../composables/useToast';
+import { notificationStore } from '../composables/useNotificationStore';
 import { X, CheckCircle2, AlertCircle, Info } from '@lucide/vue';
+import { computed } from 'vue';
 
-const { toasts, removeToast } = useToast();
+const popups = computed(() => notificationStore.notifications.value.filter(n => n.isPopup));
 </script>
 
 <template>
   <!-- Fixed container for toasts, high z-index to stay above everything -->
-  <div class="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 w-full max-w-sm pointer-events-none">
+  <div class="fixed top-12 right-4 z-[9999] flex flex-col gap-2 w-full max-w-sm pointer-events-none">
     <TransitionGroup 
       enter-active-class="transition-all duration-300 ease-out"
-      enter-from-class="opacity-0 translate-y-4 scale-95"
+      enter-from-class="opacity-0 -translate-y-4 scale-95"
       enter-to-class="opacity-100 translate-y-0 scale-100"
       leave-active-class="transition-all duration-200 ease-in"
       leave-from-class="opacity-100 scale-100"
       leave-to-class="opacity-0 scale-95"
     >
       <div 
-        v-for="toast in toasts" 
+        v-for="toast in popups" 
         :key="toast.id"
         class="pointer-events-auto flex items-start gap-3 p-4 rounded-xl shadow-lg border backdrop-blur-md"
         :class="[
@@ -43,7 +44,7 @@ const { toasts, removeToast } = useToast();
 
         <!-- Close button -->
         <button 
-          @click="removeToast(toast.id)"
+          @click="notificationStore.dismissPopup(toast.id)"
           class="shrink-0 p-1 -mr-2 -mt-1 rounded-md opacity-50 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
         >
           <X class="w-4 h-4" />

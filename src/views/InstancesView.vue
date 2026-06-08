@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, onActivated, onUnmounted } from "vue";
+import { ref, computed, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw } from "@lucide/vue";
@@ -43,6 +43,8 @@ interface JavaInfo {
 }
 
 // Router — deep-link support
+import { launchingInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';
+
 const route = useRoute();
 const router = useRouter();
 
@@ -202,6 +204,13 @@ async function loadJavas() {
 // ---------------------------------------------------------------------------
 // Settings modal
 // ---------------------------------------------------------------------------
+
+const isSettingsInstanceRunning = computed(() => {
+  return launchingInstances.value.has(settingsInstanceId.value) ||
+         runningInstances.value.has(settingsInstanceId.value) ||
+         repairingInstances.value.has(settingsInstanceId.value);
+});
+
 async function openSettings(instance: InstanceItem) {
   settingsInstanceId.value = instance.id;
   settingsInstanceName.value = instance.name;
@@ -518,6 +527,11 @@ function loaderBadgeClass(loaderType: string): string {
           {{ settingsInstanceName }}
         </DialogDescription>
 
+        <div v-if="isSettingsInstanceRunning" class="p-3 bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 rounded-md text-sm flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          {{ $t('instances.cannotEditRunning', '游戏正在运行中，无法修改配置') }}
+        </div>
+
           <!-- Java Path -->
           <div class="space-y-2">
             <label class="text-sm font-medium">{{ $t('instances.settingsDialog.javaVersion') }}</label>
@@ -614,7 +628,7 @@ function loaderBadgeClass(loaderType: string): string {
             </button>
             <button
               @click="saveSettings"
-              :disabled="isSavingConfig"
+              :disabled="isSavingConfig || isSettingsInstanceRunning"
               class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
             >
               <Save class="h-4 w-4" />

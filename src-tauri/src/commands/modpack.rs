@@ -119,7 +119,12 @@ impl ExecutableTask for InstallModpackTask {
 
                 let mut tasks = Vec::new();
                 for file in resolved_files {
-                    let dest = instance_dir.join("mods").join(&file.filename);
+                    let mut dest = instance_dir.join("mods").join(&file.filename);
+                    let disabled_dest = instance_dir.join("mods").join(format!("{}.disable", file.filename));
+                    if disabled_dest.exists() {
+                        dest = disabled_dest;
+                    }
+
                     tasks.push(DownloadTask::new(
                         file.download_url,
                         dest.to_string_lossy().to_string(),
@@ -145,7 +150,14 @@ impl ExecutableTask for InstallModpackTask {
                 let mut tasks = Vec::new();
                 for file in manifest.files {
                     if let Some(url) = file.downloads.first() {
-                        let dest = instance_dir.join(&file.path);
+                        let mut dest = instance_dir.join(&file.path);
+                        if let Some(filename) = dest.file_name().and_then(|n| n.to_str()) {
+                            let disabled_dest = dest.with_file_name(format!("{}.disable", filename));
+                            if disabled_dest.exists() {
+                                dest = disabled_dest;
+                            }
+                        }
+
                         let hash = file.hashes.get("sha1").cloned();
                         tasks.push(DownloadTask::new(
                             url.clone(),
@@ -210,7 +222,9 @@ impl ExecutableTask for InstallModpackTask {
         let mut expected_mod_filenames = std::collections::HashSet::new();
         for task in &tasks {
             if let Some(filename) = std::path::Path::new(&task.dest_path).file_name() {
-                expected_mod_filenames.insert(filename.to_string_lossy().to_string());
+                let name = filename.to_string_lossy().to_string();
+                let base_name = name.trim_end_matches(".disable").to_string();
+                expected_mod_filenames.insert(base_name);
             }
         }
 
@@ -224,9 +238,18 @@ impl ExecutableTask for InstallModpackTask {
                             let file_path = instance_dir.join(&old_file);
                             if let Some(filename) = file_path.file_name() {
                                 let name_str = filename.to_string_lossy().to_string();
-                                if !expected_mod_filenames.contains(&name_str) {
+                                let base_name = name_str.trim_end_matches(".disable").to_string();
+                                
+                                if !expected_mod_filenames.contains(&base_name) {
                                     tracing::info!("Removing old modpack file: {}", old_file);
-                                    let _ = std::fs::remove_file(file_path);
+                                    let _ = std::fs::remove_file(&file_path);
+                                    
+                                    // Also try removing variants
+                                    let disabled_path = file_path.with_file_name(format!("{}.disable", base_name));
+                                    let _ = std::fs::remove_file(&disabled_path);
+                                    
+                                    let enabled_path = file_path.with_file_name(&base_name);
+                                    let _ = std::fs::remove_file(&enabled_path);
                                 }
                             }
                         }
@@ -239,7 +262,9 @@ impl ExecutableTask for InstallModpackTask {
         let mut new_modpack_files = Vec::new();
         for task in &tasks {
             if let Ok(rel_path) = std::path::Path::new(&task.dest_path).strip_prefix(&instance_dir) {
-                new_modpack_files.push(rel_path.to_string_lossy().to_string().replace("\\\\", "/"));
+                let rel_str = rel_path.to_string_lossy().to_string().replace("\\\\", "/");
+                let base_rel_str = rel_str.trim_end_matches(".disable").to_string();
+                new_modpack_files.push(base_rel_str);
             }
         }
         let _ = std::fs::write(
