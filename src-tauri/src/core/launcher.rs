@@ -189,6 +189,9 @@ pub struct InstanceConfig {
     /// Whether this instance is currently being installed
     #[serde(default)]
     pub is_installing: bool,
+    /// Preserve any unknown fields when modifying settings so we don't accidentally clear server bindings
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl InstanceConfig {
@@ -265,14 +268,32 @@ pub async fn save_instance_config(
             .map_err(|e| format!("Failed to create version directory: {}", e))?;
     }
 
-    let content = serde_json::to_string_pretty(&config)
+    // Read existing config so we don't overwrite backend-only fields (like server bindings or task states)
+    let mut final_config = if config_path.exists() {
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .unwrap_or_else(|_| "{}".to_string());
+        serde_json::from_str::<InstanceConfig>(&content).unwrap_or_default()
+    } else {
+        InstanceConfig::default()
+    };
+
+    // Update only the fields that are configurable via the settings UI
+    final_config.java_path = config.java_path;
+    final_config.max_memory = config.max_memory;
+    final_config.jvm_args_extra = config.jvm_args_extra;
+    final_config.window_behavior = config.window_behavior;
+    final_config.show_game_log = config.show_game_log;
+    // We intentionally do NOT copy hidden, server_id, pack_version_id, pack_file_name, or is_installing here!
+
+    let content = serde_json::to_string_pretty(&final_config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     tokio::fs::write(&config_path, content)
         .await
         .map_err(|e| format!("Failed to write config: {}", e))?;
 
-    tracing::info!("Saved config for {}: {:?}", version_id, config);
+    tracing::info!("Saved config for {}: {:?}", version_id, final_config);
     Ok(())
 }
 
