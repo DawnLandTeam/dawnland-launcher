@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, X, Bell } from "@lucide/vue";
 import { notificationStore } from "../composables/useNotificationStore";
@@ -30,7 +29,7 @@ function onMouseLeave() {
   isMouseDown = false;
 }
 
-async function onMouseMove(e: MouseEvent): Promise<void> {
+async function onMouseMove(): Promise<void> {
   if (isMouseDown) {
     isMouseDown = false; // Prevent multiple calls
     try {

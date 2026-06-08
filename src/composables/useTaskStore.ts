@@ -90,7 +90,8 @@ export function useTaskStore() {
             title,
             description: '',
             type: 'info',
-            isPopup: false
+            isPopup: false,
+            duration: 3000
           });
         }
       });

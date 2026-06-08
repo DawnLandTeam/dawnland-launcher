@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { Package, Search, Download, Trash2, ToggleLeft, ToggleRight, Loader2 } from "@lucide/vue";
+import { Package, Search, Download, Trash2, Loader2 } from "@lucide/vue";
 import { DialogContent, DialogTitle, DialogDescription } from "./ui/dialog";
 
 // Types
