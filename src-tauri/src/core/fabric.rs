@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
 //! Fabric Mod Loader Integration
 //! Provides commands for fetching available Fabric loaders and installing Fabric instances.
 
@@ -431,4 +434,46 @@ pub async fn check_vanilla_installed(mc_version: String) -> Result<bool, String>
     let installed = client_jar.exists();
     tracing::info!("Vanilla {} installed: {}", mc_version, installed);
     Ok(installed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_fabric_loader_response() {
+        let json = r#"[
+            {
+                "loader": {
+                    "separator": ".",
+                    "build": 1,
+                    "maven": "net.fabricmc:fabric-loader:0.15.7",
+                    "version": "0.15.7",
+                    "stable": true
+                }
+            },
+            {
+                "loader": {
+                    "separator": ".",
+                    "build": 2,
+                    "maven": "net.fabricmc:fabric-loader:0.15.8-beta.1",
+                    "version": "0.15.8-beta.1",
+                    "stable": false
+                }
+            }
+        ]"#;
+
+        let responses: Vec<FabricLoaderResponse> = serde_json::from_str(json).unwrap();
+        assert_eq!(responses.len(), 2);
+        
+        let stable = &responses[0].loader;
+        assert_eq!(stable.version, "0.15.7");
+        assert_eq!(stable.stable, true);
+        assert_eq!(stable.build, Some(1));
+        assert_eq!(stable.maven.as_ref().unwrap(), "net.fabricmc:fabric-loader:0.15.7");
+
+        let unstable = &responses[1].loader;
+        assert_eq!(unstable.version, "0.15.8-beta.1");
+        assert_eq!(unstable.stable, false);
+    }
 }

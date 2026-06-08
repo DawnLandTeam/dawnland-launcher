@@ -1,4 +1,5 @@
-use serde::Deserialize;
+#![allow(dead_code)]
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 

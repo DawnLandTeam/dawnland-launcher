@@ -52,3 +52,17 @@ pub fn create_hidden_std_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::
     }
     std_cmd
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compare_versions() {
+        assert_eq!(compare_versions("1.0", "1.0"), std::cmp::Ordering::Equal);
+        assert_eq!(compare_versions("1.0.0", "1.0.1"), std::cmp::Ordering::Less);
+        assert_eq!(compare_versions("1.10.1", "1.9.5"), std::cmp::Ordering::Greater);
+        assert_eq!(compare_versions("2.0-beta", "2.0-alpha"), std::cmp::Ordering::Equal); // Note: Current logic drops non-numbers
+        assert_eq!(compare_versions("1.2", "1.2.3"), std::cmp::Ordering::Less);
+    }
+}

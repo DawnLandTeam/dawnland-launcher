@@ -32,3 +32,6 @@ web-backend/.env
 web-backend/sqlite.db
 web-backend/web-backend.exe
 web-backend/pack_files
+playwright-report/
+test-results/
+.webview2/
