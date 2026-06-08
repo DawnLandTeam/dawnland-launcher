@@ -11,7 +11,6 @@ import {
 } from "./ui/dialog";
 import InstallCard from "./InstallCard.vue";
 import { setAppBusy } from "../composables/useAppStatus";
-import { toast } from '../composables/useToast';
 
 // Types
 interface VanillaVersion {

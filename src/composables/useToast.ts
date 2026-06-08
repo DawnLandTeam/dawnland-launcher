@@ -7,7 +7,8 @@ export const useToast = () => {
       description: description || '',
       type: 'success',
       isPopup: true,
-      status: 'read'
+      status: 'read',
+      duration: 3000
     });
   };
 
@@ -17,7 +18,8 @@ export const useToast = () => {
       description: description || '',
       type: 'error',
       isPopup: true,
-      status: 'read'
+      status: 'read',
+      duration: 3000
     });
   };
 
@@ -27,7 +29,8 @@ export const useToast = () => {
       description: description || '',
       type: 'info',
       isPopup: true,
-      status: 'read'
+      status: 'read',
+      duration: 3000
     });
   };
 
