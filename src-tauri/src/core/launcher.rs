@@ -1483,6 +1483,20 @@ pub async fn launch_instance(
     let game_dir = instance_dir.clone();
     let assets_dir = base_dir.join("assets");
 
+    // If this is a server modpack (server_ip provided), ensure servers.dat exists
+    if let Some(ip) = &server_ip {
+        let servers_dat_path = game_dir.join("servers.dat");
+        if !servers_dat_path.exists() {
+            let port = server_port.unwrap_or(25565);
+            let nbt_data = create_servers_dat_nbt(ip, port);
+            if let Err(e) = std::fs::write(&servers_dat_path, nbt_data) {
+                tracing::warn!("Failed to write servers.dat for server modpack: {}", e);
+            } else {
+                tracing::info!("Created servers.dat for server modpack at {:?}", servers_dat_path);
+            }
+        }
+    }
+
     // Load account
     let accounts = crate::auth::load_accounts().await?;
     let mut account = accounts
@@ -2217,4 +2231,53 @@ fn find_java() -> Option<String> {
     }
 
     None
+}
+
+/// Helper to construct a minimal valid servers.dat NBT file containing a single server.
+fn create_servers_dat_nbt(ip: &str, port: u16) -> Vec<u8> {
+    let mut data = Vec::new();
+    // TAG_Compound("")
+    data.push(0x0a);
+    data.extend_from_slice(&[0x00, 0x00]);
+    
+    // TAG_List("servers")
+    data.push(0x09);
+    data.extend_from_slice(&[0x00, 0x07]);
+    data.extend_from_slice(b"servers");
+    
+    // List type = Compound (0x0a)
+    data.push(0x0a);
+    // List length = 1
+    data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+    
+    // TAG_String("name", "Dawnland Server")
+    data.push(0x08);
+    data.extend_from_slice(&[0x00, 0x04]);
+    data.extend_from_slice(b"name");
+    
+    let server_name = b"Dawnland Server";
+    data.extend_from_slice(&(server_name.len() as u16).to_be_bytes());
+    data.extend_from_slice(server_name);
+    
+    // TAG_String("ip", ip:port)
+    data.push(0x08);
+    data.extend_from_slice(&[0x00, 0x02]);
+    data.extend_from_slice(b"ip");
+    
+    let address_str = if port == 25565 {
+        ip.to_string()
+    } else {
+        format!("{}:{}", ip, port)
+    };
+    let address = address_str.as_bytes();
+    data.extend_from_slice(&(address.len() as u16).to_be_bytes());
+    data.extend_from_slice(address);
+    
+    // TAG_End (for Compound in List)
+    data.push(0x00);
+    
+    // TAG_End (for root Compound)
+    data.push(0x00);
+    
+    data
 }
