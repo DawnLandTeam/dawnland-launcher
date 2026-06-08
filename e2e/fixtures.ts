@@ -40,6 +40,26 @@ export const test = base.extend<TauriFixtures>({
       if (cmd in mockResponses) {
         return mockResponses[cmd];
       }
+
+      const availableCommands = Object.keys(mockResponses);
+      const message =
+        `No mock response registered for IPC command "${cmd}".` +
+        (availableCommands.length
+          ? ` Available mocked commands: ${availableCommands.join(', ')}.`
+          : ' No IPC commands are currently mocked.');
+
+      // Log prominently so missing mocks / unexpected commands are easy to spot in CI output
+      // eslint-disable-next-line no-console
+      console.error(message);
+
+      // Fail fast when tests hit an unexpected / unmocked IPC command
+      throw new Error(message);
+    });
+
+    await page.exposeFunction('__getIpcResponse', (cmd: string) => {
+      if (cmd in mockResponses) {
+        return mockResponses[cmd];
+      }
       return null;
     });
 
