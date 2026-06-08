@@ -111,5 +111,5 @@ onUnmounted(() => {
   <UpdaterModal v-model:open="isUpdateModalOpen" :updateInfo="updateInfo" />
   <TaskCenter />
   <NotificationCenter />
-  <Toaster position="bottom-right" richColors theme="system" />
+  <Toaster position="top-right" richColors theme="system" />
 </template>
