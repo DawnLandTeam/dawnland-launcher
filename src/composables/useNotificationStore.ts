@@ -30,7 +30,7 @@ export const useNotificationStore = () => {
     }
   };
 
-  const addNotification = (payload: Omit<NotificationMessage, 'timestamp' | 'status'> & { id?: string | number, status?: 'unread' | 'read' }) => {
+  const addNotification = (payload: Omit<NotificationMessage, 'timestamp' | 'status' | 'id'> & { id?: string | number, status?: 'unread' | 'read' }) => {
     const id = payload.id !== undefined ? payload.id : `notif_${nextId++}`;
     
     // Check if it already exists (to prevent duplicates if manually using add instead of update)

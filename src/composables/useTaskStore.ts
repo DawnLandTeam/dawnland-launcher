@@ -65,7 +65,7 @@ export function useTaskStore() {
             // Silent update for running tasks
             notificationStore.updateNotification(updatedTask.id, {
               title: i18n.global.t('task.runningTitle', { name: getTaskName(updatedTask.task_type) }) || `Running: ${getTaskName(updatedTask.task_type)}`,
-              description: updatedTask.progress_detail || '',
+              description: updatedTask.progress?.detail || '',
               type: 'info',
               isPopup: false // Do not pop up repeatedly
             });
@@ -78,7 +78,7 @@ export function useTaskStore() {
           notificationStore.addNotification({
             id: updatedTask.id,
             title: i18n.global.t('task.startedTitle', { name: getTaskName(updatedTask.task_type) }) || `Task Started: ${getTaskName(updatedTask.task_type)}`,
-            description: updatedTask.progress_detail || '',
+            description: updatedTask.progress?.detail || '',
             type: 'info',
             isPopup: true,
             duration: 3000
