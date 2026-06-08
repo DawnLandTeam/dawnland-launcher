@@ -58,14 +58,14 @@ const formatTime = (ts: number) => {
       </div>
 
       <!-- List -->
-      <div class="flex-1 overflow-y-auto p-2 space-y-2 minimal-scrollbar">
+      <div class="flex-1 overflow-y-auto p-2 pb-4 space-y-2 minimal-scrollbar">
         <div v-if="notifications.length === 0" class="py-8 text-center text-sm text-neutral-500 dark:text-neutral-400">
           暂无通知
         </div>
         <div 
           v-for="notif in notifications" 
           :key="notif.id"
-          class="relative flex items-start gap-3 p-3 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 transition-all hover:bg-black/10 dark:hover:bg-white/10"
+          class="group relative flex items-start gap-3 p-3 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 transition-all hover:bg-black/10 dark:hover:bg-white/10"
         >
           <!-- Unread indicator -->
           <div v-if="notif.status === 'unread'" class="absolute -top-1 -left-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-black"></div>
@@ -80,7 +80,7 @@ const formatTime = (ts: number) => {
           <!-- Content -->
           <div class="flex-1 min-w-0">
             <div class="flex justify-between items-start gap-2">
-              <h4 class="text-sm font-medium text-neutral-800 dark:text-neutral-200 truncate">{{ notif.title }}</h4>
+              <h4 class="text-sm font-medium text-neutral-800 dark:text-neutral-200 break-words pr-2 leading-tight">{{ notif.title }}</h4>
               <span class="text-[10px] text-neutral-400 shrink-0 mt-0.5">{{ formatTime(notif.timestamp) }}</span>
             </div>
             <p v-if="notif.description" class="text-xs text-neutral-500 dark:text-neutral-400 mt-1 break-words">
@@ -91,7 +91,7 @@ const formatTime = (ts: number) => {
           <!-- Dismiss button -->
           <button 
             @click="notificationStore.removeNotification(notif.id)"
-            class="shrink-0 p-1 -mr-1 -mt-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 text-neutral-400 transition-all"
+            class="shrink-0 p-1 -mr-1 -mt-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 text-neutral-400 transition-all absolute right-2 bottom-2 bg-white/50 dark:bg-black/50 backdrop-blur-sm"
             title="删除"
           >
             <X class="w-3.5 h-3.5" />
