@@ -10,7 +10,7 @@ import { useI18n } from "vue-i18n";
 import { useTaskStore } from "./composables/useTaskStore";
 import TaskCenter from "./components/TaskCenter.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
-import Toaster from "./components/Toaster.vue";
+import { Toaster } from "vue-sonner";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
@@ -111,5 +111,5 @@ onUnmounted(() => {
   <UpdaterModal v-model:open="isUpdateModalOpen" :updateInfo="updateInfo" />
   <TaskCenter />
   <NotificationCenter />
-  <Toaster />
+  <Toaster position="bottom-right" richColors theme="system" />
 </template>
