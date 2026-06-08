@@ -538,7 +538,6 @@ async function installVersion(): Promise<void> {
     isInstalling.value = false;
     setAppBusy(false);
     
-    toast.success(t("task.submitted"), t("task.checkProgress"));
     emit("installed-success");
     emit("update:open", false);
   } catch (err) {
