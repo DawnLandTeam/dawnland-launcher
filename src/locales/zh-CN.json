@@ -460,6 +460,8 @@
     "cancelledDesc": "该任务已被您取消，尚未完成的实例已被安全移除。",
     "completedTitle": "{name} 完成",
     "completedDesc": "任务已成功完成！",
+    "startedTitle": "{name} 开始",
+    "runningTitle": "正在执行: {name}",
     "submitted": "已提交至任务队列",
     "checkProgress": "您可以在任务中心查看进度"
   }

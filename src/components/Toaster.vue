@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { useToast } from '../composables/useToast';
+import { notificationStore } from '../composables/useNotificationStore';
 import { X, CheckCircle2, AlertCircle, Info } from '@lucide/vue';
+import { computed } from 'vue';
 
-const { toasts, removeToast } = useToast();
+const popups = computed(() => notificationStore.notifications.value.filter(n => n.isPopup));
 </script>
 
 <template>
@@ -17,7 +18,7 @@ const { toasts, removeToast } = useToast();
       leave-to-class="opacity-0 scale-95"
     >
       <div 
-        v-for="toast in toasts" 
+        v-for="toast in popups" 
         :key="toast.id"
         class="pointer-events-auto flex items-start gap-3 p-4 rounded-xl shadow-lg border backdrop-blur-md"
         :class="[
@@ -43,7 +44,7 @@ const { toasts, removeToast } = useToast();
 
         <!-- Close button -->
         <button 
-          @click="removeToast(toast.id)"
+          @click="notificationStore.dismissPopup(toast.id)"
           class="shrink-0 p-1 -mr-2 -mt-1 rounded-md opacity-50 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
         >
           <X class="w-4 h-4" />

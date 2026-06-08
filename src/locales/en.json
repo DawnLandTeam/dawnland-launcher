@@ -460,6 +460,8 @@
     "cancelledDesc": "Task was cancelled. The incomplete instance has been removed safely.",
     "completedTitle": "{name} Completed",
     "completedDesc": "Task finished successfully!",
+    "startedTitle": "{name} Started",
+    "runningTitle": "Running: {name}",
     "submitted": "Submitted to task queue",
     "checkProgress": "You can check the progress in the task center"
   }
