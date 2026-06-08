@@ -66,7 +66,10 @@ export const useNotificationStore = () => {
       notifications.value[index] = updated;
 
       if (updated.isPopup) {
-        schedulePopupHide(id, updated.duration);
+        // Only reset the hide timer if isPopup was explicitly provided or it's not currently scheduled
+        if (payload.isPopup === true || !popupTimeouts.has(id)) {
+          schedulePopupHide(id, updated.duration);
+        }
       } else {
         // If it's no longer a popup, clear any existing timeout
         clearPopupTimeout(id);
