@@ -640,7 +640,7 @@ function loaderBadgeClass(loaderType: string): string {
                 <div class="max-h-60 overflow-y-auto">
                   <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="!instance.isInstalling && (selectedInstanceId = instance.id)" class="flex items-center gap-3 p-2 rounded-lg" :class="instance.isInstalling ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'" :disabled="instance.isInstalling">
                     <Package class="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span class="truncate font-medium flex-1">{{ instance.name }}</span>
+                    <span class="truncate font-medium flex-1 text-left">{{ instance.name }}</span>
                     <Loader2 v-if="instance.isInstalling" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                   </DropdownMenuItem>
                 </div>
