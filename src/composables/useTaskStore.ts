@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { TaskState } from '../types/task';
 import { getTaskName } from '../types/task';
-import { toast } from './useToast';
+import { notificationStore } from './useNotificationStore';
 import i18n from '../i18n';
 
 // Global state
@@ -32,22 +32,57 @@ export function useTaskStore() {
           if (oldStatus !== updatedTask.status) {
             window.dispatchEvent(new CustomEvent('task-status-changed', { detail: updatedTask }));
 
-            // Show toast notifications for terminal states
+            // Update terminal states with popup
             if (updatedTask.status === 'Failed') {
-              toast.error(
-                i18n.global.t('task.failedTitle', { name: getTaskName(updatedTask.task_type) }),
-                updatedTask.error || i18n.global.t('task.failedDesc')
-              );
+              notificationStore.updateNotification(updatedTask.id, {
+                title: i18n.global.t('task.failedTitle', { name: getTaskName(updatedTask.task_type) }),
+                description: updatedTask.error || i18n.global.t('task.failedDesc'),
+                type: 'error',
+                isPopup: true,
+                duration: 5000,
+                status: 'unread'
+              });
             } else if (updatedTask.status === 'Completed') {
-              toast.success(
-                i18n.global.t('task.completedTitle', { name: getTaskName(updatedTask.task_type) }),
-                i18n.global.t('task.completedDesc')
-              );
+              notificationStore.updateNotification(updatedTask.id, {
+                title: i18n.global.t('task.completedTitle', { name: getTaskName(updatedTask.task_type) }),
+                description: i18n.global.t('task.completedDesc'),
+                type: 'success',
+                isPopup: true,
+                duration: 3000,
+                status: 'unread'
+              });
+            } else if (updatedTask.status === 'Cancelled') {
+              notificationStore.updateNotification(updatedTask.id, {
+                title: i18n.global.t('task.cancelledTitle', { name: getTaskName(updatedTask.task_type) }) || 'Task Cancelled',
+                description: '',
+                type: 'info',
+                isPopup: true,
+                duration: 3000,
+                status: 'unread'
+              });
             }
+          } else if (updatedTask.status === 'Running') {
+            // Silent update for running tasks
+            notificationStore.updateNotification(updatedTask.id, {
+              title: i18n.global.t('task.runningTitle', { name: getTaskName(updatedTask.task_type) }) || `Running: ${getTaskName(updatedTask.task_type)}`,
+              description: updatedTask.progress_detail || '',
+              type: 'info',
+              isPopup: false // Do not pop up repeatedly
+            });
           }
         } else {
           tasks.value.unshift(updatedTask);
           window.dispatchEvent(new CustomEvent('task-added', { detail: updatedTask }));
+          
+          // New task started, show popup
+          notificationStore.addNotification({
+            id: updatedTask.id,
+            title: i18n.global.t('task.startedTitle', { name: getTaskName(updatedTask.task_type) }) || `Task Started: ${getTaskName(updatedTask.task_type)}`,
+            description: updatedTask.progress_detail || '',
+            type: 'info',
+            isPopup: true,
+            duration: 3000
+          });
         }
       });
 
