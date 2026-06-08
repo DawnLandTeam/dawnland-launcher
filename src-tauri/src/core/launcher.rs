@@ -57,6 +57,15 @@ pub async fn kill_instance(
     }
 }
 
+#[tauri::command]
+pub async fn is_instance_running(
+    version_id: String,
+    state: State<'_, RunningInstances>,
+) -> Result<bool, String> {
+    let map = state.0.lock().await;
+    Ok(map.contains_key(&version_id))
+}
+
 // ============ Constants ============
 
 #[cfg(target_os = "windows")]
