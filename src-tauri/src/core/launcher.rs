@@ -1484,7 +1484,7 @@ pub async fn launch_instance(
     let assets_dir = base_dir.join("assets");
 
     // Load instance configuration early to get server_id if needed
-    let instance_config = get_instance_config(version_id.clone()).await.unwrap_or_default();
+    let instance_config = get_instance_config(version_id.clone()).await?;
 
     // If this instance is bound to a server, fetch it to get IP (if missing) and Name
     let mut actual_server_name = "Dawnland Server".to_string();
@@ -1508,7 +1508,7 @@ pub async fn launch_instance(
         let default_options_path = game_dir.join("config").join("defaultoptions").join("servers.dat");
 
         // Inject into main servers.dat
-        if let Err(e) = inject_server_to_dat(&servers_dat_path, &actual_server_name, ip, port) {
+        if let Err(e) = inject_server_to_dat(&servers_dat_path, &actual_server_name, ip, port).await {
             tracing::warn!("Failed to write servers.dat: {}", e);
         } else {
             tracing::info!("Injected server to servers.dat at {:?}", servers_dat_path);
@@ -1516,7 +1516,7 @@ pub async fn launch_instance(
 
         // Also inject into defaultoptions if the folder exists
         if default_options_path.parent().map(|p| p.exists()).unwrap_or(false) {
-            if let Err(e) = inject_server_to_dat(&default_options_path, &actual_server_name, ip, port) {
+            if let Err(e) = inject_server_to_dat(&default_options_path, &actual_server_name, ip, port).await {
                 tracing::warn!("Failed to write defaultoptions/servers.dat: {}", e);
             } else {
                 tracing::info!("Injected server to defaultoptions/servers.dat");
@@ -2276,39 +2276,45 @@ struct ServerEntry {
 }
 
 /// Helper to safely inject a server into an uncompressed servers.dat NBT file
-fn inject_server_to_dat(path: &std::path::Path, server_name: &str, ip: &str, port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let mut dat = ServersDat { servers: Vec::new() };
+async fn inject_server_to_dat(path: &std::path::Path, server_name: &str, ip: &str, port: u16) -> Result<(), String> {
+    let path_buf = path.to_path_buf();
+    let server_name = server_name.to_string();
+    let ip = ip.to_string();
 
-    if path.exists() {
-        if let Ok(bytes) = std::fs::read(path) {
-            if let Ok(parsed) = fastnbt::from_bytes::<ServersDat>(&bytes) {
-                dat = parsed;
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let mut dat = ServersDat { servers: Vec::new() };
+
+        if path_buf.exists() {
+            if let Ok(bytes) = std::fs::read(&path_buf) {
+                if let Ok(parsed) = fastnbt::from_bytes::<ServersDat>(&bytes) {
+                    dat = parsed;
+                }
             }
         }
-    }
 
-    let address_str = if port == 25565 {
-        ip.to_string()
-    } else {
-        format!("{}:{}", ip, port)
-    };
+        let address_str = if port == 25565 {
+            ip
+        } else {
+            format!("{}:{}", ip, port)
+        };
 
-    // Prevent duplicates
-    if !dat.servers.iter().any(|s| s.ip == address_str) {
-        dat.servers.push(ServerEntry {
-            name: server_name.to_string(),
-            ip: address_str,
-            hidden: Some(0),
-            icon: None,
-            accept_textures: None,
-        });
-        
-        let new_bytes = fastnbt::to_bytes(&dat)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        // Prevent duplicates
+        if !dat.servers.iter().any(|s| s.ip == address_str) {
+            dat.servers.push(ServerEntry {
+                name: server_name,
+                ip: address_str,
+                hidden: Some(0),
+                icon: None,
+                accept_textures: None,
+            });
+            
+            let new_bytes = fastnbt::to_bytes(&dat).map_err(|e| e.to_string())?;
+            if let Some(parent) = path_buf.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path_buf, new_bytes).map_err(|e| e.to_string())?;
         }
-        std::fs::write(path, new_bytes)?;
-    }
-    
-    Ok(())
+        
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
 }
