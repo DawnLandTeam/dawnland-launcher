@@ -9,6 +9,10 @@ async function minimize(): Promise<void> {
   await appWindow.minimize();
 }
 
+async function toggleMaximize(): Promise<void> {
+  await appWindow.toggleMaximize();
+}
+
 async function close(): Promise<void> {
   await appWindow.close();
 }
@@ -49,7 +53,7 @@ async function onMouseMove(): Promise<void> {
     @mouseup="onMouseUp"
     @mouseleave="onMouseLeave"
     @mousemove="onMouseMove"
-    @dblclick.prevent
+    @dblclick="toggleMaximize"
   >
     <!-- Left: App title - prevent events to allow drag on parent -->
     <div
@@ -59,8 +63,8 @@ async function onMouseMove(): Promise<void> {
       Dawnland Launcher
     </div>
 
-    <!-- Right: Window controls - enable pointer events for button clicks -->
-    <div class="flex items-center pointer-events-auto">
+    <!-- Right: Window controls - enable pointer events for button clicks and prevent drag -->
+    <div class="flex items-center pointer-events-auto" @mousedown.stop @dblclick.stop>
       <button
         class="notification-toggle relative inline-flex h-8 w-10 items-center justify-center transition-colors hover:bg-neutral-700 hover:text-neutral-200"
         :class="notificationStore.isCenterOpen.value ? 'bg-neutral-700 text-neutral-200' : ''"
