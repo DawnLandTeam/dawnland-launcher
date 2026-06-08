@@ -112,6 +112,12 @@ pub async fn scan_installed_instances(
                     continue;
                 }
 
+                // An instance MUST have its basic {id}.json file unless it is currently actively installing
+                if !is_installing && !json_path.exists() {
+                    tracing::warn!("Skipping invalid/empty instance directory {}: missing {}.json", id, id);
+                    continue;
+                }
+
                 // Read version JSON to extract metadata
                 match tokio::fs::read_to_string(&json_path).await {
                     Ok(content) => {
