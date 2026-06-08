@@ -11,7 +11,6 @@ import {
 } from "./ui/dialog";
 import InstallCard from "./InstallCard.vue";
 import { setAppBusy } from "../composables/useAppStatus";
-import { toast } from '../composables/useToast';
 
 // Types
 interface VanillaVersion {
@@ -538,7 +537,6 @@ async function installVersion(): Promise<void> {
     isInstalling.value = false;
     setAppBusy(false);
     
-    toast.success(t("task.submitted"), t("task.checkProgress"));
     emit("installed-success");
     emit("update:open", false);
   } catch (err) {

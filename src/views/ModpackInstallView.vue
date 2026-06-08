@@ -9,7 +9,6 @@ import { setAppBusy } from "../composables/useAppStatus";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar, X } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
-import { toast } from '../composables/useToast';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -426,7 +425,6 @@ const installModpack = async () => {
     isInstalling.value = false;
     setAppBusy(false);
     
-    toast.success(t("task.submitted"), t("task.checkProgress"));
     router.push("/instances");
   } catch (error) {
     console.error("Installation failed:", error);

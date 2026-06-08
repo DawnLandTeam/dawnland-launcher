@@ -67,11 +67,9 @@ const accounts = ref<Account[]>([]);
 const selectedInstanceId = ref<string>("");
 const selectedAccountId = ref<string>("");
 
+import { launchingInstances, jvmSpawnedInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';
+
 // Running state
-const launchingInstances = ref<Set<string>>(new Set());
-const jvmSpawnedInstances = ref<Set<string>>(new Set());
-const runningInstances = ref<Set<string>>(new Set());
-const repairingInstances = ref<Set<string>>(new Set());
 const gameLogs = ref<string[]>([]);
 const showGameLog = ref(false);
 
@@ -642,9 +640,18 @@ function loaderBadgeClass(loaderType: string): string {
                 <div class="max-h-60 overflow-y-auto">
                   <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="!instance.isInstalling && (selectedInstanceId = instance.id)" class="flex items-center gap-3 p-2 rounded-lg" :class="instance.isInstalling ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'" :disabled="instance.isInstalling">
                     <Package class="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span class="truncate font-medium flex-1">{{ instance.name }}</span>
+                    <span class="truncate font-medium flex-1 text-left">{{ instance.name }}</span>
                     <Loader2 v-if="instance.isInstalling" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                   </DropdownMenuItem>
+
+                  <div v-if="installedInstances.length > 0" class="h-px bg-border my-1 mx-2"></div>
+                  
+                  <router-link to="/instances" class="flex items-center gap-2 w-full p-2 rounded-lg cursor-pointer hover:bg-muted text-primary transition-colors">
+                    <div class="flex items-center justify-center w-4 h-4 rounded-full bg-primary/10 shrink-0">
+                      <Plus class="h-3 w-3 text-primary" />
+                    </div>
+                    <span class="font-medium text-sm">{{ $t('home.installInstance') }}</span>
+                  </router-link>
                 </div>
               </DropdownMenu>
             </div>

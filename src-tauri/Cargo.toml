@@ -54,3 +54,4 @@ tokio-util = "0.7.18"
 chrono = "0.4.45"
 thiserror = "2.0.18"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
+fastnbt = "2.6.1"

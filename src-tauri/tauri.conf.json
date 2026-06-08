@@ -21,6 +21,7 @@
         "maxHeight": 800,
         "resizable": false,
         "fullscreen": false,
+        "maximizable": false,
         "decorations": false,
         "visible": false,
         "dragDropEnabled": false
