@@ -17,7 +17,7 @@ jobs:
             args: ''
 
           # 2. Linux 任务 -> 路由给 NAS
-          - platform: 'linux-x86_64'
+          - platform: 'ubuntu-22_04'
             runner: [ 'self-hosted', 'Linux' ]   # 必须匹配你在 Docker compose 里设置的 Label
             args: ''
 
@@ -78,8 +78,17 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check Frontend Compilation
-        run: pnpm run build
+      - name: Build Tauri App
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: pnpm tauri build ${{ matrix.args }}
 
-      - name: Check Backend Compilation
-        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dawnland-Launcher-PR-${{ github.event.pull_request.number || github.sha }}-${{ matrix.platform }}
+          path: |
+            src-tauri/target/release/DLML.exe
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          retention-days: 7
+
