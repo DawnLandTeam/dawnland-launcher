@@ -11,6 +11,30 @@ fn greet(name: &str) -> String {
     format!("Hello, {name}! You've been greeted from Rust!")
 }
 
+#[cfg(target_os = "windows")]
+fn register_deep_link() {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    use std::env;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let path = "Software\\Classes\\dlml";
+
+    // Register deep link for portable/green version on Windows
+    if let Ok((key, _)) = hkcu.create_subkey(path) {
+        let _ = key.set_value("", &"URL:dlml");
+        let _ = key.set_value("URL Protocol", &"");
+
+        if let Ok((cmd_key, _)) = key.create_subkey("shell\\open\\command") {
+            if let Ok(exe_path) = env::current_exe() {
+                let exe_path_str = exe_path.to_string_lossy();
+                let command_val = format!("\"{}\" \"%1\"", exe_path_str);
+                let _ = cmd_key.set_value("", &command_val);
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize the logging system before anything else.
@@ -25,6 +49,9 @@ pub fn run() {
             use tauri::Manager;
             let app_handle = app.handle().clone();
             
+            #[cfg(target_os = "windows")]
+            register_deep_link();
+
             let app_dir = core::mojang::get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland");
             std::fs::create_dir_all(&app_dir).unwrap_or_default();
             let db_path = app_dir.join("tasks.db");
@@ -61,6 +88,15 @@ pub fn run() {
             }
             Ok(())
         })
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())

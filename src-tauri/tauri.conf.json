@@ -45,5 +45,11 @@
       "icons/icon.ico"
     ]
   },
-  "plugins": {}
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["dlml"]
+      }
+    }
+  }
 }
