@@ -75,6 +75,10 @@ pub async fn load_accounts() -> Result<Vec<Account>, String> {
         .await
         .map_err(|e| format!("Failed to read accounts file: {e}"))?;
 
+    if content.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
     let accounts: Vec<Account> = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse accounts file: {e}"))?;
 
