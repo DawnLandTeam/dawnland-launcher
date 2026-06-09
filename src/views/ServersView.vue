@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Server, Gamepad2, Plus, Search, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Star } from "@lucide/vue";
@@ -89,6 +89,7 @@ interface ServerStatus {
 
 // State
 const { t } = useI18n();
+const route = useRoute();
 const router = useRouter();
 const servers = ref<ServerInfo[]>([]);
 const isLoading = ref(false);
@@ -468,6 +469,17 @@ async function fetchServers() {
     servers.value = response;
     currentPage.value = 1;
     totalPages.value = 1;
+    
+    // Check deep link after loading
+    if (route.query.view_id && typeof route.query.view_id === 'string') {
+      const server = servers.value.find(s => s.id === Number(route.query.view_id));
+      if (server) {
+        openServerDetails(server);
+        const newQuery = { ...route.query };
+        delete newQuery.view_id;
+        router.replace({ query: newQuery });
+      }
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
     console.error("Failed to fetch servers:", e);
@@ -544,6 +556,22 @@ onMounted(() => {
   // Close version dropdown when clicking outside
   document.addEventListener("click", handleClickOutside);
 });
+
+// Watch for deep links when already on the page
+watch(
+  () => route.query.view_id,
+  (newId) => {
+    if (newId && typeof newId === 'string' && servers.value.length > 0) {
+      const server = servers.value.find(s => s.id === Number(newId));
+      if (server) {
+        openServerDetails(server);
+        const newQuery = { ...route.query };
+        delete newQuery.view_id;
+        router.replace({ query: newQuery });
+      }
+    }
+  }
+);
 
 // Refresh when coming back to this view (keep-alive reactivation)
 onActivated(() => {
