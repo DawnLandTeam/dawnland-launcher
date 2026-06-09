@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { X, Globe, Users, Copy, Check, MessageSquare } from '@lucide/vue';
+import { X, Globe, Users, Copy, Check, MessageSquare, Share2 } from '@lucide/vue';
 import { marked } from 'marked';
 
 const props = defineProps<{
@@ -13,6 +13,7 @@ import { useI18n } from 'vue-i18n';
 const { t } = useI18n();
 
 const copiedIp = ref(false);
+const copiedShareLink = ref(false);
 
 const close = () => {
   emit('update:open', false);
@@ -24,6 +25,16 @@ const copyIp = () => {
   copiedIp.value = true;
   setTimeout(() => {
     copiedIp.value = false;
+  }, 2000);
+};
+
+const shareServer = () => {
+  if (!props.server?.id) return;
+  const link = `dlml://server/view?id=${props.server.id}`;
+  navigator.clipboard.writeText(link);
+  copiedShareLink.value = true;
+  setTimeout(() => {
+    copiedShareLink.value = false;
   }, 2000);
 };
 
@@ -70,9 +81,15 @@ const renderedDescription = computed(() => {
               </div>
             </div>
           </div>
-          <button @click="close" class="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white transition-colors rounded-lg hover:bg-neutral-200 dark:hover:bg-zinc-800">
-            <X class="w-6 h-6" />
-          </button>
+          <div class="flex items-center gap-2">
+            <button @click="shareServer" class="p-2 text-neutral-500 hover:text-primary dark:text-neutral-400 dark:hover:text-primary transition-colors rounded-lg hover:bg-neutral-200 dark:hover:bg-zinc-800" title="分享此服务器 (Share Server)">
+              <Check v-if="copiedShareLink" class="w-6 h-6 text-green-500" />
+              <Share2 v-else class="w-6 h-6" />
+            </button>
+            <button @click="close" class="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white transition-colors rounded-lg hover:bg-neutral-200 dark:hover:bg-zinc-800">
+              <X class="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         <!-- Body -->

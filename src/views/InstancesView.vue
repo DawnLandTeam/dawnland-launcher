@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw } from "@lucide/vue";
+import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw, Share2, Check } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
 import InstanceModsModal from "../components/InstanceModsModal.vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
@@ -53,6 +53,7 @@ const showInstallModal = ref(false);
 const prefillVersion = ref("");
 const prefillLoader = ref("");
 const installedInstances = ref<InstanceItem[]>([]);
+const copiedShareInstanceId = ref<string | null>(null);
 
 // Settings modal state
 const showSettingsModal = ref(false);
@@ -299,6 +300,16 @@ function updateModpack(instance: InstanceItem) {
   });
 }
 
+function shareModpack(instance: InstanceItem) {
+  if (!instance.modpackProjectId || !instance.modpackVersion || !instance.modpackType) return;
+  const link = `dlml://modpack/install?id=${instance.modpackProjectId}&source=${instance.modpackType.toLowerCase()}&version_id=${instance.modpackVersion}&name=${encodeURIComponent(instance.name)}`;
+  navigator.clipboard.writeText(link);
+  
+  copiedShareInstanceId.value = instance.id;
+  setTimeout(() => {
+    copiedShareInstanceId.value = null;
+  }, 2000);
+}
 function confirmDeleteInstance(instance: InstanceItem) {
   deletingInstanceId.value = instance.id;
   deletingInstanceName.value = instance.name;
@@ -485,6 +496,14 @@ function loaderBadgeClass(loaderType: string): string {
               >
                 <RefreshCw class="h-4 w-4" />
                 {{ $t('instances.updateModpack', 'Update Modpack') }}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                v-if="instance.modpackType && instance.modpackProjectId && instance.modpackVersion"
+                @click="shareModpack(instance)"
+              >
+                <Check v-if="copiedShareInstanceId === instance.id" class="h-4 w-4 text-green-500" />
+                <Share2 v-else class="h-4 w-4" />
+                {{ copiedShareInstanceId === instance.id ? $t('instances.shareCopied', '已复制') : $t('instances.shareModpack', 'Share Modpack') }}
               </DropdownMenuItem>
               <DropdownMenuItem
                 v-if="instance.loaderType && instance.loaderType.toLowerCase() !== 'none' && instance.loaderType.toLowerCase() !== 'vanilla'"

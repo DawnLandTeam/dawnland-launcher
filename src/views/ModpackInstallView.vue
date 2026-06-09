@@ -115,7 +115,10 @@ const initializeView = () => {
           const fetchVersions = source.value === 'modrinth' ? 'get_modrinth_modpack_versions' : 'get_curseforge_modpack_versions';
           invoke(fetchVersions, { projectId: dummyModpack.project_id })
             .then((versions: any) => {
-              const targetVersion = versions.find((v: any) => v.id.toString() === route.query.version_id);
+              let targetVersion = versions.find((v: any) => v.id.toString() === route.query.version_id);
+              if (!targetVersion) targetVersion = versions.find((v: any) => v.name === route.query.version_id);
+              if (!targetVersion) targetVersion = versions.find((v: any) => v.name.includes(route.query.version_id));
+
               if (targetVersion) {
                 onlineUrl.value = targetVersion.download_url;
                 selectedVersionName.value = targetVersion.name;

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, shallowRef, onMounted, onUnmounted } from "vue";
+import { useRouter } from "vue-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
 import { setUpdateAvailable, type CustomUpdate } from "./composables/useUpdate";
@@ -11,15 +13,39 @@ import { useTaskStore } from "./composables/useTaskStore";
 import TaskCenter from "./components/TaskCenter.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
 import Toaster from "./components/Toaster.vue";
+import DeepLinkReceiveModal, { type DeepLinkData } from "./components/DeepLinkReceiveModal.vue";
+import { toast } from "./composables/useToast";
+import { parseDeepLinkUrl } from "./utils/deepLink";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
+const showDeepLinkModal = ref(false);
+const incomingLinkData = ref<DeepLinkData | null>(null);
 const { locale, t } = useI18n();
 const taskStore = useTaskStore();
+const router = useRouter();
 
 onMounted(async () => {
   // Initialize task center
   await taskStore.init();
+
+  // Deep Link listener
+  const unlistenDeepLink = await onOpenUrl((urls) => {
+    for (const urlStr of urls) {
+      const parsedData = parseDeepLinkUrl(urlStr);
+      if (parsedData) {
+        incomingLinkData.value = parsedData;
+        showDeepLinkModal.value = true;
+      } else {
+        console.warn("Received invalid or unrecognized deep link:", urlStr);
+      }
+    }
+  });
+
+  // Store unlisten function
+  onUnmounted(() => {
+    unlistenDeepLink();
+  });
 
   // Show window
   getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
@@ -67,6 +93,54 @@ onMounted(async () => {
   document.addEventListener('drop', handleDrop, true);
 });
 
+// Handle Deep Link Confirmation
+const handleDeepLinkConfirm = async (data: DeepLinkData) => {
+  if (data.type === 'modpack') {
+    const { projectId, source, versionId, name } = data.payload;
+    toast.info(t('deepLink.fetching', '正在获取整合包详情...'));
+    try {
+      const fetchVersions = source === 'modrinth' ? 'get_modrinth_modpack_versions' : 'get_curseforge_modpack_versions';
+      const versions: any = await invoke(fetchVersions, { projectId });
+      let targetVersion = versions.find((v: any) => v.id.toString() === versionId);
+      if (!targetVersion) targetVersion = versions.find((v: any) => v.name === versionId);
+      if (!targetVersion) targetVersion = versions.find((v: any) => v.name.includes(versionId));
+      
+      if (targetVersion) {
+        const rawName = name || targetVersion.name || targetVersion.displayName || 'Shared Modpack';
+        const finalName = rawName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+        
+        await invoke("download_and_install_online_modpack", {
+          url: targetVersion.download_url,
+          instanceName: finalName,
+          source: source,
+          projectId: projectId,
+          versionId: versionId,
+          isUpdate: false
+        });
+        toast.success(t('deepLink.installStarted', '已开始安装整合包'), t('deepLink.installStartedDesc', '请在任务中心查看进度'));
+      } else {
+        toast.error(t('deepLink.installFailed', '安装失败'), t('deepLink.versionNotFound', '未找到对应的整合包版本'));
+      }
+    } catch (e) {
+      toast.error(t('deepLink.installFailed', '安装失败'), String(e));
+    }
+  } else if (data.type === 'authlib') {
+    invoke("add_authlib_server", { url: data.payload.url })
+      .then(() => {
+        window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
+        alert(t('settings.authlib.addSuccess', { url: data.payload.url }));
+      })
+      .catch(err => {
+        alert(t('settings.authlib.addFailed', { error: String(err) }));
+      });
+  } else if (data.type === 'server') {
+    router.push({
+      path: '/servers',
+      query: { view_id: data.payload.id }
+    });
+  }
+};
+
 const handleDrag = (e: DragEvent) => {
   e.preventDefault();
   e.stopPropagation();
@@ -108,8 +182,9 @@ onUnmounted(() => {
 
 <template>
   <MainLayout />
-  <UpdaterModal v-model:open="isUpdateModalOpen" :updateInfo="updateInfo" />
+  <UpdaterModal v-model:open="isUpdateModalOpen" :update-info="updateInfo" />
   <TaskCenter />
   <NotificationCenter />
+  <DeepLinkReceiveModal v-model:open="showDeepLinkModal" :data="incomingLinkData" @confirm="handleDeepLinkConfirm" />
   <Toaster />
 </template>
