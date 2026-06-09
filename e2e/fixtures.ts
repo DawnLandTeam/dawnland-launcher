@@ -56,13 +56,6 @@ export const test = base.extend<TauriFixtures>({
       throw new Error(message);
     });
 
-    await page.exposeFunction('__getIpcResponse', (cmd: string) => {
-      if (cmd in mockResponses) {
-        return mockResponses[cmd];
-      }
-      return null;
-    });
-
     // Inject the Tauri mock early before page loads
     await page.addInitScript(() => {
       // @ts-ignore
