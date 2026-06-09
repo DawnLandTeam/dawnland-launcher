@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
+#![allow(unused_mut)]
 //! Minecraft Launcher Engine
 //! Handles JVM process spawning, natives extraction, and classpath construction.
 
@@ -2317,4 +2321,40 @@ async fn inject_server_to_dat(path: &std::path::Path, server_name: &str, ip: &st
         
         Ok(())
     }).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_os_name() {
+        assert_eq!(normalize_os_name("macos"), "osx");
+        assert_eq!(normalize_os_name("windows"), "windows");
+        assert_eq!(normalize_os_name("linux"), "linux");
+        assert_eq!(normalize_os_name("freebsd"), "freebsd");
+        assert_eq!(normalize_os_name("unknown"), "unknown");
+    }
+
+    #[test]
+    fn test_normalize_arch() {
+        assert_eq!(normalize_arch("x86_64"), "x64");
+        assert_eq!(normalize_arch("aarch64"), "arm64");
+        assert_eq!(normalize_arch("x86"), "x86");
+        assert_eq!(normalize_arch("unknown"), "unknown");
+    }
+
+    #[test]
+    fn test_matches_os_condition() {
+        // Test with exact match
+        let current_os = normalize_os_name(std::env::consts::OS);
+        assert!(matches_os_condition(Some(&current_os), None));
+
+        // Test with wrong match
+        let wrong_os = if current_os == "windows" { "osx" } else { "windows" };
+        assert!(!matches_os_condition(Some(wrong_os), None));
+
+        // Test with no condition
+        assert!(matches_os_condition(None, None));
+    }
 }

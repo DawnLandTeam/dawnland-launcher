@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
 //! Java Management Module
 //! Provides functionality to scan, manage, and download Java runtimes.
 

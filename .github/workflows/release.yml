@@ -108,6 +108,11 @@ jobs:
           Write-Host "Injecting Cargo PATH into current GitHub workflow..."
           echo "${env:USERPROFILE}\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      - name: Rust cache
+        uses: swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          workspaces: './src-tauri -> target'
+
       - name: Install frontend dependencies
         run: pnpm install
 
