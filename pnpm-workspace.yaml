@@ -1,0 +1,8 @@
+packages:
+  - '.'
+
+allowBuilds:
+  esbuild: true
+  edgedriver: true
+  geckodriver: true
+  vue-demi: true
