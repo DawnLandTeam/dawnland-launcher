@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
+#![allow(unused_mut)]
 //! Forge & NeoForge Mod Loader Integration
 //! Provides commands for fetching available Forge/NeoForge versions and installing them.
 //!
@@ -1080,4 +1084,93 @@ pub async fn install_forge_instance(
         .map_err(|e| e.to_string())?;
 
     Ok(task_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_forge_version() {
+        assert_eq!(parse_forge_version("1.20.1-47.1.0"), Some(("1.20.1".to_string(), "47.1.0".to_string())));
+        assert_eq!(parse_forge_version("1.16.5-36.2.39"), Some(("1.16.5".to_string(), "36.2.39".to_string())));
+        assert_eq!(parse_forge_version("1.8.9-11.15.1.2318-1.8.9"), Some(("1.8.9-11.15.1.2318".to_string(), "1.8.9".to_string())));
+        assert_eq!(parse_forge_version("invalid_version"), None);
+    }
+
+    #[test]
+    fn test_maven_name_to_path() {
+        assert_eq!(maven_name_to_path("net.minecraft:client:1.20.1-patched"), Some("net/minecraft/client/1.20.1-patched/client-1.20.1-patched.jar".to_string()));
+        assert_eq!(maven_name_to_path("net.minecraftforge:forge:1.16.5"), Some("net/minecraftforge/forge/1.16.5/forge-1.16.5-universal.jar".to_string()));
+        assert_eq!(maven_name_to_path("invalid:format"), None);
+    }
+
+    #[test]
+    fn test_should_download_library_json() {
+        let json_allow_windows = r#"{
+            "name": "test:lib:1.0",
+            "rules": [
+                {
+                    "action": "allow",
+                    "os": { "name": "windows" }
+                }
+            ]
+        }"#;
+
+        let lib_allow_win: serde_json::Value = serde_json::from_str(json_allow_windows).unwrap();
+        let is_windows = std::env::consts::OS == "windows";
+        assert_eq!(should_download_library_json(&lib_allow_win), is_windows);
+
+        let json_disallow_osx = r#"{
+            "name": "test:lib:2.0",
+            "rules": [
+                {
+                    "action": "allow"
+                },
+                {
+                    "action": "disallow",
+                    "os": { "name": "osx" }
+                }
+            ]
+        }"#;
+
+        let lib_disallow_osx: serde_json::Value = serde_json::from_str(json_disallow_osx).unwrap();
+        let is_macos = std::env::consts::OS == "macos";
+        assert_eq!(should_download_library_json(&lib_disallow_osx), !is_macos);
+
+        let json_no_rules = r#"{
+            "name": "test:lib:3.0"
+        }"#;
+        let lib_no_rules: serde_json::Value = serde_json::from_str(json_no_rules).unwrap();
+        assert_eq!(should_download_library_json(&lib_no_rules), true);
+    }
+
+    #[test]
+    fn test_get_library_download_info_json() {
+        // Standard Forge artifact
+        let json1 = r#"{
+            "name": "org.ow2.asm:asm:9.5",
+            "downloads": {
+                "artifact": {
+                    "path": "org/ow2/asm/asm/9.5/asm-9.5.jar",
+                    "url": "https://maven.minecraftforge.net/org/ow2/asm/asm/9.5/asm-9.5.jar",
+                    "sha1": "123",
+                    "size": 123
+                }
+            }
+        }"#;
+        let lib1: serde_json::Value = serde_json::from_str(json1).unwrap();
+        let info1 = get_library_download_info_json(&lib1).unwrap();
+        assert_eq!(info1.0, "https://maven.minecraftforge.net/org/ow2/asm/asm/9.5/asm-9.5.jar");
+        assert_eq!(info1.1, "libraries/org/ow2/asm/asm/9.5/asm-9.5.jar");
+
+        // Maven fallback format
+        let json2 = r#"{
+            "name": "net.minecraftforge:forge:1.20.1"
+        }"#;
+        let lib2: serde_json::Value = serde_json::from_str(json2).unwrap();
+        let info2 = get_library_download_info_json(&lib2).unwrap();
+        assert_eq!(info2.0, "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1/forge-1.20.1-universal.jar");
+        assert_eq!(info2.1, "libraries/net/minecraftforge/forge/1.20.1/forge-1.20.1-universal.jar");
+    }
 }

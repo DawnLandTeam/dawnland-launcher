@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,4 +133,70 @@ pub enum TaskError {
     ExecutionError(String),
     #[error("Internal error: {0}")]
     Internal(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_task_type_conflicts() {
+        let vanilla_1 = TaskType::InstallVanilla { version_id: "1.20.1".to_string(), version_json_url: "".to_string(), is_dependency: None };
+        let vanilla_2 = TaskType::InstallVanilla { version_id: "1.20.1".to_string(), version_json_url: "".to_string(), is_dependency: None };
+        let vanilla_3 = TaskType::InstallVanilla { version_id: "1.19.4".to_string(), version_json_url: "".to_string(), is_dependency: None };
+        
+        let forge_1 = TaskType::InstallForge { mc_version: "1.20.1".to_string(), loader_version: "47.1.0".to_string(), loader_type: "forge".to_string(), custom_instance_name: "1.20.1".to_string(), is_dependency: None };
+        let forge_2 = TaskType::InstallForge { mc_version: "1.20.1".to_string(), loader_version: "47.1.0".to_string(), loader_type: "forge".to_string(), custom_instance_name: "forge-1.20.1".to_string(), is_dependency: None };
+
+        let generic_1 = TaskType::Generic { name: "test".to_string() };
+        let generic_2 = TaskType::Generic { name: "test".to_string() };
+        let generic_3 = TaskType::Generic { name: "other".to_string() };
+
+        assert!(vanilla_1.conflicts_with(&vanilla_2));
+        assert!(!vanilla_1.conflicts_with(&vanilla_3));
+        
+        // They both target "1.20.1" instance folder
+        assert!(vanilla_1.conflicts_with(&forge_1));
+        assert!(!vanilla_1.conflicts_with(&forge_2));
+
+        assert!(generic_1.conflicts_with(&generic_2));
+        assert!(!generic_1.conflicts_with(&generic_3));
+        assert!(!vanilla_1.conflicts_with(&generic_1));
+    }
+
+    #[test]
+    fn test_task_state_transitions() {
+        use TaskStatus::*;
+        
+        let task = TaskState::new("test-id".to_string(), TaskType::Generic { name: "test".to_string() });
+        assert_eq!(task.status, Pending);
+
+        // Pending -> Running, Cancelled (valid)
+        assert!(task.can_transition_to(&Running));
+        assert!(task.can_transition_to(&Cancelled));
+        
+        // Pending -> Completed, Failed, Paused (invalid)
+        assert!(!task.can_transition_to(&Completed));
+        assert!(!task.can_transition_to(&Failed));
+        assert!(!task.can_transition_to(&Paused));
+
+        let mut running_task = task.clone();
+        running_task.status = Running;
+        assert!(running_task.can_transition_to(&Paused));
+        assert!(running_task.can_transition_to(&Completed));
+        assert!(running_task.can_transition_to(&Failed));
+        assert!(running_task.can_transition_to(&Cancelled));
+        assert!(!running_task.can_transition_to(&Pending));
+
+        let mut paused_task = task.clone();
+        paused_task.status = Paused;
+        assert!(paused_task.can_transition_to(&Running));
+        assert!(paused_task.can_transition_to(&Cancelled));
+        assert!(!paused_task.can_transition_to(&Completed));
+
+        let mut completed_task = task.clone();
+        completed_task.status = Completed;
+        assert!(!completed_task.can_transition_to(&Running));
+        assert!(!completed_task.can_transition_to(&Pending));
+    }
 }

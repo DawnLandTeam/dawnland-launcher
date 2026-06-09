@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Server management commands that proxy requests to the Go web backend.
 
 use crate::models::{

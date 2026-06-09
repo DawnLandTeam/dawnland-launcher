@@ -1,7 +1,9 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
-
 pub mod authlib;
 pub mod microsoft;
 
@@ -72,6 +74,10 @@ pub async fn load_accounts() -> Result<Vec<Account>, String> {
     let content = tokio::fs::read_to_string(&path)
         .await
         .map_err(|e| format!("Failed to read accounts file: {e}"))?;
+
+    if content.trim().is_empty() {
+        return Ok(Vec::new());
+    }
 
     let accounts: Vec<Account> = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse accounts file: {e}"))?;
