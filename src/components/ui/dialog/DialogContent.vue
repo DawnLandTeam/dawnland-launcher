@@ -26,6 +26,8 @@ function close() {
         
         <!-- Content with solid background -->
         <div
+          role="dialog"
+          aria-modal="true"
           class="relative z-10 w-full max-w-2xl gap-4 border bg-white dark:bg-zinc-900 p-4 shadow-xl rounded-lg max-h-[85vh] overflow-y-auto pointer-events-auto"
           :class="props.class"
         >

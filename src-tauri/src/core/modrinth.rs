@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 
 /// Modrinth API base URL
@@ -515,4 +516,98 @@ pub async fn get_modrinth_modpack_versions(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_modrinth_search_result() {
+        let json = r#"{
+            "hits": [
+                {
+                    "project_id": "P7dR8mSH",
+                    "project_type": "mod",
+                    "slug": "fabric-api",
+                    "author": "modmuss50",
+                    "title": "Fabric API",
+                    "description": "Lightweight and modular API providing common hooks and intercompatibility measures utilized by mods using the Fabric toolchain.",
+                    "categories": ["api", "utility"],
+                    "display_categories": ["API", "Utility"],
+                    "versions": ["1.16.5", "1.17.1"],
+                    "downloads": 100000000,
+                    "follows": 10000,
+                    "icon_url": "https://cdn.modrinth.com/data/P7dR8mSH/icon.png",
+                    "date_created": "2020-12-23T16:04:46.438255Z",
+                    "date_modified": "2024-03-27T14:48:30Z",
+                    "latest_version": "0.96.4+1.20.4",
+                    "license": "apache-2.0",
+                    "client_side": "required",
+                    "server_side": "required",
+                    "gallery": [],
+                    "featured_gallery": null,
+                    "color": 16777215
+                }
+            ],
+            "offset": 0,
+            "limit": 10,
+            "total_hits": 1
+        }"#;
+
+        let result: ModrinthSearchResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.total_hits, 1);
+        assert_eq!(result.hits.len(), 1);
+        let project = &result.hits[0];
+        assert_eq!(project.project_id, "P7dR8mSH");
+        assert_eq!(project.title, "Fabric API");
+        assert_eq!(project.downloads, 100000000);
+        assert_eq!(project.author, "modmuss50");
+    }
+
+    #[test]
+    fn test_parse_modrinth_version() {
+        let json = r#"{
+            "id": "2L9X8K9u",
+            "project_id": "P7dR8mSH",
+            "author_id": "12345",
+            "featured": true,
+            "name": "Fabric API 0.96.4+1.20.4",
+            "version_number": "0.96.4+1.20.4",
+            "changelog": "Update to 1.20.4",
+            "changelog_url": null,
+            "date_published": "2024-03-27T14:48:30Z",
+            "downloads": 50000,
+            "version_type": "release",
+            "status": "listed",
+            "requested_status": "listed",
+            "files": [
+                {
+                    "hashes": {
+                        "sha1": "1234567890abcdef",
+                        "sha512": "abc"
+                    },
+                    "url": "https://cdn.modrinth.com/data/P7dR8mSH/versions/2L9X8K9u/fabric-api-0.96.4%2B1.20.4.jar",
+                    "filename": "fabric-api-0.96.4+1.20.4.jar",
+                    "primary": true,
+                    "size": 1234567,
+                    "file_type": null
+                }
+            ],
+            "dependencies": [],
+            "game_versions": ["1.20.4"],
+            "loaders": ["fabric"]
+        }"#;
+
+        let version: ModrinthVersion = serde_json::from_str(json).unwrap();
+        assert_eq!(version.id, "2L9X8K9u");
+        assert_eq!(version.version_number, "0.96.4+1.20.4");
+        assert_eq!(version.version_type, "release");
+        assert_eq!(version.game_versions[0], "1.20.4");
+        assert_eq!(version.loaders[0], "fabric");
+        assert_eq!(version.files.len(), 1);
+        let file = &version.files[0];
+        assert_eq!(file.filename, "fabric-api-0.96.4+1.20.4.jar");
+        assert_eq!(file.hashes.get("sha1").unwrap(), "1234567890abcdef");
+    }
 }

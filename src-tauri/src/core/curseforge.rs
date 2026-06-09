@@ -623,3 +623,87 @@ pub async fn get_curseforge_modpack_versions(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_cf_search_response() {
+        let json = r#"{
+            "data": [
+                {
+                    "id": 238222,
+                    "name": "Just Enough Items (JEI)",
+                    "summary": "JEI is an item and recipe viewing mod for Minecraft",
+                    "downloadCount": 265000000.0,
+                    "authors": [
+                        { "name": "mezz" }
+                    ],
+                    "logo": {
+                        "thumbnailUrl": "https://media.forgecdn.net/avatars/thumbnail/1.png"
+                    },
+                    "latestFiles": [
+                        {
+                            "id": 123456,
+                            "fileName": "jei-1.20.1.jar",
+                            "displayName": "JEI 1.20.1",
+                            "releaseType": 1,
+                            "fileDate": "2023-01-01T00:00:00Z",
+                            "gameVersions": ["1.20.1"],
+                            "loaders": ["Forge", "Fabric"]
+                        }
+                    ]
+                }
+            ]
+        }"#;
+
+        let response: CfSearchResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.data.len(), 1);
+        let project = &response.data[0];
+        assert_eq!(project.id, 238222);
+        assert_eq!(project.name, "Just Enough Items (JEI)");
+        assert_eq!(project.authors[0].name, "mezz");
+        assert_eq!(project.latest_files.as_ref().unwrap().len(), 1);
+        assert_eq!(project.latest_files.as_ref().unwrap()[0].file_name, "jei-1.20.1.jar");
+        assert_eq!(project.latest_files.as_ref().unwrap()[0].game_versions.as_ref().unwrap()[0], "1.20.1");
+    }
+
+    #[test]
+    fn test_parse_cf_files_response() {
+        let json = r#"{
+            "data": [
+                {
+                    "id": 123456,
+                    "fileName": "jei-1.20.1.jar",
+                    "displayName": "JEI 1.20.1",
+                    "downloadUrl": "https://edge.forgecdn.net/files/123/456/jei-1.20.1.jar",
+                    "fileLength": 1024000,
+                    "releaseType": 1,
+                    "fileDate": "2023-01-01T00:00:00Z",
+                    "hashes": [
+                        { "value": "1234567890abcdef", "algo": 1 }
+                    ],
+                    "gameVersions": ["1.20.1", "Forge"],
+                    "loaders": ["Forge"]
+                }
+            ]
+        }"#;
+
+        let response: CfFilesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.data.len(), 1);
+        let file = &response.data[0];
+        assert_eq!(file.id, 123456);
+        assert_eq!(file.download_url.as_ref().unwrap(), "https://edge.forgecdn.net/files/123/456/jei-1.20.1.jar");
+        assert_eq!(file.hashes.as_ref().unwrap()[0].algo, 1);
+        assert_eq!(file.hashes.as_ref().unwrap()[0].value, "1234567890abcdef");
+    }
+
+    #[test]
+    fn test_cf_mod_loader_parsing() {
+        assert_eq!(CfModLoader::from_str("forge"), CfModLoader::Forge);
+        assert_eq!(CfModLoader::from_str("fabric"), CfModLoader::Fabric);
+        assert_eq!(CfModLoader::from_str("neoforge"), CfModLoader::NeoForge);
+        assert_eq!(CfModLoader::from_str("unknown"), CfModLoader::Any);
+    }
+}

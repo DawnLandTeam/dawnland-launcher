@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use sha1::{Digest as Sha1Digest, Sha1};
 use sha2::{Digest as Sha2Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -95,5 +96,82 @@ pub async fn is_file_valid_sha1(path: impl AsRef<Path>, expected_hash: &str) -> 
     match compute_sha1(path).await {
         Ok(hash) => hash.eq_ignore_ascii_case(expected_hash),
         Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn test_compute_sha1() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        write!(temp_file, "hello world").unwrap();
+        
+        // sha1("hello world") = 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed
+        let hash = compute_sha1(temp_file.path()).await.unwrap();
+        assert_eq!(hash, "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed");
+    }
+
+    #[tokio::test]
+    async fn test_compute_sha256() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        write!(temp_file, "hello world").unwrap();
+        
+        // sha256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+        let hash = compute_sha256(temp_file.path()).await.unwrap();
+        assert_eq!(hash, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    }
+
+    #[tokio::test]
+    async fn test_is_file_valid_sha1() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        write!(temp_file, "hello world").unwrap();
+        let path = temp_file.path();
+
+        // Valid hash
+        assert!(is_file_valid_sha1(path, "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed").await);
+        // Case-insensitive check
+        assert!(is_file_valid_sha1(path, "2AAE6C35C94FCFB415DBE95F408B9CE91EE846ED").await);
+        // Invalid hash
+        assert!(!is_file_valid_sha1(path, "wrong_hash").await);
+        // Empty hash (always valid by implementation)
+        assert!(is_file_valid_sha1(path, "").await);
+    }
+
+    #[tokio::test]
+    async fn test_atomic_move_success() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.txt");
+        let dest_path = temp_dir.path().join("subdir").join("dest.txt");
+
+        fs::write(&source_path, "move me").await.unwrap();
+
+        // Perform move
+        atomic_move(&source_path, &dest_path, false).await.unwrap();
+
+        assert!(!source_path.exists());
+        assert!(dest_path.exists());
+        let content = fs::read_to_string(&dest_path).await.unwrap();
+        assert_eq!(content, "move me");
+    }
+
+    #[tokio::test]
+    async fn test_atomic_move_no_overwrite() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source_path = temp_dir.path().join("source.txt");
+        let dest_path = temp_dir.path().join("dest.txt");
+
+        fs::write(&source_path, "new content").await.unwrap();
+        fs::write(&dest_path, "old content").await.unwrap();
+
+        // Should fail because overwrite is false
+        let result = atomic_move(&source_path, &dest_path, false).await;
+        assert!(matches!(result, Err(FsError::TargetExists)));
+        
+        let content = fs::read_to_string(&dest_path).await.unwrap();
+        assert_eq!(content, "old content");
     }
 }

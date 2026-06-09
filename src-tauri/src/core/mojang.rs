@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -742,4 +744,124 @@ pub async fn get_installed_versions() -> Result<Vec<String>, String> {
     versions.sort_by(|a, b| compare_versions(b, a));
     tracing::info!("Found {} installed versions", versions.len());
     Ok(versions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_maven_name_to_path() {
+        // Standard fabric loader format
+        let path = maven_name_to_path("net.fabricmc:fabric-loader:0.14.22").unwrap();
+        assert_eq!(path, "net/fabricmc/fabric-loader/0.14.22/fabric-loader-0.14.22.jar");
+
+        // Forge universal special case
+        let path = maven_name_to_path("net.minecraftforge:forge:1.16.5-36.2.39").unwrap();
+        assert_eq!(path, "net/minecraftforge/forge/1.16.5-36.2.39/forge-1.16.5-36.2.39-universal.jar");
+
+        // With classifier
+        let path = maven_name_to_path("optifine:OptiFine:1.16.5_HD_U_G8:installer").unwrap();
+        assert_eq!(path, "optifine/OptiFine/1.16.5_HD_U_G8/OptiFine-1.16.5_HD_U_G8-installer.jar");
+
+        // Invalid format
+        assert!(maven_name_to_path("invalid-format").is_none());
+    }
+
+    #[test]
+    fn test_should_download_library() {
+        let mut lib = Library {
+            name: Some("test.lib".into()),
+            downloads: None,
+            url: None,
+            rules: None,
+            extract: None,
+            natives: None,
+        };
+
+        // No rules -> true
+        assert!(should_download_library(&lib));
+
+        // Rule allow for windows
+        lib.rules = Some(vec![Rule {
+            action: Some("allow".into()),
+            os: Some(RuleOs {
+                name: Some("windows".into()),
+                arch: None,
+                version: None,
+            }),
+            features: None,
+        }]);
+
+        let is_windows = std::env::consts::OS == "windows";
+        assert_eq!(should_download_library(&lib), is_windows);
+
+        // Rule disallow for macos
+        lib.rules = Some(vec![
+            Rule {
+                action: Some("allow".into()),
+                os: None,
+                features: None,
+            },
+            Rule {
+                action: Some("disallow".into()),
+                os: Some(RuleOs {
+                    name: Some("osx".into()),
+                    arch: None,
+                    version: None,
+                }),
+                features: None,
+            },
+        ]);
+
+        let is_macos = std::env::consts::OS == "macos";
+        assert_eq!(should_download_library(&lib), !is_macos);
+    }
+
+    #[test]
+    fn test_parse_version_manifest() {
+        let json = r#"{
+            "latest": {
+                "release": "1.20.4",
+                "snapshot": "24w14a"
+            },
+            "versions": [
+                {
+                    "id": "1.20.4",
+                    "type": "release",
+                    "url": "https://piston-meta.mojang.com/v1/packages/1.20.4.json",
+                    "time": "2023-12-07T14:48:30+00:00",
+                    "releaseTime": "2023-12-07T14:48:30+00:00"
+                }
+            ]
+        }"#;
+
+        let manifest: VersionManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.latest.release.unwrap(), "1.20.4");
+        assert_eq!(manifest.latest.snapshot.unwrap(), "24w14a");
+        assert_eq!(manifest.versions.len(), 1);
+        assert_eq!(manifest.versions[0].id, "1.20.4");
+        assert_eq!(manifest.versions[0].version_type, "release");
+    }
+
+    #[test]
+    fn test_parse_version_meta() {
+        let json = r#"{
+            "id": "1.20.4",
+            "mainClass": "net.minecraft.client.main.Main",
+            "minecraftArguments": "--username ${auth_player_name}",
+            "type": "release",
+            "javaVersion": {
+                "component": "java-runtime-gamma",
+                "majorVersion": 17
+            },
+            "libraries": []
+        }"#;
+
+        let meta: VersionMeta = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.id, "1.20.4");
+        assert_eq!(meta.main_class.unwrap(), "net.minecraft.client.main.Main");
+        assert_eq!(meta.minecraft_arguments.unwrap(), "--username ${auth_player_name}");
+        assert_eq!(meta.java_version.unwrap().major_version, 17);
+    }
 }

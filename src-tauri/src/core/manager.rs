@@ -1,6 +1,9 @@
 //! Instance Manager - Local Instance Scanning Engine
 //! Provides functionality to scan and manage installed game instances.
 
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 use crate::core::mojang::get_minecraft_base;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -749,4 +752,62 @@ pub async fn bind_instance_to_server(
         .map_err(|e| format!("Failed to write dlml.json: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_mc_version_from_id() {
+        assert_eq!(extract_mc_version_from_id("1.20.1"), Some("1.20.1".to_string()));
+        assert_eq!(extract_mc_version_from_id("1.19.4-Fabric-0.15.7"), Some("1.19.4".to_string()));
+        assert_eq!(extract_mc_version_from_id("Fabric-1.18.2-0.14.21"), Some("1.18.2".to_string()));
+        assert_eq!(extract_mc_version_from_id("NeoForge-1.20.4-20.4.80-beta"), Some("1.20.4".to_string()));
+        assert_eq!(extract_mc_version_from_id("1.8.9-forge1.8.9-11.15.1.2318-1.8.9"), Some("1.8.9".to_string()));
+        assert_eq!(extract_mc_version_from_id("invalid-version"), None);
+        assert_eq!(extract_mc_version_from_id("47.1.0"), None); // Forge version shouldn't be extracted
+    }
+
+    #[test]
+    fn test_parse_version_json() {
+        let vanilla_json = r#"{
+            "id": "1.20.1",
+            "type": "release"
+        }"#;
+        let (mc, loader, mv, _mt, _mpid) = parse_version_json(vanilla_json, "1.20.1");
+        assert_eq!(mc, "1.20.1");
+        assert_eq!(loader, "Vanilla");
+        assert_eq!(mv, None);
+
+        let fabric_json = r#"{
+            "id": "fabric-loader-0.15.7-1.20.1",
+            "inheritsFrom": "1.20.1",
+            "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+            "modpackVersion": "1.0.0",
+            "modpackType": "CurseForge"
+        }"#;
+        let (mc, loader, mv, mt, _mpid) = parse_version_json(fabric_json, "fabric-loader-0.15.7-1.20.1");
+        assert_eq!(mc, "1.20.1");
+        assert_eq!(loader, "Fabric");
+        assert_eq!(mv, Some("1.0.0".to_string()));
+        assert_eq!(mt, Some("CurseForge".to_string()));
+
+        let forge_json = r#"{
+            "id": "1.20.1-forge-47.2.20",
+            "inheritsFrom": "1.20.1",
+            "mainClass": "cpw.mods.bootstraplauncher.BootstrapLauncher"
+        }"#;
+        let (mc, loader, _mv, _mt, _mpid) = parse_version_json(forge_json, "1.20.1-forge-47.2.20");
+        assert_eq!(mc, "1.20.1");
+        assert_eq!(loader, "Forge");
+
+        let neoforge_json = r#"{
+            "id": "1.20.4-neoforge-20.4.80",
+            "inheritsFrom": "1.20.4"
+        }"#;
+        let (mc, loader, _mv, _mt, _mpid) = parse_version_json(neoforge_json, "1.20.4-neoforge-20.4.80");
+        assert_eq!(mc, "1.20.4");
+        assert_eq!(loader, "NeoForge");
+    }
 }
