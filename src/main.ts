@@ -10,9 +10,13 @@ if (import.meta.env.PROD) {
   document.addEventListener("contextmenu", (e) => e.preventDefault());
 }
 
+import { trackEvent } from "./utils/analytics";
+
 const app = createApp(App);
 
 app.use(router);
 app.use(i18n);
 app.directive('safe-html', safeHtml);
 app.mount("#app");
+
+trackEvent("app_started").catch(console.error);

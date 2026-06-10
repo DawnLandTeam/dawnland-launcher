@@ -4,6 +4,7 @@ import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { trackEvent } from "../utils/analytics";
 import { useI18n } from "vue-i18n";
 import { setAppBusy } from "../composables/useAppStatus";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar, X } from "@lucide/vue";
@@ -393,6 +394,7 @@ const installModpack = async () => {
   statusMessage.value = "Starting installation...";
 
   try {
+    trackEvent("modpack_install_started", { type: onlineUrl.value ? "online" : "local", isUpdate: String(isUpdate.value) });
     if (onlineUrl.value) {
       console.log("Invoking download_and_install_online_modpack...");
       await invoke<string>("download_and_install_online_modpack", {
@@ -425,12 +427,14 @@ const installModpack = async () => {
     }
     
     console.log("Installation task submitted successfully. Redirecting...");
+    trackEvent("modpack_install_completed", { instanceName: instanceName.value });
     isInstalling.value = false;
     setAppBusy(false);
     
     router.push("/instances");
   } catch (error) {
     console.error("Installation failed:", error);
+    trackEvent("error_occurred", { context: "modpack_install", error: String(error) });
     statusMessage.value = `Installation failed: ${error}`;
     isInstalling.value = false;
     isCanceling.value = false;

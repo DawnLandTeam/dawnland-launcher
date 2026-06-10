@@ -204,3 +204,13 @@ pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), Stri
     Ok(())
 }
 
+#[tauri::command]
+pub fn app_track_event(
+    app: tauri::AppHandle,
+    name: &str,
+    props: Option<serde_json::Value>,
+) -> Result<(), String> {
+    use tauri_plugin_aptabase::EventTracker;
+    tracing::info!("Tracking event: {} (Props: {:?})", name, props);
+    app.track_event(name, props)
+}
