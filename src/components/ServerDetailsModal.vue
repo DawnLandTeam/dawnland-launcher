@@ -32,7 +32,8 @@ const shareServer = () => {
   if (!props.server?.id) return;
   const rawLink = `dlml://server/view?id=${props.server.id}`;
   const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://backend.dawnland.cn';
-  const link = `${backendUrl}/link?url=${encodeURIComponent(rawLink)}`;
+  const b64 = btoa(unescape(encodeURIComponent(rawLink)));
+  const link = `${backendUrl}/link?b64=${b64}`;
   navigator.clipboard.writeText(link);
   copiedShareLink.value = true;
   setTimeout(() => {
