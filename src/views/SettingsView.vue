@@ -18,7 +18,7 @@ const router = useRouter();
 const appVersion = ref('0.0.0');
 
 onMounted(async () => {
-  trackEvent("settings_viewed").catch(console.error);
+  trackEvent("settings_viewed");
   try {
     appVersion.value = await getVersion();
   } catch (err) {
@@ -168,7 +168,11 @@ async function addAuthlibServer(): Promise<void> {
     newAuthlibUrl.value = "";
   } catch (err) {
     console.error("Failed to add authlib server:", err);
-    trackEvent("error_occurred", { context: "manual_authlib", error: String(err), api: newAuthlibUrl.value.trim() });
+    trackEvent("error_occurred", { 
+      context: "manual_authlib", 
+      error_type: err instanceof Error ? err.name : typeof err, 
+      api: newAuthlibUrl.value.trim() 
+    });
     alert(`Failed to add Authlib Server: ${err}`);
   } finally {
     isAddingAuthlibServer.value = false;
@@ -355,7 +359,10 @@ async function downloadJava(majorVersion: number): Promise<void> {
     
   } catch (err) {
     console.error("Failed to download Java:", err);
-    trackEvent("error_occurred", { context: "java_download", error: String(err) });
+    trackEvent("error_occurred", { 
+      context: "java_download", 
+      error_type: err instanceof Error ? err.name : typeof err 
+    });
     alert(`Failed to download Java ${majorVersion}: ${err}`);
   } finally {
     if (unlisten) unlisten();

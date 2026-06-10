@@ -155,7 +155,11 @@ async function addAuthlibAccount(): Promise<void> {
     closeAddAccountModal();
     await emit("accounts-updated");
   } catch (err) {
-    trackEvent("login_failed", { type: "authlib", error: String(err), api: authlibUrl.value.trim() });
+    trackEvent("login_failed", { 
+      type: "authlib", 
+      error_type: err instanceof Error ? err.name : typeof err, 
+      api: authlibUrl.value.trim() 
+    });
     loginError.value = typeof err === "string" ? err : String(err);
   } finally {
     isAddingAuthlib.value = false;
@@ -334,7 +338,11 @@ watch(
           await loadAuthlibServers();
         } catch (err) {
           console.error("Failed to auto-add authlib server:", err);
-          trackEvent("error_occurred", { context: "manual_authlib", error: String(err), api: url });
+          trackEvent("error_occurred", { 
+            context: "manual_authlib", 
+            error_type: err instanceof Error ? err.name : typeof err, 
+            api: url 
+          });
         }
       }
 

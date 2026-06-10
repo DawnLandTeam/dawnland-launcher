@@ -77,16 +77,18 @@ pub fn run() {
             std::fs::create_dir_all(&app_dir).unwrap_or_default();
             let db_path = app_dir.join("tasks.db");
 
-            tauri::async_runtime::spawn(async move {
-                match core::task::db::TaskDatabase::new(db_path).await {
-                    Ok(db) => {
-                        let manager = core::task::TaskManager::new(app_handle.clone(), db).await;
-                        app_handle.manage(manager);
+            tokio::task::block_in_place(|| {
+                tauri::async_runtime::block_on(async move {
+                    match core::task::db::TaskDatabase::new(db_path).await {
+                        Ok(db) => {
+                            let manager = core::task::TaskManager::new(app_handle.clone(), db).await;
+                            app_handle.manage(manager);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to initialize task database: {}", e);
+                        }
                     }
-                    Err(e) => {
-                        tracing::error!("Failed to initialize task database: {}", e);
-                    }
-                }
+                });
             });
 
             if let Some(window) = app.get_webview_window("main") {
@@ -108,7 +110,9 @@ pub fn run() {
                 let _ = window.show();
             }
             Ok(())
-        })
+        });
+
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
@@ -120,8 +124,13 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_aptabase::Builder::new(option_env!("APTABASE_KEY").unwrap_or("A-US-6243848613")).build())
+        .plugin(tauri_plugin_process::init());
+
+    if let Some(key) = option_env!("APTABASE_KEY") {
+        builder = builder.plugin(tauri_plugin_aptabase::Builder::new(key).build());
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             greet,
             core::security::generate_api_signature,

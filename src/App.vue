@@ -123,7 +123,10 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
       }
     } catch (e) {
       toast.error(t('deepLink.installFailed', '安装失败'), String(e));
-      trackEvent("error_occurred", { context: "deeplink_modpack_install", error: String(e) });
+      trackEvent("error_occurred", { 
+        context: "deeplink_modpack_install", 
+        error_type: e instanceof Error ? e.name : typeof e 
+      });
     }
   } else if (data.type === 'authlib') {
     invoke("add_authlib_server", { url: data.payload.url })
@@ -134,7 +137,11 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
       })
       .catch(err => {
         alert(t('settings.authlib.addFailed', { error: String(err) }));
-        trackEvent("error_occurred", { context: "deeplink_authlib", error: String(err), api: data.payload.url });
+        trackEvent("error_occurred", { 
+          context: "deeplink_authlib", 
+          error_type: err instanceof Error ? err.name : typeof err, 
+          api: data.payload.url 
+        });
       });
   } else if (data.type === 'server') {
     router.push({
@@ -172,7 +179,11 @@ const handleDrop = async (e: DragEvent) => {
         trackEvent("authlib_added", { type: "deeplink_authlib_drop", api: url.trim() });
       } catch (err) {
         alert(t('settings.authlib.addFailed', { error: String(err) }));
-        trackEvent("error_occurred", { context: "deeplink_authlib_drop", error: String(err), api: url.trim() });
+        trackEvent("error_occurred", { 
+          context: "deeplink_authlib_drop", 
+          error_type: err instanceof Error ? err.name : typeof err, 
+          api: url.trim() 
+        });
       }
     }
   }

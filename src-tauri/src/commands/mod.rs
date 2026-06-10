@@ -210,6 +210,10 @@ pub fn app_track_event(
     name: &str,
     props: Option<serde_json::Value>,
 ) -> Result<(), String> {
+    if option_env!("APTABASE_KEY").is_none() {
+        tracing::debug!("Aptabase disabled. Dropping event: {} (Props: {:?})", name, props);
+        return Ok(());
+    }
     use tauri_plugin_aptabase::EventTracker;
     tracing::info!("Tracking event: {} (Props: {:?})", name, props);
     app.track_event(name, props)
