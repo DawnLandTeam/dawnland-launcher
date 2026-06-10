@@ -31,7 +31,7 @@ const copyIp = () => {
 const shareServer = () => {
   if (!props.server?.id) return;
   const rawLink = `dlml://server/view?id=${props.server.id}`;
-  const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://backend.dawnland.cn';
+  const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://api.dawnland.cn';
   const b64 = btoa(unescape(encodeURIComponent(rawLink)));
   const link = `${backendUrl}/link?b64=${b64}`;
   navigator.clipboard.writeText(link);
