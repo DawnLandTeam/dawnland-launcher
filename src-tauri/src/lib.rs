@@ -11,6 +11,51 @@ fn greet(name: &str) -> String {
     format!("Hello, {name}! You've been greeted from Rust!")
 }
 
+#[cfg(target_os = "windows")]
+fn register_deep_link() {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    use std::env;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let path = "Software\\Classes\\dlml";
+
+    // Register deep link for portable/green version on Windows
+    match hkcu.create_subkey(path) {
+        Ok((key, _)) => {
+            if let Err(e) = key.set_value("", &"URL:dlml") {
+                tracing::warn!("Failed to set dlml protocol description in registry: {}", e);
+            }
+            if let Err(e) = key.set_value("URL Protocol", &"") {
+                tracing::warn!("Failed to set URL Protocol value in registry: {}", e);
+            }
+
+            match key.create_subkey("shell\\open\\command") {
+                Ok((cmd_key, _)) => {
+                    match env::current_exe() {
+                        Ok(exe_path) => {
+                            let exe_path_str = exe_path.to_string_lossy();
+                            let command_val = format!("\"{}\" \"%1\"", exe_path_str);
+                            if let Err(e) = cmd_key.set_value("", &command_val) {
+                                tracing::error!("Failed to set deep link command value in registry: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to get current executable path for deep link registration: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create shell\\open\\command registry subkey: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to create registry subkey for dlml deep link: {}", e);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize the logging system before anything else.
@@ -25,6 +70,9 @@ pub fn run() {
             use tauri::Manager;
             let app_handle = app.handle().clone();
             
+            #[cfg(target_os = "windows")]
+            register_deep_link();
+
             let app_dir = core::mojang::get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland");
             std::fs::create_dir_all(&app_dir).unwrap_or_default();
             let db_path = app_dir.join("tasks.db");
@@ -61,6 +109,15 @@ pub fn run() {
             }
             Ok(())
         })
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
