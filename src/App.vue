@@ -100,7 +100,7 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
       const versions: any = await invoke(fetchVersions, { projectId });
       let targetVersion = versions.find((v: any) => v.id.toString() === versionId);
       if (!targetVersion) targetVersion = versions.find((v: any) => v.name === versionId);
-      if (!targetVersion) targetVersion = versions.find((v: any) => v.name.includes(versionId));
+      if (!targetVersion) targetVersion = versions.find((v: any) => typeof v.name === 'string' && v.name.includes(versionId));
       
       if (targetVersion) {
         const rawName = name || targetVersion.name || targetVersion.displayName || 'Shared Modpack';
