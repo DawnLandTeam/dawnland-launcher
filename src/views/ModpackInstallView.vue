@@ -117,7 +117,7 @@ const initializeView = () => {
             .then((versions: any) => {
               let targetVersion = versions.find((v: any) => v.id.toString() === route.query.version_id);
               if (!targetVersion) targetVersion = versions.find((v: any) => v.name === route.query.version_id);
-              if (!targetVersion) targetVersion = versions.find((v: any) => v.name.includes(route.query.version_id));
+              if (!targetVersion) targetVersion = versions.find((v: any) => typeof v.name === 'string' && v.name.includes(route.query.version_id as string));
 
               if (targetVersion) {
                 onlineUrl.value = targetVersion.download_url;
@@ -320,7 +320,7 @@ const getVersionUpgradeStatus = (index: number) => {
     const cv = route.query.current_version as string;
     return v.name === cv || 
            v.id.toString() === cv || 
-           (cv && v.name.includes(cv));
+           (cv && typeof v.name === 'string' && v.name.includes(cv));
   });
   
   if (currentVersionIndex === -1) {
