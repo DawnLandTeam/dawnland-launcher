@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw } from "@lucide/vue";
+import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw, Share2, Check } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
 import InstanceModsModal from "../components/InstanceModsModal.vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
@@ -44,6 +44,7 @@ interface JavaInfo {
 
 // Router — deep-link support
 import { launchingInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';
+import { toast } from '../composables/useToast';
 
 const route = useRoute();
 const router = useRouter();
@@ -53,6 +54,7 @@ const showInstallModal = ref(false);
 const prefillVersion = ref("");
 const prefillLoader = ref("");
 const installedInstances = ref<InstanceItem[]>([]);
+const copiedShareInstanceId = ref<string | null>(null);
 
 // Settings modal state
 const showSettingsModal = ref(false);
@@ -299,6 +301,24 @@ function updateModpack(instance: InstanceItem) {
   });
 }
 
+async function shareModpack(instance: InstanceItem) {
+  if (!instance.modpackProjectId || !instance.modpackVersion || !instance.modpackType) return;
+  const rawLink = `dlml://modpack/install?id=${encodeURIComponent(instance.modpackProjectId)}&source=${encodeURIComponent(instance.modpackType.toLowerCase())}&version_id=${encodeURIComponent(instance.modpackVersion)}&name=${encodeURIComponent(instance.name)}`;
+  const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://api.dawnland.cn';
+  const b64 = btoa(unescape(encodeURIComponent(rawLink)));
+  const link = `${backendUrl}/link?b64=${b64}`;
+  
+  try {
+    await navigator.clipboard.writeText(link);
+    copiedShareInstanceId.value = instance.id;
+    setTimeout(() => {
+      copiedShareInstanceId.value = null;
+    }, 2000);
+  } catch (err) {
+    console.error("Failed to write to clipboard:", err);
+    toast.error('无法复制链接到剪贴板，请检查浏览器权限。');
+  }
+}
 function confirmDeleteInstance(instance: InstanceItem) {
   deletingInstanceId.value = instance.id;
   deletingInstanceName.value = instance.name;
@@ -485,6 +505,14 @@ function loaderBadgeClass(loaderType: string): string {
               >
                 <RefreshCw class="h-4 w-4" />
                 {{ $t('instances.updateModpack', 'Update Modpack') }}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                v-if="instance.modpackType && instance.modpackProjectId && instance.modpackVersion"
+                @click="shareModpack(instance)"
+              >
+                <Check v-if="copiedShareInstanceId === instance.id" class="h-4 w-4 text-green-500" />
+                <Share2 v-else class="h-4 w-4" />
+                {{ copiedShareInstanceId === instance.id ? $t('instances.shareCopied', '已复制') : $t('instances.shareModpack', 'Share Modpack') }}
               </DropdownMenuItem>
               <DropdownMenuItem
                 v-if="instance.loaderType && instance.loaderType.toLowerCase() !== 'none' && instance.loaderType.toLowerCase() !== 'vanilla'"

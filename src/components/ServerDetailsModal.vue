@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { X, Globe, Users, Copy, Check, MessageSquare } from '@lucide/vue';
+import { X, Globe, Users, Copy, Check, MessageSquare, Share2 } from '@lucide/vue';
 import { marked } from 'marked';
 
 const props = defineProps<{
@@ -10,21 +10,48 @@ const props = defineProps<{
 
 const emit = defineEmits(['update:open']);
 import { useI18n } from 'vue-i18n';
+import { toast } from '../composables/useToast';
 const { t } = useI18n();
 
 const copiedIp = ref(false);
+const copiedShareLink = ref(false);
 
 const close = () => {
   emit('update:open', false);
 };
 
-const copyIp = () => {
+const copyIp = async () => {
   if (!props.server?.ip) return;
-  navigator.clipboard.writeText(`${props.server.ip}:${props.server.port}`);
-  copiedIp.value = true;
-  setTimeout(() => {
-    copiedIp.value = false;
-  }, 2000);
+  try {
+    const textToCopy = props.server.port ? `${props.server.ip}:${props.server.port}` : props.server.ip;
+    await navigator.clipboard.writeText(textToCopy);
+    copiedIp.value = true;
+    setTimeout(() => {
+      copiedIp.value = false;
+    }, 2000);
+  } catch (err) {
+    console.error("Failed to write to clipboard:", err);
+    toast.error('无法复制 IP 到剪贴板，请检查浏览器权限。');
+  }
+};
+
+const shareServer = async () => {
+  if (!props.server?.id) return;
+  const rawLink = `dlml://server/view?id=${encodeURIComponent(props.server.id)}`;
+  const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://api.dawnland.cn';
+  const b64 = btoa(unescape(encodeURIComponent(rawLink)));
+  const link = `${backendUrl}/link?b64=${b64}`;
+  
+  try {
+    await navigator.clipboard.writeText(link);
+    copiedShareLink.value = true;
+    setTimeout(() => {
+      copiedShareLink.value = false;
+    }, 2000);
+  } catch (err) {
+    console.error("Failed to write to clipboard:", err);
+    toast.error('无法复制链接到剪贴板，请检查浏览器权限。');
+  }
 };
 
 const tags = computed(() => {
@@ -70,9 +97,15 @@ const renderedDescription = computed(() => {
               </div>
             </div>
           </div>
-          <button @click="close" class="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white transition-colors rounded-lg hover:bg-neutral-200 dark:hover:bg-zinc-800">
-            <X class="w-6 h-6" />
-          </button>
+          <div class="flex items-center gap-2">
+            <button @click="shareServer" class="p-2 text-neutral-500 hover:text-primary dark:text-neutral-400 dark:hover:text-primary transition-colors rounded-lg hover:bg-neutral-200 dark:hover:bg-zinc-800" title="分享此服务器 (Share Server)">
+              <Check v-if="copiedShareLink" class="w-6 h-6 text-green-500" />
+              <Share2 v-else class="w-6 h-6" />
+            </button>
+            <button @click="close" class="p-2 text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white transition-colors rounded-lg hover:bg-neutral-200 dark:hover:bg-zinc-800">
+              <X class="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         <!-- Body -->
