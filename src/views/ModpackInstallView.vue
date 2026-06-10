@@ -394,7 +394,7 @@ const installModpack = async () => {
   statusMessage.value = "Starting installation...";
 
   try {
-    trackEvent("modpack_install_started", { type: onlineUrl.value ? "online" : "local", isUpdate: String(isUpdate.value) });
+    trackEvent("modpack_install_started", { type: onlineUrl.value ? "online" : "local", isUpdate: isUpdate.value });
     if (onlineUrl.value) {
       console.log("Invoking download_and_install_online_modpack...");
       await invoke<string>("download_and_install_online_modpack", {
