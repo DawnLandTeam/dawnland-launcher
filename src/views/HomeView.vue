@@ -4,6 +4,7 @@ import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { trackEvent } from "../utils/analytics";
 import {
   Play,
   Loader2,
@@ -393,6 +394,7 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
     gameLogs.value = [];
     
     try {
+      trackEvent("game_launched", { instanceId: selectedInstanceId.value });
       await invoke("launch_instance", {
         versionId: selectedInstanceId.value,
         accountUuid: selectedAccountId.value,
@@ -401,6 +403,7 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
       });
     } catch (e) {
       console.error("Failed to launch auto instance:", e);
+      trackEvent("error_occurred", { context: "auto_launch", error: String(e) });
       launchingInstances.value.delete(selectedInstanceId.value);
       repairingInstances.value.delete(selectedInstanceId.value);
       isRepairing.value = false;
@@ -499,12 +502,14 @@ async function handlePrimaryAction() {
   }
 
   try {
+    trackEvent("game_launched", { instanceId: selectedInstanceId.value });
     await invoke("launch_instance", {
       versionId: selectedInstanceId.value,
       accountUuid: selectedAccountId.value,
     });
   } catch (e) {
     console.error("Failed to launch instance:", e);
+    trackEvent("error_occurred", { context: "manual_launch", error: String(e) });
     launchingInstances.value.delete(selectedInstanceId.value);
     repairingInstances.value.delete(selectedInstanceId.value);
     isRepairing.value = false;

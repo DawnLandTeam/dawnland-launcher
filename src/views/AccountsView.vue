@@ -9,6 +9,7 @@ import { DialogContent, DialogTitle } from "../components/ui/dialog";
 import { useRouter, useRoute } from "vue-router";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import QrcodeVue from 'qrcode.vue';
+import { trackEvent } from "../utils/analytics";
 
 interface Account {
   id: string;
@@ -122,6 +123,7 @@ async function addOfflineAccount(): Promise<void> {
   try {
     await invoke("add_offline_account", { username: newUsername.value.trim() });
     newUsername.value = "";
+    trackEvent("account_added", { type: "offline" });
     await loadAccounts();
     closeAddAccountModal();
     // Notify other views to refresh accounts
@@ -148,10 +150,16 @@ async function addAuthlibAccount(): Promise<void> {
     });
     authlibUsername.value = "";
     authlibPassword.value = "";
+    trackEvent("account_added", { type: "authlib", api: authlibUrl.value.trim() });
     await loadAccounts();
     closeAddAccountModal();
     await emit("accounts-updated");
   } catch (err) {
+    trackEvent("login_failed", { 
+      type: "authlib", 
+      error_type: err instanceof Error ? err.name : typeof err, 
+      api: authlibUrl.value.trim() 
+    });
     loginError.value = typeof err === "string" ? err : String(err);
   } finally {
     isAddingAuthlib.value = false;
@@ -227,11 +235,13 @@ async function startSeamlessMicrosoftLogin(): Promise<void> {
     const account = await invoke<Account>("login_microsoft_oauth");
     if (!accounts.value) accounts.value = [];
     accounts.value.push(account);
+    trackEvent("account_added", { type: "microsoft", flow: "seamless" });
     isLoggingInMicrosoft.value = false;
     closeAddAccountModal();
     // Notify other views to refresh accounts
     await emit("accounts-updated");
   } catch (err) {
+    trackEvent("login_failed", { type: "microsoft", flow: "seamless", error: String(err) });
     loginError.value = typeof err === "string" ? err : String(err);
     isLoggingInMicrosoft.value = false;
   }
@@ -250,6 +260,7 @@ async function startMicrosoftLogin(): Promise<void> {
 
     pollMicrosoftToken(response.deviceCode);
   } catch (err) {
+    trackEvent("login_failed", { type: "microsoft", flow: "device_code_init", error: String(err) });
     loginError.value = typeof err === "string" ? err : String(err);
     isLoggingInMicrosoft.value = false;
   }
@@ -261,6 +272,7 @@ async function pollMicrosoftToken(code: string): Promise<void> {
     const account = await invoke<Account>("poll_microsoft_token", { deviceCode: code });
     if (!accounts.value) accounts.value = [];
     accounts.value.push(account);
+    trackEvent("account_added", { type: "microsoft", flow: "device_code" });
     microsoftLoginData.value = null;
     isLoggingInMicrosoft.value = false;
     closeAddAccountModal();
@@ -271,6 +283,7 @@ async function pollMicrosoftToken(code: string): Promise<void> {
     if (errorMsg.includes("authorization_pending")) {
       setTimeout(() => pollMicrosoftToken(code), 5000);
     } else if (errorMsg.includes("expired_token") || errorMsg.includes("cancellation")) {
+      trackEvent("login_failed", { type: "microsoft", flow: "device_code", error: errorMsg });
       loginError.value = errorMsg;
       microsoftLoginData.value = null;
       isLoggingInMicrosoft.value = false;
@@ -321,9 +334,15 @@ watch(
       if (!exists) {
         try {
           await invoke("add_authlib_server", { url });
+          trackEvent("authlib_added", { type: "manual_authlib", api: url });
           await loadAuthlibServers();
         } catch (err) {
           console.error("Failed to auto-add authlib server:", err);
+          trackEvent("error_occurred", { 
+            context: "manual_authlib", 
+            error_type: err instanceof Error ? err.name : typeof err, 
+            api: url 
+          });
         }
       }
 
