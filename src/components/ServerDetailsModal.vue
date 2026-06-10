@@ -37,7 +37,7 @@ const copyIp = async () => {
 
 const shareServer = async () => {
   if (!props.server?.id) return;
-  const rawLink = `dlml://server/view?id=${props.server.id}`;
+  const rawLink = `dlml://server/view?id=${encodeURIComponent(props.server.id)}`;
   const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://api.dawnland.cn';
   const b64 = btoa(unescape(encodeURIComponent(rawLink)));
   const link = `${backendUrl}/link?b64=${b64}`;
