@@ -303,7 +303,7 @@ function updateModpack(instance: InstanceItem) {
 
 async function shareModpack(instance: InstanceItem) {
   if (!instance.modpackProjectId || !instance.modpackVersion || !instance.modpackType) return;
-  const rawLink = `dlml://modpack/install?id=${instance.modpackProjectId}&source=${instance.modpackType.toLowerCase()}&version_id=${instance.modpackVersion}&name=${encodeURIComponent(instance.name)}`;
+  const rawLink = `dlml://modpack/install?id=${encodeURIComponent(instance.modpackProjectId)}&source=${encodeURIComponent(instance.modpackType.toLowerCase())}&version_id=${encodeURIComponent(instance.modpackVersion)}&name=${encodeURIComponent(instance.name)}`;
   const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://api.dawnland.cn';
   const b64 = btoa(unescape(encodeURIComponent(rawLink)));
   const link = `${backendUrl}/link?b64=${b64}`;
