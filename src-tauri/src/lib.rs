@@ -77,18 +77,16 @@ pub fn run() {
             std::fs::create_dir_all(&app_dir).unwrap_or_default();
             let db_path = app_dir.join("tasks.db");
 
-            tokio::task::block_in_place(|| {
-                tauri::async_runtime::block_on(async move {
-                    match core::task::db::TaskDatabase::new(db_path).await {
-                        Ok(db) => {
-                            let manager = core::task::TaskManager::new(app_handle.clone(), db).await;
-                            app_handle.manage(manager);
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to initialize task database: {}", e);
-                        }
+            tauri::async_runtime::block_on(async move {
+                match core::task::db::TaskDatabase::new(db_path).await {
+                    Ok(db) => {
+                        let manager = core::task::TaskManager::new(app_handle.clone(), db).await;
+                        app_handle.manage(manager);
                     }
-                });
+                    Err(e) => {
+                        tracing::error!("Failed to initialize task database: {}", e);
+                    }
+                }
             });
 
             if let Some(window) = app.get_webview_window("main") {
