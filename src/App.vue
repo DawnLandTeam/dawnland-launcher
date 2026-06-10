@@ -16,6 +16,7 @@ import Toaster from "./components/Toaster.vue";
 import DeepLinkReceiveModal, { type DeepLinkData } from "./components/DeepLinkReceiveModal.vue";
 import { toast } from "./composables/useToast";
 import { parseDeepLinkUrl } from "./utils/deepLink";
+import { trackEvent } from "./utils/analytics";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
@@ -28,24 +29,28 @@ const router = useRouter();
 let unlistenDeepLink: (() => void) | null = null;
 
 onMounted(async () => {
+  // Show window immediately to prevent blank startup if subsequent awaits fail
+  getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
+
   // Initialize task center
   await taskStore.init();
 
   // Deep Link listener
-  unlistenDeepLink = await onOpenUrl((urls) => {
-    for (const urlStr of urls) {
-      const parsedData = parseDeepLinkUrl(urlStr);
-      if (parsedData) {
-        incomingLinkData.value = parsedData;
-        showDeepLinkModal.value = true;
-      } else {
-        console.warn("Received invalid or unrecognized deep link:", urlStr);
+  try {
+    unlistenDeepLink = await onOpenUrl((urls) => {
+      for (const urlStr of urls) {
+        const parsedData = parseDeepLinkUrl(urlStr);
+        if (parsedData) {
+          incomingLinkData.value = parsedData;
+          showDeepLinkModal.value = true;
+        } else {
+          console.warn("Received invalid or unrecognized deep link:", urlStr);
+        }
       }
-    }
-  });
-
-  // Show window
-  getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
+    });
+  } catch (err) {
+    console.error("Failed to initialize deep link listener:", err);
+  }
 
   // Async precise locale detection from Rust
   if (localStorage.getItem('userSelectedLanguage') !== 'true') {
@@ -106,6 +111,7 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
         const rawName = name || targetVersion.name || targetVersion.displayName || 'Shared Modpack';
         const finalName = rawName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
         
+        trackEvent("modpack_install_started", { type: "deeplink_online", source });
         await invoke("download_and_install_online_modpack", {
           url: targetVersion.download_url,
           instanceName: finalName,
@@ -117,18 +123,29 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
         toast.success(t('deepLink.installStarted', '已开始安装整合包'), t('deepLink.installStartedDesc', '请在任务中心查看进度'));
       } else {
         toast.error(t('deepLink.installFailed', '安装失败'), t('deepLink.versionNotFound', '未找到对应的整合包版本'));
+        trackEvent("error_occurred", { context: "deeplink_modpack_install", error: "Version not found" });
       }
     } catch (e) {
       toast.error(t('deepLink.installFailed', '安装失败'), String(e));
+      trackEvent("error_occurred", { 
+        context: "deeplink_modpack_install", 
+        error_type: e instanceof Error ? e.name : typeof e 
+      });
     }
   } else if (data.type === 'authlib') {
     invoke("add_authlib_server", { url: data.payload.url })
       .then(() => {
         window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
         alert(t('settings.authlib.addSuccess', { url: data.payload.url }));
+        trackEvent("authlib_added", { type: "deeplink_authlib", api: data.payload.url });
       })
       .catch(err => {
         alert(t('settings.authlib.addFailed', { error: String(err) }));
+        trackEvent("error_occurred", { 
+          context: "deeplink_authlib", 
+          error_type: err instanceof Error ? err.name : typeof err, 
+          api: data.payload.url 
+        });
       });
   } else if (data.type === 'server') {
     router.push({
@@ -163,8 +180,14 @@ const handleDrop = async (e: DragEvent) => {
         await invoke("add_authlib_server", { url: url.trim() });
         window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
         alert(t('settings.authlib.addSuccess', { url }));
+        trackEvent("authlib_added", { type: "deeplink_authlib_drop", api: url.trim() });
       } catch (err) {
         alert(t('settings.authlib.addFailed', { error: String(err) }));
+        trackEvent("error_occurred", { 
+          context: "deeplink_authlib_drop", 
+          error_type: err instanceof Error ? err.name : typeof err, 
+          api: url.trim() 
+        });
       }
     }
   }
