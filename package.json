@@ -13,6 +13,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@aptabase/tauri": "^0.4.1",
     "@lucide/vue": "^1.16.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-deep-link": "^2.4.9",
