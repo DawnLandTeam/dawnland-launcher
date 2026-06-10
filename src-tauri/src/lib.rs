@@ -64,7 +64,7 @@ pub fn run() {
         eprintln!("Warning: failed to initialize logger: {e}");
     }
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .manage(core::launcher::RunningInstances(std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))))
         .setup(|app| {
             use tauri::Manager;
@@ -108,9 +108,7 @@ pub fn run() {
                 let _ = window.show();
             }
             Ok(())
-        });
-
-    let mut builder = tauri::Builder::default()
+        })
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
