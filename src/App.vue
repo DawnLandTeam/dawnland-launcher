@@ -29,24 +29,28 @@ const router = useRouter();
 let unlistenDeepLink: (() => void) | null = null;
 
 onMounted(async () => {
+  // Show window immediately to prevent blank startup if subsequent awaits fail
+  getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
+
   // Initialize task center
   await taskStore.init();
 
   // Deep Link listener
-  unlistenDeepLink = await onOpenUrl((urls) => {
-    for (const urlStr of urls) {
-      const parsedData = parseDeepLinkUrl(urlStr);
-      if (parsedData) {
-        incomingLinkData.value = parsedData;
-        showDeepLinkModal.value = true;
-      } else {
-        console.warn("Received invalid or unrecognized deep link:", urlStr);
+  try {
+    unlistenDeepLink = await onOpenUrl((urls) => {
+      for (const urlStr of urls) {
+        const parsedData = parseDeepLinkUrl(urlStr);
+        if (parsedData) {
+          incomingLinkData.value = parsedData;
+          showDeepLinkModal.value = true;
+        } else {
+          console.warn("Received invalid or unrecognized deep link:", urlStr);
+        }
       }
-    }
-  });
-
-  // Show window
-  getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
+    });
+  } catch (err) {
+    console.error("Failed to initialize deep link listener:", err);
+  }
 
   // Async precise locale detection from Rust
   if (localStorage.getItem('userSelectedLanguage') !== 'true') {
