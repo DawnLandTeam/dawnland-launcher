@@ -25,12 +25,14 @@ const { locale, t } = useI18n();
 const taskStore = useTaskStore();
 const router = useRouter();
 
+let unlistenDeepLink: (() => void) | null = null;
+
 onMounted(async () => {
   // Initialize task center
   await taskStore.init();
 
   // Deep Link listener
-  const unlistenDeepLink = await onOpenUrl((urls) => {
+  unlistenDeepLink = await onOpenUrl((urls) => {
     for (const urlStr of urls) {
       const parsedData = parseDeepLinkUrl(urlStr);
       if (parsedData) {
@@ -40,11 +42,6 @@ onMounted(async () => {
         console.warn("Received invalid or unrecognized deep link:", urlStr);
       }
     }
-  });
-
-  // Store unlisten function
-  onUnmounted(() => {
-    unlistenDeepLink();
   });
 
   // Show window
@@ -174,6 +171,9 @@ const handleDrop = async (e: DragEvent) => {
 };
 
 onUnmounted(() => {
+  if (unlistenDeepLink) {
+    unlistenDeepLink();
+  }
   document.removeEventListener('dragenter', handleDrag, true);
   document.removeEventListener('dragover', handleDrag, true);
   document.removeEventListener('drop', handleDrop, true);
