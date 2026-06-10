@@ -77,7 +77,7 @@ pub fn run() {
             std::fs::create_dir_all(&app_dir).unwrap_or_default();
             let db_path = app_dir.join("tasks.db");
 
-            tauri::async_runtime::block_on(async move {
+            tauri::async_runtime::spawn(async move {
                 match core::task::db::TaskDatabase::new(db_path).await {
                     Ok(db) => {
                         let manager = core::task::TaskManager::new(app_handle.clone(), db).await;
@@ -121,6 +121,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_aptabase::Builder::new(option_env!("APTABASE_KEY").unwrap_or("A-US-6243848613")).build())
         .invoke_handler(tauri::generate_handler![
             greet,
             core::security::generate_api_signature,
@@ -221,6 +222,8 @@ pub fn run() {
             commands::task::retry_task,
             // Custom Updater commands
             commands::update_launcher,
+            // Custom Analytics Command
+            commands::app_track_event,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
