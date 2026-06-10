@@ -10,6 +10,7 @@ const props = defineProps<{
 
 const emit = defineEmits(['update:open']);
 import { useI18n } from 'vue-i18n';
+import { toast } from '../composables/useToast';
 const { t } = useI18n();
 
 const copiedIp = ref(false);
@@ -19,26 +20,38 @@ const close = () => {
   emit('update:open', false);
 };
 
-const copyIp = () => {
+const copyIp = async () => {
   if (!props.server?.ip) return;
-  navigator.clipboard.writeText(`${props.server.ip}:${props.server.port}`);
-  copiedIp.value = true;
-  setTimeout(() => {
-    copiedIp.value = false;
-  }, 2000);
+  try {
+    const textToCopy = props.server.port ? `${props.server.ip}:${props.server.port}` : props.server.ip;
+    await navigator.clipboard.writeText(textToCopy);
+    copiedIp.value = true;
+    setTimeout(() => {
+      copiedIp.value = false;
+    }, 2000);
+  } catch (err) {
+    console.error("Failed to write to clipboard:", err);
+    toast.error('无法复制 IP 到剪贴板，请检查浏览器权限。');
+  }
 };
 
-const shareServer = () => {
+const shareServer = async () => {
   if (!props.server?.id) return;
   const rawLink = `dlml://server/view?id=${props.server.id}`;
   const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://api.dawnland.cn';
   const b64 = btoa(unescape(encodeURIComponent(rawLink)));
   const link = `${backendUrl}/link?b64=${b64}`;
-  navigator.clipboard.writeText(link);
-  copiedShareLink.value = true;
-  setTimeout(() => {
-    copiedShareLink.value = false;
-  }, 2000);
+  
+  try {
+    await navigator.clipboard.writeText(link);
+    copiedShareLink.value = true;
+    setTimeout(() => {
+      copiedShareLink.value = false;
+    }, 2000);
+  } catch (err) {
+    console.error("Failed to write to clipboard:", err);
+    toast.error('无法复制链接到剪贴板，请检查浏览器权限。');
+  }
 };
 
 const tags = computed(() => {

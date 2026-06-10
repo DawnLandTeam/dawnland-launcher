@@ -44,6 +44,7 @@ interface JavaInfo {
 
 // Router — deep-link support
 import { launchingInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';
+import { toast } from '../composables/useToast';
 
 const route = useRoute();
 const router = useRouter();
@@ -300,18 +301,23 @@ function updateModpack(instance: InstanceItem) {
   });
 }
 
-function shareModpack(instance: InstanceItem) {
+async function shareModpack(instance: InstanceItem) {
   if (!instance.modpackProjectId || !instance.modpackVersion || !instance.modpackType) return;
   const rawLink = `dlml://modpack/install?id=${instance.modpackProjectId}&source=${instance.modpackType.toLowerCase()}&version_id=${instance.modpackVersion}&name=${encodeURIComponent(instance.name)}`;
   const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://api.dawnland.cn';
   const b64 = btoa(unescape(encodeURIComponent(rawLink)));
   const link = `${backendUrl}/link?b64=${b64}`;
-  navigator.clipboard.writeText(link);
   
-  copiedShareInstanceId.value = instance.id;
-  setTimeout(() => {
-    copiedShareInstanceId.value = null;
-  }, 2000);
+  try {
+    await navigator.clipboard.writeText(link);
+    copiedShareInstanceId.value = instance.id;
+    setTimeout(() => {
+      copiedShareInstanceId.value = null;
+    }, 2000);
+  } catch (err) {
+    console.error("Failed to write to clipboard:", err);
+    toast.error('无法复制链接到剪贴板，请检查浏览器权限。');
+  }
 }
 function confirmDeleteInstance(instance: InstanceItem) {
   deletingInstanceId.value = instance.id;
