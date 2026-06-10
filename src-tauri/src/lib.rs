@@ -21,16 +21,37 @@ fn register_deep_link() {
     let path = "Software\\Classes\\dlml";
 
     // Register deep link for portable/green version on Windows
-    if let Ok((key, _)) = hkcu.create_subkey(path) {
-        let _ = key.set_value("", &"URL:dlml");
-        let _ = key.set_value("URL Protocol", &"");
-
-        if let Ok((cmd_key, _)) = key.create_subkey("shell\\open\\command") {
-            if let Ok(exe_path) = env::current_exe() {
-                let exe_path_str = exe_path.to_string_lossy();
-                let command_val = format!("\"{}\" \"%1\"", exe_path_str);
-                let _ = cmd_key.set_value("", &command_val);
+    match hkcu.create_subkey(path) {
+        Ok((key, _)) => {
+            if let Err(e) = key.set_value("", &"URL:dlml") {
+                tracing::warn!("Failed to set dlml protocol description in registry: {}", e);
             }
+            if let Err(e) = key.set_value("URL Protocol", &"") {
+                tracing::warn!("Failed to set URL Protocol value in registry: {}", e);
+            }
+
+            match key.create_subkey("shell\\open\\command") {
+                Ok((cmd_key, _)) => {
+                    match env::current_exe() {
+                        Ok(exe_path) => {
+                            let exe_path_str = exe_path.to_string_lossy();
+                            let command_val = format!("\"{}\" \"%1\"", exe_path_str);
+                            if let Err(e) = cmd_key.set_value("", &command_val) {
+                                tracing::error!("Failed to set deep link command value in registry: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to get current executable path for deep link registration: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create shell\\open\\command registry subkey: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to create registry subkey for dlml deep link: {}", e);
         }
     }
 }
