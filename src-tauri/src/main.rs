@@ -2,7 +2,6 @@
 #![allow(unused)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[tokio::main]
-async fn main() {
+fn main() {
     dawnland_launcher_lib::run()
 }
