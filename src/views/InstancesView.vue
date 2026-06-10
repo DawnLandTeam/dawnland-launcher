@@ -302,7 +302,9 @@ function updateModpack(instance: InstanceItem) {
 
 function shareModpack(instance: InstanceItem) {
   if (!instance.modpackProjectId || !instance.modpackVersion || !instance.modpackType) return;
-  const link = `dlml://modpack/install?id=${instance.modpackProjectId}&source=${instance.modpackType.toLowerCase()}&version_id=${instance.modpackVersion}&name=${encodeURIComponent(instance.name)}`;
+  const rawLink = `dlml://modpack/install?id=${instance.modpackProjectId}&source=${instance.modpackType.toLowerCase()}&version_id=${instance.modpackVersion}&name=${encodeURIComponent(instance.name)}`;
+  const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'https://backend.dawnland.cn';
+  const link = `${backendUrl}/link?url=${encodeURIComponent(rawLink)}`;
   navigator.clipboard.writeText(link);
   
   copiedShareInstanceId.value = instance.id;
