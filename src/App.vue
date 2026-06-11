@@ -16,7 +16,7 @@ import Toaster from "./components/Toaster.vue";
 import DeepLinkReceiveModal, { type DeepLinkData } from "./components/DeepLinkReceiveModal.vue";
 import { toast } from "./composables/useToast";
 import { parseDeepLinkUrl } from "./utils/deepLink";
-import { trackEvent } from "./utils/analytics";
+import { trackEvent, sanitizeTrackingUrl, getErrorType } from "./utils/analytics";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
@@ -123,13 +123,13 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
         toast.success(t('deepLink.installStarted', '已开始安装整合包'), t('deepLink.installStartedDesc', '请在任务中心查看进度'));
       } else {
         toast.error(t('deepLink.installFailed', '安装失败'), t('deepLink.versionNotFound', '未找到对应的整合包版本'));
-        trackEvent("error_occurred", { context: "deeplink_modpack_install", error: "Version not found" });
+        trackEvent("error_occurred", { context: "deeplink_modpack_install", error_type: "VersionNotFound" });
       }
     } catch (e) {
       toast.error(t('deepLink.installFailed', '安装失败'), String(e));
       trackEvent("error_occurred", { 
         context: "deeplink_modpack_install", 
-        error_type: e instanceof Error ? e.name : typeof e 
+        error_type: getErrorType(e) 
       });
     }
   } else if (data.type === 'authlib') {
@@ -137,14 +137,14 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
       .then(() => {
         window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
         alert(t('settings.authlib.addSuccess', { url: data.payload.url }));
-        trackEvent("authlib_added", { type: "deeplink_authlib", api: data.payload.url });
+        trackEvent("authlib_added", { type: "deeplink_authlib", api: sanitizeTrackingUrl(data.payload.url) });
       })
       .catch(err => {
         alert(t('settings.authlib.addFailed', { error: String(err) }));
         trackEvent("error_occurred", { 
           context: "deeplink_authlib", 
-          error_type: err instanceof Error ? err.name : typeof err, 
-          api: data.payload.url 
+          error_type: getErrorType(err), 
+          api: sanitizeTrackingUrl(data.payload.url) 
         });
       });
   } else if (data.type === 'server') {
@@ -180,13 +180,13 @@ const handleDrop = async (e: DragEvent) => {
         await invoke("add_authlib_server", { url: url.trim() });
         window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
         alert(t('settings.authlib.addSuccess', { url }));
-        trackEvent("authlib_added", { type: "deeplink_authlib_drop", api: url.trim() });
+        trackEvent("authlib_added", { type: "deeplink_authlib_drop", api: sanitizeTrackingUrl(url) });
       } catch (err) {
         alert(t('settings.authlib.addFailed', { error: String(err) }));
         trackEvent("error_occurred", { 
           context: "deeplink_authlib_drop", 
-          error_type: err instanceof Error ? err.name : typeof err, 
-          api: url.trim() 
+          error_type: getErrorType(err), 
+          api: sanitizeTrackingUrl(url) 
         });
       }
     }

@@ -4,7 +4,7 @@ import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { trackEvent } from "../utils/analytics";
+import { trackEvent, getErrorType } from "../utils/analytics";
 import { useI18n } from "vue-i18n";
 import { setAppBusy } from "../composables/useAppStatus";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar, X } from "@lucide/vue";
@@ -434,7 +434,7 @@ const installModpack = async () => {
     router.push("/instances");
   } catch (error) {
     console.error("Installation failed:", error);
-    trackEvent("error_occurred", { context: "modpack_install", error: String(error) });
+    trackEvent("error_occurred", { context: "modpack_install", error_type: getErrorType(error) });
     statusMessage.value = `Installation failed: ${error}`;
     isInstalling.value = false;
     isCanceling.value = false;
