@@ -244,6 +244,21 @@ pub async fn authenticate_authlib_user(
     })
 }
 
+fn normalize_uuid(uuid_str: &str) -> String {
+    if uuid_str.len() == 32 {
+        format!(
+            "{}-{}-{}-{}-{}",
+            &uuid_str[0..8],
+            &uuid_str[8..12],
+            &uuid_str[12..16],
+            &uuid_str[16..20],
+            &uuid_str[20..32]
+        )
+    } else {
+        uuid_str.to_string()
+    }
+}
+
 #[tauri::command]
 pub async fn save_authlib_accounts(
     url: String,
@@ -259,23 +274,25 @@ pub async fn save_authlib_accounts(
     let mut accounts = get_accounts().await?;
     let mut added_accounts = Vec::new();
 
+    let normalized_selected_profile_ids: std::collections::HashSet<String> = selected_profiles
+        .iter()
+        .map(|profile| normalize_uuid(&profile.id))
+        .collect();
+
+    // Remove existing Authlib accounts with same UUID if exists
+    accounts.retain(|a| {
+        let same_type = a.account_type == AccountType::Authlib;
+        // Normalize the existing account ID just in case
+        let normalized_id = normalize_uuid(&a.id.replace("-", ""));
+        let same_id = normalized_selected_profile_ids.contains(&normalize_uuid(&a.id));
+        !(same_type && (same_id || normalized_selected_profile_ids.contains(&normalized_id)))
+    });
+
     for profile in selected_profiles {
-        let uuid_str = profile.id;
-        let uuid_with_hyphens = if uuid_str.len() == 32 {
-            format!(
-                "{}-{}-{}-{}-{}",
-                &uuid_str[0..8],
-                &uuid_str[8..12],
-                &uuid_str[12..16],
-                &uuid_str[16..20],
-                &uuid_str[20..32]
-            )
-        } else {
-            uuid_str
-        };
+        let uuid_with_hyphens = normalize_uuid(&profile.id);
 
         let account = Account {
-            id: uuid_with_hyphens.clone(),
+            id: uuid_with_hyphens,
             username: profile.name,
             account_type: AccountType::Authlib,
             access_token: Some(access_token.clone()),
@@ -285,15 +302,6 @@ pub async fn save_authlib_accounts(
             authlib_server_name: authlib_server_name.clone(),
             client_token: Some(client_token.clone()),
         };
-
-        // Remove existing Authlib account with same UUID if exists.
-        accounts.retain(|a| {
-            let same_type = a.account_type == AccountType::Authlib;
-            let same_id =
-                a.id.replace("-", "")
-                    .eq_ignore_ascii_case(&uuid_with_hyphens.replace("-", ""));
-            !(same_type && same_id)
-        });
 
         accounts.push(account.clone());
         added_accounts.push(account);
