@@ -9,6 +9,7 @@ import { useRoute, useRouter } from "vue-router";
 import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { setUpdateAvailable, hasUpdateAvailable, type CustomUpdate } from "../composables/useUpdate";
+import { trackEvent, getErrorType, sanitizeTrackingUrl } from "../utils/analytics";
 
 const route = useRoute();
 const router = useRouter();
@@ -17,6 +18,7 @@ const router = useRouter();
 const appVersion = ref('0.0.0');
 
 onMounted(async () => {
+  trackEvent("settings_viewed");
   try {
     appVersion.value = await getVersion();
   } catch (err) {
@@ -162,9 +164,15 @@ async function addAuthlibServer(): Promise<void> {
     const server = await invoke<AuthlibServer>("add_authlib_server", { url: newAuthlibUrl.value.trim() });
     authlibServers.value = authlibServers.value.filter(s => s.url !== server.url);
     authlibServers.value.push(server);
+    trackEvent("authlib_added", { type: "manual_authlib", api: sanitizeTrackingUrl(newAuthlibUrl.value) });
     newAuthlibUrl.value = "";
   } catch (err) {
     console.error("Failed to add authlib server:", err);
+    trackEvent("error_occurred", { 
+      context: "manual_authlib", 
+      error_type: getErrorType(err), 
+      api: sanitizeTrackingUrl(newAuthlibUrl.value) 
+    });
     alert(`Failed to add Authlib Server: ${err}`);
   } finally {
     isAddingAuthlibServer.value = false;
@@ -347,9 +355,14 @@ async function downloadJava(majorVersion: number): Promise<void> {
 
     const javaInfo = await invoke<JavaInfo>("download_java", { majorVersion });
     installedJavas.value.unshift(javaInfo);
+    trackEvent("java_download_completed", { majorVersion, version: javaInfo.versionString });
     
   } catch (err) {
     console.error("Failed to download Java:", err);
+    trackEvent("error_occurred", { 
+      context: "java_download", 
+      error_type: getErrorType(err) 
+    });
     alert(`Failed to download Java ${majorVersion}: ${err}`);
   } finally {
     if (unlisten) unlisten();

@@ -64,7 +64,7 @@ pub fn run() {
         eprintln!("Warning: failed to initialize logger: {e}");
     }
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .manage(core::launcher::RunningInstances(std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))))
         .setup(|app| {
             use tauri::Manager;
@@ -120,7 +120,13 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_process::init());
+
+    if let Some(key) = option_env!("APTABASE_KEY") {
+        builder = builder.plugin(tauri_plugin_aptabase::Builder::new(key).build());
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             greet,
             core::security::generate_api_signature,
@@ -221,6 +227,8 @@ pub fn run() {
             commands::task::retry_task,
             // Custom Updater commands
             commands::update_launcher,
+            // Custom Analytics Command
+            commands::app_track_event,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
