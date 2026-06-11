@@ -216,5 +216,6 @@ pub fn app_track_event(
     }
     use tauri_plugin_aptabase::EventTracker;
     tracing::debug!("Tracking event: {} (Props: {:?})", name, props);
-    app.track_event(name, props)
+    app.track_event(name, props);
+    Ok(())
 }
