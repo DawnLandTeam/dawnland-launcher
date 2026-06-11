@@ -87,13 +87,20 @@ const defaultMaxMemory = ref(4096);
 const isCheckingUpdate = ref(false);
 const showUpdaterModal = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
+const updateChannel = ref(localStorage.getItem('updateChannel') || 'stable');
+
+function changeUpdateChannel(channel: string) {
+  updateChannel.value = channel;
+  localStorage.setItem('updateChannel', channel);
+}
 
 async function checkForUpdates() {
   isCheckingUpdate.value = true;
   try {
     const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
     const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-    const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${appVersion.value}`);
+    const channel = updateChannel.value === 'prerelease' ? '?channel=prerelease' : '';
+    const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${appVersion.value}${channel}`);
     if (res.status === 200) {
       const data = await res.json();
       if (data.version && data.version !== appVersion.value) {
@@ -442,6 +449,25 @@ function changeLanguage(lang: string) {
         >
           <option value="en">English</option>
           <option value="zh-CN">简体中文</option>
+        </select>
+      </div>
+
+      <!-- Update Channel Settings -->
+      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div>
+          <h2 class="text-lg font-semibold flex items-center gap-2">
+            <Download :size="20" class="text-primary" />
+            {{ $t('settings.general.updateChannelTitle') }}
+          </h2>
+          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.updateChannelDesc') }}</p>
+        </div>
+        <select 
+          :value="updateChannel"
+          @change="changeUpdateChannel(($event.target as HTMLSelectElement).value)"
+          class="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700 min-w-[120px]"
+        >
+          <option value="stable">{{ $t('settings.general.channelStable') }}</option>
+          <option value="prerelease">{{ $t('settings.general.channelPrerelease') }}</option>
         </select>
       </div>
 
