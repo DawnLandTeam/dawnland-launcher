@@ -238,7 +238,7 @@
     "preparing": "准备登录中...",
     "deleteTitle": "删除账号？",
     "deleteUndone": "此操作无法撤销",
-    "deleteConfirm": "您确定要删除账号 <strong>{name}</strong> 吗？",
+    "deleteConfirm": "您确定要删除账号 {name} 吗？",
     "delete": "删除",
     "noAuthlibServers": "暂无已添加的认证服务器，\n请先前往设置页面进行添加。",
     "authlibTab": "外置登录",
