@@ -10,6 +10,7 @@ import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { setUpdateAvailable, hasUpdateAvailable, type CustomUpdate } from "../composables/useUpdate";
 import { trackEvent, getErrorType, sanitizeTrackingUrl } from "../utils/analytics";
+import { normalizeUpdateChannel, getUpdateChannelQuery } from "../utils/updateChannel";
 
 const route = useRoute();
 const router = useRouter();
@@ -87,11 +88,12 @@ const defaultMaxMemory = ref(4096);
 const isCheckingUpdate = ref(false);
 const showUpdaterModal = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
-const updateChannel = ref(localStorage.getItem('updateChannel') || 'stable');
+const updateChannel = ref(normalizeUpdateChannel(localStorage.getItem('updateChannel')));
 
 function changeUpdateChannel(channel: string) {
-  updateChannel.value = channel;
-  localStorage.setItem('updateChannel', channel);
+  const normalizedChannel = normalizeUpdateChannel(channel);
+  updateChannel.value = normalizedChannel;
+  localStorage.setItem('updateChannel', normalizedChannel);
 }
 
 async function checkForUpdates() {
@@ -99,7 +101,7 @@ async function checkForUpdates() {
   try {
     const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
     const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-    const channel = updateChannel.value === 'prerelease' ? '?channel=prerelease' : '';
+    const channel = getUpdateChannelQuery();
     const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${appVersion.value}${channel}`);
     if (res.status === 200) {
       const data = await res.json();
