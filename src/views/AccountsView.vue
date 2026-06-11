@@ -229,6 +229,12 @@ async function saveAuthlibAccounts(): Promise<void> {
     closeAddAccountModal();
     await emit("accounts-updated");
   } catch (err) {
+    trackEvent("login_failed", { 
+      type: "authlib", 
+      error_type: getErrorType(err), 
+      api: sanitizeTrackingUrl(authlibUrl.value),
+      phase: "save"
+    });
     loginError.value = typeof err === "string" ? err : String(err);
   } finally {
     isAddingAuthlib.value = false;
