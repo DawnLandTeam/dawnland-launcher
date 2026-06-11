@@ -19,11 +19,11 @@ struct AuthenticateRequest {
     client_token: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-struct YggdrasilProfile {
-    id: String,
-    name: String,
+pub struct YggdrasilProfile {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -40,6 +40,15 @@ struct YggdrasilError {
     error: Option<String>,
     #[serde(rename = "errorMessage")]
     error_message: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthlibAuthResult {
+    pub access_token: String,
+    pub client_token: String,
+    pub available_profiles: Vec<YggdrasilProfile>,
+    pub authlib_server_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -163,11 +172,11 @@ pub async fn get_authlib_meta(url: String) -> Result<YggdrasilRootResponse, Stri
 }
 
 #[tauri::command]
-pub async fn add_authlib_account(
+pub async fn authenticate_authlib_user(
     url: String,
     username: String,
     password: String,
-) -> Result<Account, String> {
+) -> Result<AuthlibAuthResult, String> {
     let client_token = Uuid::new_v4().to_string();
     let client = Client::new();
 
@@ -211,22 +220,32 @@ pub async fn add_authlib_account(
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    let profile = auth_res
-        .selected_profile
-        .or_else(|| {
-            auth_res.available_profiles.and_then(|mut profiles| {
-                if profiles.is_empty() {
-                    None
-                } else {
-                    Some(profiles.remove(0))
-                }
-            })
-        })
-        .ok_or_else(|| "No profile available for this account".to_string())?;
+    let mut profiles = auth_res.available_profiles.unwrap_or_default();
+    if profiles.is_empty() {
+        if let Some(sp) = auth_res.selected_profile {
+            profiles.push(sp);
+        }
+    }
 
-    // Format UUID with hyphens if needed (Yggdrasil usually returns without hyphens)
-    let uuid_str = profile.id;
-    let uuid_with_hyphens = if uuid_str.len() == 32 {
+    if profiles.is_empty() {
+        return Err("No profile available for this account".to_string());
+    }
+
+    let authlib_server_name = get_authlib_meta(url)
+        .await
+        .ok()
+        .and_then(|r| r.meta.and_then(|m| m.server_name));
+
+    Ok(AuthlibAuthResult {
+        access_token: auth_res.access_token,
+        client_token: auth_res.client_token,
+        available_profiles: profiles,
+        authlib_server_name,
+    })
+}
+
+fn normalize_uuid(uuid_str: &str) -> String {
+    if uuid_str.len() == 32 {
         format!(
             "{}-{}-{}-{}-{}",
             &uuid_str[0..8],
@@ -236,39 +255,61 @@ pub async fn add_authlib_account(
             &uuid_str[20..32]
         )
     } else {
-        uuid_str
-    };
+        uuid_str.to_string()
+    }
+}
 
-    let account = Account {
-        id: uuid_with_hyphens.clone(),
-        username: profile.name,
-        account_type: AccountType::Authlib,
-        access_token: Some(auth_res.access_token),
-        refresh_token: None, // Authlib doesn't use standard oauth refresh tokens usually, or rather it uses accessToken in /refresh
-        textures: None,
-        authlib_url: Some(url.clone()),
-        authlib_server_name: get_authlib_meta(url)
-            .await
-            .ok()
-            .and_then(|r| r.meta.and_then(|m| m.server_name)),
-        client_token: Some(auth_res.client_token),
-    };
+#[tauri::command]
+pub async fn save_authlib_accounts(
+    url: String,
+    selected_profiles: Vec<YggdrasilProfile>,
+    access_token: String,
+    client_token: String,
+    authlib_server_name: Option<String>,
+) -> Result<Vec<Account>, String> {
+    if selected_profiles.is_empty() {
+        return Err("No profiles selected".to_string());
+    }
 
     let mut accounts = get_accounts().await?;
+    let mut added_accounts = Vec::new();
 
-    // Remove existing Authlib account with same UUID if exists.
+    let normalized_selected_profile_ids: std::collections::HashSet<String> = selected_profiles
+        .iter()
+        .map(|profile| normalize_uuid(&profile.id))
+        .collect();
+
+    // Remove existing Authlib accounts with same UUID if exists
     accounts.retain(|a| {
         let same_type = a.account_type == AccountType::Authlib;
-        let same_id =
-            a.id.replace("-", "")
-                .eq_ignore_ascii_case(&uuid_with_hyphens.replace("-", ""));
-        !(same_type && same_id)
+        // Normalize the existing account ID just in case
+        let normalized_id = normalize_uuid(&a.id.replace("-", ""));
+        let same_id = normalized_selected_profile_ids.contains(&normalize_uuid(&a.id));
+        !(same_type && (same_id || normalized_selected_profile_ids.contains(&normalized_id)))
     });
 
-    accounts.push(account.clone());
+    for profile in selected_profiles {
+        let uuid_with_hyphens = normalize_uuid(&profile.id);
+
+        let account = Account {
+            id: uuid_with_hyphens,
+            username: profile.name,
+            account_type: AccountType::Authlib,
+            access_token: Some(access_token.clone()),
+            refresh_token: None, // Authlib doesn't use standard oauth refresh tokens usually
+            textures: None,
+            authlib_url: Some(url.clone()),
+            authlib_server_name: authlib_server_name.clone(),
+            client_token: Some(client_token.clone()),
+        };
+
+        accounts.push(account.clone());
+        added_accounts.push(account);
+    }
+
     save_accounts(&accounts).await?;
 
-    Ok(account)
+    Ok(added_accounts)
 }
 
 #[cfg(test)]
@@ -348,7 +389,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_authlib_account() {
+    async fn test_authenticate_and_save_authlib_account() {
         let _guard = TEST_MUTEX.lock().await;
         clear_authlib_files().await;
 
@@ -368,22 +409,41 @@ mod tests {
             .with_body(r#"{
                 "accessToken": "mock_access_token",
                 "clientToken": "mock_client_token",
-                "selectedProfile": {
-                    "id": "1234567890abcdef1234567890abcdef",
-                    "name": "AuthlibPlayer"
-                }
+                "availableProfiles": [
+                    {
+                        "id": "1234567890abcdef1234567890abcdef",
+                        "name": "AuthlibPlayer1"
+                    },
+                    {
+                        "id": "abcdef1234567890abcdef1234567890",
+                        "name": "AuthlibPlayer2"
+                    }
+                ]
             }"#)
             .create_async().await;
 
-        let result = add_authlib_account(server.url(), "user".to_string(), "pass".to_string()).await;
+        let result = authenticate_authlib_user(server.url(), "user".to_string(), "pass".to_string()).await;
         assert!(result.is_ok(), "Failed: {:?}", result.err());
-        let account = result.unwrap();
+        let auth_res = result.unwrap();
 
-        assert_eq!(account.username, "AuthlibPlayer");
-        // Check if hyphens were added correctly
-        assert_eq!(account.id, "12345678-90ab-cdef-1234-567890abcdef");
-        assert_eq!(account.access_token, Some("mock_access_token".to_string()));
-        assert_eq!(account.authlib_server_name, Some("My Authlib".to_string()));
+        assert_eq!(auth_res.available_profiles.len(), 2);
+        assert_eq!(auth_res.available_profiles[0].name, "AuthlibPlayer1");
+        assert_eq!(auth_res.authlib_server_name, Some("My Authlib".to_string()));
+
+        let save_result = save_authlib_accounts(
+            server.url(),
+            auth_res.available_profiles,
+            auth_res.access_token,
+            auth_res.client_token,
+            auth_res.authlib_server_name,
+        ).await;
+
+        assert!(save_result.is_ok());
+        let added_accounts = save_result.unwrap();
+        assert_eq!(added_accounts.len(), 2);
+        assert_eq!(added_accounts[0].username, "AuthlibPlayer1");
+        assert_eq!(added_accounts[0].id, "12345678-90ab-cdef-1234-567890abcdef");
+        assert_eq!(added_accounts[1].username, "AuthlibPlayer2");
 
         mock_meta.assert_async().await;
         mock_auth.assert_async().await;
