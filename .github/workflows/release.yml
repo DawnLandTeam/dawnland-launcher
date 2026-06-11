@@ -119,6 +119,7 @@ jobs:
       - name: Build Tauri App
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          APTABASE_KEY: ${{ secrets.APTABASE_KEY }}
         run: pnpm tauri build ${{ matrix.args }}
 
       - name: Create GitHub Release and Upload Artifacts

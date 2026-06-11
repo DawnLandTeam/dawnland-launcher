@@ -7,6 +7,9 @@ on:
 
 jobs:
   build:
+    env:
+      VITE_WEB_BACKEND_URL: ${{ vars.VITE_WEB_BACKEND_URL }}
+      LAUNCHER_API_SECRET: ${{ secrets.LAUNCHER_API_SECRET }}
     strategy:
       fail-fast: false
       matrix:
@@ -81,6 +84,7 @@ jobs:
       - name: Build Tauri App
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          APTABASE_KEY: ${{ secrets.APTABASE_KEY }}
         run: pnpm tauri build ${{ matrix.args }}
 
       - name: Upload Build Artifacts
