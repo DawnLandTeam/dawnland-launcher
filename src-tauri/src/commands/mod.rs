@@ -212,7 +212,8 @@ pub async fn app_track_event(
 ) -> Result<(), String> {
     let aptabase_key = option_env!("APTABASE_KEY")
         .map(String::from)
-        .or_else(|| std::env::var("APTABASE_KEY").ok());
+        .or_else(|| std::env::var("APTABASE_KEY").ok())
+        .filter(|k| !k.trim().is_empty());
 
     if aptabase_key.is_none() {
         tracing::debug!("Aptabase disabled. Dropping event: {} (Props: {:?})", name, props);
