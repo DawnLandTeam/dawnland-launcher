@@ -8,7 +8,7 @@ pub mod authlib;
 pub mod microsoft;
 
 pub use authlib::{
-    add_authlib_account, add_authlib_server, fetch_authlib_servers, get_authlib_meta,
+    authenticate_authlib_user, save_authlib_accounts, add_authlib_server, fetch_authlib_servers, get_authlib_meta,
     remove_authlib_server,
 };
 pub use microsoft::{
