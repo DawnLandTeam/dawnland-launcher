@@ -74,7 +74,8 @@ onMounted(async () => {
       const currentVersion = await getVersion();
       const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
       const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-      const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${currentVersion}`);
+      const channel = localStorage.getItem('updateChannel') === 'prerelease' ? '?channel=prerelease' : '';
+      const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${currentVersion}${channel}`);
       if (res.status === 200) {
         const data = await res.json();
         if (data.version && data.version !== currentVersion) {

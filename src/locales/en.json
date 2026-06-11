@@ -258,7 +258,11 @@
       "system": "System",
       "recommended": "This will be used as the default memory for new instances. Recommended: {recommended} MB (1/3 of system RAM)",
       "languageTitle": "Language",
-      "languageDesc": "Choose your preferred display language"
+      "languageDesc": "Choose your preferred display language",
+      "updateChannelTitle": "Update Channel",
+      "updateChannelDesc": "Choose whether to receive stable releases or experimental preview builds",
+      "channelStable": "Stable (Recommended)",
+      "channelPrerelease": "Pre-release"
     },
     "java": {
       "title": "Java Management",

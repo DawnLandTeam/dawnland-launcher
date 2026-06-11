@@ -258,7 +258,11 @@
       "system": "系统",
       "recommended": "此设置将作为新实例的默认内存。推荐值：{recommended} MB (物理内存的三分之一)",
       "languageTitle": "语言 (Language)",
-      "languageDesc": "选择你偏好的显示语言"
+      "languageDesc": "选择你偏好的显示语言",
+      "updateChannelTitle": "更新通道",
+      "updateChannelDesc": "选择接收正式版更新还是包含新特性的预览版更新",
+      "channelStable": "正式版 (推荐)",
+      "channelPrerelease": "预览版"
     },
     "java": {
       "title": "Java 管理",
