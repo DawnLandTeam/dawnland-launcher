@@ -14,9 +14,6 @@ jobs:
     permissions:
       contents: write
     environment: release
-    env:
-      VITE_WEB_BACKEND_URL: ${{ vars.VITE_WEB_BACKEND_URL }}
-      LAUNCHER_API_SECRET: ${{ secrets.LAUNCHER_API_SECRET }}
     strategy:
       fail-fast: false
       matrix:
@@ -119,6 +116,10 @@ jobs:
       - name: Build Tauri App
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          # VITE_WEB_BACKEND_URL is sourced from vars because it's public/environment-specific configuration
+          VITE_WEB_BACKEND_URL: ${{ vars.VITE_WEB_BACKEND_URL }}
+          # LAUNCHER_API_SECRET and APTABASE_KEY are sourced from secrets because they are sensitive credentials
+          LAUNCHER_API_SECRET: ${{ secrets.LAUNCHER_API_SECRET }}
           APTABASE_KEY: ${{ secrets.APTABASE_KEY }}
         run: pnpm tauri build ${{ matrix.args }}
 
