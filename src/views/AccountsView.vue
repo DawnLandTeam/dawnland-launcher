@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, onUnmounted } from "vue";
+import { ref, computed, onMounted, watch, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { 
@@ -46,6 +46,18 @@ interface AuthlibServer {
   name: string;
 }
 
+interface YggdrasilProfile {
+  id: string;
+  name: string;
+}
+
+interface AuthlibAuthResult {
+  accessToken: string;
+  clientToken: string;
+  availableProfiles: YggdrasilProfile[];
+  authlibServerName?: string;
+}
+
 type AccountType = "offline" | "microsoft" | "authlib";
 
 // State
@@ -64,6 +76,22 @@ const microsoftLoginData = ref<LoginInitResponse | null>(null);
 const loginError = ref<string | null>(null);
 const deviceCode = ref("");
 const showDeviceCodeFlow = ref(false);
+
+const authlibProfiles = ref<YggdrasilProfile[] | null>(null);
+const selectedAuthlibProfiles = ref<string[]>([]);
+const tempAuthData = ref<AuthlibAuthResult | null>(null);
+
+function isProfileAlreadyAdded(profile: YggdrasilProfile): boolean {
+  return accounts.value.some(a => 
+    a.accountType === 'authlib' && 
+    a.id.replace(/-/g, '').toLowerCase() === profile.id.replace(/-/g, '').toLowerCase()
+  );
+}
+
+const allProfilesAdded = computed(() => {
+  if (!authlibProfiles.value || authlibProfiles.value.length === 0) return false;
+  return authlibProfiles.value.every(p => isProfileAlreadyAdded(p));
+});
 
 // Modal state
 const showAddAccountModal = ref(false);
@@ -100,6 +128,9 @@ function openAddAccountModal(type?: AccountType): void {
   // Reset authlib form and fetch initial meta if authlib is selected or on open
   authlibUsername.value = "";
   authlibPassword.value = "";
+  authlibProfiles.value = null;
+  selectedAuthlibProfiles.value = [];
+  tempAuthData.value = null;
   loadAuthlibServers();
 }
 
@@ -111,6 +142,9 @@ function closeAddAccountModal(): void {
   microsoftLoginData.value = null;
   isLoggingInMicrosoft.value = false;
   showDeviceCodeFlow.value = false;
+  authlibProfiles.value = null;
+  selectedAuthlibProfiles.value = [];
+  tempAuthData.value = null;
 }
 
 // Add offline account
@@ -143,23 +177,58 @@ async function addAuthlibAccount(): Promise<void> {
   loginError.value = null;
 
   try {
-    await invoke("add_authlib_account", { 
+    const authResult = await invoke<AuthlibAuthResult>("authenticate_authlib_user", { 
       url: authlibUrl.value.trim(),
       username: authlibUsername.value.trim(),
       password: authlibPassword.value
     });
-    authlibUsername.value = "";
-    authlibPassword.value = "";
-    trackEvent("account_added", { type: "authlib", api: sanitizeTrackingUrl(authlibUrl.value) });
-    await loadAccounts();
-    closeAddAccountModal();
-    await emit("accounts-updated");
+    
+    tempAuthData.value = authResult;
+    authlibProfiles.value = authResult.availableProfiles;
+    selectedAuthlibProfiles.value = authResult.availableProfiles
+      .filter(p => !isProfileAlreadyAdded(p))
+      .map(p => p.id);
+    
   } catch (err) {
     trackEvent("login_failed", { 
       type: "authlib", 
       error_type: getErrorType(err), 
       api: sanitizeTrackingUrl(authlibUrl.value) 
     });
+    loginError.value = typeof err === "string" ? err : String(err);
+  } finally {
+    isAddingAuthlib.value = false;
+  }
+}
+
+async function saveAuthlibAccounts(): Promise<void> {
+  if (!tempAuthData.value || !authlibProfiles.value || selectedAuthlibProfiles.value.length === 0) return;
+
+  isAddingAuthlib.value = true;
+  loginError.value = null;
+
+  try {
+    const profilesToSave = authlibProfiles.value.filter(p => selectedAuthlibProfiles.value.includes(p.id));
+    
+    await invoke("save_authlib_accounts", { 
+      url: authlibUrl.value.trim(),
+      selectedProfiles: profilesToSave,
+      accessToken: tempAuthData.value.accessToken,
+      clientToken: tempAuthData.value.clientToken,
+      authlibServerName: tempAuthData.value.authlibServerName
+    });
+    
+    authlibUsername.value = "";
+    authlibPassword.value = "";
+    authlibProfiles.value = null;
+    tempAuthData.value = null;
+    selectedAuthlibProfiles.value = [];
+    
+    trackEvent("account_added", { type: "authlib", api: sanitizeTrackingUrl(authlibUrl.value) });
+    await loadAccounts();
+    closeAddAccountModal();
+    await emit("accounts-updated");
+  } catch (err) {
     loginError.value = typeof err === "string" ? err : String(err);
   } finally {
     isAddingAuthlib.value = false;
@@ -625,32 +694,84 @@ watch(
                   </option>
                 </select>
               </div>
-              <div class="space-y-1">
-                <label class="text-sm font-medium">Email / Username</label>
-                <input
-                  v-model="authlibUsername"
-                  type="text"
-                  class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
-                />
+              <!-- Login Form -->
+              <div v-if="!authlibProfiles" class="space-y-3">
+                <div class="space-y-1">
+                  <label class="text-sm font-medium">Email / Username</label>
+                  <input
+                    v-model="authlibUsername"
+                    type="text"
+                    class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
+                  />
+                </div>
+                <div class="space-y-1">
+                  <label class="text-sm font-medium">Password</label>
+                  <input
+                    v-model="authlibPassword"
+                    type="password"
+                    class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
+                    @keyup.enter="addAuthlibAccount"
+                  />
+                </div>
+                <button
+                  class="w-full flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="isAddingAuthlib || !authlibUsername.trim() || !authlibPassword.trim() || !authlibUrl.trim()"
+                  @click="addAuthlibAccount"
+                >
+                  <Loader2 v-if="isAddingAuthlib" :size="16" class="animate-spin" />
+                  <Globe v-else :size="16" />
+                  {{ isAddingAuthlib ? $t('accounts.adding') : $t('accounts.login', '登录验证') }}
+                </button>
               </div>
-              <div class="space-y-1">
-                <label class="text-sm font-medium">Password</label>
-                <input
-                  v-model="authlibPassword"
-                  type="password"
-                  class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
-                  @keyup.enter="addAuthlibAccount"
-                />
+
+              <!-- Character Selection Form -->
+              <div v-else class="space-y-3">
+                <p class="text-sm font-medium">{{ $t('accounts.selectCharacters', '选择要添加的角色') }}</p>
+
+                <div v-if="allProfilesAdded" class="p-3 mb-2 rounded-lg bg-neutral-100 dark:bg-zinc-800 border border-neutral-200 dark:border-zinc-700">
+                  <p class="text-sm text-center text-neutral-500 dark:text-neutral-400">所有角色均已添加，无可添加角色</p>
+                </div>
+
+                <div class="max-h-48 overflow-y-auto space-y-1.5 border border-neutral-200 dark:border-zinc-700 rounded-lg p-2 bg-white/50 dark:bg-zinc-900/50">
+                  <label v-for="profile in authlibProfiles" :key="profile.id" 
+                    class="flex items-center gap-3 p-2 rounded-lg transition-colors"
+                    :class="isProfileAlreadyAdded(profile) ? 'opacity-60 cursor-not-allowed bg-neutral-50 dark:bg-zinc-800/50' : 'hover:bg-neutral-100 dark:hover:bg-zinc-800 cursor-pointer'"
+                  >
+                    <input type="checkbox" :value="profile.id" v-model="selectedAuthlibProfiles" 
+                      :disabled="isProfileAlreadyAdded(profile)"
+                      class="rounded text-purple-600 focus:ring-purple-500 dark:border-zinc-600 dark:bg-zinc-800 disabled:opacity-50" 
+                    />
+                    <div class="flex items-center gap-2">
+                      <div class="flex h-8 w-8 items-center justify-center rounded-md bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400 font-bold text-xs"
+                        :class="isProfileAlreadyAdded(profile) ? 'grayscale' : ''">
+                        {{ profile.name.charAt(0).toUpperCase() }}
+                      </div>
+                      <span class="text-sm font-medium" :class="isProfileAlreadyAdded(profile) ? 'text-neutral-500 dark:text-neutral-500' : 'text-neutral-900 dark:text-neutral-100'">
+                        {{ profile.name }}
+                        <span v-if="isProfileAlreadyAdded(profile)" class="ml-2 text-xs font-normal text-neutral-400">(已添加)</span>
+                      </span>
+                    </div>
+                  </label>
+                </div>
+                
+                <div class="flex gap-2 pt-1">
+                  <button 
+                    class="flex-1 rounded-lg bg-neutral-200 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 transition-colors"
+                    @click="authlibProfiles = null; selectedAuthlibProfiles = []; tempAuthData = null;"
+                  >
+                    {{ $t('accounts.back', '返回') }}
+                  </button>
+                  <button
+                    class="flex-1 flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    :disabled="isAddingAuthlib || selectedAuthlibProfiles.length === 0"
+                    @click="saveAuthlibAccounts"
+                  >
+                    <Loader2 v-if="isAddingAuthlib" :size="16" class="animate-spin" />
+                    <Plus v-else :size="16" />
+                    {{ isAddingAuthlib ? $t('accounts.saving', '保存中') : $t('accounts.confirmAdd', '确认添加') }}
+                  </button>
+                </div>
               </div>
-              <button
-                class="w-full flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
-                :disabled="isAddingAuthlib || !authlibUsername.trim() || !authlibPassword.trim() || !authlibUrl.trim()"
-                @click="addAuthlibAccount"
-              >
-                <Loader2 v-if="isAddingAuthlib" :size="16" class="animate-spin" />
-                <Globe v-else :size="16" />
-                {{ isAddingAuthlib ? $t('accounts.adding') : $t('accounts.add') }}
-              </button>
             </template>
           </div>
 
@@ -671,8 +792,11 @@ watch(
           <AlertDialogDescription class="text-sm text-muted-foreground">{{ $t('accounts.deleteUndone') }}</AlertDialogDescription>
         </div>
       </div>
-          <p class="text-sm mb-4" v-safe-html="$t('accounts.deleteConfirm', { name: deletingAccountName })">
-          </p>
+          <i18n-t keypath="accounts.deleteConfirm" tag="p" class="text-sm mb-4">
+            <template #name>
+              <strong>{{ deletingAccountName }}</strong>
+            </template>
+          </i18n-t>
           <div class="flex justify-end gap-2">
             <button
               class="px-3 py-1.5 text-sm font-medium border rounded-lg hover:bg-muted transition-colors"
