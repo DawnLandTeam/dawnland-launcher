@@ -17,6 +17,7 @@ import DeepLinkReceiveModal, { type DeepLinkData } from "./components/DeepLinkRe
 import { toast } from "./composables/useToast";
 import { parseDeepLinkUrl } from "./utils/deepLink";
 import { trackEvent, sanitizeTrackingUrl, getErrorType } from "./utils/analytics";
+import { getUpdateChannelQuery } from "./utils/updateChannel";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
@@ -74,7 +75,7 @@ onMounted(async () => {
       const currentVersion = await getVersion();
       const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
       const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-      const channel = localStorage.getItem('updateChannel') === 'prerelease' ? '?channel=prerelease' : '';
+      const channel = getUpdateChannelQuery();
       const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${currentVersion}${channel}`);
       if (res.status === 200) {
         const data = await res.json();
