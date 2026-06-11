@@ -122,8 +122,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init());
 
-    if let Some(key) = option_env!("APTABASE_KEY") {
-        builder = builder.plugin(tauri_plugin_aptabase::Builder::new(key).build());
+    let aptabase_key = option_env!("APTABASE_KEY")
+        .map(String::from)
+        .or_else(|| std::env::var("APTABASE_KEY").ok());
+
+    if let Some(key) = aptabase_key {
+        builder = builder.plugin(tauri_plugin_aptabase::Builder::new(&key).build());
     }
 
     builder
