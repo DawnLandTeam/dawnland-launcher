@@ -204,3 +204,18 @@ pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), Stri
     Ok(())
 }
 
+#[tauri::command]
+pub fn app_track_event(
+    app: tauri::AppHandle,
+    name: &str,
+    props: Option<serde_json::Value>,
+) -> Result<(), String> {
+    if option_env!("APTABASE_KEY").is_none() {
+        tracing::debug!("Aptabase disabled. Dropping event: {} (Props: {:?})", name, props);
+        return Ok(());
+    }
+    use tauri_plugin_aptabase::EventTracker;
+    tracing::debug!("Tracking event: {} (Props: {:?})", name, props);
+    app.track_event(name, props);
+    Ok(())
+}
