@@ -124,7 +124,8 @@ pub fn run() {
 
     let aptabase_key = option_env!("APTABASE_KEY")
         .map(String::from)
-        .or_else(|| std::env::var("APTABASE_KEY").ok());
+        .or_else(|| std::env::var("APTABASE_KEY").ok())
+        .filter(|k| !k.trim().is_empty());
 
     if let Some(key) = aptabase_key {
         builder = builder.plugin(tauri_plugin_aptabase::Builder::new(&key).build());
