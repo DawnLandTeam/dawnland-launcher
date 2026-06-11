@@ -238,7 +238,7 @@
     "preparing": "Preparing login...",
     "deleteTitle": "Delete Account?",
     "deleteUndone": "This action cannot be undone",
-    "deleteConfirm": "Are you sure you want to delete account <strong>{name}</strong>?",
+    "deleteConfirm": "Are you sure you want to delete account {name}?",
     "delete": "Delete",
     "noAuthlibServers": "No Authlib servers added yet.\nPlease go to Settings to add one.",
     "authlibTab": "Authlib",
