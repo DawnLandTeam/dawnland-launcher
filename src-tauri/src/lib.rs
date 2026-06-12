@@ -142,6 +142,8 @@ pub fn run() {
             commands::modpack::install_modpack,
             commands::modpack::download_and_install_online_modpack,
             commands::modpack::get_modpack_name,
+            core::curseforge::set_curseforge_api_key,
+            core::curseforge::get_curseforge_api_key,
             // Auth commands
             commands::get_accounts,
             commands::add_offline_account,
