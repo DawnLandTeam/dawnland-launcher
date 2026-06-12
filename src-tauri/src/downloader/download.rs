@@ -126,8 +126,17 @@ async fn download_file_task(
         return Err("Cancelled".to_string());
     }
 
+    let mut req = client.get(&task.url);
+    if task.url.contains("forgecdn.net") {
+        if let Some(key) = crate::core::curseforge::CURSE_API_KEY.get() {
+            req = req.header("x-api-key", key);
+        } else {
+            tracing::warn!("Downloading from forgecdn.net but CURSE_API_KEY is not set!");
+        }
+    }
+
     // Make the HTTP request with timeout.
-    let response = match client.get(&task.url).send().await {
+    let response = match req.send().await {
         Ok(resp) => resp,
         Err(e) => {
             return Err(format!("Request failed: {}", e));
