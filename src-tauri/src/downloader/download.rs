@@ -127,11 +127,15 @@ async fn download_file_task(
     }
 
     let mut req = client.get(&task.url);
-    if task.url.contains("forgecdn.net") {
-        if let Some(key) = crate::core::curseforge::CURSE_API_KEY.get() {
-            req = req.header("x-api-key", key);
-        } else {
-            tracing::warn!("Downloading from forgecdn.net but CURSE_API_KEY is not set!");
+    if let Ok(parsed_url) = reqwest::Url::parse(&task.url) {
+        if let Some(host) = parsed_url.host_str() {
+            if host == "forgecdn.net" || host.ends_with(".forgecdn.net") {
+                if let Some(key) = crate::core::curseforge::CURSE_API_KEY.get() {
+                    req = req.header("x-api-key", key);
+                } else {
+                    tracing::warn!("Downloading from forgecdn.net but CURSE_API_KEY is not set!");
+                }
+            }
         }
     }
 

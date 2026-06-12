@@ -130,14 +130,15 @@ fn build_cf_url(path: &str, query: Option<&str>) -> String {
 }
 
 /// Helper to create a request builder with the API key.
-fn cf_request(client: &reqwest::Client, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+fn cf_request(client: &reqwest::Client, method: reqwest::Method, url: &str) -> Result<reqwest::RequestBuilder, String> {
     let mut req = client.request(method, url).header("Accept", "application/json");
     if let Some(key) = CURSE_API_KEY.get() {
         req = req.header("x-api-key", key);
+        Ok(req)
     } else {
-        tracing::warn!("Making CurseForge request but CURSE_API_KEY is not set!");
+        tracing::error!("CURSE_API_KEY is not set! Cannot make CurseForge API request.");
+        Err("CURSE_API_KEY is not set! Cannot make CurseForge API request.".to_string())
     }
-    req
 }
 
 /// Search CurseForge mods via the web backend proxy.
@@ -170,7 +171,7 @@ pub async fn search_curseforge(
     tracing::info!("CF API URL: {}", cf_url);
 
     let client = reqwest::Client::new();
-    let response = cf_request(&client, reqwest::Method::GET, &cf_url)
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Network Error: {}", e))?;
@@ -273,7 +274,7 @@ pub async fn get_cf_mod_files(
     tracing::info!("CF API URL: {}", cf_url);
 
     let client = reqwest::Client::new();
-    let response = cf_request(&client, reqwest::Method::GET, &cf_url)
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -356,7 +357,7 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
     let request_body = CfBatchFilesRequest { file_ids };
 
     let client = reqwest::Client::new();
-    let response = cf_request(&client, reqwest::Method::POST, &cf_url)
+    let response = cf_request(&client, reqwest::Method::POST, &cf_url)?
         .json(&request_body)
         .send()
         .await
@@ -421,7 +422,7 @@ pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject,
     tracing::info!("CF API URL: {}", cf_url);
 
     let client = reqwest::Client::new();
-    let response = cf_request(&client, reqwest::Method::GET, &cf_url)
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -491,7 +492,7 @@ pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModP
     let cf_url = build_cf_url("/mods/search", Some(&query_string));
 
     let client = reqwest::Client::new();
-    let response = cf_request(&client, reqwest::Method::GET, &cf_url)
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -579,7 +580,7 @@ pub async fn get_curseforge_modpack_versions(
     let cf_url = build_cf_url(&format!("/mods/{}/files", project_id), None);
 
     let client = reqwest::Client::new();
-    let response = cf_request(&client, reqwest::Method::GET, &cf_url)
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
