@@ -7,6 +7,7 @@ const props = defineProps<{
   exitCode: number;
   versionId: string;
   logs: string[];
+  isOpenJ9?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -77,8 +78,17 @@ async function copyLogs() {
             </button>
           </div>
 
+          <!-- OpenJ9 Compatibility Warning -->
+          <div v-if="isOpenJ9" class="mx-6 mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700/50 rounded-lg flex items-start gap-3 text-yellow-800 dark:text-yellow-200">
+            <AlertTriangle class="h-5 w-5 shrink-0 mt-0.5" />
+            <div class="space-y-1">
+              <h4 class="font-semibold">{{ $t('crash.openj9Title', 'OpenJ9 兼容性警告 (OpenJ9 Compatibility Warning)') }}</h4>
+              <p class="text-sm opacity-90">{{ $t('crash.openj9Desc', '游戏在使用 OpenJ9 虚拟机时崩溃。OpenJ9 与部分 Minecraft 版本及 Mod（特别是 Forge）存在已知的兼容性问题。我们强烈建议您前往“设置 -> Java 管理”中，使用 HotSpot 架构的 Java（如 Eclipse Temurin 或 Microsoft Build of OpenJDK）。') }}</p>
+            </div>
+          </div>
+
           <!-- Crash Log Display -->
-          <div class="flex-1 mt-4 overflow-hidden flex flex-col min-h-0">
+          <div class="flex-1 mt-4 mx-6 overflow-hidden flex flex-col min-h-0">
             <div class="flex items-center justify-between mb-2">
               <label class="text-sm font-medium">{{ $t('crash.viewLog') }}</label>
               <button
@@ -98,7 +108,7 @@ async function copyLogs() {
           </div>
 
           <!-- Footer -->
-          <div class="flex justify-end gap-2 mt-4 pt-4 border-t">
+          <div class="flex justify-end gap-2 mt-4 pt-4 border-t px-6 pb-6">
             <button
               @click="close"
               class="px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
