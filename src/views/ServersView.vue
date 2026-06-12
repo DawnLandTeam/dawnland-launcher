@@ -673,11 +673,13 @@ async function refreshAllServerStatuses() {
   if (isRefreshing.value) return;
   isRefreshing.value = true;
   
-  // Re-fetch status for all currently filtered servers
-  const promises = filteredServers.value.map(server => fetchServerStatus(server));
-  await Promise.all(promises);
-  
-  isRefreshing.value = false;
+  try {
+    // Re-fetch status for all currently filtered servers
+    const promises = filteredServers.value.map(server => fetchServerStatus(server));
+    await Promise.all(promises);
+  } finally {
+    isRefreshing.value = false;
+  }
 }
 
 watch(servers, (newServers) => {
@@ -910,6 +912,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
           :disabled="isRefreshing"
           class="flex items-center justify-center h-8 w-8 rounded-md border border-neutral-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-zinc-700 transition-colors"
           :title="$t('servers.refreshStatuses', 'Refresh Statuses')"
+          :aria-label="$t('servers.refreshStatuses', 'Refresh Statuses')"
         >
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': isRefreshing }" />
         </button>
