@@ -77,6 +77,9 @@ pub struct JavaInfo {
     pub vendor: String,
     /// Whether this is a 64-bit JVM
     pub is_64bit: bool,
+    /// Whether this is an OpenJ9 JVM (which often has compatibility issues with Minecraft)
+    #[serde(rename = "isOpenJ9")]
+    pub is_openj9: bool,
 }
 
 /// Scan all locally installed Java versions.
@@ -168,8 +171,35 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
         }
     }
 
-    // Sort by major version descending
-    javas.sort_by(|a, b| b.major_version.cmp(&a.major_version));
+    // Sort by major version descending, then by detailed version parts descending
+    javas.sort_by(|a, b| {
+        let cmp = b.major_version.cmp(&a.major_version);
+        if cmp != std::cmp::Ordering::Equal {
+            return cmp;
+        }
+
+        let parse_parts = |s: &str| -> Vec<u32> {
+            s.split(|c: char| !c.is_ascii_digit())
+                .filter(|part| !part.is_empty())
+                .filter_map(|part| part.parse::<u32>().ok())
+                .collect()
+        };
+
+        let parts_a = parse_parts(&a.version_string);
+        let parts_b = parse_parts(&b.version_string);
+
+        for i in 0..std::cmp::max(parts_a.len(), parts_b.len()) {
+            let p_a = parts_a.get(i).unwrap_or(&0);
+            let p_b = parts_b.get(i).unwrap_or(&0);
+            let p_cmp = p_b.cmp(p_a);
+            if p_cmp != std::cmp::Ordering::Equal {
+                return p_cmp;
+            }
+        }
+
+        // Stable sort fallback
+        a.path.cmp(&b.path)
+    });
 
     // Update cache
     *CACHED_JAVAS.lock().await = Some(javas.clone());
@@ -263,6 +293,7 @@ async fn probe_java(java_path: &PathBuf) -> Option<JavaInfo> {
     let major_version = extract_major_version(&stderr);
     let vendor = extract_vendor(&stderr);
     let is_64bit = stderr.contains("64-Bit");
+    let is_openj9 = stderr.to_lowercase().contains("openj9");
 
     Some(JavaInfo {
         path: java_path.to_string_lossy().to_string(),
@@ -270,6 +301,7 @@ async fn probe_java(java_path: &PathBuf) -> Option<JavaInfo> {
         version_string,
         vendor,
         is_64bit,
+        is_openj9,
     })
 }
 
