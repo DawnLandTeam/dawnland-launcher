@@ -191,8 +191,8 @@ onMounted(async () => {
   // Listen for game logs
   listen<GameLog>("game-log", (event) => {
     gameLogs.value.push(event.payload.line);
-    if (gameLogs.value.length > 500) {
-      gameLogs.value = gameLogs.value.slice(-500);
+    if (gameLogs.value.length > 2000) {
+      gameLogs.value = gameLogs.value.slice(-2000);
     }
     
     // Heuristic: detect when Minecraft window is likely appearing
