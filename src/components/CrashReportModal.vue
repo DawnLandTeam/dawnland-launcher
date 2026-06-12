@@ -16,10 +16,9 @@ const emit = defineEmits<{
 
 const copied = ref(false);
 
-// Get last 50 lines of logs
+// Get all provided logs
 const crashLogs = computed(() => {
-  const lines = props.logs || [];
-  return lines.slice(-50);
+  return props.logs || [];
 });
 
 const formattedLogs = computed(() => {
@@ -88,7 +87,7 @@ async function copyLogs() {
           </div>
 
           <!-- Crash Log Display -->
-          <div class="flex-1 mt-4 mx-6 overflow-hidden flex flex-col min-h-0">
+          <div class="flex-1 my-4 mx-6 overflow-hidden flex flex-col min-h-0 pb-2">
             <div class="flex items-center justify-between mb-2">
               <label class="text-sm font-medium">{{ $t('crash.viewLog') }}</label>
               <button
@@ -105,16 +104,6 @@ async function copyLogs() {
               class="flex-1 w-full px-3 py-2 font-mono text-xs bg-black text-green-400 rounded-lg resize-none border-0 focus:ring-0"
               style="min-height: 300px;"
             />
-          </div>
-
-          <!-- Footer -->
-          <div class="flex justify-end gap-2 mt-4 pt-4 border-t px-6 pb-6">
-            <button
-              @click="close"
-              class="px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              {{ $t('crash.close') }}
-            </button>
           </div>
         </div>
       </div>
