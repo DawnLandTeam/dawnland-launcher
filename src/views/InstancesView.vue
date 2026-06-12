@@ -571,7 +571,7 @@ function loaderBadgeClass(loaderType: string): string {
             >
               <option value="">{{ $t('instances.settingsDialog.defaultAuto') }}</option>
               <option v-for="java in installedJavas" :key="java.path" :value="java.path">
-                Java {{ java.majorVersion }} ({{ java.vendor }}) - {{ java.versionString }}
+                Java {{ java.majorVersion }} ({{ java.vendor }}) [{{ java.isOpenJ9 ? 'OpenJ9' : (java.isGraalvm ? 'GraalVM' : 'HotSpot') }}] - {{ java.versionString }}
               </option>
             </select>
             <p class="text-xs text-muted-foreground">
