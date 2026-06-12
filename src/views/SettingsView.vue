@@ -66,6 +66,8 @@ interface JavaInfo {
   versionString: string;
   vendor: string;
   is64Bit: boolean;
+  isOpenJ9: boolean;
+  isGraalvm: boolean;
 }
 
 interface DownloadProgress {
@@ -622,7 +624,12 @@ function changeLanguage(lang: string) {
           <div class="flex items-center gap-3 overflow-hidden">
             <Coffee class="h-5 w-5 text-orange-500 shrink-0" />
             <div class="min-w-0">
-              <p class="text-sm font-medium">Java {{ java.majorVersion }} ({{ java.vendor }})</p>
+              <div class="flex items-center gap-2">
+                <p class="text-sm font-medium">Java {{ java.majorVersion }} ({{ java.vendor }})</p>
+                <span v-if="java.isOpenJ9" class="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-[10px] font-medium text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300">OpenJ9</span>
+                <span v-else-if="java.isGraalvm" class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">GraalVM</span>
+                <span v-else class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">HotSpot</span>
+              </div>
               <p class="text-xs text-muted-foreground truncate" :title="java.path">{{ java.path }}</p>
             </div>
           </div>
