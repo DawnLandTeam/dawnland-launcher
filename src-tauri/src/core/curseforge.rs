@@ -2,15 +2,21 @@ use serde::Deserialize;
 
 use super::modrinth::{OnlineModpackVersion, UnifiedModFile, UnifiedModProject};
 
-/// Get the web backend URL from environment or use default.
-fn get_web_backend_url() -> String {
-    option_env!("VITE_WEB_BACKEND_URL")
-        .unwrap_or("http://localhost:3030")
-        .to_string()
+
+
+pub static CURSE_API_KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+#[tauri::command]
+pub fn set_curseforge_api_key(key: String) {
+    // If it's already set, this will fail, which is fine for our use case
+    // since we only set it once at startup.
+    let _ = CURSE_API_KEY.set(key);
 }
 
-/// CurseForge API path prefix on the web backend.
-const CURSEFORGE_PROXY_PATH: &str = "/api/curseforge";
+#[tauri::command]
+pub fn get_curseforge_api_key() -> Option<String> {
+    CURSE_API_KEY.get().cloned()
+}
 
 /// Game ID for Minecraft on CurseForge
 const CF_GAME_ID_MINECRAFT: i32 = 432;
@@ -114,13 +120,24 @@ pub struct CfFilesResponse {
 // API Functions
 // ============================================================================
 
-/// Build the full URL to the web backend proxy.
-fn build_proxy_url(path: &str, query: Option<&str>) -> String {
-    let backend_url = get_web_backend_url();
-    let base = format!("{}{}", backend_url, CURSEFORGE_PROXY_PATH);
+/// Build the full URL to the CurseForge Core API.
+fn build_cf_url(path: &str, query: Option<&str>) -> String {
+    let base = "https://api.curseforge.com/v1";
     match query {
         Some(q) => format!("{}{}?{}", base, path, q),
         None => format!("{}{}", base, path),
+    }
+}
+
+/// Helper to create a request builder with the API key.
+fn cf_request(client: &reqwest::Client, method: reqwest::Method, url: &str) -> Result<reqwest::RequestBuilder, String> {
+    let mut req = client.request(method, url).header("Accept", "application/json");
+    if let Some(key) = CURSE_API_KEY.get() {
+        req = req.header("x-api-key", key);
+        Ok(req)
+    } else {
+        tracing::error!("CURSE_API_KEY is not set! Cannot make CurseForge API request.");
+        Err("CURSE_API_KEY is not set! Cannot make CurseForge API request.".to_string())
     }
 }
 
@@ -150,12 +167,11 @@ pub async fn search_curseforge(
         mod_loader_type
     );
 
-    let proxy_url = build_proxy_url("/mods/search", Some(&query_string));
-    tracing::info!("Proxy URL: {}", proxy_url);
+    let cf_url = build_cf_url("/mods/search", Some(&query_string));
+    tracing::info!("CF API URL: {}", cf_url);
 
     let client = reqwest::Client::new();
-    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
-        .header("Accept", "application/json")
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Network Error: {}", e))?;
@@ -254,12 +270,11 @@ pub async fn get_cf_mod_files(
         format!("gameVersion={}", mc_version)
     };
 
-    let proxy_url = build_proxy_url(&format!("/mods/{}/files", project_id), Some(&query_string));
-    tracing::info!("Proxy URL: {}", proxy_url);
+    let cf_url = build_cf_url(&format!("/mods/{}/files", project_id), Some(&query_string));
+    tracing::info!("CF API URL: {}", cf_url);
 
     let client = reqwest::Client::new();
-    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
-        .header("Accept", "application/json")
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -337,14 +352,12 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
         file_ids.len()
     );
 
-    let proxy_url = build_proxy_url("/mods/files", None);
+    let cf_url = build_cf_url("/mods/files", None);
 
     let request_body = CfBatchFilesRequest { file_ids };
 
     let client = reqwest::Client::new();
-    let body_str = serde_json::to_string(&request_body).unwrap_or_default();
-    let response = crate::core::security::secure_request(&client, reqwest::Method::POST, &proxy_url, &body_str)
-        .header("Accept", "application/json")
+    let response = cf_request(&client, reqwest::Method::POST, &cf_url)?
         .json(&request_body)
         .send()
         .await
@@ -405,12 +418,11 @@ pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject,
         project_id
     );
 
-    let proxy_url = build_proxy_url(&format!("/mods/{}", project_id), None);
-    tracing::info!("Proxy URL: {}", proxy_url);
+    let cf_url = build_cf_url(&format!("/mods/{}", project_id), None);
+    tracing::info!("CF API URL: {}", cf_url);
 
     let client = reqwest::Client::new();
-    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
-        .header("Accept", "application/json")
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -477,11 +489,10 @@ pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModP
         urlencoding::encode(&query)
     );
 
-    let proxy_url = build_proxy_url("/mods/search", Some(&query_string));
+    let cf_url = build_cf_url("/mods/search", Some(&query_string));
 
     let client = reqwest::Client::new();
-    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
-        .header("Accept", "application/json")
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -566,11 +577,10 @@ pub async fn get_curseforge_modpack_versions(
     // Use /mods/{modId}/files to get versions. The proxy might just expect /mods/files or something?
     // Wait, the API endpoint is /v1/mods/{modId}/files. Let's see how `get_cf_files_batch` or others use proxy.
     // I'll assume `build_proxy_url(&format!("/mods/{}/files", project_id), None)`
-    let proxy_url = build_proxy_url(&format!("/mods/{}/files", project_id), None);
+    let cf_url = build_cf_url(&format!("/mods/{}/files", project_id), None);
 
     let client = reqwest::Client::new();
-    let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &proxy_url, "")
-        .header("Accept", "application/json")
+    let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
