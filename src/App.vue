@@ -18,6 +18,7 @@ import { toast } from "./composables/useToast";
 import { parseDeepLinkUrl } from "./utils/deepLink";
 import { trackEvent, sanitizeTrackingUrl, getErrorType } from "./utils/analytics";
 import { getUpdateChannelQuery } from "./utils/updateChannel";
+import { fetchApi } from "./utils/api";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
@@ -67,6 +68,21 @@ onMounted(async () => {
     } catch (e) {
       console.warn("Failed to get system locale from Rust:", e);
     }
+  }
+
+  // Fetch Client Config (e.g. CurseForge API Key)
+  try {
+    const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
+    const res = await fetchApi(`${baseUrl}/api/client-config`);
+    if (res.ok) {
+      const configData = await res.json();
+      if (configData.curseforgeApiKey) {
+        await invoke('set_curseforge_api_key', { key: configData.curseforgeApiKey });
+        console.log("Successfully loaded dynamic CurseForge API Key from backend.");
+      }
+    }
+  } catch (error) {
+    console.error("Failed to fetch client config:", error);
   }
 
   // Delay the update check slightly to ensure network and plugins are fully initialized
