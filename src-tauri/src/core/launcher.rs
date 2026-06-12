@@ -1938,7 +1938,7 @@ pub async fn launch_instance(
                 tracing::info!("Detected Java Major Version: {}", java_major_version);
             }
             
-            if stderr_output.to_lowercase().contains("openj9") {
+            if crate::core::java::is_openj9(&stderr_output) {
                 is_openj9 = true;
                 tracing::info!("Detected OpenJ9 JVM");
             }
