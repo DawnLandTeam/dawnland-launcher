@@ -1920,6 +1920,7 @@ pub async fn launch_instance(
         .await;
 
     let mut java_major_version: u32 = 8; // Default to Java 8 for safety
+    let mut is_openj9 = false;
 
     match java_check {
         Ok(output) if output.status.success() => {
@@ -1935,6 +1936,11 @@ pub async fn launch_instance(
             if major_version > 0 {
                 java_major_version = major_version;
                 tracing::info!("Detected Java Major Version: {}", java_major_version);
+            }
+            
+            if crate::core::java::is_openj9(&stderr_output) {
+                is_openj9 = true;
+                tracing::info!("Detected OpenJ9 JVM");
             }
         }
         Ok(output) => {
@@ -2200,7 +2206,8 @@ pub async fn launch_instance(
                     serde_json::json!({
                         "versionId": version_id_clone,
                         "status": "exited",
-                        "exitCode": exit_code
+                        "exitCode": exit_code,
+                        "isOpenJ9": is_openj9
                     }),
                 );
 
@@ -2221,7 +2228,8 @@ pub async fn launch_instance(
                     serde_json::json!({
                         "versionId": version_id_clone,
                         "status": "exited",
-                        "exitCode": -1
+                        "exitCode": -1,
+                        "isOpenJ9": is_openj9
                     }),
                 );
 

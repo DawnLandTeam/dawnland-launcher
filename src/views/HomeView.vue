@@ -55,6 +55,7 @@ interface InstanceState {
   status: "running" | "exited" | "repairing" | "repairing_complete";
   exitCode?: number;
   missingCount?: number;
+  isOpenJ9?: boolean;
 }
 
 // Router for navigation to settings
@@ -81,6 +82,7 @@ const intentionallyKilledInstances = ref<Set<string>>(new Set());
 const showCrashAlert = ref(false);
 const crashExitCode = ref(0);
 const crashVersionId = ref("");
+const crashIsOpenJ9 = ref(false);
 
 // Repair progress state
 interface DownloadProgress {
@@ -208,7 +210,7 @@ onMounted(async () => {
 
   // Listen for instance state changes
   listen<InstanceState>("instance-state-changed", (event) => {
-    const { versionId, status, exitCode, missingCount } = event.payload;
+    const { versionId, status, exitCode, missingCount, isOpenJ9 } = event.payload;
 
     if (status === "running") {
       jvmSpawnedInstances.value.add(versionId);
@@ -242,6 +244,7 @@ onMounted(async () => {
       if (exitCode !== 0 && !wasIntentionallyKilled) {
         crashVersionId.value = versionId;
         crashExitCode.value = exitCode ?? -1;
+        crashIsOpenJ9.value = !!isOpenJ9;
         showCrashAlert.value = true;
       }
     } else if (status === "repairing") {
@@ -761,7 +764,7 @@ function loaderBadgeClass(loaderType: string): string {
     </Teleport>
 
     <!-- Crash Report Modal -->
-    <CrashReportModal :open="showCrashAlert" :exit-code="crashExitCode" :version-id="crashVersionId" :logs="gameLogs" @update:open="showCrashAlert = $event" />
+    <CrashReportModal :open="showCrashAlert" :exit-code="crashExitCode" :version-id="crashVersionId" :logs="gameLogs" :is-open-j9="crashIsOpenJ9" @update:open="showCrashAlert = $event" />
 
     <!-- Repair Progress Modal -->
     <Teleport to="body">

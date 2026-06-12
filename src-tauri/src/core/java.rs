@@ -77,6 +77,15 @@ pub struct JavaInfo {
     pub vendor: String,
     /// Whether this is a 64-bit JVM
     pub is_64bit: bool,
+    /// Whether this is an OpenJ9 JVM (which often has compatibility issues with Minecraft)
+    #[serde(rename = "isOpenJ9")]
+    pub is_openj9: bool,
+    /// Whether this is a GraalVM JVM
+    #[serde(rename = "isGraalvm")]
+    pub is_graalvm: bool,
+    /// Precomputed parsed version for fast sorting
+    #[serde(skip)]
+    pub parsed_version: Vec<u32>,
 }
 
 /// Scan all locally installed Java versions.
@@ -168,8 +177,25 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
         }
     }
 
-    // Sort by major version descending
-    javas.sort_by(|a, b| b.major_version.cmp(&a.major_version));
+    // Sort by major version descending, then by detailed version parts descending
+    javas.sort_by(|a, b| {
+        let cmp = b.major_version.cmp(&a.major_version);
+        if cmp != std::cmp::Ordering::Equal {
+            return cmp;
+        }
+
+        for i in 0..std::cmp::max(a.parsed_version.len(), b.parsed_version.len()) {
+            let p_a = a.parsed_version.get(i).unwrap_or(&0);
+            let p_b = b.parsed_version.get(i).unwrap_or(&0);
+            let p_cmp = p_b.cmp(p_a);
+            if p_cmp != std::cmp::Ordering::Equal {
+                return p_cmp;
+            }
+        }
+
+        // Stable sort fallback
+        a.path.cmp(&b.path)
+    });
 
     // Update cache
     *CACHED_JAVAS.lock().await = Some(javas.clone());
@@ -263,6 +289,9 @@ async fn probe_java(java_path: &PathBuf) -> Option<JavaInfo> {
     let major_version = extract_major_version(&stderr);
     let vendor = extract_vendor(&stderr);
     let is_64bit = stderr.contains("64-Bit");
+    let is_openj9 = is_openj9(&stderr);
+    let is_graalvm = is_graalvm(&stderr);
+    let parsed_version = parse_version_parts(&version_string);
 
     Some(JavaInfo {
         path: java_path.to_string_lossy().to_string(),
@@ -270,7 +299,28 @@ async fn probe_java(java_path: &PathBuf) -> Option<JavaInfo> {
         version_string,
         vendor,
         is_64bit,
+        is_openj9,
+        is_graalvm,
+        parsed_version,
     })
+}
+
+/// Helper to check if a JVM is OpenJ9
+pub fn is_openj9(stderr: &str) -> bool {
+    stderr.to_lowercase().contains("openj9")
+}
+
+/// Helper to check if a JVM is GraalVM
+pub fn is_graalvm(stderr: &str) -> bool {
+    stderr.to_lowercase().contains("graalvm")
+}
+
+/// Parse version string into parts for sorting
+pub fn parse_version_parts(s: &str) -> Vec<u32> {
+    s.split(|c: char| !c.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse::<u32>().ok())
+        .collect()
 }
 
 /// Extract version string from java -version output.
