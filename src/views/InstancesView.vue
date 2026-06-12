@@ -41,6 +41,7 @@ interface JavaInfo {
   vendor: string;
   is64Bit: boolean;
   isOpenJ9: boolean;
+  isGraalvm: boolean;
 }
 
 // Router — deep-link support
