@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Server, Gamepad2, Plus, Search, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Star } from "@lucide/vue";
+import { Server, Gamepad2, Plus, Search, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Star, RefreshCw } from "@lucide/vue";
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -660,8 +660,25 @@ async function fetchServerStatus(server: ServerInfo) {
     serverStatuses.value[server.id] = status;
   } catch (e) {
     console.error(`Failed to ping server ${server.id}:`, e);
+    // Optionally clear status on failure so it shows offline
+    delete serverStatuses.value[server.id];
   } finally {
     serverStatusesLoading.value[server.id] = false;
+  }
+}
+
+const isRefreshing = ref(false);
+
+async function refreshAllServerStatuses() {
+  if (isRefreshing.value) return;
+  isRefreshing.value = true;
+  
+  try {
+    // Re-fetch status for all currently filtered servers
+    const promises = filteredServers.value.map(server => fetchServerStatus(server));
+    await Promise.all(promises);
+  } finally {
+    isRefreshing.value = false;
   }
 }
 
@@ -889,13 +906,24 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
           </p>
         </div>
       </div>
-      <button
-        @click="openPublishDialog"
-        class="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-      >
-        <Plus class="h-4 w-4" />
-        {{ $t('servers.publish') }}
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          @click="refreshAllServerStatuses"
+          :disabled="isRefreshing"
+          class="flex items-center justify-center h-8 w-8 rounded-md border border-neutral-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-zinc-700 transition-colors"
+          :title="$t('servers.refreshStatuses', 'Refresh Statuses')"
+          :aria-label="$t('servers.refreshStatuses', 'Refresh Statuses')"
+        >
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': isRefreshing }" />
+        </button>
+        <button
+          @click="openPublishDialog"
+          class="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          <Plus class="h-4 w-4" />
+          {{ $t('servers.publish') }}
+        </button>
+      </div>
     </div>
 
     <!-- Error display -->
