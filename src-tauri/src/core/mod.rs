@@ -1,4 +1,5 @@
 pub mod curseforge;
+pub mod cache;
 pub mod fabric;
 pub mod forge;
 pub mod java;
@@ -19,3 +20,4 @@ pub use crate::core::mojang::VanillaVersion;
 // Re-export modrinth types
 pub use crate::core::modrinth::{OnlineModpackVersion, UnifiedModFile, UnifiedModProject};
 pub mod security;
+pub mod settings;

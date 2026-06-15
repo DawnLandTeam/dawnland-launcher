@@ -34,6 +34,7 @@ onUnmounted(() => {
 });
 
 onActivated(async () => {
+  await loadLauncherSettings();
   await loadAuthlibServers();
   await loadSystemMemory();
   await scanLocalJavas();
@@ -91,6 +92,30 @@ const isCheckingUpdate = ref(false);
 const showUpdaterModal = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
 const updateChannel = ref(normalizeUpdateChannel(localStorage.getItem('updateChannel')));
+
+// Launcher Settings state
+const enableInstanceInheritance = ref(false);
+
+async function loadLauncherSettings() {
+  try {
+    const settings = await invoke<any>('load_launcher_settings');
+    enableInstanceInheritance.value = settings.enableInstanceInheritance;
+  } catch (e) {
+    console.error('Failed to load launcher settings:', e);
+  }
+}
+
+async function saveLauncherSettings() {
+  try {
+    await invoke('save_launcher_settings', {
+      settings: {
+        enableInstanceInheritance: enableInstanceInheritance.value
+      }
+    });
+  } catch (e) {
+    console.error('Failed to save launcher settings:', e);
+  }
+}
 
 function changeUpdateChannel(channel: string) {
   const normalizedChannel = normalizeUpdateChannel(channel);
@@ -473,6 +498,21 @@ function changeLanguage(lang: string) {
           <option value="stable">{{ $t('settings.general.channelStable') }}</option>
           <option value="prerelease">{{ $t('settings.general.channelPrerelease') }}</option>
         </select>
+      </div>
+
+      <!-- Instance Inheritance Settings -->
+      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div>
+          <h2 class="text-lg font-semibold flex items-center gap-2">
+            <Package :size="20" class="text-primary" />
+            {{ $t('settings.general.inheritanceTitle') }}
+          </h2>
+          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.inheritanceDesc') }}</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" v-model="enableInstanceInheritance" @change="saveLauncherSettings" class="sr-only peer">
+          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+        </label>
       </div>
 
       <!-- Global Memory Settings -->
