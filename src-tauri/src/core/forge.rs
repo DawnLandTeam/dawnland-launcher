@@ -850,7 +850,7 @@ impl ExecutableTask for InstallForgeTask {
     let temp_vanilla_dir = base_dir.join("versions").join(&mc_version);
     let mut created_temp_vanilla = false;
     if is_dep && !temp_vanilla_dir.exists() {
-        let _ = crate::core::utils::copy_dir_all(base_version_dir.clone(), temp_vanilla_dir.clone()).await;
+        let _ = crate::core::utils::copy_dir_all(&base_version_dir, &temp_vanilla_dir).await;
         created_temp_vanilla = true;
     }
 

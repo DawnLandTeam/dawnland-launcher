@@ -18,11 +18,7 @@ impl Default for LauncherSettings {
 }
 
 pub fn get_launcher_settings_path() -> PathBuf {
-    get_minecraft_base()
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join(".dawnland")
-        .join("launcher_settings.json")
+    crate::core::mojang::get_dawnland_dir().join("launcher_settings.json")
 }
 
 #[tauri::command]

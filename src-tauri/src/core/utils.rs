@@ -1,13 +1,13 @@
 /// Compare two version strings numerically (segment by segment)
 /// e.g., "0.9.1" < "0.10.1" < "0.19.1"
 #[async_recursion::async_recursion]
-pub async fn copy_dir_all(src: std::path::PathBuf, dst: std::path::PathBuf) -> std::io::Result<()> {
-    tokio::fs::create_dir_all(&dst).await?;
+pub async fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    tokio::fs::create_dir_all(dst).await?;
     let mut entries = tokio::fs::read_dir(src).await?;
     while let Some(entry) = entries.next_entry().await? {
         let ty = entry.file_type().await?;
         if ty.is_dir() {
-            copy_dir_all(entry.path(), dst.join(entry.file_name())).await?;
+            copy_dir_all(&entry.path(), &dst.join(entry.file_name())).await?;
         } else {
             tokio::fs::copy(entry.path(), dst.join(entry.file_name())).await?;
         }

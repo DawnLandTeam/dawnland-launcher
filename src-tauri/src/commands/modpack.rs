@@ -232,7 +232,7 @@ impl ExecutableTask for InstallModpackTask {
             let vanilla_src = dawnland_cache.join(&mc_version);
             let vanilla_dest = versions_dir.join(&mc_version);
             if vanilla_src.exists() && !vanilla_dest.exists() {
-                let _ = crate::core::utils::copy_dir_all(vanilla_src, vanilla_dest).await;
+                let _ = crate::core::utils::copy_dir_all(&vanilla_src, &vanilla_dest).await;
             }
             
             // Loader
@@ -240,7 +240,7 @@ impl ExecutableTask for InstallModpackTask {
                 let loader_src = dawnland_cache.join(&inherits_from);
                 let loader_dest = versions_dir.join(&inherits_from);
                 if loader_src.exists() && !loader_dest.exists() {
-                    let _ = crate::core::utils::copy_dir_all(loader_src, loader_dest).await;
+                    let _ = crate::core::utils::copy_dir_all(&loader_src, &loader_dest).await;
                 }
             }
         }
@@ -525,11 +525,8 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
         return Ok(mc_version.to_string());
     }
 
-    let custom_instance_name = if loader.contains(mc_version) {
-        loader.to_string()
-    } else {
-        format!("{}-{}", loader, mc_version)
-    };
+    let base_loader = loader.strip_suffix(&format!("-{}", mc_version)).unwrap_or(loader);
+    let custom_instance_name = format!("{}-{}", base_loader, mc_version);
 
     // Loader is present
     ctx.manager.wait_for_instance(&custom_instance_name, &ctx.cancel_token).await;
