@@ -89,6 +89,10 @@ pub fn run() {
                 }
             });
 
+            tauri::async_runtime::spawn(async move {
+                crate::core::cache::cleanup_expired_cache().await;
+            });
+
             if let Some(window) = app.get_webview_window("main") {
                 if let Ok(Some(monitor)) = window.current_monitor() {
                     let size = monitor.size();
@@ -134,6 +138,7 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             greet,
+            core::cache::clean_dawnland_cache,
             core::security::generate_api_signature,
             commands::get_system_info,
             commands::get_system_locale,
@@ -235,6 +240,10 @@ pub fn run() {
             commands::task::retry_task,
             // Custom Updater commands
             commands::update_launcher,
+            // Settings commands
+            core::settings::load_launcher_settings,
+            core::settings::save_launcher_settings,
+
             // Custom Analytics Command
             commands::app_track_event,
         ])
