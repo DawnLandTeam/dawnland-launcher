@@ -25,6 +25,22 @@ pub fn get_minecraft_base() -> &'static PathBuf {
     })
 }
 
+/// Get the Dawnland base directory path.
+pub fn get_dawnland_dir() -> &'static PathBuf {
+    static DAWNLAND_BASE: OnceLock<PathBuf> = OnceLock::new();
+    DAWNLAND_BASE.get_or_init(|| {
+        let base = std::env::current_exe()
+            .map(|p| p.parent().unwrap().to_path_buf())
+            .unwrap_or_else(|_| PathBuf::from("."));
+        base.join(".dawnland")
+    })
+}
+
+/// Get the Dawnland cache directory path.
+pub fn get_dawnland_cache() -> PathBuf {
+    get_dawnland_dir().join("cache")
+}
+
 // Legacy INSTALL_STATE has been removed in favor of TaskManager.
 // CANCEL_FLAG is temporarily retained for compatibility with specific legacy call sites 
 // (e.g., older download tasks) that have not yet been fully migrated to TaskContext cancellation tokens.
@@ -421,7 +437,11 @@ impl ExecutableTask for InstallVanillaTask {
         }
 
         let base_dir = get_minecraft_base();
-        let version_dir = base_dir.join("versions").join(version_id);
+        let version_dir = if is_dependency.unwrap_or(false) {
+            get_dawnland_cache().join(version_id)
+        } else {
+            base_dir.join("versions").join(version_id)
+        };
 
         let _ = tokio::fs::create_dir_all(&version_dir).await;
         crate::core::launcher::InstanceConfig::ensure_installing(&version_dir, is_dependency.unwrap_or(false)).await;
@@ -539,8 +559,7 @@ impl ExecutableTask for InstallVanillaTask {
             let hash = client_download.sha1.as_ref().cloned();
 
             if !url.is_empty() {
-                let path = format!("versions/{}/{}.jar", version_id, version_id);
-                let dest = base_dir.join(&path);
+                let dest = version_dir.join(format!("{}.jar", version_id));
                 tasks.push(DownloadTask::new(
                     url,
                     dest.to_string_lossy().to_string(),
@@ -628,14 +647,22 @@ impl ExecutableTask for InstallVanillaTask {
         run_batch_download_task(tasks, ctx.clone()).await.map_err(|e| TaskError::ExecutionError(e))?;
 
         if ctx.is_cancelled() {
-            let version_dir = base_dir.join("versions").join(version_id);
+            let version_dir = if is_dependency.unwrap_or(false) {
+                get_dawnland_cache().join(version_id)
+            } else {
+                base_dir.join("versions").join(version_id)
+            };
             let _ = tokio::fs::remove_dir_all(&version_dir).await;
             return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
         }
 
         ctx.update_progress(total_tasks as u64, total_tasks as u64, "Complete").await;
 
-        let version_dir = base_dir.join("versions").join(version_id);
+        let version_dir = if is_dependency.unwrap_or(false) {
+            get_dawnland_cache().join(version_id)
+        } else {
+            base_dir.join("versions").join(version_id)
+        };
         let config_path = version_dir.join("dlml.json");
         let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
             let content = tokio::fs::read_to_string(&config_path)
@@ -672,7 +699,11 @@ pub async fn install_vanilla_version(
 
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
-    let version_dir = base_dir.join("versions").join(&version_id);
+    let version_dir = if is_dependency.unwrap_or(false) {
+        crate::core::mojang::get_dawnland_cache().join(&version_id)
+    } else {
+        base_dir.join("versions").join(&version_id)
+    };
     let _ = std::fs::create_dir_all(&version_dir);
     let config_path = version_dir.join("dlml.json");
     let mut pre_config = crate::core::launcher::InstanceConfig::default();

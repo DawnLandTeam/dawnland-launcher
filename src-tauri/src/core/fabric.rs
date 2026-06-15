@@ -131,7 +131,11 @@ impl ExecutableTask for InstallFabricTask {
     );
 
     let base_dir = get_minecraft_base();
-    let instance_dir = base_dir.join("versions").join(custom_instance_name);
+    let instance_dir = if is_dependency.unwrap_or(false) {
+        crate::core::mojang::get_dawnland_cache().join(custom_instance_name)
+    } else {
+        base_dir.join("versions").join(custom_instance_name)
+    };
 
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, is_dependency.unwrap_or(false)).await;
@@ -142,7 +146,12 @@ impl ExecutableTask for InstallFabricTask {
         .map_err(|e| TaskError::ExecutionError(format!("Failed to create HTTP client: {e}")))?;
 
     // Step 1: Check if base vanilla version is installed
-    let base_version_dir = base_dir.join("versions").join(&mc_version);
+    let dawnland_cache = crate::core::mojang::get_dawnland_cache();
+    let base_version_dir = if is_dependency.unwrap_or(false) {
+        dawnland_cache.join(&mc_version)
+    } else {
+        base_dir.join("versions").join(&mc_version)
+    };
     let base_client_jar = base_version_dir.join(format!("{}.jar", mc_version));
     let base_version_json = base_version_dir.join(format!("{}.json", mc_version));
 
@@ -233,7 +242,14 @@ impl ExecutableTask for InstallFabricTask {
     // Modify id and set inheritsFrom
     if let Some(obj) = profile.as_object_mut() {
         obj.insert("id".to_string(), serde_json::json!(custom_instance_name));
-        obj.insert("inheritsFrom".to_string(), serde_json::json!(mc_version));
+        
+        let settings = crate::core::settings::load_launcher_settings().await.unwrap_or_default();
+        if !settings.enable_instance_inheritance {
+            crate::core::utils::flatten_instance_json_recursive(&mc_version, obj).await.map_err(|e| TaskError::ExecutionError(e))?;
+            obj.insert("clientVersion".to_string(), serde_json::json!(mc_version));
+        } else {
+            obj.insert("inheritsFrom".to_string(), serde_json::json!(mc_version));
+        }
 
         // Update logging file reference
         if let Some(logging) = obj.get_mut("logging") {
@@ -253,7 +269,7 @@ impl ExecutableTask for InstallFabricTask {
     }
 
     // Save Fabric profile
-    let version_dir = base_dir.join("versions").join(&custom_instance_name);
+    let version_dir = instance_dir.clone();
 
     tokio::fs::create_dir_all(&version_dir)
         .await
@@ -316,7 +332,7 @@ impl ExecutableTask for InstallFabricTask {
     if !tasks.is_empty() {
         if let Err(e) = crate::downloader::run_batch_download_task(tasks, ctx.clone()).await {
             tracing::warn!("Installation failed during batch download, cleaning up...");
-            let version_dir = base_dir.join("versions").join(&custom_instance_name);
+            let version_dir = instance_dir.clone();
             let _ = tokio::fs::remove_dir_all(&version_dir).await;
             return Err(TaskError::ExecutionError(e));
         }
@@ -324,7 +340,7 @@ impl ExecutableTask for InstallFabricTask {
 
     if ctx.is_cancelled() {
         tracing::warn!("Installation cancelled, cleaning up fabric instance directory...");
-        let version_dir = base_dir.join("versions").join(&custom_instance_name);
+        let version_dir = instance_dir.clone();
         let _ = tokio::fs::remove_dir_all(&version_dir).await;
         return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
     }
@@ -391,7 +407,11 @@ pub async fn install_fabric_instance(
     
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
-    let instance_dir = base_dir.join("versions").join(&custom_instance_name);
+    let instance_dir = if is_dependency.unwrap_or(false) {
+        crate::core::mojang::get_dawnland_cache().join(&custom_instance_name)
+    } else {
+        base_dir.join("versions").join(&custom_instance_name)
+    };
     let _ = std::fs::create_dir_all(&instance_dir);
     let config_path = instance_dir.join("dlml.json");
     let mut pre_config = crate::core::launcher::InstanceConfig::default();
