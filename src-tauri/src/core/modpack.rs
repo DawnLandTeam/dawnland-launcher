@@ -136,15 +136,26 @@ pub fn extract_zip<P: AsRef<Path>>(zip_path: P, extract_dir: P) -> Result<(), St
     Ok(())
 }
 
+/// Helper function to parse CurseForge-like manifests
+fn parse_cf_format_manifest(path: &PathBuf, format_name: &str) -> Result<ModpackType, String> {
+    tracing::info!("Found {}", path.file_name().and_then(|n| n.to_str()).unwrap_or(format_name));
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let manifest: CfManifest =
+        serde_json::from_str(&content).map_err(|e| format!("Invalid {} manifest: {}", format_name, e))?;
+    Ok(ModpackType::CurseForge(manifest))
+}
+
 /// Parses the modpack manifest from an extracted directory.
 pub fn parse_modpack_manifest(extract_dir: &PathBuf) -> Result<ModpackType, String> {
     let cf_manifest_path = extract_dir.join("manifest.json");
     if cf_manifest_path.exists() {
-        tracing::info!("Found CurseForge manifest.json");
-        let content = std::fs::read_to_string(&cf_manifest_path).map_err(|e| e.to_string())?;
-        let manifest: CfManifest =
-            serde_json::from_str(&content).map_err(|e| format!("Invalid CF manifest: {}", e))?;
-        return Ok(ModpackType::CurseForge(manifest));
+        return parse_cf_format_manifest(&cf_manifest_path, "CF");
+    }
+
+    let mcbbs_manifest_path = extract_dir.join("mcbbs.pack.json");
+    if mcbbs_manifest_path.exists() {
+        // MCBBS format is structurally compatible with CurseForge manifest
+        return parse_cf_format_manifest(&mcbbs_manifest_path, "MCBBS");
     }
 
     let mr_manifest_path = extract_dir.join("modrinth.index.json");
@@ -156,7 +167,7 @@ pub fn parse_modpack_manifest(extract_dir: &PathBuf) -> Result<ModpackType, Stri
         return Ok(ModpackType::Modrinth(manifest));
     }
 
-    Err("Unknown modpack format: Neither manifest.json nor modrinth.index.json found.".into())
+    Err("Unknown modpack format: None of manifest.json, mcbbs.pack.json, or modrinth.index.json found.".into())
 }
 
 /// Copies the overrides folder from the extracted modpack to the instance root.
