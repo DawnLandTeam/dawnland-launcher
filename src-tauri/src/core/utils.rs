@@ -1,5 +1,20 @@
 /// Compare two version strings numerically (segment by segment)
 /// e.g., "0.9.1" < "0.10.1" < "0.19.1"
+#[async_recursion::async_recursion]
+pub async fn copy_dir_all(src: std::path::PathBuf, dst: std::path::PathBuf) -> std::io::Result<()> {
+    tokio::fs::create_dir_all(&dst).await?;
+    let mut entries = tokio::fs::read_dir(src).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let ty = entry.file_type().await?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.join(entry.file_name())).await?;
+        } else {
+            tokio::fs::copy(entry.path(), dst.join(entry.file_name())).await?;
+        }
+    }
+    Ok(())
+}
+
 pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     // If both strings are exactly the same, skip further logic
     if a == b {
@@ -52,6 +67,80 @@ pub fn create_hidden_std_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::
     }
     std_cmd
 }
+
+#[async_recursion::async_recursion]
+pub async fn flatten_instance_json_recursive(parent_id: &str, child_obj: &mut serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let base_dir = crate::core::mojang::get_minecraft_base();
+    let mut parent_json_path = base_dir.join("versions").join(parent_id).join(format!("{}.json", parent_id));
+    
+    if !parent_json_path.exists() {
+        let dawnland_cache = crate::core::mojang::get_dawnland_cache();
+        let cache_json = dawnland_cache.join(parent_id).join(format!("{}.json", parent_id));
+        if cache_json.exists() {
+            parent_json_path = cache_json;
+        } else {
+            return Err(format!("Parent version {} not found at {:?}", parent_id, parent_json_path));
+        }
+    }
+    
+    let parent_content = tokio::fs::read_to_string(&parent_json_path).await.map_err(|e| e.to_string())?;
+    let mut parent_obj: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&parent_content).map_err(|e| e.to_string())?;
+    
+    // Recursive resolution of inheritsFrom
+    if let Some(grandparent_id) = parent_obj.get("inheritsFrom").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+        flatten_instance_json_recursive(&grandparent_id, &mut parent_obj).await?;
+    }
+    
+    // Merge logic: Merge child_obj into parent_obj
+    
+    // 1. Merge libraries (array append)
+    if let Some(child_libs) = child_obj.get("libraries").and_then(|v| v.as_array()) {
+        if let Some(parent_libs) = parent_obj.get_mut("libraries").and_then(|v| v.as_array_mut()) {
+            parent_libs.extend(child_libs.clone());
+        } else {
+            parent_obj.insert("libraries".to_string(), serde_json::Value::Array(child_libs.clone()));
+        }
+    }
+    
+    // 2. Merge arguments (minecraftArguments or arguments.game/jvm)
+    if let Some(child_mc_args) = child_obj.get("minecraftArguments") {
+        parent_obj.insert("minecraftArguments".to_string(), child_mc_args.clone());
+    }
+    
+    if let Some(child_args) = child_obj.get("arguments").and_then(|v| v.as_object()) {
+        if !parent_obj.contains_key("arguments") {
+            parent_obj.insert("arguments".to_string(), serde_json::Value::Object(serde_json::Map::new()));
+        }
+        if let Some(parent_args) = parent_obj.get_mut("arguments").and_then(|v| v.as_object_mut()) {
+            for (key, val) in child_args {
+                if let Some(val_arr) = val.as_array() {
+                    if let Some(p_val_arr) = parent_args.get_mut(key).and_then(|v| v.as_array_mut()) {
+                        p_val_arr.extend(val_arr.clone());
+                    } else {
+                        parent_args.insert(key.clone(), serde_json::Value::Array(val_arr.clone()));
+                    }
+                }
+            }
+        }
+    }
+    
+    // 3. Override other keys (mainClass, id, type, etc.)
+    for (key, val) in child_obj.iter() {
+        if key == "libraries" || key == "arguments" || key == "inheritsFrom" || key == "minecraftArguments" {
+            continue;
+        }
+        parent_obj.insert(key.clone(), val.clone());
+    }
+    
+    // Clear inheritsFrom since it's fully resolved
+    parent_obj.remove("inheritsFrom");
+    
+    // Replace child_obj with the fully merged parent_obj
+    *child_obj = parent_obj;
+    
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {
