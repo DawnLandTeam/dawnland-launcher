@@ -347,6 +347,11 @@ struct CfBatchFilesRequest {
 /// Get multiple mod files from CurseForge via the web backend proxy using a batch request.
 #[tauri::command]
 pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile>, String> {
+    if file_ids.is_empty() {
+        tracing::debug!("get_cf_files_batch called with empty file_ids, returning early");
+        return Ok(Vec::new());
+    }
+
     tracing::info!(
         "Getting CF mod files batch via proxy for {} files",
         file_ids.len()
