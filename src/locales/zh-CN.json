@@ -262,7 +262,9 @@
       "updateChannelTitle": "更新通道",
       "updateChannelDesc": "选择接收正式版更新还是包含新特性的预览版更新",
       "channelStable": "正式版 (推荐)",
-      "channelPrerelease": "预览版"
+      "channelPrerelease": "预览版",
+      "inheritanceTitle": "实例继承",
+      "inheritanceDesc": "开启后，安装的新实例将仅包含修改项并继承原版文件（节省空间）；关闭后，实例的配置将被彻底扁平化（更利于便携和导出）。默认建议关闭。"
     },
     "java": {
       "title": "Java 管理",
