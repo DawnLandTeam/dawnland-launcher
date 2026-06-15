@@ -195,20 +195,57 @@ impl ExecutableTask for InstallModpackTask {
         // 3. Setup Instance
         ctx.set_step(4, 7, &format!("Preparing instance {}...", instance_name)).await;
 
-        ensure_dependencies(&mc_version, &loader, ctx.clone()).await?;
+        let actual_loader = ensure_dependencies(&mc_version, &loader, ctx.clone()).await?;
 
         check_cancel!();
 
         std::fs::create_dir_all(&instance_dir).map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
-        let version_json = serde_json::json!({
-            "id": instance_name,
-            "inheritsFrom": if loader.is_empty() { mc_version.clone() } else { loader.clone() },
-            "type": "release",
-            "modpackVersion": modpack_version,
-            "modpackType": modpack_type_str,
-            "modpackProjectId": project_id
-        });
+        let inherits_from = actual_loader;
+
+        let mut version_json_map = serde_json::Map::new();
+        version_json_map.insert("id".to_string(), serde_json::json!(instance_name));
+        version_json_map.insert("type".to_string(), serde_json::json!("release"));
+        version_json_map.insert("modpackVersion".to_string(), serde_json::json!(modpack_version));
+        version_json_map.insert("modpackType".to_string(), serde_json::json!(modpack_type_str));
+        version_json_map.insert("modpackProjectId".to_string(), serde_json::json!(project_id));
+
+        let settings = crate::core::settings::load_launcher_settings().await.unwrap_or_default();
+        if !settings.enable_instance_inheritance {
+            crate::core::utils::flatten_instance_json_recursive(&inherits_from, &mut version_json_map).await.map_err(|e| TaskError::ExecutionError(e))?;
+            version_json_map.insert("clientVersion".to_string(), serde_json::json!(mc_version));
+            // Copy the vanilla jar to isolated sandbox
+            let dawnland_cache = crate::core::mojang::get_dawnland_cache();
+            let source_jar = dawnland_cache.join(&mc_version).join(format!("{}.jar", mc_version));
+            if source_jar.exists() {
+                let target_jar = instance_dir.join(format!("{}.jar", instance_name));
+                let _ = tokio::fs::copy(&source_jar, &target_jar).await;
+            }
+        } else {
+            version_json_map.insert("inheritsFrom".to_string(), serde_json::json!(inherits_from));
+            
+            // Copy from cache to versions
+            let dawnland_cache = crate::core::mojang::get_dawnland_cache();
+            let versions_dir = base_dir.join("versions");
+            
+            // Vanilla
+            let vanilla_src = dawnland_cache.join(&mc_version);
+            let vanilla_dest = versions_dir.join(&mc_version);
+            if vanilla_src.exists() && !vanilla_dest.exists() {
+                let _ = crate::core::utils::copy_dir_all(vanilla_src, vanilla_dest).await;
+            }
+            
+            // Loader
+            if inherits_from != mc_version {
+                let loader_src = dawnland_cache.join(&inherits_from);
+                let loader_dest = versions_dir.join(&inherits_from);
+                if loader_src.exists() && !loader_dest.exists() {
+                    let _ = crate::core::utils::copy_dir_all(loader_src, loader_dest).await;
+                }
+            }
+        }
+
+        let version_json = serde_json::Value::Object(version_json_map);
 
         std::fs::write(
             instance_dir.join(format!("{}.json", instance_name)),
@@ -454,15 +491,15 @@ impl ExecutableTask for InstallOnlineModpackTask {
 // HELPERS
 // ==========================================
 
-async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -> Result<(), TaskError> {
+async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -> Result<String, TaskError> {
     let base_dir = crate::core::mojang::get_minecraft_base();
 
     // Check if loader is empty -> means only vanilla
     if loader.is_empty() {
         ctx.manager.wait_for_instance(mc_version, &ctx.cancel_token).await;
 
-        let vanilla_json = base_dir
-            .join("versions")
+        let dawnland_cache = crate::core::mojang::get_dawnland_cache();
+        let vanilla_json = dawnland_cache
             .join(mc_version)
             .join(format!("{}.json", mc_version));
         if !vanilla_json.exists() {
@@ -485,18 +522,24 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
             };
             vanilla_task.execute(ctx.clone()).await?;
         }
-        return Ok(());
+        return Ok(mc_version.to_string());
     }
 
-    // Loader is present
-    ctx.manager.wait_for_instance(loader, &ctx.cancel_token).await;
+    let custom_instance_name = if loader.contains(mc_version) {
+        loader.to_string()
+    } else {
+        format!("{}-{}", loader, mc_version)
+    };
 
-    let loader_json = base_dir
-        .join("versions")
-        .join(loader)
-        .join(format!("{}.json", loader));
+    // Loader is present
+    ctx.manager.wait_for_instance(&custom_instance_name, &ctx.cancel_token).await;
+
+    let dawnland_cache = crate::core::mojang::get_dawnland_cache();
+    let loader_json = dawnland_cache
+        .join(&custom_instance_name)
+        .join(format!("{}.json", custom_instance_name));
     if !loader_json.exists() {
-        ctx.update_progress(0, 0, &format!("Installing dependency {}...", loader)).await;
+        ctx.update_progress(0, 0, &format!("Installing dependency {}...", custom_instance_name)).await;
 
         if loader.starts_with("fabric-") {
             let loader_version = loader.strip_prefix("fabric-").unwrap().to_string();
@@ -504,7 +547,7 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
                 options: InstallFabricOptions {
                     mc_version: mc_version.to_string(),
                     fabric_version: loader_version,
-                    custom_instance_name: loader.to_string(),
+                    custom_instance_name: custom_instance_name.clone(),
                     is_dependency: Some(true),
                 },
             };
@@ -516,7 +559,7 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
                     mc_version: mc_version.to_string(),
                     loader_version: loader_version,
                     loader_type: "forge".to_string(),
-                    custom_instance_name: loader.to_string(),
+                    custom_instance_name: custom_instance_name.clone(),
                     is_dependency: Some(true),
                 },
             };
@@ -528,7 +571,7 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
                     mc_version: mc_version.to_string(),
                     loader_version: loader_version,
                     loader_type: "neoforge".to_string(),
-                    custom_instance_name: loader.to_string(),
+                    custom_instance_name: custom_instance_name.clone(),
                     is_dependency: Some(true),
                 },
             };
@@ -538,7 +581,7 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
         }
     }
 
-    Ok(())
+    Ok(custom_instance_name)
 }
 
 // ==========================================
