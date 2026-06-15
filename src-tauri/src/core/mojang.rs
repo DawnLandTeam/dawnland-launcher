@@ -25,12 +25,20 @@ pub fn get_minecraft_base() -> &'static PathBuf {
     })
 }
 
+/// Get the Dawnland base directory path.
+pub fn get_dawnland_dir() -> &'static PathBuf {
+    static DAWNLAND_BASE: OnceLock<PathBuf> = OnceLock::new();
+    DAWNLAND_BASE.get_or_init(|| {
+        let base = std::env::current_exe()
+            .map(|p| p.parent().unwrap().to_path_buf())
+            .unwrap_or_else(|_| PathBuf::from("."));
+        base.join(".dawnland")
+    })
+}
+
 /// Get the Dawnland cache directory path.
 pub fn get_dawnland_cache() -> PathBuf {
-    let base = std::env::current_exe()
-        .map(|p| p.parent().unwrap().to_path_buf())
-        .unwrap_or_else(|_| PathBuf::from("."));
-    base.join(".dawnland").join("cache")
+    get_dawnland_dir().join("cache")
 }
 
 // Legacy INSTALL_STATE has been removed in favor of TaskManager.
