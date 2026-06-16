@@ -1387,7 +1387,10 @@ async fn verify_instance_integrity(
                     let path_clone = path.clone();
                     let computed_hash = tokio::task::spawn_blocking(move || {
                         crate::downloader::download::compute_sha1_sync(&path_clone)
-                    }).await.unwrap_or(Err(std::io::Error::new(std::io::ErrorKind::Other, "Hash computation panicked").to_string()));
+                    })
+                    .await
+                    .map_err(|e| DawnlandError::ProcessError(format!("Task panicked: {}", e)))
+                    .and_then(|res| res.map_err(DawnlandError::from));
 
                     match computed_hash {
                         Ok(computed_hash) => {
@@ -1493,7 +1496,7 @@ impl From<LaunchError> for AppError {
     fn from(err: LaunchError) -> Self {
         match err {
             LaunchError::NoCompatibleJava { required_version } => {
-                DawnlandError::Unknown(format!("No compatible Java {required_version} found")).into()
+                DawnlandError::NoCompatibleJava { required_version }.into()
             }
             LaunchError::Other(msg) => DawnlandError::Unknown(msg).into(),
         }
