@@ -571,7 +571,7 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, AppError
     };
 
     // Load existing accounts and add new one.
-    let mut accounts = get_accounts().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    let mut accounts = get_accounts().await?;
 
     // Remove existing Microsoft account with same UUID if exists (ignore case and hyphens just in case).
     accounts.retain(|a| {
@@ -583,7 +583,7 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, AppError
     });
 
     accounts.push(account.clone());
-    super::save_accounts(&accounts).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    super::save_accounts(&accounts).await?;
 
     Ok(account)
 }
@@ -594,7 +594,7 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppErr
     tracing::info!("Refreshing Microsoft token for account: {}", account_id);
 
     // Load all accounts to find the Microsoft account
-    let mut accounts = get_accounts().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    let mut accounts = get_accounts().await?;
 
     // Find the account
     let account_pos = accounts
@@ -696,7 +696,7 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppErr
     };
 
     // Save updated accounts
-    save_accounts(&accounts).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    save_accounts(&accounts).await?;
 
     tracing::info!(target: "auth", "Account token refreshed for: {}", account_id);
     Ok(updated_account)
@@ -869,7 +869,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
         client_token: None,
     };
 
-    let mut accounts = get_accounts().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    let mut accounts = get_accounts().await?;
     accounts.retain(|a| {
         let same_type = a.account_type == AccountType::Microsoft;
         let same_id =
