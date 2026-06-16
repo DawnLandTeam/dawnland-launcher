@@ -417,8 +417,14 @@ async fn extract_zip_entry(
         .map_err(|e| format!("Task join error: {}", e))?
 }
 
-/// Check if a library should be downloaded based on rules
 fn should_download_library_json(lib: &serde_json::Value) -> bool {
+    // Skip server-only libraries
+    if let Some(clientreq) = lib.get("clientreq").and_then(|c| c.as_bool()) {
+        if !clientreq {
+            return false;
+        }
+    }
+
     // If no rules, always download.
     let rules = match lib.get("rules").and_then(|r| r.as_array()) {
         Some(r) if r.is_empty() => return true,
@@ -514,6 +520,9 @@ fn get_library_download_info_json(lib: &serde_json::Value) -> Option<(String, St
                         };
                         return Some((url.to_string(), lib_path));
                     }
+                } else {
+                    // url is explicitly empty. This means it's provided by the installer and shouldn't be downloaded.
+                    return None;
                 }
             }
         }
