@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { Package, Search, Download, Trash2, Loader2 } from "@lucide/vue";
 import { DialogContent, DialogTitle, DialogDescription } from "./ui/dialog";
+import { getErrorMessage } from "../utils/error";
 
 // Types
 interface InstanceItem {
@@ -108,7 +109,7 @@ async function loadLocalMods() {
       versionId: props.instance.id,
     });
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
     localMods.value = [];
   } finally {
     isLoadingLocal.value = false;
@@ -128,7 +129,7 @@ async function toggleMod(mod: LocalModItem) {
     // Refresh the list
     await loadLocalMods();
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
   }
 }
 
@@ -148,7 +149,7 @@ async function deleteMod(mod: LocalModItem) {
     // Remove from list
     localMods.value = localMods.value.filter(m => m.filename !== mod.filename);
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
   }
 }
 
@@ -184,7 +185,7 @@ async function searchMods() {
     
     searchResults.value = results;
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
     searchResults.value = [];
   } finally {
     isLoadingSearch.value = false;
@@ -217,7 +218,7 @@ async function fetchModFilesForSelection(mod: UnifiedModProject) {
       selectedModFileId.value = availableModFiles.value[0].id;
     }
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
     selectedModForVersionSelection.value = null;
   } finally {
     isLoadingModFiles.value = false;
@@ -250,7 +251,7 @@ async function confirmInstallMod() {
     activeTab.value = "local";
     await loadLocalMods();
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
   } finally {
     isConfirmingInstall.value = false;
   }

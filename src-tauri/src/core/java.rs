@@ -502,11 +502,9 @@ pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<
         // Use zip-extract for Windows
         let download_path_clone = download_path.clone();
         let runtimes_dir_clone = runtimes_dir.clone();
-        tokio::task::spawn_blocking(move || {
-            crate::core::modpack::extract_zip(&download_path_clone, &runtimes_dir_clone)
-        })
-        .await
-        .map_err(|e| format!("Task join error: {}", e))??;
+        crate::core::modpack::extract_zip(&download_path_clone, &runtimes_dir_clone)
+            .await
+            .map_err(|e| format!("Task join error: {}", e))?;
     } else {
         // Use tar on macOS/Linux
         let output = crate::core::utils::create_hidden_command("tar")
