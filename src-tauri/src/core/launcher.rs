@@ -1462,7 +1462,24 @@ async fn verify_instance_integrity(
     Ok(())
 }
 
-/// Launch a Minecraft instance.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "type", content = "data")]
+pub enum LaunchError {
+    NoCompatibleJava { required_version: u32 },
+    Other(String),
+}
+
+impl From<String> for LaunchError {
+    fn from(error: String) -> Self {
+        LaunchError::Other(error)
+    }
+}
+
+impl From<&str> for LaunchError {
+    fn from(error: &str) -> Self {
+        LaunchError::Other(error.to_string())
+    }
+}
 #[tauri::command]
 pub async fn launch_instance(
     app: AppHandle,
@@ -1470,7 +1487,7 @@ pub async fn launch_instance(
     account_uuid: String,
     mut server_ip: Option<String>,
     mut server_port: Option<u16>,
-) -> Result<(), String> {
+) -> Result<(), LaunchError> {
     tracing::info!(
         "Launching instance {} with account {}",
         version_id,
@@ -1547,7 +1564,7 @@ pub async fn launch_instance(
             Err(e) => {
                 tracing::warn!("Failed to refresh Microsoft token: {}. Will try launching with existing token.", e);
                 if e == "REAUTH_REQUIRED" {
-                    return Err("Your Microsoft login session has expired. Please log out and log in again.".to_string());
+                    return Err(LaunchError::Other("Your Microsoft login session has expired. Please log out and log in again.".to_string()));
                 }
             }
         }
@@ -1804,7 +1821,7 @@ pub async fn launch_instance(
             // Download missing files
             let app_for_download = app.clone();
             if let Err(e) = run_batch_download(missing_files, app_for_download, crate::core::mojang::get_cancel_flag()).await {
-                return Err(format!("Failed to auto-repair missing files: {}", e));
+                return Err(LaunchError::Other(format!("Failed to auto-repair missing files: {}", e)));
             }
         }
 
@@ -1906,7 +1923,7 @@ pub async fn launch_instance(
                     "Could not find compatible Java >= {}",
                     recommended_major
                 );
-                return Err(format!("No compatible Java version found. This instance requires Java {} or higher. Please download Java {} in the Settings page.", recommended_major, recommended_major));
+                return Err(LaunchError::NoCompatibleJava { required_version: recommended_major });
             }
         }
     };
@@ -1945,16 +1962,16 @@ pub async fn launch_instance(
         }
         Ok(output) => {
             let stderr_output = String::from_utf8_lossy(&output.stderr);
-            return Err(format!(
+            return Err(LaunchError::Other(format!(
                 "Java executable '{}' failed to run.\nError: {}",
                 java_executable, stderr_output
-            ));
+            )));
         }
         Err(e) => {
-            return Err(format!(
+            return Err(LaunchError::Other(format!(
                 "Failed to execute Java at '{}': {}\nPlease ensure Java is installed and the path is valid.",
                 java_executable, e
-            ));
+            )));
         }
     }
 
@@ -1971,10 +1988,10 @@ pub async fn launch_instance(
 
     let required_java = crate::core::java::get_recommended_java(mc_version_for_check);
     if java_major_version < required_java {
-        return Err(format!(
-            "Minecraft {} requires Java {} or newer, but the selected Java version is Java {}.\n\nPlease install the correct Java version in Settings > Java Management.",
+        return Err(LaunchError::Other(format!(
+            "Minecraft {} requires Java {} or newer, but the selected Java version is Java {}.\n\nPlease install the correct Java version or select it in the Settings page.",
             mc_version_for_check, required_java, java_major_version
-        ));
+        )));
     }
 
     // ========== Authlib Injector Setup ==========
