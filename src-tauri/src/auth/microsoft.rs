@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 use crate::auth::{get_accounts, save_accounts, Account, AccountType};
+use crate::error::{AppError, DawnlandError};
 use serde::{Deserialize, Serialize};
 
 /// Device code flow response from Microsoft.
@@ -121,7 +122,7 @@ fn get_oauth_token_url() -> String {
 }
 
 /// Initiate Microsoft Device Code Flow.
-pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
+pub async fn start_microsoft_login() -> Result<LoginInitResponse, AppError> {
     let client = http_client();
 
     let url = format!("{}/api/microsoft/devicecode", get_web_backend_url());
@@ -134,7 +135,7 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Device code request failed: {} - {}", status, body));
+        return Err(DawnlandError::Unknown(format!("Device code request failed: {} - {}", status, body)).into());
     }
 
     // Debug: print raw response body
@@ -168,7 +169,7 @@ struct TokenPayload<'a> {
 }
 
 /// Poll for token - returns (access_token, refresh_token).
-async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
+async fn poll_for_token(device_code: &str) -> Result<(String, String), AppError> {
     let client = http_client();
 
     loop {
@@ -215,17 +216,17 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
             }
             // authorization_declined means user cancelled
             if error == "authorization_declined" {
-                return Err("Authorization was declined by the user".to_string());
+                return Err(DawnlandError::Unknown("Authorization was declined by the user".to_string()).into());
             }
             // expired_token means the flow expired
             if error == "expired_token" {
-                return Err("Device code flow expired. Please try again.".to_string());
+                return Err(DawnlandError::Unknown("Device code flow expired. Please try again.".to_string()).into());
             }
-            return Err(format!(
+            return Err(DawnlandError::Unknown(format!(
                 "Token error: {} - {}",
                 error,
                 token_resp.error_description.unwrap_or_default()
-            ));
+            )).into());
         }
 
         // No access_token and no error - wait and continue
@@ -234,7 +235,7 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), String> {
 }
 
 /// Exchange Microsoft token for Xbox Live token.
-async fn get_xbox_live_token(ms_token: &str) -> Result<String, String> {
+async fn get_xbox_live_token(ms_token: &str) -> Result<String, AppError> {
     let client = http_client();
 
     #[derive(Serialize)]
@@ -281,7 +282,7 @@ async fn get_xbox_live_token(ms_token: &str) -> Result<String, String> {
 
     if !status.is_success() {
         tracing::error!("Xbox Live auth failed: {} - {}", status, raw_text);
-        return Err(format!("Xbox Live auth failed: {} - {}", status, raw_text));
+        return Err(DawnlandError::Unknown(format!("Xbox Live auth failed: {} - {}", status, raw_text)).into());
     }
 
     #[derive(Deserialize)]
@@ -302,7 +303,7 @@ async fn get_xbox_live_token(ms_token: &str) -> Result<String, String> {
 }
 
 /// Exchange Xbox Live token for XSTS token.
-async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
+async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), AppError> {
     let client = http_client();
 
     #[derive(Serialize)]
@@ -368,10 +369,10 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
                     2148916237 => "This account requires parental consent for Xbox Live.",
                     _ => xerr_resp.message.as_deref().unwrap_or("Unknown XSTS error"),
                 };
-                return Err(format!("XSTS error ({}): {}", xerr, detailed_error));
+                return Err(DawnlandError::Unknown(format!("XSTS error ({}): {}", xerr, detailed_error)).into());
             }
         }
-        return Err(format!("XSTS auth failed: {} - {}", status, raw_text));
+        return Err(DawnlandError::Unknown(format!("XSTS auth failed: {} - {}", status, raw_text)).into());
     }
 
     #[derive(Deserialize)]
@@ -414,7 +415,7 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), String> {
 }
 
 /// Exchange XSTS token for Minecraft access token.
-async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, String> {
+async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, AppError> {
     let client = http_client();
 
     #[derive(Serialize)]
@@ -441,7 +442,7 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, Stri
 
     if !status.is_success() {
         tracing::error!("Minecraft auth failed: {} - {}", status, raw_text);
-        return Err(format!("Minecraft auth failed: {} - {}", status, raw_text));
+        return Err(DawnlandError::Unknown(format!("Minecraft auth failed: {} - {}", status, raw_text)).into());
     }
 
     #[derive(Deserialize)]
@@ -462,11 +463,11 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, Stri
     })?;
 
     if let Some(error) = mc_resp.error {
-        return Err(format!(
+        return Err(DawnlandError::Unknown(format!(
             "Minecraft auth error: {} - {}",
             error,
             mc_resp.error_message.unwrap_or_default()
-        ));
+        )).into());
     }
 
     let token = mc_resp
@@ -478,7 +479,7 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, Stri
 }
 
 /// Get Minecraft profile (UUID and username).
-async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), String> {
+async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), AppError> {
     let client = http_client();
 
     let response = client
@@ -494,20 +495,20 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), Strin
     if !status.is_success() {
         if status.as_u16() == 404 {
             tracing::error!("Account does not own Minecraft Java Edition");
-            return Err(
+            return Err(DawnlandError::Unknown(
                 "Account does not own Minecraft Java Edition. Please purchase the game first."
                     .to_string(),
-            );
+            ).into());
         }
         tracing::error!(
             "Minecraft profile request failed: {} - {}",
             status,
             raw_text
         );
-        return Err(format!(
+        return Err(DawnlandError::Unknown(format!(
             "Minecraft profile request failed: {} - {}",
             status, raw_text
-        ));
+        )).into());
     }
 
     #[derive(Deserialize)]
@@ -533,7 +534,7 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), Strin
 }
 
 /// Poll for Microsoft login and complete the full authentication chain.
-pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, String> {
+pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, AppError> {
     tracing::info!("Polling for Microsoft token...");
 
     // Step 1: Poll for Microsoft access token.
@@ -589,7 +590,7 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, String> 
 
 /// Refresh Microsoft token for a given account.
 /// Returns updated account if successful, Err if refresh fails.
-pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String> {
+pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppError> {
     tracing::info!("Refreshing Microsoft token for account: {}", account_id);
 
     // Load all accounts to find the Microsoft account
@@ -599,13 +600,13 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
     let account_pos = accounts
         .iter()
         .position(|a| a.id == account_id)
-        .ok_or_else(|| "Account not found".to_string())?;
+        .ok_or_else(|| DawnlandError::Unknown("Account not found".to_string()))?;
 
     let account = &mut accounts[account_pos];
 
     // Must be a Microsoft account with refresh token
     if account.account_type != AccountType::Microsoft {
-        return Err("Account is not a Microsoft account".to_string());
+        return Err(DawnlandError::Unknown("Account is not a Microsoft account".to_string()).into());
     }
 
     let refresh_token = account
@@ -657,11 +658,11 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
             || error == "invalid_request"
         {
             tracing::info!("Microsoft token has expired normally ({}). User needs to re-authenticate.", error);
-            return Err("REAUTH_REQUIRED".to_string());
+            return Err(DawnlandError::Unknown("REAUTH_REQUIRED".to_string()).into());
         }
 
         tracing::error!("Token refresh failed: {} - {}", error, error_desc);
-        return Err(format!("Token refresh error: {} - {}", error, error_desc));
+        return Err(DawnlandError::Unknown(format!("Token refresh error: {} - {}", error, error_desc)).into());
     }
 
     let new_ms_token = refresh_resp
@@ -705,7 +706,7 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, String
 static OAUTH_LISTENER: tokio::sync::OnceCell<tokio::net::TcpListener> =
     tokio::sync::OnceCell::const_new();
 
-pub async fn login_microsoft_oauth() -> Result<Account, String> {
+pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use sha2::{Digest, Sha256};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -792,8 +793,8 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
 
     let code = match callback_result {
         Ok(Ok(c)) => c,
-        Ok(Err(e)) => return Err(e),
-        Err(_) => return Err("Login timed out after 5 minutes.".to_string()),
+        Ok(Err(e)) => return Err(DawnlandError::Unknown(e).into()),
+        Err(_) => return Err(DawnlandError::Unknown("Login timed out after 5 minutes.".to_string()).into()),
     };
 
     tracing::info!("Received authorization code from browser callback.");
@@ -832,19 +833,19 @@ pub async fn login_microsoft_oauth() -> Result<Account, String> {
     }
 
     let token_resp: TokenResponse = serde_json::from_str(&raw_text)
-        .map_err(|e| format!("Failed to parse token response: {}. Raw: {}", e, raw_text))?;
+        .map_err(|e| DawnlandError::Unknown(format!("Failed to parse token response: {}. Raw: {}", e, raw_text)))?;
 
     if let Some(error) = token_resp.error {
-        return Err(format!(
+        return Err(DawnlandError::Unknown(format!(
             "Token error: {} - {}",
             error,
             token_resp.error_description.unwrap_or_default()
-        ));
+        )).into());
     }
 
     let ms_token = token_resp
         .access_token
-        .ok_or_else(|| "No access token in response".to_string())?;
+        .ok_or_else(|| DawnlandError::Unknown("No access token in response".to_string()))?;
     let refresh_token = token_resp.refresh_token.unwrap_or_default();
 
     tracing::info!("Received Microsoft access token from OAuth flow");

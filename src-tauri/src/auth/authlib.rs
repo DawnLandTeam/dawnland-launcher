@@ -1,3 +1,4 @@
+use crate::error::{AppError, DawnlandError};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -75,32 +76,30 @@ pub struct AuthlibServer {
     pub name: String,
 }
 
-pub async fn get_authlib_servers() -> Result<Vec<AuthlibServer>, String> {
+pub async fn get_authlib_servers() -> Result<Vec<AuthlibServer>, DawnlandError> {
     let mut config_path = std::env::current_exe()
         .map(|p| p.parent().unwrap().to_path_buf())
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
     config_path.push(".dawnland");
-    std::fs::create_dir_all(&config_path).map_err(|e| e.to_string())?;
+    tokio::fs::create_dir_all(&config_path).await?;
     config_path.push("authlib_servers.json");
 
     if !config_path.exists() {
         return Ok(Vec::new());
     }
 
-    let contents = tokio::fs::read_to_string(&config_path)
-        .await
-        .map_err(|e| e.to_string())?;
-    let servers: Vec<AuthlibServer> = serde_json::from_str(&contents).unwrap_or_default();
+    let contents = tokio::fs::read_to_string(&config_path).await?;
+    let servers: Vec<AuthlibServer> = serde_json::from_str(&contents)?;
     Ok(servers)
 }
 
 #[tauri::command]
-pub async fn fetch_authlib_servers() -> Result<Vec<AuthlibServer>, String> {
-    get_authlib_servers().await
+pub async fn fetch_authlib_servers() -> Result<Vec<AuthlibServer>, AppError> {
+    get_authlib_servers().await.map_err(AppError::from)
 }
 
 #[tauri::command]
-pub async fn add_authlib_server(url: String) -> Result<AuthlibServer, String> {
+pub async fn add_authlib_server(url: String) -> Result<AuthlibServer, AppError> {
     let meta = get_authlib_meta(url.clone()).await?;
     let name = meta
         .meta
@@ -119,19 +118,17 @@ pub async fn add_authlib_server(url: String) -> Result<AuthlibServer, String> {
         .map(|p| p.parent().unwrap().to_path_buf())
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
     config_path.push(".dawnland");
-    std::fs::create_dir_all(&config_path).map_err(|e| e.to_string())?;
+    tokio::fs::create_dir_all(&config_path).await?;
     config_path.push("authlib_servers.json");
 
-    let json = serde_json::to_string_pretty(&servers).map_err(|e| e.to_string())?;
-    tokio::fs::write(&config_path, json)
-        .await
-        .map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&servers)?;
+    tokio::fs::write(&config_path, json).await?;
 
     Ok(server)
 }
 
 #[tauri::command]
-pub async fn remove_authlib_server(url: String) -> Result<(), String> {
+pub async fn remove_authlib_server(url: String) -> Result<(), AppError> {
     let mut servers = get_authlib_servers().await?;
     servers.retain(|s| s.url != url);
 
@@ -139,35 +136,25 @@ pub async fn remove_authlib_server(url: String) -> Result<(), String> {
         .map(|p| p.parent().unwrap().to_path_buf())
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
     config_path.push(".dawnland");
-    std::fs::create_dir_all(&config_path).map_err(|e| e.to_string())?;
+    tokio::fs::create_dir_all(&config_path).await?;
     config_path.push("authlib_servers.json");
 
-    let json = serde_json::to_string_pretty(&servers).map_err(|e| e.to_string())?;
-    tokio::fs::write(&config_path, json)
-        .await
-        .map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&servers)?;
+    tokio::fs::write(&config_path, json).await?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn get_authlib_meta(url: String) -> Result<YggdrasilRootResponse, String> {
+pub async fn get_authlib_meta(url: String) -> Result<YggdrasilRootResponse, AppError> {
     let client = Client::new();
-    let res = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Network error: {}", e))?;
+    let res = client.get(&url).send().await?;
 
     if !res.status().is_success() {
-        return Err(format!("Server returned status {}", res.status()));
+        return Err(DawnlandError::Unknown(format!("Server returned status {}", res.status())).into());
     }
 
-    let meta_res: YggdrasilRootResponse = res
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
-
+    let meta_res: YggdrasilRootResponse = res.json().await?;
     Ok(meta_res)
 }
 
@@ -176,7 +163,7 @@ pub async fn authenticate_authlib_user(
     url: String,
     username: String,
     password: String,
-) -> Result<AuthlibAuthResult, String> {
+) -> Result<AuthlibAuthResult, AppError> {
     let client_token = Uuid::new_v4().to_string();
     let client = Client::new();
 
@@ -196,29 +183,22 @@ pub async fn authenticate_authlib_user(
         client_token: client_token.clone(),
     };
 
-    let res = client
-        .post(&auth_url)
-        .json(&req_body)
-        .send()
-        .await
-        .map_err(|e| format!("Network error: {}", e))?;
+    let res = client.post(&auth_url).json(&req_body).send().await?;
 
     if !res.status().is_success() {
         let err_body = res.text().await.unwrap_or_default();
         if let Ok(ygg_err) = serde_json::from_str::<YggdrasilError>(&err_body) {
-            return Err(ygg_err.error_message.unwrap_or_else(|| {
-                ygg_err
-                    .error
-                    .unwrap_or_else(|| "Unknown authentication error".to_string())
-            }));
+            return Err(DawnlandError::Unknown(
+                ygg_err.error_message.unwrap_or_else(|| {
+                    ygg_err.error.unwrap_or_else(|| "Unknown authentication error".to_string())
+                }),
+            )
+            .into());
         }
-        return Err("Authentication failed".to_string());
+        return Err(DawnlandError::Unknown("Authentication failed".to_string()).into());
     }
 
-    let auth_res: AuthenticateResponse = res
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let auth_res: AuthenticateResponse = res.json().await?;
 
     let mut profiles = auth_res.available_profiles.unwrap_or_default();
     if profiles.is_empty() {
@@ -228,7 +208,7 @@ pub async fn authenticate_authlib_user(
     }
 
     if profiles.is_empty() {
-        return Err("No profile available for this account".to_string());
+        return Err(DawnlandError::Unknown("No profile available for this account".to_string()).into());
     }
 
     let authlib_server_name = get_authlib_meta(url)
@@ -266,9 +246,9 @@ pub async fn save_authlib_accounts(
     access_token: String,
     client_token: String,
     authlib_server_name: Option<String>,
-) -> Result<Vec<Account>, String> {
+) -> Result<Vec<Account>, AppError> {
     if selected_profiles.is_empty() {
-        return Err("No profiles selected".to_string());
+        return Err(DawnlandError::Unknown("No profiles selected".to_string()).into());
     }
 
     let mut accounts = get_accounts().await?;
