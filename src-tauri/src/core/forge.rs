@@ -11,6 +11,7 @@
 use crate::core::mojang::{get_minecraft_base, InstallVanillaTask, VanillaInstallOptions};
 use crate::core::task::{ExecutableTask, TaskContext, TaskError, TaskManager, TaskType};
 use crate::core::utils::compare_versions;
+use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
@@ -209,7 +210,7 @@ async fn fetch_forge_versions(maven_base: &str) -> Result<Vec<String>, String> {
 /// Fetch available Forge versions, filtered by Minecraft version
 /// Uses BMCLAPI for stable and fast access in China
 #[tauri::command]
-pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, String> {
+pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, AppError> {
     tracing::info!(
         "Fetching Forge loaders for Minecraft {} via BMCLAPI",
         mc_version
@@ -289,7 +290,7 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
 /// Fetch available NeoForge versions, filtered by Minecraft version
 /// Uses BMCLAPI for stable access - correct endpoint: /neoforge/list/{mc_version}
 #[tauri::command]
-pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionList, String> {
+pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionList, AppError> {
     tracing::info!("Fetching NeoForge loaders for Minecraft {}", mc_version);
 
     let client = reqwest::Client::builder()
@@ -1095,7 +1096,7 @@ pub async fn install_forge_instance(
     custom_instance_name: String,
     is_dependency: Option<bool>,
     app: AppHandle,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let task_manager = app.state::<TaskManager>().inner().clone();
 
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
@@ -1105,12 +1106,12 @@ pub async fn install_forge_instance(
     } else {
         base_dir.join("versions").join(&custom_instance_name)
     };
-    let _ = std::fs::create_dir_all(&instance_dir);
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
     let mut pre_config = crate::core::launcher::InstanceConfig::default();
     pre_config.is_installing = true;
     pre_config.hidden = is_dependency.unwrap_or(false);
-    let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap());
+    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
     
     let task = InstallForgeTask {
         options: InstallForgeOptions {
@@ -1131,7 +1132,7 @@ pub async fn install_forge_instance(
             is_dependency,
         }, task)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Failed to spawn task: {}", e))?;
 
     Ok(task_id)
 }

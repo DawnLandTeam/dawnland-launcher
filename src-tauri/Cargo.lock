@@ -13,6 +13,7 @@ dependencies = [
  "craftping",
  "dirs",
  "fastnbt",
+ "futures",
  "futures-util",
  "hex",
  "hmac 0.13.0",

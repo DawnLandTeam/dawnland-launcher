@@ -1,4 +1,5 @@
 use crate::auth::{self, Account, LoginInitResponse};
+use crate::error::{AppError, DawnlandError};
 use crate::downloader::{run_batch_download, DownloadTask};
 use std::env::consts;
 use sysinfo::System;
@@ -9,7 +10,7 @@ pub mod task;
 
 /// Returns a human-readable OS identifier string.
 #[tauri::command]
-pub fn get_system_info() -> Result<String, String> {
+pub fn get_system_info() -> Result<String, AppError> {
     let os = consts::OS;
     let arch = consts::ARCH;
     let family = consts::FAMILY;
@@ -35,7 +36,7 @@ pub struct SystemMemoryInfo {
 }
 
 #[tauri::command]
-pub fn get_system_memory() -> Result<SystemMemoryInfo, String> {
+pub fn get_system_memory() -> Result<SystemMemoryInfo, AppError> {
     let mut sys = System::new_all();
     sys.refresh_all();
     let total_bytes = sys.total_memory();
@@ -56,7 +57,7 @@ pub fn get_system_memory() -> Result<SystemMemoryInfo, String> {
 
 /// Batch download multiple files concurrently.
 #[tauri::command]
-pub async fn batch_download(tasks: Vec<DownloadTask>, app: AppHandle) -> Result<(), String> {
+pub async fn batch_download(tasks: Vec<DownloadTask>, app: AppHandle) -> Result<(), AppError> {
     tracing::info!("Received batch download request with {} tasks", tasks.len());
 
     // Spawn the download tasks without blocking the command.
@@ -73,50 +74,50 @@ pub async fn batch_download(tasks: Vec<DownloadTask>, app: AppHandle) -> Result<
 
 /// Get all stored accounts.
 #[tauri::command]
-pub async fn get_accounts() -> Result<Vec<Account>, String> {
-    auth::get_accounts().await
+pub async fn get_accounts() -> Result<Vec<Account>, AppError> {
+    auth::get_accounts().await.map_err(AppError::from)
 }
 
 /// Add a new offline account.
 #[tauri::command]
-pub async fn add_offline_account(username: String) -> Result<Account, String> {
+pub async fn add_offline_account(username: String) -> Result<Account, AppError> {
     tracing::info!("Adding offline account: {}", username);
-    auth::add_offline_account(&username).await
+    auth::add_offline_account(&username).await.map_err(AppError::from)
 }
 
 /// Remove an account by ID.
 #[tauri::command]
-pub async fn remove_account(id: String) -> Result<(), String> {
+pub async fn remove_account(id: String) -> Result<(), AppError> {
     tracing::info!("Removing account: {}", id);
-    auth::remove_account(&id).await
+    auth::remove_account(&id).await.map_err(AppError::from)
 }
 
 /// Start Microsoft Device Code Flow login.
 #[tauri::command]
-pub async fn start_microsoft_login() -> Result<LoginInitResponse, String> {
+pub async fn start_microsoft_login() -> Result<LoginInitResponse, AppError> {
     tracing::info!("Starting Microsoft login flow");
-    auth::start_microsoft_login().await
+    auth::start_microsoft_login().await.map_err(AppError::from)
 }
 
 /// Poll for Microsoft login completion.
 #[tauri::command]
-pub async fn poll_microsoft_token(device_code: String) -> Result<Account, String> {
+pub async fn poll_microsoft_token(device_code: String) -> Result<Account, AppError> {
     tracing::info!("Polling Microsoft token with device code");
-    auth::poll_microsoft_token(&device_code).await
+    auth::poll_microsoft_token(&device_code).await.map_err(AppError::from)
 }
 
 /// Refresh Microsoft token for an existing account.
 #[tauri::command]
-pub async fn refresh_microsoft_token(account_id: String) -> Result<Account, String> {
+pub async fn refresh_microsoft_token(account_id: String) -> Result<Account, AppError> {
     tracing::info!("Refreshing Microsoft token for account: {}", account_id);
-    auth::refresh_microsoft_token(&account_id).await
+    auth::refresh_microsoft_token(&account_id).await.map_err(AppError::from)
 }
 
 /// Start seamless Microsoft OAuth 2.0 PKCE login flow.
 #[tauri::command]
-pub async fn login_microsoft_oauth() -> Result<Account, String> {
+pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     tracing::info!("Invoking seamless Microsoft OAuth login");
-    auth::login_microsoft_oauth().await
+    auth::login_microsoft_oauth().await.map_err(AppError::from)
 }
 
 // ============ Custom Updater Commands ============
@@ -138,13 +139,13 @@ pub struct ProgressData {
 }
 
 #[tauri::command]
-pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), String> {
+pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), AppError> {
     let filename = if cfg!(target_os = "windows") {
         "DLML.exe"
     } else if cfg!(target_os = "linux") {
         "amd64.AppImage"
     } else {
-        return Err("Unsupported OS for native auto-update".to_string());
+        return Err(DawnlandError::Unknown("Unsupported OS for native auto-update".to_string()).into());
     };
     
     let url = format!("https://dl.88880222.xyz/releases/v{}/{}", version, filename);
@@ -156,7 +157,7 @@ pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), Stri
     let mut response = reqwest::get(&url).await.map_err(|e| format!("Failed to connect: {}", e))?;
     
     if !response.status().is_success() {
-        return Err(format!("Server returned error: {}", response.status()));
+        return Err(DawnlandError::Unknown(format!("Server returned error: {}", response.status())).into());
     }
     
     let content_length = response.content_length();
@@ -209,7 +210,7 @@ pub async fn app_track_event(
     app: tauri::AppHandle,
     name: String,
     props: Option<serde_json::Value>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let aptabase_key = option_env!("APTABASE_KEY")
         .map(String::from)
         .or_else(|| std::env::var("APTABASE_KEY").ok())

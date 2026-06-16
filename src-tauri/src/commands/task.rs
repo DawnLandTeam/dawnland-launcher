@@ -1,26 +1,27 @@
 use crate::core::task::{TaskManager, TaskState, TaskError};
+use crate::error::{AppError, DawnlandError};
 use tauri::State;
 
 #[tauri::command]
 pub async fn get_task_history(
     task_manager: State<'_, TaskManager>,
-) -> Result<Vec<TaskState>, String> {
-    task_manager.load_history().await.map_err(|e| e.to_string())
+) -> Result<Vec<TaskState>, AppError> {
+    task_manager.load_history().await.map_err(|e| DawnlandError::Unknown(e.to_string()).into())
 }
 
 #[tauri::command]
 pub async fn cancel_task(
     task_id: String,
     task_manager: State<'_, TaskManager>,
-) -> Result<(), String> {
-    task_manager.cancel_task(&task_id).await.map_err(|e| e.to_string())
+) -> Result<(), AppError> {
+    task_manager.cancel_task(&task_id).await.map_err(|e| DawnlandError::Unknown(e.to_string()).into())
 }
 
 #[tauri::command]
 pub async fn clear_task_history(
     task_manager: State<'_, TaskManager>,
-) -> Result<(), String> {
-    task_manager.clear_history().await.map_err(|e| e.to_string())
+) -> Result<(), AppError> {
+    task_manager.clear_history().await.map_err(|e| DawnlandError::Unknown(e.to_string()).into())
 }
 
 #[tauri::command]
@@ -28,9 +29,9 @@ pub async fn retry_task(
     task_id: String,
     task_manager: State<'_, TaskManager>,
     app: tauri::AppHandle,
-) -> Result<String, String> {
-    let task = task_manager.get_task(&task_id).await.map_err(|e| e.to_string())?
-        .ok_or_else(|| "Task not found".to_string())?;
+) -> Result<String, AppError> {
+    let task = task_manager.get_task(&task_id).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?
+        .ok_or_else(|| DawnlandError::Unknown("Task not found".to_string()))?;
 
     use crate::core::task::TaskType;
 
@@ -115,7 +116,7 @@ pub async fn retry_task(
             };
             task_manager.spawn_task_with_id(task_id.clone(), task.task_type, executable).await.map_err(|e| e.to_string())?
         }
-        TaskType::Generic { .. } => return Err("Cannot retry generic task".to_string()),
+        TaskType::Generic { .. } => return Err(DawnlandError::Unknown("Cannot retry generic task".to_string()).into()),
     };
 
     Ok(task_id)

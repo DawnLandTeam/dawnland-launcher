@@ -11,6 +11,7 @@ import {
 } from "./ui/dialog";
 import InstallCard from "./InstallCard.vue";
 import { setAppBusy } from "../composables/useAppStatus";
+import { getErrorMessage } from "../utils/error";
 
 // Types
 interface VanillaVersion {
@@ -350,7 +351,7 @@ async function loadVersions(): Promise<void> {
       selectedVersion.value = latestRelease.id;
     }
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
     console.error("Failed to load versions:", err);
   } finally {
     isLoadingVersions.value = false;
@@ -386,7 +387,7 @@ async function loadFabricLoaders(): Promise<void> {
       customInstanceName.value = generateInstanceName();
     }
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
     console.error("Failed to load Fabric loaders:", err);
   } finally {
     isLoadingFabric.value = false;
@@ -418,7 +419,7 @@ async function loadForgeLoaders(): Promise<void> {
       customInstanceName.value = generateInstanceName();
     }
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
     console.error("Failed to load Forge loaders:", err);
   } finally {
     isLoadingForge.value = false;
@@ -450,7 +451,7 @@ async function loadNeoForgeLoaders(): Promise<void> {
       customInstanceName.value = generateInstanceName();
     }
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
     console.error("Failed to load NeoForge loaders:", err);
   } finally {
     isLoadingNeoForge.value = false;
@@ -540,7 +541,7 @@ async function installVersion(): Promise<void> {
     emit("installed-success");
     emit("update:open", false);
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
     isInstalling.value = false;
     setAppBusy(false);
   }
