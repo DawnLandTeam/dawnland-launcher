@@ -121,6 +121,7 @@ jobs:
           # LAUNCHER_API_SECRET and APTABASE_KEY are sourced from secrets because they are sensitive credentials
           LAUNCHER_API_SECRET: ${{ secrets.LAUNCHER_API_SECRET }}
           APTABASE_KEY: ${{ secrets.APTABASE_KEY }}
+          APTABASE_URL: ${{ secrets.APTABASE_URL }}
         run: pnpm tauri build ${{ matrix.args }}
 
       - name: Create GitHub Release and Upload Artifacts
