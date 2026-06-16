@@ -26,6 +26,7 @@
     "sessionExpiredConfirmTitle": "登录状态已过期",
     "sessionExpiredConfirm": "您的微软账号登录状态已过期，需要重新登录才能继续启动游戏。是否现在重新登录？",
     "launchFailed": "启动失败 (Failed to launch): {error}",
+    "noCompatibleJava": "启动失败 (Failed to launch): 找不到兼容的 Java 版本。此实例需要 Java {version} 或更高版本。请在设置页面下载 Java {version}。",
     "stopGame": "停止运行",
     "stopGameConfirmTitle": "强制停止游戏",
     "stopGameConfirm": "你确定要强制结束正在运行的游戏进程吗？",
