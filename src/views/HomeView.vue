@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { trackEvent, getErrorType } from "../utils/analytics";
+import { getErrorMessage } from "../utils/error";
 import {
   Play,
   Loader2,
@@ -464,7 +465,7 @@ async function handlePrimaryAction() {
         intentionallyKilledInstances.value.add(selectedInstanceId.value);
       } catch (e) {
         console.error("Failed to kill instance:", e);
-        alert(t('home.stopGameFailed', { error: e }));
+        alert(t('home.stopGameFailed', { error: getErrorMessage(e) }));
       }
     }
     return;
@@ -506,10 +507,12 @@ async function handlePrimaryAction() {
 
 async function handleLaunchError(e: any) {
   const errorObj = e as any;
-  if (errorObj && errorObj.type === "NoCompatibleJava") {
-    alert(t('home.noCompatibleJava', { version: errorObj.data.required_version }));
+  if (errorObj && errorObj.code === "NO_COMPATIBLE_JAVA") {
+    const versionMatch = errorObj.message?.match(/\d+/);
+    const version = versionMatch ? versionMatch[0] : '17';
+    alert(t('home.noCompatibleJava', { version }));
   } else {
-    const errorStr = typeof e === 'string' ? e : (errorObj.data || String(e));
+    const errorStr = getErrorMessage(e);
     if (errorStr.includes("login session has expired") || errorStr.includes("REAUTH_REQUIRED")) {
       const confirmed = await confirm(
         t('home.sessionExpiredConfirm'),

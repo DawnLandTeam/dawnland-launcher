@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw, Share2, Check } from "@lucide/vue";
 import InstallInstanceModal from "../components/InstallInstanceModal.vue";
 import InstanceModsModal from "../components/InstanceModsModal.vue";
+import { getErrorMessage } from "../utils/error";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
@@ -273,7 +274,7 @@ async function saveSettings() {
     showSettingsModal.value = false;
   } catch (e) {
     console.error("Failed to save instance config:", e);
-    alert(`Failed to save: ${e}`);
+    alert(`Failed to save: ${getErrorMessage(e)}`);
   } finally {
     isSavingConfig.value = false;
   }
@@ -287,7 +288,7 @@ async function openInstanceFolder(instanceId: string) {
     await invoke("open_instance_folder", { versionId: instanceId });
   } catch (e) {
     console.error("Failed to open instance folder:", e);
-    alert(`Failed to open folder: ${e}`);
+    alert(`Failed to open folder: ${getErrorMessage(e)}`);
   }
 }
 
@@ -338,7 +339,7 @@ async function deleteInstance() {
     await refreshInstancesList();
   } catch (e) {
     console.error("Failed to delete instance:", e);
-    alert(`Failed to delete: ${e}`);
+    alert(`Failed to delete: ${getErrorMessage(e)}`);
   } finally {
     isDeletingInstance.value = false;
     deletingInstanceId.value = "";
