@@ -970,12 +970,10 @@ impl ExecutableTask for InstallForgeTask {
             crate::core::utils::flatten_instance_json_recursive(&mc_version, obj).await.map_err(|e| TaskError::ExecutionError(e))?;
             obj.insert("clientVersion".to_string(), serde_json::json!(mc_version));
             
-            // Copy the vanilla jar to the flattened instance so the launcher doesn't need to re-download it
+            // Any failures are logged but do not fail the overall task.
             let parent_jar = base_version_dir.join(format!("{}.jar", mc_version));
             let dest_jar = instance_dir.join(format!("{}.jar", custom_instance_name));
-            if parent_jar.exists() {
-                let _ = tokio::fs::copy(&parent_jar, &dest_jar).await;
-            }
+            crate::core::utils::copy_jar_if_exists_with_logging(&parent_jar, &dest_jar).await;
         } else {
             obj.insert("inheritsFrom".to_string(), serde_json::json!(mc_version));
         }
