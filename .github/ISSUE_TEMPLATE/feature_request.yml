@@ -1,0 +1,33 @@
+name: ✨ 新特性请求 (Feature Request)
+description: 提出关于 Dawnland Launcher 的新想法或建议 (Suggest an idea for this project)
+title: "[Feature] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢您为 Dawnland Launcher 提出建议！
+  - type: textarea
+    id: problem
+    attributes:
+      label: 您的功能请求是否与某个痛点相关？(Is your feature request related to a problem?)
+      description: 请简明扼要地描述您在使用过程中遇到的痛点或不便之处。(A clear and concise description of the problem you are facing.)
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 您期望的解决方案 (Describe the solution you'd like)
+      description: 请简明扼要地描述您期望本启动器提供怎样的功能或解决方案。(A clear and concise description of what you want to happen.)
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 您考虑过的替代方案 (Describe alternatives you've considered)
+      description: 请描述您是否尝试过其他替代方案或现有功能来满足此需求。(A clear and concise description of any alternative solutions or features you've considered.)
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: 附加背景 (Additional context)
+      description: 请提供有助于我们理解该请求的任何补充信息、设计草图或相关截图。(Add any other context or screenshots about the feature request here.)
