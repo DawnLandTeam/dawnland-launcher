@@ -131,8 +131,17 @@ pub fn run() {
         .or_else(|| std::env::var("APTABASE_KEY").ok())
         .filter(|k| !k.trim().is_empty());
 
+    let aptabase_url = option_env!("APTABASE_URL")
+        .map(String::from)
+        .or_else(|| std::env::var("APTABASE_URL").ok())
+        .filter(|u| !u.trim().is_empty());
+
     if let Some(key) = aptabase_key {
-        builder = builder.plugin(tauri_plugin_aptabase::Builder::new(&key).build());
+        let mut opts = tauri_plugin_aptabase::InitOptions::default();
+        if let Some(url) = aptabase_url {
+            opts.host = Some(url);
+        }
+        builder = builder.plugin(tauri_plugin_aptabase::Builder::new(&key).with_options(opts).build());
     }
 
     builder
