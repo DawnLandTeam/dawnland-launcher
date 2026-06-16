@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
+use crate::error::DawnlandError;
 pub mod authlib;
 pub mod microsoft;
 
@@ -56,7 +57,7 @@ pub struct Account {
 }
 
 /// Get the accounts file path.
-fn accounts_file_path() -> Result<PathBuf, String> {
+fn accounts_file_path() -> Result<PathBuf, DawnlandError> {
     let base = std::env::current_exe()
         .map(|p| p.parent().unwrap().to_path_buf())
         .unwrap_or_else(|_| PathBuf::from("."));
@@ -64,44 +65,35 @@ fn accounts_file_path() -> Result<PathBuf, String> {
 }
 
 /// Load all accounts from disk.
-pub async fn load_accounts() -> Result<Vec<Account>, String> {
+pub async fn load_accounts() -> Result<Vec<Account>, DawnlandError> {
     let path = accounts_file_path()?;
 
     if !path.exists() {
         return Ok(Vec::new());
     }
 
-    let content = tokio::fs::read_to_string(&path)
-        .await
-        .map_err(|e| format!("Failed to read accounts file: {e}"))?;
+    let content = tokio::fs::read_to_string(&path).await?;
 
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
 
-    let accounts: Vec<Account> = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse accounts file: {e}"))?;
+    let accounts: Vec<Account> = serde_json::from_str(&content)?;
 
     Ok(accounts)
 }
 
 /// Save all accounts to disk.
-pub async fn save_accounts(accounts: &[Account]) -> Result<(), String> {
+pub async fn save_accounts(accounts: &[Account]) -> Result<(), DawnlandError> {
     let path = accounts_file_path()?;
 
     // Ensure parent directory exists.
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| format!("Failed to create directory: {e}"))?;
+        tokio::fs::create_dir_all(parent).await?;
     }
 
-    let content = serde_json::to_string_pretty(accounts)
-        .map_err(|e| format!("Failed to serialize accounts: {e}"))?;
-
-    tokio::fs::write(&path, content)
-        .await
-        .map_err(|e| format!("Failed to write accounts file: {e}"))?;
+    let content = serde_json::to_string_pretty(accounts)?;
+    tokio::fs::write(&path, content).await?;
 
     Ok(())
 }
@@ -116,9 +108,9 @@ pub fn generate_offline_uuid(username: &str) -> String {
 }
 
 /// Add a new offline account.
-pub async fn add_offline_account(username: &str) -> Result<Account, String> {
+pub async fn add_offline_account(username: &str) -> Result<Account, DawnlandError> {
     if username.trim().is_empty() {
-        return Err("Username cannot be empty".to_string());
+        return Err(DawnlandError::Unknown("Username cannot be empty".to_string()));
     }
 
     let mut accounts = load_accounts().await?;
@@ -128,7 +120,7 @@ pub async fn add_offline_account(username: &str) -> Result<Account, String> {
         .iter()
         .any(|a| a.username == username && a.account_type == AccountType::Offline)
     {
-        return Err("Offline account already exists".to_string());
+        return Err(DawnlandError::Unknown("Offline account already exists".to_string()));
     }
 
     let account = Account {
@@ -150,31 +142,31 @@ pub async fn add_offline_account(username: &str) -> Result<Account, String> {
 }
 
 /// Get all accounts.
-pub async fn get_accounts() -> Result<Vec<Account>, String> {
+pub async fn get_accounts() -> Result<Vec<Account>, DawnlandError> {
     load_accounts().await
 }
 
 /// Remove an account by ID.
-pub async fn remove_account(id: &str) -> Result<(), String> {
+pub async fn remove_account(id: &str) -> Result<(), DawnlandError> {
     let mut accounts = load_accounts().await?;
     let original_len = accounts.len();
     accounts.retain(|a| a.id != id);
 
     if accounts.len() == original_len {
-        return Err("Account not found".to_string());
+        return Err(DawnlandError::Unknown("Account not found".to_string()));
     }
 
     save_accounts(&accounts).await
 }
 
 /// Update an existing account.
-pub async fn update_account(account: Account) -> Result<(), String> {
+pub async fn update_account(account: Account) -> Result<(), DawnlandError> {
     let mut accounts = load_accounts().await?;
 
     if let Some(existing) = accounts.iter_mut().find(|a| a.id == account.id) {
         *existing = account;
     } else {
-        return Err("Account not found".to_string());
+        return Err(DawnlandError::Unknown("Account not found".to_string()));
     }
 
     save_accounts(&accounts).await

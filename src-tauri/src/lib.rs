@@ -5,6 +5,7 @@ mod core;
 mod downloader;
 mod logger;
 mod models;
+pub mod error;
 
 #[tauri::command]
 fn greet(name: &str) -> String {

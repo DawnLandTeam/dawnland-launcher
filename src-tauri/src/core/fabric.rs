@@ -7,6 +7,7 @@
 use crate::core::mojang::{get_minecraft_base, InstallVanillaTask, VanillaInstallOptions};
 use crate::core::task::{ExecutableTask, TaskContext, TaskError, TaskManager, TaskType};
 use crate::core::utils::compare_versions;
+use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -47,7 +48,7 @@ const FABRIC_META_BASE: &str = "https://meta.fabricmc.net/v2";
 /// Get available Fabric Loader versions for a given Minecraft version.
 /// Returns stable versions first, then unstable versions.
 #[tauri::command]
-pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, String> {
+pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, AppError> {
     tracing::info!("Fetching Fabric loaders for Minecraft {}", mc_version);
 
     let client = reqwest::Client::builder()
@@ -67,7 +68,7 @@ pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, 
         return Err(format!(
             "Fabric loader API request failed: {}",
             response.status()
-        ));
+        ).into());
     }
 
     let loaders: Vec<FabricLoaderResponse> = response
@@ -412,7 +413,7 @@ pub async fn install_fabric_instance(
     custom_instance_name: String,
     is_dependency: Option<bool>,
     app: AppHandle,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let task_manager = app.state::<TaskManager>().inner().clone();
     
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
@@ -422,12 +423,12 @@ pub async fn install_fabric_instance(
     } else {
         base_dir.join("versions").join(&custom_instance_name)
     };
-    let _ = std::fs::create_dir_all(&instance_dir);
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
     let mut pre_config = crate::core::launcher::InstanceConfig::default();
     pre_config.is_installing = true;
     pre_config.hidden = is_dependency.unwrap_or(false);
-    let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap());
+    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
     
     let task = InstallFabricTask {
         options: InstallFabricOptions {
@@ -446,7 +447,7 @@ pub async fn install_fabric_instance(
             is_dependency,
         }, task)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Failed to spawn task: {}", e))?;
 
     Ok(task_id)
 }
@@ -454,7 +455,7 @@ pub async fn install_fabric_instance(
 
 /// Check if a base Minecraft version is installed (has client.jar).
 #[tauri::command]
-pub async fn check_vanilla_installed(mc_version: String) -> Result<bool, String> {
+pub async fn check_vanilla_installed(mc_version: String) -> Result<bool, AppError> {
     let base_dir = get_minecraft_base();
     let client_jar = base_dir
         .join("versions")

@@ -5,6 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Server, Gamepad2, Plus, Search, Copy, Check, Loader2, Download, Package, ChevronDown, Users, Star, RefreshCw } from "@lucide/vue";
+import { getErrorMessage } from "../utils/error";
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -481,7 +482,7 @@ async function fetchServers() {
       }
     }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = getErrorMessage(e);
     console.error("Failed to fetch servers:", e);
   } finally {
     isLoading.value = false;
@@ -761,7 +762,7 @@ async function submitServer() {
     // Reset form
     resetPublishForm();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = getErrorMessage(e);
     console.error("Failed to create server:", e);
   } finally {
     isSubmitting.value = false;
