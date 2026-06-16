@@ -80,40 +80,7 @@ pub fn run() {
             tauri::async_runtime::block_on(async move {
                 match core::task::db::TaskDatabase::new(db_path).await {
                     Ok(db) => {
-                        // Actively clean up orphaned temp files
-                        if let Ok(tasks) = db.load_all_tasks().await {
-                            let mut keep_ids = std::collections::HashSet::new();
-                            for task in tasks {
-                                if task.status == core::task::TaskStatus::Pending 
-                                    || task.status == core::task::TaskStatus::Running 
-                                    || task.status == core::task::TaskStatus::Paused 
-                                    || task.status == core::task::TaskStatus::Failed {
-                                    keep_ids.insert(task.id);
-                                }
-                            }
-                            
-                            let temp_dir = app_dir.join("temp");
-                            if temp_dir.exists() {
-                                if let Ok(mut entries) = tokio::fs::read_dir(&temp_dir).await {
-                                    while let Ok(Some(entry)) = entries.next_entry().await {
-                                        let name = entry.file_name().to_string_lossy().to_string();
-                                        let is_keep = keep_ids.iter().any(|id| name.starts_with(id));
-                                        
-                                        if !is_keep {
-                                            tracing::info!("Cleaning up orphaned temp file/dir: {}", name);
-                                            let meta = entry.metadata().await;
-                                            if let Ok(meta) = meta {
-                                                if meta.is_dir() {
-                                                    let _ = tokio::fs::remove_dir_all(entry.path()).await;
-                                                } else {
-                                                    let _ = tokio::fs::remove_file(entry.path()).await;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        cleanup_orphan_temp_files(&app_dir, &db).await;
 
                         let manager = core::task::TaskManager::new(app_handle.clone(), db).await;
                         app_handle.manage(manager);
@@ -293,4 +260,54 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+async fn cleanup_orphan_temp_files(app_dir: &std::path::Path, db: &core::task::db::TaskDatabase) {
+    if let Ok(tasks) = db.load_all_tasks().await {
+        let mut keep_ids = std::collections::HashSet::new();
+        for task in tasks {
+            if task.status == core::task::TaskStatus::Pending 
+                || task.status == core::task::TaskStatus::Running 
+                || task.status == core::task::TaskStatus::Paused 
+                || task.status == core::task::TaskStatus::Failed {
+                keep_ids.insert(task.id);
+            }
+        }
+        
+        let temp_dir = app_dir.join("temp");
+        if temp_dir.exists() {
+            if let Ok(mut entries) = tokio::fs::read_dir(&temp_dir).await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let is_keep = keep_ids.iter().any(|id| name.starts_with(id));
+                    
+                    if !is_keep {
+                        tracing::info!("Cleaning up orphaned temp file/dir: {}", name);
+                        if let Ok(meta) = entry.metadata().await {
+                            let path = entry.path();
+                            if meta.is_dir() {
+                                if let Err(err) = tokio::fs::remove_dir_all(&path).await {
+                                    tracing::warn!(
+                                        "Failed to remove orphaned temp dir {} ({}): {}",
+                                        name,
+                                        path.display(),
+                                        err
+                                    );
+                                }
+                            } else {
+                                if let Err(err) = tokio::fs::remove_file(&path).await {
+                                    tracing::warn!(
+                                        "Failed to remove orphaned temp file {} ({}): {}",
+                                        name,
+                                        path.display(),
+                                        err
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
