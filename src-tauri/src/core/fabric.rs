@@ -147,7 +147,12 @@ impl ExecutableTask for InstallFabricTask {
 
     // Step 1: Check if base vanilla version is installed
     let dawnland_cache = crate::core::mojang::get_dawnland_cache();
-    let base_version_dir = if is_dependency.unwrap_or(false) {
+    let settings = crate::core::settings::load_launcher_settings().await.unwrap_or_default();
+    let is_dep_val = is_dependency.unwrap_or(false);
+    let should_flatten = !settings.enable_instance_inheritance;
+    let effective_is_dep = is_dep_val || should_flatten;
+
+    let base_version_dir = if effective_is_dep {
         dawnland_cache.join(&mc_version)
     } else {
         base_dir.join("versions").join(&mc_version)
@@ -193,7 +198,7 @@ impl ExecutableTask for InstallFabricTask {
             options: VanillaInstallOptions {
                 version_id: mc_version.clone(),
                 version_json_url: version_url.to_string(),
-                is_dependency: Some(true),
+                is_dependency: Some(effective_is_dep),
             },
         };
         vanilla_task.execute(ctx.clone()).await?;
@@ -247,6 +252,11 @@ impl ExecutableTask for InstallFabricTask {
         if !settings.enable_instance_inheritance {
             crate::core::utils::flatten_instance_json_recursive(&mc_version, obj).await.map_err(|e| TaskError::ExecutionError(e))?;
             obj.insert("clientVersion".to_string(), serde_json::json!(mc_version));
+            
+            // Any failures are logged but do not fail the overall task.
+            let parent_jar = base_version_dir.join(format!("{}.jar", mc_version));
+            let dest_jar = instance_dir.join(format!("{}.jar", custom_instance_name));
+            crate::core::utils::copy_jar_if_exists_with_logging(&parent_jar, &dest_jar).await;
         } else {
             obj.insert("inheritsFrom".to_string(), serde_json::json!(mc_version));
         }
