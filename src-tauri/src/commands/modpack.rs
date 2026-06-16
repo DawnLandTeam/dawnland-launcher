@@ -483,7 +483,14 @@ impl ExecutableTask for InstallOnlineModpackTask {
             },
         };
 
-        modpack_task.execute(ctx).await
+        let result = modpack_task.execute(ctx).await;
+
+        if result.is_ok() {
+            // Clean up the downloaded modpack zip archive to save space
+            let _ = tokio::fs::remove_file(&temp_zip_path).await;
+        }
+
+        result
     }
 }
 
