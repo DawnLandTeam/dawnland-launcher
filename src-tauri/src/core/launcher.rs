@@ -1906,7 +1906,7 @@ pub async fn launch_instance(
                     "Could not find compatible Java >= {}",
                     recommended_major
                 );
-                return Err(format!("No compatible Java version found. This instance requires Java {} or higher. Please download Java {} in the Settings page.", recommended_major, recommended_major));
+                return Err(format!("ERR_NO_COMPATIBLE_JAVA:{}", recommended_major));
             }
         }
     };

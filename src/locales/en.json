@@ -26,6 +26,7 @@
     "sessionExpiredConfirmTitle": "Login Session Expired",
     "sessionExpiredConfirm": "Your Microsoft login session has expired and needs to be re-authenticated to launch the game. Would you like to log in now?",
     "launchFailed": "Failed to launch: {error}",
+    "noCompatibleJava": "Failed to launch: No compatible Java version found. This instance requires Java {version} or higher. Please download Java {version} in the Settings page.",
     "stopGame": "Stop Game",
     "stopGameConfirmTitle": "Force Stop Game",
     "stopGameConfirm": "Are you sure you want to force kill the running game process?",
