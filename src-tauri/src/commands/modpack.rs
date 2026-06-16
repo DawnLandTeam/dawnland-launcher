@@ -489,6 +489,9 @@ impl ExecutableTask for InstallOnlineModpackTask {
             // Clean up the downloaded modpack zip archive to save space
             let _ = tokio::fs::remove_file(&temp_zip_path).await;
         }
+        // Note: we intentionally do NOT delete the zip file on failure. If the task 
+        // fails during installation, retaining the fully downloaded zip allows 
+        // subsequent retries to skip the download phase and resume instantly.
 
         result
     }
