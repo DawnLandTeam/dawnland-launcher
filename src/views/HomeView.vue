@@ -427,6 +427,9 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
             console.error("Re-login failed:", loginErr);
           }
         }
+      } else if (errorStr.includes("ERR_NO_COMPATIBLE_JAVA:")) {
+        const requiredJava = errorStr.split("ERR_NO_COMPATIBLE_JAVA:")[1].trim();
+        alert(t('home.noCompatibleJava', { version: requiredJava }));
       } else {
         alert(t('home.launchFailed', { error: e }));
       }
@@ -534,6 +537,9 @@ async function handlePrimaryAction() {
           console.error("Re-login failed:", loginErr);
         }
       }
+    } else if (errorStr.includes("ERR_NO_COMPATIBLE_JAVA:")) {
+      const requiredJava = errorStr.split("ERR_NO_COMPATIBLE_JAVA:")[1].trim();
+      alert(t('home.noCompatibleJava', { version: requiredJava }));
     } else {
       alert(t('home.launchFailed', { error: e }));
     }
