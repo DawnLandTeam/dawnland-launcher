@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { trackEvent, getErrorType } from "../utils/analytics";
+import { getErrorMessage } from "../utils/error";
 import { useI18n } from "vue-i18n";
 import { setAppBusy } from "../composables/useAppStatus";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar, X } from "@lucide/vue";
@@ -435,12 +436,12 @@ const installModpack = async () => {
   } catch (error) {
     console.error("Installation failed:", error);
     trackEvent("error_occurred", { context: "modpack_install", error_type: getErrorType(error) });
-    statusMessage.value = `Installation failed: ${error}`;
+    statusMessage.value = `Installation failed: ${getErrorMessage(error)}`;
     isInstalling.value = false;
     isCanceling.value = false;
     setAppBusy(false);
     
-    if (String(error).includes("cancelled by user") && route.query.server_id) {
+    if (getErrorMessage(error).includes("cancelled by user") && route.query.server_id) {
       router.push("/servers");
     }
   }

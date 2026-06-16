@@ -10,6 +10,7 @@ use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
+use crate::error::{AppError, DawnlandError};
 
 // ==========================================
 // TASKS
@@ -76,21 +77,16 @@ impl ExecutableTask for InstallModpackTask {
             ctx.set_total_steps(7).await;
             ctx.next_step("Extracting modpack archive...").await;
 
-            tokio::task::spawn_blocking({
-                let zip = PathBuf::from(zip_path);
-                let temp = temp_dir.clone();
-                move || extract_zip(zip, temp)
-            })
-            .await
-            .map_err(|e| TaskError::ExecutionError(format!("Task join error: {}", e)))?
-            .map_err(|e| TaskError::ExecutionError(e))?;
+            let zip = PathBuf::from(zip_path);
+            let temp = temp_dir.clone();
+            extract_zip(zip, temp).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
             check_cancel!();
 
             // 2. Parse Manifest
             ctx.next_step("Reading modpack manifest...").await;
 
-            let modpack = parse_modpack_manifest(&temp_dir).map_err(|e| TaskError::ExecutionError(e))?;
+            let modpack = parse_modpack_manifest(&temp_dir).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
             let modpack_type_str = match &modpack {
                 ModpackType::CurseForge(_) => "CurseForge",
@@ -199,7 +195,7 @@ impl ExecutableTask for InstallModpackTask {
 
         check_cancel!();
 
-        std::fs::create_dir_all(&instance_dir).map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+        tokio::fs::create_dir_all(&instance_dir).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
         let inherits_from = actual_loader;
 
@@ -269,7 +265,7 @@ impl ExecutableTask for InstallModpackTask {
             ctx.set_step(5, 7, "Cleaning up old modpack files...").await;
 
             if modpack_files_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&modpack_files_path) {
+                if let Ok(content) = tokio::fs::read_to_string(&modpack_files_path).await {
                     if let Ok(old_files) = serde_json::from_str::<Vec<String>>(&content) {
                         for old_file in old_files {
                             let file_path = instance_dir.join(&old_file);
@@ -279,14 +275,14 @@ impl ExecutableTask for InstallModpackTask {
                                 
                                 if !expected_mod_filenames.contains(&base_name) {
                                     tracing::info!("Removing old modpack file: {}", old_file);
-                                    let _ = std::fs::remove_file(&file_path);
+                                    let _ = tokio::fs::remove_file(&file_path).await;
                                     
                                     // Also try removing variants
                                     let disabled_path = file_path.with_file_name(format!("{}.disable", base_name));
-                                    let _ = std::fs::remove_file(&disabled_path);
+                                    let _ = tokio::fs::remove_file(&disabled_path).await;
                                     
                                     let enabled_path = file_path.with_file_name(&base_name);
-                                    let _ = std::fs::remove_file(&enabled_path);
+                                    let _ = tokio::fs::remove_file(&enabled_path).await;
                                 }
                             }
                         }
@@ -304,10 +300,10 @@ impl ExecutableTask for InstallModpackTask {
                 new_modpack_files.push(base_rel_str);
             }
         }
-        let _ = std::fs::write(
+        let _ = tokio::fs::write(
             &modpack_files_path,
-            serde_json::to_string_pretty(&new_modpack_files).unwrap(),
-        );
+            serde_json::to_string_pretty(&new_modpack_files).map_err(|e| TaskError::ExecutionError(e.to_string()))?,
+        ).await;
 
         // 4. Batch Download Mods
         check_cancel!();
@@ -331,15 +327,10 @@ impl ExecutableTask for InstallModpackTask {
         
         let overrides_dir = temp_dir.join(&overrides_folder);
         if overrides_dir.exists() {
-            tokio::task::spawn_blocking({
-                let src = temp_dir.clone();
-                let dst = instance_dir.clone();
-                let folder = overrides_folder.clone();
-                move || copy_overrides(&src, &dst, &folder)
-            })
-            .await
-            .map_err(|e| TaskError::ExecutionError(format!("Task join error: {}", e)))?
-            .map_err(|e| TaskError::ExecutionError(e))?;
+            let src = temp_dir.clone();
+            let dst = instance_dir.clone();
+            let folder = overrides_folder.clone();
+            copy_overrides(&src, &dst, &folder).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
         }
 
         // 6. Cleanup Temp
@@ -393,7 +384,7 @@ impl ExecutableTask for InstallOnlineModpackTask {
         crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
         
         let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp");
-        std::fs::create_dir_all(&temp_dir).unwrap_or_default();
+        let _ = tokio::fs::create_dir_all(&temp_dir).await;
         let temp_zip_path = temp_dir.join(format!("{}.zip", ctx.id));
 
         ctx.update_progress(0, 0, "Downloading modpack archive...").await;
@@ -417,7 +408,7 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let mut downloaded: u64 = 0;
 
         let skip_download = if total_size > 0 && temp_zip_path.exists() {
-            if let Ok(metadata) = std::fs::metadata(&temp_zip_path) {
+            if let Ok(metadata) = tokio::fs::metadata(&temp_zip_path).await {
                 if metadata.len() == total_size {
                     tracing::info!("Found existing online modpack zip for task {}, skipping download", ctx.id);
                     true
@@ -602,17 +593,17 @@ pub async fn install_modpack(
     is_update: bool,
     project_id: Option<String>,
     app: AppHandle,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let task_manager = app.state::<TaskManager>().inner().clone();
     
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
-    let _ = std::fs::create_dir_all(&instance_dir);
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
     let mut pre_config = crate::core::launcher::InstanceConfig::default();
     pre_config.is_installing = true;
-    let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap());
+    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
 
     let task = InstallModpackTask {
         options: InstallModpackOptions {
@@ -631,7 +622,7 @@ pub async fn install_modpack(
             project_id,
         }, task)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
     Ok(task_id)
 }
@@ -643,17 +634,17 @@ pub async fn download_and_install_online_modpack(
     project_id: Option<String>,
     is_update: bool,
     app: AppHandle,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let task_manager = app.state::<TaskManager>().inner().clone();
     
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
-    let _ = std::fs::create_dir_all(&instance_dir);
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
     let mut pre_config = crate::core::launcher::InstanceConfig::default();
     pre_config.is_installing = true;
-    let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap());
+    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
 
     let task = InstallOnlineModpackTask {
         options: InstallOnlineModpackOptions {
@@ -672,18 +663,18 @@ pub async fn download_and_install_online_modpack(
             project_id: project_id.clone(),
         }, task)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
     Ok(task_id)
 }
 
 #[tauri::command]
-pub async fn get_modpack_name(zip_path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
+pub async fn get_modpack_name(zip_path: String) -> Result<String, AppError> {
+    let name = tokio::task::spawn_blocking(move || -> Result<String, DawnlandError> {
         let file =
-            std::fs::File::open(&zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
+            std::fs::File::open(&zip_path).map_err(|e| DawnlandError::Unknown(format!("Failed to open zip: {}", e)))?;
         let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip: {}", e))?;
+            zip::ZipArchive::new(file).map_err(|e| DawnlandError::Unknown(format!("Failed to read zip: {}", e)))?;
 
         if let Ok(mut manifest_file) = archive.by_name("manifest.json") {
             let mut contents = String::new();
@@ -709,8 +700,10 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, String> {
             }
         }
 
-        Err("Could not find manifest.json or modrinth.index.json with a valid name".to_string())
+        Err(DawnlandError::Unknown("Could not find manifest.json or modrinth.index.json with a valid name".to_string()))
     })
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| DawnlandError::ProcessError(format!("Task join error: {}", e)))??;
+
+    Ok(name)
 }

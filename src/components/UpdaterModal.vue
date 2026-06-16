@@ -5,6 +5,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { CustomUpdate } from "../composables/useUpdate";
+import { getErrorMessage } from "../utils/error";
 
 interface UpdateProgressPayload {
   event: string;
@@ -88,7 +89,7 @@ async function startUpdate() {
     await relaunch();
     
   } catch (err) {
-    error.value = typeof err === 'string' ? err : String(err);
+    error.value = getErrorMessage(err);
     isDownloading.value = false;
   }
 }

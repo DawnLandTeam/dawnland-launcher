@@ -2,6 +2,7 @@
 import { ref, watch, onDeactivated } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { Package, Search, Download, User, ExternalLink, Loader2 } from "@lucide/vue";
+import { getErrorMessage } from "../utils/error";
 
 // Types
 interface UnifiedModProject {
@@ -106,7 +107,7 @@ async function searchMods() {
 
     searchResults.value = results;
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
     searchResults.value = [];
   } finally {
     isSearching.value = false;
@@ -133,7 +134,7 @@ async function getDownloadUrl(mod: UnifiedModProject) {
     mod.download_url = downloadUrl;
     mod.file_id = fileId;
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
   } finally {
     isLoadingDownloadUrl.value = false;
   }
@@ -153,7 +154,7 @@ async function downloadMod(mod: UnifiedModProject) {
     // For now, we'll open the URL in browser as a fallback
     window.open(mod.download_url, "_blank");
   } catch (err) {
-    error.value = typeof err === "string" ? err : String(err);
+    error.value = getErrorMessage(err);
   } finally {
     isDownloading.value = false;
   }

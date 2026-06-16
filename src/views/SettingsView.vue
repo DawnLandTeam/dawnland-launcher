@@ -10,6 +10,7 @@ import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { setUpdateAvailable, hasUpdateAvailable, type CustomUpdate } from "../composables/useUpdate";
 import { trackEvent, getErrorType, sanitizeTrackingUrl } from "../utils/analytics";
+import { getErrorMessage } from "../utils/error";
 import { normalizeUpdateChannel, getUpdateChannelQuery } from "../utils/updateChannel";
 
 const route = useRoute();
@@ -41,6 +42,8 @@ onActivated(async () => {
   await loadJavaDownloadPath();
   await loadAvailableJavas();
 });
+
+const activeTab = ref<'general' | 'java' | 'authlib' | 'about'>('general');
 
 watch(
   () => route.query.tab,
@@ -83,7 +86,7 @@ interface AuthlibServer {
 }
 
 // Global settings
-const activeTab = ref<'general' | 'java' | 'authlib' | 'about'>('general');
+
 const systemMemory = ref<SystemMemoryInfo>({ totalMb: 8192, recommendedMaxMb: 4096 });
 const defaultMaxMemory = ref(4096);
 
@@ -209,7 +212,7 @@ async function addAuthlibServer(): Promise<void> {
       error_type: getErrorType(err), 
       api: sanitizeTrackingUrl(newAuthlibUrl.value) 
     });
-    alert(`Failed to add Authlib Server: ${err}`);
+    alert(`Failed to add Authlib Server: ${getErrorMessage(err)}`);
   } finally {
     isAddingAuthlibServer.value = false;
   }
@@ -314,7 +317,7 @@ async function addManualJava(): Promise<void> {
     }
   } catch (err) {
     console.error("Failed to add manual Java:", err);
-    alert(`Failed to add Java: ${err}`);
+    alert(`Failed to add Java: ${getErrorMessage(err)}`);
   }
 }
 
@@ -330,7 +333,7 @@ async function removeJava(path: string): Promise<void> {
       installedJavas.value = installedJavas.value.filter(j => j.path !== path);
     } catch (err) {
       console.error("Failed to remove Java:", err);
-      alert(`Failed to remove Java: ${err}`);
+      alert(`Failed to remove Java: ${getErrorMessage(err)}`);
     }
   }
 }
@@ -399,7 +402,7 @@ async function downloadJava(majorVersion: number): Promise<void> {
       context: "java_download", 
       error_type: getErrorType(err) 
     });
-    alert(`Failed to download Java ${majorVersion}: ${err}`);
+    alert(`Failed to download Java ${majorVersion}: ${getErrorMessage(err)}`);
   } finally {
     if (unlisten) unlisten();
     isDownloadingJava.value = false;

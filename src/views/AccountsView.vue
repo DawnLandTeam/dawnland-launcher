@@ -10,6 +10,7 @@ import { useRouter, useRoute } from "vue-router";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import QrcodeVue from 'qrcode.vue';
 import { trackEvent, sanitizeTrackingUrl, getErrorType } from "../utils/analytics";
+import { getErrorMessage } from "../utils/error";
 
 interface Account {
   id: string;
@@ -163,7 +164,7 @@ async function addOfflineAccount(): Promise<void> {
     // Notify other views to refresh accounts
     await emit("accounts-updated");
   } catch (err) {
-    loginError.value = typeof err === "string" ? err : String(err);
+    loginError.value = getErrorMessage(err);
   } finally {
     isAddingOffline.value = false;
   }
@@ -195,7 +196,7 @@ async function addAuthlibAccount(): Promise<void> {
       error_type: getErrorType(err), 
       api: sanitizeTrackingUrl(authlibUrl.value) 
     });
-    loginError.value = typeof err === "string" ? err : String(err);
+    loginError.value = getErrorMessage(err);
   } finally {
     isAddingAuthlib.value = false;
   }
@@ -235,7 +236,7 @@ async function saveAuthlibAccounts(): Promise<void> {
       api: sanitizeTrackingUrl(authlibUrl.value),
       phase: "save"
     });
-    loginError.value = typeof err === "string" ? err : String(err);
+    loginError.value = getErrorMessage(err);
   } finally {
     isAddingAuthlib.value = false;
   }
@@ -317,7 +318,7 @@ async function startSeamlessMicrosoftLogin(): Promise<void> {
     await emit("accounts-updated");
   } catch (err) {
     trackEvent("login_failed", { type: "microsoft", flow: "seamless", error_type: getErrorType(err) });
-    loginError.value = typeof err === "string" ? err : String(err);
+    loginError.value = getErrorMessage(err);
     isLoggingInMicrosoft.value = false;
   }
 }
@@ -336,7 +337,7 @@ async function startMicrosoftLogin(): Promise<void> {
     pollMicrosoftToken(response.deviceCode);
   } catch (err) {
     trackEvent("login_failed", { type: "microsoft", flow: "device_code_init", error_type: getErrorType(err) });
-    loginError.value = typeof err === "string" ? err : String(err);
+    loginError.value = getErrorMessage(err);
     isLoggingInMicrosoft.value = false;
   }
 }
@@ -354,7 +355,7 @@ async function pollMicrosoftToken(code: string): Promise<void> {
     // Notify other views to refresh accounts
     await emit("accounts-updated");
   } catch (err) {
-    const errorMsg = typeof err === "string" ? err : String(err);
+    const errorMsg = getErrorMessage(err);
     if (errorMsg.includes("authorization_pending")) {
       setTimeout(() => pollMicrosoftToken(code), 5000);
     } else if (errorMsg.includes("expired_token") || errorMsg.includes("cancellation")) {

@@ -8,6 +8,7 @@
 use crate::auth::Account;
 use crate::core::mojang::{get_minecraft_base, maven_name_to_path, Library, Rule, VersionMeta};
 use crate::downloader::{run_batch_download, DownloadTask};
+use crate::error::{AppError, DawnlandError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -26,7 +27,7 @@ pub struct RunningInstances(pub Arc<Mutex<HashMap<String, u32>>>);
 pub async fn kill_instance(
     version_id: String,
     state: State<'_, RunningInstances>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let pid = {
         let map = state.0.lock().await;
         map.get(&version_id).copied()
@@ -35,29 +36,31 @@ pub async fn kill_instance(
     if let Some(pid) = pid {
         #[cfg(windows)]
         {
-            let output = crate::core::utils::create_hidden_std_command("taskkill")
+            let output = crate::core::utils::create_hidden_command("taskkill")
                 .args(["/F", "/T", "/PID", &pid.to_string()])
                 .output()
-                .map_err(|e| e.to_string())?;
+                .await
+                .map_err(|e| DawnlandError::ProcessError(format!("Failed to execute taskkill: {}", e)))?;
 
             if !output.status.success() {
-                return Err(String::from_utf8_lossy(&output.stderr).to_string());
+                return Err(DawnlandError::ProcessError(String::from_utf8_lossy(&output.stderr).to_string()).into());
             }
         }
         #[cfg(not(windows))]
         {
-            let output = crate::core::utils::create_hidden_std_command("kill")
+            let output = crate::core::utils::create_hidden_command("kill")
                 .args(["-9", &pid.to_string()])
                 .output()
-                .map_err(|e| e.to_string())?;
+                .await
+                .map_err(|e| DawnlandError::ProcessError(format!("Failed to execute kill: {}", e)))?;
 
             if !output.status.success() {
-                return Err(String::from_utf8_lossy(&output.stderr).to_string());
+                return Err(DawnlandError::ProcessError(String::from_utf8_lossy(&output.stderr).to_string()).into());
             }
         }
         Ok(())
     } else {
-        Err("Instance is not running or PID not found".to_string())
+        Err(DawnlandError::Unknown("Instance is not running or PID not found".to_string()).into())
     }
 }
 
@@ -65,7 +68,7 @@ pub async fn kill_instance(
 pub async fn is_instance_running(
     version_id: String,
     state: State<'_, RunningInstances>,
-) -> Result<bool, String> {
+) -> Result<bool, AppError> {
     let map = state.0.lock().await;
     Ok(map.contains_key(&version_id))
 }
@@ -241,7 +244,7 @@ const CONFIG_FILENAME: &str = "dlml.json";
 
 /// Get instance configuration
 #[tauri::command]
-pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, String> {
+pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, AppError> {
     let base_dir = get_minecraft_base();
     let config_path = base_dir
         .join("versions")
@@ -269,7 +272,7 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, S
 pub async fn save_instance_config(
     version_id: String,
     config: InstanceConfig,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let base_dir = get_minecraft_base();
     let version_dir = base_dir.join("versions").join(&version_id);
     let config_path = version_dir.join(CONFIG_FILENAME);
@@ -1244,7 +1247,7 @@ fn apply_rules(rule_obj: &serde_json::Map<String, serde_json::Value>) -> Result<
 }
 
 /// Auto-repair a missing instance by inferring its type and reinstalling it
-async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Result<(), String> {
+async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Result<(), AppError> {
     tracing::info!("Attempting to auto-repair missing instance JSON for: {}", version_id);
 
     // Notify frontend
@@ -1331,7 +1334,7 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
         }
     }
 
-    Err(format!("Could not determine how to auto-repair missing instance JSON: {}", version_id))
+    Err(DawnlandError::Unknown(format!("Could not determine how to auto-repair missing instance JSON: {}", version_id)).into())
 }
 
 // ============ Process Launching ============
@@ -1340,7 +1343,7 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
 async fn verify_instance_integrity(
     app: &AppHandle,
     instance_dir: &std::path::PathBuf,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let modpack_tasks_path = instance_dir.join("modpack_tasks.json");
     if !modpack_tasks_path.exists() {
         return Ok(());
@@ -1355,10 +1358,10 @@ async fn verify_instance_integrity(
 
     let content = tokio::fs::read_to_string(&modpack_tasks_path)
         .await
-        .map_err(|e| format!("Failed to read modpack_tasks.json: {}", e))?;
+        .map_err(|e| DawnlandError::Unknown(format!("Failed to read modpack_tasks.json: {}", e)))?;
 
     let tasks: Vec<DownloadTask> = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse modpack_tasks.json: {}", e))?;
+        .map_err(|e| DawnlandError::Unknown(format!("Failed to parse modpack_tasks.json: {}", e)))?;
 
     let mut repair_tasks = Vec::new();
 
@@ -1367,7 +1370,7 @@ async fn verify_instance_integrity(
 
         // Ensure parent directories exist
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            let _ = tokio::fs::create_dir_all(parent).await;
         }
 
         if !path.exists() {
@@ -1381,7 +1384,12 @@ async fn verify_instance_integrity(
             if expected_hash.len() == 40 || expected_hash.len() == 64 {
                 // SHA1 or SHA256 length check, we only support SHA1 locally for now
                 if expected_hash.len() == 40 {
-                    match crate::downloader::download::compute_sha1_sync(&path) {
+                    let path_clone = path.clone();
+                    let computed_hash = tokio::task::spawn_blocking(move || {
+                        crate::downloader::download::compute_sha1_sync(&path_clone)
+                    }).await.unwrap_or(Err(std::io::Error::new(std::io::ErrorKind::Other, "Hash computation panicked").to_string()));
+
+                    match computed_hash {
                         Ok(computed_hash) => {
                             if computed_hash.to_lowercase() != expected_hash.to_lowercase() {
                                 tracing::warn!(
@@ -1390,19 +1398,19 @@ async fn verify_instance_integrity(
                                     expected_hash,
                                     computed_hash
                                 );
-                                let _ = std::fs::remove_file(&path);
+                                let _ = tokio::fs::remove_file(&path).await;
                                 repair_tasks.push(task);
                             }
                         }
                         Err(e) => {
                             tracing::warn!("Failed to compute hash for {:?}: {}", path, e);
-                            let _ = std::fs::remove_file(&path);
+                            let _ = tokio::fs::remove_file(&path).await;
                             repair_tasks.push(task);
                         }
                     }
                 }
             } else if let Some(expected_size) = task.expected_size {
-                if let Ok(metadata) = std::fs::metadata(&path) {
+                if let Ok(metadata) = tokio::fs::metadata(&path).await {
                     if metadata.len() != expected_size {
                         tracing::warn!(
                             "Size mismatch for {:?}: expected {}, got {}",
@@ -1410,13 +1418,13 @@ async fn verify_instance_integrity(
                             expected_size,
                             metadata.len()
                         );
-                        let _ = std::fs::remove_file(&path);
+                        let _ = tokio::fs::remove_file(&path).await;
                         repair_tasks.push(task);
                     }
                 }
             }
         } else if let Some(expected_size) = task.expected_size {
-            if let Ok(metadata) = std::fs::metadata(&path) {
+            if let Ok(metadata) = tokio::fs::metadata(&path).await {
                 if metadata.len() != expected_size {
                     tracing::warn!(
                         "Size mismatch for {:?}: expected {}, got {}",
@@ -1424,7 +1432,7 @@ async fn verify_instance_integrity(
                         expected_size,
                         metadata.len()
                     );
-                    let _ = std::fs::remove_file(&path);
+                    let _ = tokio::fs::remove_file(&path).await;
                     repair_tasks.push(task);
                 }
             }
@@ -1446,7 +1454,7 @@ async fn verify_instance_integrity(
         );
 
         if let Err(e) = crate::downloader::run_batch_download(repair_tasks, app.clone(), crate::core::mojang::get_cancel_flag()).await {
-            return Err(format!("Auto-repair failed: {}", e));
+            return Err(DawnlandError::Unknown(format!("Auto-repair failed: {}", e)).into());
         }
 
         let _ = app.emit(
@@ -1480,6 +1488,17 @@ impl From<&str> for LaunchError {
         LaunchError::Other(error.to_string())
     }
 }
+
+impl From<LaunchError> for AppError {
+    fn from(err: LaunchError) -> Self {
+        match err {
+            LaunchError::NoCompatibleJava { required_version } => {
+                DawnlandError::Unknown(format!("No compatible Java {required_version} found")).into()
+            }
+            LaunchError::Other(msg) => DawnlandError::Unknown(msg).into(),
+        }
+    }
+}
 #[tauri::command]
 pub async fn launch_instance(
     app: AppHandle,
@@ -1487,7 +1506,7 @@ pub async fn launch_instance(
     account_uuid: String,
     mut server_ip: Option<String>,
     mut server_port: Option<u16>,
-) -> Result<(), LaunchError> {
+) -> Result<(), AppError> {
     tracing::info!(
         "Launching instance {} with account {}",
         version_id,
@@ -1562,9 +1581,9 @@ pub async fn launch_instance(
                 tracing::info!("Successfully refreshed Microsoft token");
             }
             Err(e) => {
-                tracing::warn!("Failed to refresh Microsoft token: {}. Will try launching with existing token.", e);
-                if e == "REAUTH_REQUIRED" {
-                    return Err(LaunchError::Other("Your Microsoft login session has expired. Please log out and log in again.".to_string()));
+                tracing::warn!("Failed to refresh Microsoft token: {}. Will try launching with existing token.", e.message);
+                if e.code == "REAUTH_REQUIRED" {
+                    return Err(DawnlandError::Unknown("Your Microsoft login session has expired. Please log out and log in again.".to_string()).into());
                 }
             }
         }
@@ -1777,8 +1796,8 @@ pub async fn launch_instance(
                                 
                                 let forge_base = base_dir.join("libraries").join("net").join("minecraftforge").join("forge");
                                 if forge_base.exists() {
-                                    if let Ok(entries) = std::fs::read_dir(&forge_base) {
-                                        for entry in entries.flatten() {
+                                    if let Ok(mut entries) = tokio::fs::read_dir(&forge_base).await {
+                                        while let Ok(Some(entry)) = entries.next_entry().await {
                                             if entry.file_name().to_string_lossy().contains(s) {
                                                 forge_found = true;
                                                 break;
@@ -1821,7 +1840,7 @@ pub async fn launch_instance(
             // Download missing files
             let app_for_download = app.clone();
             if let Err(e) = run_batch_download(missing_files, app_for_download, crate::core::mojang::get_cancel_flag()).await {
-                return Err(LaunchError::Other(format!("Failed to auto-repair missing files: {}", e)));
+                return Err(DawnlandError::Unknown(format!("Failed to auto-repair missing files: {}", e)).into());
             }
         }
 
@@ -1923,7 +1942,7 @@ pub async fn launch_instance(
                     "Could not find compatible Java >= {}",
                     recommended_major
                 );
-                return Err(LaunchError::NoCompatibleJava { required_version: recommended_major });
+                return Err(AppError::from(LaunchError::NoCompatibleJava { required_version: recommended_major }));
             }
         }
     };
@@ -1962,16 +1981,16 @@ pub async fn launch_instance(
         }
         Ok(output) => {
             let stderr_output = String::from_utf8_lossy(&output.stderr);
-            return Err(LaunchError::Other(format!(
+            return Err(DawnlandError::ProcessError(format!(
                 "Java executable '{}' failed to run.\nError: {}",
                 java_executable, stderr_output
-            )));
+            )).into());
         }
         Err(e) => {
-            return Err(LaunchError::Other(format!(
+            return Err(DawnlandError::ProcessError(format!(
                 "Failed to execute Java at '{}': {}\nPlease ensure Java is installed and the path is valid.",
                 java_executable, e
-            )));
+            )).into());
         }
     }
 
@@ -1988,8 +2007,8 @@ pub async fn launch_instance(
 
     let required_java = crate::core::java::get_recommended_java(mc_version_for_check);
     if java_major_version < required_java {
-        return Err(LaunchError::Other(format!(
-            "Minecraft {} requires Java {} or newer, but the selected Java version is Java {}.\n\nPlease install the correct Java version or select it in the Settings page.",
+        return Err(AppError::from(format!(
+            "Minecraft {} requires Java {} or newer, but the selected Java version is Java {}.\n\nPlease install the correct Java version or select a compatible one in the instance settings.",
             mc_version_for_check, required_java, java_major_version
         )));
     }
@@ -2115,7 +2134,7 @@ pub async fn launch_instance(
     // Get the main window for behavior control
     let window = app
         .get_webview_window("main")
-        .ok_or("Failed to get main window")?;
+        .ok_or_else(|| DawnlandError::Unknown("Failed to get main window".to_string()))?;
 
     // Determine window behavior after game starts
     let window_behavior = instance_config.window_behavior.clone();
@@ -2168,8 +2187,8 @@ pub async fn launch_instance(
     );
 
     // Get stdout and stderr
-    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+    let stdout = child.stdout.take().ok_or_else(|| DawnlandError::ProcessError("Failed to capture stdout".to_string()))?;
+    let stderr = child.stderr.take().ok_or_else(|| DawnlandError::ProcessError("Failed to capture stderr".to_string()))?;
 
     // Spawn tasks to read output
     let app_clone = app.clone();
