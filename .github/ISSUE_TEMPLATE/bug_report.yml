@@ -1,0 +1,69 @@
+name: 🐛 提交 Bug (Bug Report)
+description: 提交您在 Dawnland Launcher 中遇到的问题 (Report a bug to help us improve)
+title: "[Bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢您抽出时间报告 Dawnland Launcher 的 Bug！
+        在提交之前，请确保您已经搜索过[过往的问题 (Issues)](https://github.com/DawnLandTeam/dawnland-launcher/issues) 确认该问题没有被提出过。
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述 (Describe the bug)
+      description: 请清晰、详细地描述您遇到的具体 Bug。(A clear and concise description of what the bug is.)
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤 (Steps to Reproduce)
+      description: |
+        请提供复现该问题的具体步骤：
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果 (Expected behavior)
+      description: 请描述在正常情况下，您期望看到的正确行为或结果。(A clear and concise description of what you expected to happen.)
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图或视频 (Screenshots or Video)
+      description: 如有相关报错界面的截图或录屏，请在此处提供，这将极大帮助我们定位问题。(If applicable, add screenshots or videos to help explain your problem.)
+  - type: input
+    id: version
+    attributes:
+      label: 启动器版本 (Launcher Version)
+      description: 您使用的 Dawnland Launcher 是哪个版本？(e.g., v0.0.9)
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统 (Operating System)
+      description: 您的操作系统及版本是什么？(What OS are you using?)
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - 其他 (Other)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志信息 (Logs)
+      description: |
+        如果可能，请附带相关的日志信息。(Please attach any relevant log files or output.)
+        注意：Rust 后端与 Tauri 的输出请一并提供。
+      render: shell
