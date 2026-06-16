@@ -14,6 +14,8 @@ pub enum DawnlandError {
     JsonError(#[from] serde_json::Error),
     #[error("{0}")]
     InstanceNotFound(String),
+    #[error("No compatible Java {required_version} found")]
+    NoCompatibleJava { required_version: u32 },
     #[error("{0}")]
     Unknown(String),
 }
@@ -43,6 +45,7 @@ impl From<DawnlandError> for AppError {
             DawnlandError::ProcessError(_) => "PROCESS_ERROR",
             DawnlandError::JsonError(_) => "JSON_PARSE_ERROR",
             DawnlandError::InstanceNotFound(_) => "INSTANCE_NOT_FOUND",
+            DawnlandError::NoCompatibleJava { .. } => "NO_COMPATIBLE_JAVA",
             DawnlandError::Unknown(_) => "UNKNOWN_ERROR",
         };
 
