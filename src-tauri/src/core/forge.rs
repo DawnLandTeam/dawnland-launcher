@@ -603,7 +603,12 @@ impl ExecutableTask for InstallForgeTask {
 
     // ========== Step 1: Ensure base vanilla version is installed ==========
     let dawnland_cache = crate::core::mojang::get_dawnland_cache();
-    let base_version_dir = if is_dependency.unwrap_or(false) {
+    let settings = crate::core::settings::load_launcher_settings().await.unwrap_or_default();
+    let is_dep_val = is_dependency.unwrap_or(false);
+    let should_flatten = !settings.enable_instance_inheritance;
+    let effective_is_dep = is_dep_val || should_flatten;
+
+    let base_version_dir = if effective_is_dep {
         dawnland_cache.join(&mc_version)
     } else {
         base_dir.join("versions").join(&mc_version)
@@ -648,7 +653,7 @@ impl ExecutableTask for InstallForgeTask {
             options: VanillaInstallOptions {
                 version_id: mc_version.clone(),
                 version_json_url: version_url.to_string(),
-                is_dependency: Some(true),
+                is_dependency: Some(effective_is_dep),
             },
         };
         vanilla_task.execute(ctx.clone()).await?;
@@ -858,7 +863,7 @@ impl ExecutableTask for InstallForgeTask {
 
     let temp_vanilla_dir = base_dir.join("versions").join(&mc_version);
     let mut created_temp_vanilla = false;
-    if is_dep && !temp_vanilla_dir.exists() {
+    if effective_is_dep && !temp_vanilla_dir.exists() {
         let _ = crate::core::utils::copy_dir_all(&base_version_dir, &temp_vanilla_dir).await;
         created_temp_vanilla = true;
     }
@@ -964,6 +969,13 @@ impl ExecutableTask for InstallForgeTask {
         if !settings.enable_instance_inheritance {
             crate::core::utils::flatten_instance_json_recursive(&mc_version, obj).await.map_err(|e| TaskError::ExecutionError(e))?;
             obj.insert("clientVersion".to_string(), serde_json::json!(mc_version));
+            
+            // Copy the vanilla jar to the flattened instance so the launcher doesn't need to re-download it
+            let parent_jar = base_version_dir.join(format!("{}.jar", mc_version));
+            let dest_jar = instance_dir.join(format!("{}.jar", custom_instance_name));
+            if parent_jar.exists() {
+                let _ = tokio::fs::copy(&parent_jar, &dest_jar).await;
+            }
         } else {
             obj.insert("inheritsFrom".to_string(), serde_json::json!(mc_version));
         }
