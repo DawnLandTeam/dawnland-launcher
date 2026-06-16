@@ -141,6 +141,34 @@ pub async fn flatten_instance_json_recursive(parent_id: &str, child_obj: &mut se
     Ok(())
 }
 
+pub async fn copy_jar_if_exists_with_logging<S: AsRef<std::path::Path>, D: AsRef<std::path::Path>>(src: S, dest: D) {
+    let src_ref = src.as_ref();
+    let dest_ref = dest.as_ref();
+
+    match tokio::fs::metadata(src_ref).await {
+        Ok(_) => {
+            if let Err(err) = tokio::fs::copy(src_ref, dest_ref).await {
+                tracing::warn!(
+                    "Failed to copy jar from '{}' to '{}': {:#}",
+                    src_ref.display(),
+                    dest_ref.display(),
+                    err
+                );
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // Source jar doesn't exist — nothing to do.
+        }
+        Err(err) => {
+            tracing::warn!(
+                "Failed to stat jar source '{}' for copy to '{}': {:#}",
+                src_ref.display(),
+                dest_ref.display(),
+                err
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

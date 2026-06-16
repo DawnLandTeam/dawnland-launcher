@@ -411,28 +411,7 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
       launchingInstances.value.delete(selectedInstanceId.value);
       repairingInstances.value.delete(selectedInstanceId.value);
       isRepairing.value = false;
-      const errorStr = String(e);
-      if (errorStr.includes("login session has expired") || errorStr.includes("REAUTH_REQUIRED")) {
-        const confirmed = await confirm(
-          t('home.sessionExpiredConfirm'),
-          { title: t('home.sessionExpiredConfirmTitle'), kind: "warning" }
-        );
-        if (confirmed) {
-          try {
-            const newAccount = await invoke<Account>("login_microsoft_oauth");
-            await loadAccounts();
-            selectedAccountId.value = newAccount.id;
-            handlePrimaryAction();
-          } catch (loginErr) {
-            console.error("Re-login failed:", loginErr);
-          }
-        }
-      } else if (errorStr.includes("ERR_NO_COMPATIBLE_JAVA:")) {
-        const requiredJava = errorStr.split("ERR_NO_COMPATIBLE_JAVA:")[1].trim();
-        alert(t('home.noCompatibleJava', { version: requiredJava }));
-      } else {
-        alert(t('home.launchFailed', { error: e }));
-      }
+      await handleLaunchError(e);
     }
     
     // Clean up query
@@ -521,7 +500,16 @@ async function handlePrimaryAction() {
     launchingInstances.value.delete(selectedInstanceId.value);
     repairingInstances.value.delete(selectedInstanceId.value);
     isRepairing.value = false;
-    const errorStr = String(e);
+    await handleLaunchError(e);
+  }
+}
+
+async function handleLaunchError(e: any) {
+  const errorObj = e as any;
+  if (errorObj && errorObj.type === "NoCompatibleJava") {
+    alert(t('home.noCompatibleJava', { version: errorObj.data.required_version }));
+  } else {
+    const errorStr = typeof e === 'string' ? e : (errorObj.data || String(e));
     if (errorStr.includes("login session has expired") || errorStr.includes("REAUTH_REQUIRED")) {
       const confirmed = await confirm(
         t('home.sessionExpiredConfirm'),
@@ -537,11 +525,8 @@ async function handlePrimaryAction() {
           console.error("Re-login failed:", loginErr);
         }
       }
-    } else if (errorStr.includes("ERR_NO_COMPATIBLE_JAVA:")) {
-      const requiredJava = errorStr.split("ERR_NO_COMPATIBLE_JAVA:")[1].trim();
-      alert(t('home.noCompatibleJava', { version: requiredJava }));
     } else {
-      alert(t('home.launchFailed', { error: e }));
+      alert(t('home.launchFailed', { error: errorStr }));
     }
   }
 }
