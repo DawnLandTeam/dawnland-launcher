@@ -488,6 +488,10 @@ pub struct LocalModItem {
     pub enabled: bool,
     /// File size in bytes
     pub size: u64,
+    pub mod_id: Option<String>,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub icon_url: Option<String>,
 }
 
 /// Get list of installed mods for a specific instance
@@ -509,6 +513,9 @@ pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>,
         .await
         .map_err(|e| format!("Failed to read mods directory: {}", e))?;
 
+    let parser = crate::core::mod_parser::ModParser::new(&base_dir);
+    let mut cache_entries = parser.load_all_cache();
+
     while let Some(entry) = entries
         .next_entry()
         .await
@@ -521,20 +528,62 @@ pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>,
             .await
             .map_err(|e| e.to_string())?;
 
-        if filename.ends_with(".jar") {
-            mods.push(LocalModItem {
-                filename: filename.clone(),
-                enabled: true,
-                size: metadata.len(),
-            });
-        } else if filename.ends_with(".jar.disable") {
-            let display_name = filename.trim_end_matches(".disable").to_string();
-            mods.push(LocalModItem {
-                filename: display_name,
-                enabled: false,
-                size: metadata.len(),
-            });
+        let mut actual_filename = filename.clone();
+        let mut enabled = true;
+
+        if filename.ends_with(".jar.disable") {
+            actual_filename = filename.trim_end_matches(".disable").to_string();
+            enabled = false;
+        } else if !filename.ends_with(".jar") {
+            continue;
         }
+
+        let mtime = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let cache_key = format!("{}_{}_{}", actual_filename, metadata.len(), mtime);
+
+        let meta = if let Some(m) = cache_entries.get(&cache_key) {
+            m.clone()
+        } else {
+            let path_clone = path.clone();
+            let key_clone = cache_key.clone();
+            let base_dir_clone = base_dir.clone();
+            let m = tokio::task::spawn_blocking(move || {
+                let p = crate::core::mod_parser::ModParser::new(&base_dir_clone);
+                p.parse_mod(&path_clone, &key_clone)
+            })
+            .await
+            .unwrap_or_default();
+
+            cache_entries.insert(cache_key.clone(), m.clone());
+            parser.set_cache_entry(&cache_key, &m);
+            m
+        };
+
+        let icon_url = if meta.has_icon {
+            let icon_name = meta.mod_id.as_deref().unwrap_or(&cache_key);
+            let mut p = parser.get_icon_path(icon_name);
+            if !p.exists() {
+                p = parser.get_icon_path(&cache_key);
+            }
+            Some(p.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
+        mods.push(LocalModItem {
+            filename: actual_filename,
+            enabled,
+            size: metadata.len(),
+            mod_id: meta.mod_id,
+            name: meta.name,
+            version: meta.version,
+            icon_url,
+        });
     }
 
     // Sort by filename
@@ -596,7 +645,7 @@ pub async fn toggle_mod_status(
 
 /// Delete a local mod file
 #[tauri::command]
-pub async fn delete_local_mod(version_id: String, filename: String) -> Result<(), String> {
+pub async fn delete_local_mod(version_id: String, filename: String, is_enabled: Option<bool>) -> Result<(), String> {
     tracing::info!("Deleting mod {} from instance {}", filename, version_id);
 
     let base_dir = get_minecraft_base();
@@ -608,30 +657,179 @@ pub async fn delete_local_mod(version_id: String, filename: String) -> Result<()
     // Check in disabled directory
     let disabled_file = mods_dir.join(format!("{}.disable", filename));
 
-    let file_to_delete = if mod_file.exists() {
-        mod_file
-    } else if disabled_file.exists() {
-        disabled_file
+    let file_to_delete = if let Some(enabled) = is_enabled {
+        if enabled { mod_file.clone() } else { disabled_file.clone() }
     } else {
-        return Err(format!("Mod file not found: {}", filename));
+        if mod_file.exists() {
+            mod_file.clone()
+        } else if disabled_file.exists() {
+            disabled_file.clone()
+        } else {
+            return Err(format!("Mod file not found: {}", filename));
+        }
     };
+
+    if !file_to_delete.exists() {
+        return Err(format!("Mod file not found: {}", file_to_delete.display()));
+    }
 
     tokio::fs::remove_file(&file_to_delete)
         .await
         .map_err(|e| format!("Failed to delete mod file: {}", e))?;
 
+    // Only remove from dlml.json if both the enabled and disabled variants are gone
+    if !mod_file.exists() && !disabled_file.exists() {
+        let mut installed_map = load_installed_mods_json(&version_id).await;
+        let mut keys_to_remove = Vec::new();
+        for (k, v) in installed_map.iter() {
+            if v == &filename {
+                keys_to_remove.push(k.clone());
+            }
+        }
+        if !keys_to_remove.is_empty() {
+            for k in keys_to_remove {
+                installed_map.remove(&k);
+            }
+            save_installed_mods_json(&version_id, &installed_map).await;
+        }
+    }
+
     tracing::info!("Deleted mod {} from instance {}", filename, version_id);
     Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModInstallProgress {
+    event: String,
+    filename: String,
+    content_length: Option<u64>,
+    chunk_length: Option<usize>,
+}
+
+async fn download_mod_file_stream(
+    app: &tauri::AppHandle,
+    url: &str,
+    target_path: &std::path::Path,
+    filename: &str,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    use tauri::Emitter;
+
+    let client = reqwest::Client::new();
+    let mut response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download mod: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+
+    let content_length = response.content_length();
+    
+    let _ = app.emit("mod-install-progress", ModInstallProgress {
+        event: "Started".to_string(),
+        filename: filename.to_string(),
+        content_length,
+        chunk_length: None,
+    });
+
+    let mut file = tokio::fs::File::create(target_path)
+        .await
+        .map_err(|e| format!("Failed to create mod file: {}", e))?;
+
+    while let Some(chunk) = response.chunk().await.map_err(|e| format!("Chunk error: {}", e))? {
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Write error: {}", e))?;
+        
+        let _ = app.emit("mod-install-progress", ModInstallProgress {
+            event: "Progress".to_string(),
+            filename: filename.to_string(),
+            content_length: None,
+            chunk_length: Some(chunk.len()),
+        });
+    }
+
+    file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
+
+    let _ = app.emit("mod-install-progress", ModInstallProgress {
+        event: "Finished".to_string(),
+        filename: filename.to_string(),
+        content_length: None,
+        chunk_length: None,
+    });
+
+    Ok(())
+}
+
+fn extract_filename_from_url(url: &str, project_id: &str) -> String {
+    let url_filename = url
+        .split('/')
+        .last()
+        .unwrap_or_default()
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+
+    if url_filename.is_empty() || !url_filename.ends_with(".jar") {
+        format!("{}.jar", project_id)
+    } else {
+        url_filename
+    }
+}
+
+/// Helper function to load and save installed mods directly into `dlml.json`
+async fn load_installed_mods_json(instance_id: &str) -> std::collections::HashMap<String, String> {
+    let base_dir = get_minecraft_base();
+    let config_path = base_dir.join("versions").join(instance_id).join("dlml.json");
+    if config_path.exists() {
+        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+            if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                return config.installed_mods;
+            }
+        }
+    }
+    std::collections::HashMap::new()
+}
+
+async fn save_installed_mods_json(instance_id: &str, map: &std::collections::HashMap<String, String>) {
+    let base_dir = get_minecraft_base();
+    let config_path = base_dir.join("versions").join(instance_id).join("dlml.json");
+    
+    // Read existing config first to preserve other fields
+    let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
+        tokio::fs::read_to_string(&config_path)
+            .await
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        crate::core::launcher::InstanceConfig::default()
+    };
+    
+    config.installed_mods = map.clone();
+    
+    if let Ok(content) = serde_json::to_string_pretty(&config) {
+        let _ = tokio::fs::write(&config_path, content).await;
+    }
 }
 
 /// Install a mod to a specific instance (download + save)
 #[tauri::command]
 pub async fn install_mod_to_instance(
+    app: tauri::AppHandle,
     version_id: String,
     mod_source: String, // "modrinth" or "curseforge"
     project_id: String,
     file_id: String,
     download_url: String,
+    dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
+    keep_both: Option<bool>,
 ) -> Result<String, String> {
     tracing::info!(
         "Installing mod {} from {} to instance {}",
@@ -650,56 +848,169 @@ pub async fn install_mod_to_instance(
             .map_err(|e| format!("Failed to create mods directory: {}", e))?;
     }
 
-    // Download the mod file
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&download_url)
-        .send()
+    let item = crate::core::manager::get_instance_details(version_id.clone())
         .await
-        .map_err(|e| format!("Failed to download mod: {}", e))?;
+        .map_err(|e| format!("Failed to load instance details: {}", e))?;
+    let mc_version = item.mc_version;
+    let loader = item.loader_type;
 
-    if !response.status().is_success() {
-        return Err(format!(
-            "Download failed with status: {}",
-            response.status()
-        ));
+    let filename = extract_filename_from_url(&download_url, &project_id);
+    let target_path = mods_dir.join(&filename);
+
+    let mut installed_map = load_installed_mods_json(&version_id).await;
+    let mod_key = format!("{}_{}", mod_source, project_id);
+
+    // Remove old version if it exists and filename differs
+    let keep_old = keep_both.unwrap_or(false);
+    if !keep_old {
+        if let Some(old_filename) = installed_map.get(&mod_key) {
+            if old_filename != &filename {
+                let old_path = mods_dir.join(old_filename);
+                if old_path.exists() {
+                    let _ = tokio::fs::remove_file(old_path).await;
+                }
+            }
+            let old_path_disabled = mods_dir.join(format!("{}.disable", old_filename));
+            if old_path_disabled.exists() {
+                let _ = tokio::fs::remove_file(old_path_disabled).await;
+            }
+        }
     }
 
-    // Extract filename from URL or use project_id
-    let url_filename = download_url
-        .split('/')
-        .last()
-        .unwrap_or_default()
-        .split('?')
-        .next()
-        .unwrap_or_default()
-        .to_string();
+    if !target_path.exists() {
+        download_mod_file_stream(&app, &download_url, &target_path, &filename).await?;
+    }
 
-    let filename = if url_filename.is_empty() || !url_filename.ends_with(".jar") {
-        format!("{}.jar", project_id)
-    } else {
-        url_filename
-    };
+    tracing::info!("Installed mod {} to instance {} (file: {})", project_id, version_id, filename);
+
+    // Enforce 1-to-1 mapping: Remove any existing keys that map to this exact filename
+    installed_map.retain(|_, v| v != &filename);
+    installed_map.insert(mod_key, filename.clone());
+    save_installed_mods_json(&version_id, &installed_map).await;
+
+    // Await dependency resolution and downloading sequentially
+    if let Some(deps) = dependencies {
+        let req_deps: Vec<_> = deps.into_iter().filter(|d| d.required).collect();
+        if !req_deps.is_empty() {
+            tracing::info!("Found {} required dependencies for mod {}. Initiating download.", req_deps.len(), project_id);
+            for dep in req_deps {
+                let dep_key = format!("{}_{}", mod_source, dep.project_id);
+
+                if mod_source == "modrinth" {
+                    if let Some(vid) = dep.version_id {
+                        tracing::info!("Fetching Modrinth dependency version: {}", vid);
+                        if let Ok(res) = reqwest::get(&format!("https://api.modrinth.com/v2/version/{}", vid)).await {
+                            if let Ok(json) = res.json::<serde_json::Value>().await {
+                                if let Some(files) = json.get("files").and_then(|f| f.as_array()) {
+                                    if let Some(primary) = files.first() {
+                                        if let (Some(url), Some(fname)) = (primary.get("url").and_then(|u| u.as_str()), primary.get("filename").and_then(|f| f.as_str())) {
+                                            if let Some(old_fname) = installed_map.get(&dep_key) {
+                                                if old_fname != fname {
+                                                    let _ = tokio::fs::remove_file(mods_dir.join(old_fname)).await;
+                                                }
+                                                let _ = tokio::fs::remove_file(mods_dir.join(format!("{}.disable", old_fname))).await;
+                                            }
+                                            let dep_path = mods_dir.join(fname);
+                                            if !dep_path.exists() {
+                                                let _ = download_mod_file_stream(&app, url, &dep_path, fname).await;
+                                            }
+                                            // Enforce 1-to-1 mapping
+                                            installed_map.retain(|_, v| v != fname);
+                                            installed_map.insert(dep_key, fname.to_string());
+                                            save_installed_mods_json(&version_id, &installed_map).await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let pid = &dep.project_id;
+                        tracing::info!("Fetching Modrinth dependency project (latest compatible): {}", pid);
+                        if let Ok(files) = crate::core::modrinth::get_modrinth_mod_files(pid.clone(), mc_version.clone(), loader.clone()).await {
+                            if let Some(primary) = files.first() {
+                                let fname = &primary.filename;
+                                let url = &primary.download_url;
+
+                                if let Some(old_fname) = installed_map.get(&dep_key) {
+                                    if old_fname != fname {
+                                        let _ = tokio::fs::remove_file(mods_dir.join(old_fname)).await;
+                                    }
+                                    let _ = tokio::fs::remove_file(mods_dir.join(format!("{}.disable", old_fname))).await;
+                                }
+                                let dep_path = mods_dir.join(fname);
+                                if !dep_path.exists() {
+                                    let _ = download_mod_file_stream(&app, url, &dep_path, fname).await;
+                                }
+                                // Enforce 1-to-1 mapping
+                                installed_map.retain(|_, v| v != fname);
+                                installed_map.insert(dep_key, fname.to_string());
+                                save_installed_mods_json(&version_id, &installed_map).await;
+                            }
+                        }
+                    }
+                } else if mod_source == "curseforge" {
+                    tracing::info!("Fetching CurseForge dependency project: {}", dep.project_id);
+                    if let Ok(files) = crate::core::curseforge::get_cf_mod_files(dep.project_id.clone(), mc_version.clone(), loader.clone()).await {
+                        if let Some(primary) = files.first() {
+                            let fname = &primary.filename;
+                            let url = &primary.download_url;
+
+                            if let Some(old_fname) = installed_map.get(&dep_key) {
+                                if old_fname != fname {
+                                    let _ = tokio::fs::remove_file(mods_dir.join(old_fname)).await;
+                                }
+                                let _ = tokio::fs::remove_file(mods_dir.join(format!("{}.disable", old_fname))).await;
+                            }
+                            let dep_path = mods_dir.join(fname);
+                            if !dep_path.exists() {
+                                let _ = download_mod_file_stream(&app, url, &dep_path, fname).await;
+                            }
+                            // Enforce 1-to-1 mapping
+                            installed_map.retain(|_, v| v != fname);
+                            installed_map.insert(dep_key, fname.to_string());
+                            save_installed_mods_json(&version_id, &installed_map).await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(filename)
+}
+
+/// Import a local mod file into an instance
+#[tauri::command]
+pub async fn import_local_mod_to_instance(
+    version_id: String,
+    file_path: String,
+) -> Result<String, String> {
+    let base_dir = get_minecraft_base();
+    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
+
+    if !mods_dir.exists() {
+        tokio::fs::create_dir_all(&mods_dir)
+            .await
+            .map_err(|e| format!("Failed to create mods directory: {}", e))?;
+    }
+
+    let path = std::path::Path::new(&file_path);
+    if !path.exists() || !path.is_file() {
+        return Err(format!("File does not exist: {}", file_path));
+    }
+
+    let filename = path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown.jar")
+        .to_string();
 
     let target_path = mods_dir.join(&filename);
 
-    // Save the file
-    let bytes = response
-        .bytes()
+    tokio::fs::copy(&path, &target_path)
         .await
-        .map_err(|e| format!("Failed to read download content: {}", e))?;
+        .map_err(|e| format!("Failed to copy mod file: {}", e))?;
 
-    tokio::fs::write(&target_path, &bytes)
-        .await
-        .map_err(|e| format!("Failed to save mod file: {}", e))?;
-
-    tracing::info!(
-        "Installed mod {} to instance {} (file: {})",
-        project_id,
-        version_id,
-        filename
-    );
-
+    tracing::info!("Imported local mod {} to instance {}", filename, version_id);
     Ok(filename)
 }
 

@@ -13,6 +13,7 @@ pub mod server;
 pub mod utils;
 pub mod fs_utils;
 pub mod task;
+pub mod mod_parser;
 
 // Re-export types from mojang for easier importing
 pub use crate::core::mojang::VanillaVersion;

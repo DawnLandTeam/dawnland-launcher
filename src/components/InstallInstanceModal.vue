@@ -228,7 +228,23 @@ const canProceedToStep2 = computed(() => {
   return selectedVersion.value !== "";
 });
 
-const canProceedToStep3 = computed(() => true);
+const canProceedToStep3 = computed(() => {
+  if (isLoadingFabric.value || isLoadingForge.value || isLoadingNeoForge.value) {
+    return false;
+  }
+  
+  if (activeConfiguringComponent.value) {
+    const comp = activeConfiguringComponent.value;
+    // Forge, Fabric, and NeoForge require a version to be selected
+    if (['Forge', 'Fabric', 'NeoForge'].includes(comp)) {
+      if (!selectedComponents[comp as keyof typeof selectedComponents]) {
+        return false;
+      }
+    }
+  }
+  
+  return true;
+});
 
 const downloadProgressPercent = computed(() => {
   if (!installProgress.value?.totalTasks) return 0;
@@ -384,6 +400,7 @@ async function loadFabricLoaders(): Promise<void> {
     }
     
     if (selectedFabricLoader.value) {
+      selectedComponents.Fabric = selectedFabricLoader.value;
       customInstanceName.value = generateInstanceName();
     }
   } catch (err) {
@@ -416,6 +433,7 @@ async function loadForgeLoaders(): Promise<void> {
     }
     
     if (selectedForgeLoader.value) {
+      selectedComponents.Forge = selectedForgeLoader.value;
       customInstanceName.value = generateInstanceName();
     }
   } catch (err) {
@@ -448,6 +466,7 @@ async function loadNeoForgeLoaders(): Promise<void> {
     }
     
     if (selectedNeoForgeLoader.value) {
+      selectedComponents.NeoForge = selectedNeoForgeLoader.value;
       customInstanceName.value = generateInstanceName();
     }
   } catch (err) {
@@ -853,7 +872,7 @@ onUnmounted(() => {
 
       <div class="flex justify-between mt-6">
         <button @click="goBackToStep1" class="px-3 py-1.5 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white font-medium">← 返回</button>
-        <button @click="goToStep3" class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors text-sm font-medium">下一步 <span class="text-lg">→</span></button>
+        <button @click="goToStep3" :disabled="!canProceedToStep3" class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium">下一步 <span class="text-lg">→</span></button>
       </div>
     </div>
 
@@ -914,7 +933,7 @@ onUnmounted(() => {
           <div class="flex items-center gap-3">
             <button
               @click="installVersion"
-              :disabled="!customInstanceName || isLoadingVersions"
+              :disabled="!customInstanceName || isLoadingVersions || isLoadingFabric || isLoadingForge || isLoadingNeoForge"
               class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
             >
               <Download class="w-4 h-4" />

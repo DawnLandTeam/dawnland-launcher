@@ -32,6 +32,13 @@ pub struct UnifiedModProject {
     pub file_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedDependency {
+    pub project_id: String,
+    pub version_id: Option<String>, // Can be file_id for CF
+    pub required: bool,
+}
+
 /// Unified mod version file representing a downloadable mod file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedModFile {
@@ -43,6 +50,7 @@ pub struct UnifiedModFile {
     pub date: String,
     pub file_size: Option<u64>,
     pub hash: Option<String>,
+    pub dependencies: Vec<UnifiedDependency>,
 }
 
 /// Online Modpack Version representing a modpack file to download
@@ -103,6 +111,13 @@ struct ModrinthProjectDetails {
     version_groups: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct ModrinthDependency {
+    pub version_id: Option<String>,
+    pub project_id: Option<String>,
+    pub dependency_type: String, // "required", "optional", "incompatible", "embedded"
+}
+
 #[derive(Debug, Deserialize)]
 struct ModrinthVersion {
     id: String,
@@ -116,6 +131,8 @@ struct ModrinthVersion {
     version_type: String, // "release", "beta", "alpha"
     date_published: String,
     files: Vec<ModrinthFile>,
+    #[serde(default)]
+    dependencies: Vec<ModrinthDependency>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,11 +164,27 @@ pub async fn search_modrinth(
         loader
     );
 
-    // Build search query parameters - keep it simple first
+    let mut facets = Vec::new();
+    if !mc_version.is_empty() {
+        facets.push(format!("[\"versions:{}\"]", mc_version));
+    }
+    if !loader.is_empty() {
+        facets.push(format!("[\"categories:{}\"]", loader.to_lowercase()));
+    }
+    
+    let facets_query = if !facets.is_empty() {
+        let json_arr = format!("[{}]", facets.join(","));
+        format!("&facets={}", urlencoding::encode(&json_arr))
+    } else {
+        String::new()
+    };
+
+    // Build search query parameters - use facets for server-side filtering
     let search_url = format!(
-        "{}/search?query={}&limit=20",
+        "{}/search?query={}&limit=20{}",
         MODRINTH_BASE_URL,
-        urlencoding::encode(&query)
+        urlencoding::encode(&query),
+        facets_query
     );
 
     let client = reqwest::Client::new();
@@ -185,30 +218,6 @@ pub async fn search_modrinth(
     let mut projects: Vec<UnifiedModProject> = search_result
         .hits
         .into_iter()
-        .filter(|p| {
-            // Filter by MC version if specified
-            if !mc_version.is_empty() {
-                if let Some(ref versions) = p.game_versions {
-                    if !versions.contains(&mc_version) {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            }
-            // Filter by loader if specified
-            if !loader.is_empty() {
-                let loader_lower = loader.to_lowercase();
-                if let Some(ref loaders) = p.loaders {
-                    if !loaders.iter().any(|l| l.to_lowercase() == loader_lower) {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            }
-            true
-        })
         .map(|p| UnifiedModProject {
             source: "modrinth".to_string(),
             project_id: p.project_id,
@@ -284,7 +293,9 @@ pub async fn get_modrinth_mod_files(
         let has_mc_version = version
             .game_versions
             .iter()
-            .any(|gv| gv.contains(&mc_version));
+            .any(|gv| {
+                gv == &mc_version || (mc_version.starts_with(gv) && mc_version[gv.len()..].starts_with('.'))
+            });
 
         // Check loader compatibility
         let has_loader = version
@@ -295,6 +306,14 @@ pub async fn get_modrinth_mod_files(
         if has_mc_version && has_loader {
             // Get the primary file (first one or primary file)
             if let Some(file) = version.files.first() {
+                let deps = version.dependencies.iter().map(|d| {
+                    super::modrinth::UnifiedDependency {
+                        project_id: d.project_id.clone().unwrap_or_default(),
+                        version_id: d.version_id.clone(),
+                        required: d.dependency_type == "required",
+                    }
+                }).collect();
+
                 compatible_files.push(UnifiedModFile {
                     id: version.id.clone(),
                     filename: file.filename.clone(),
@@ -304,6 +323,7 @@ pub async fn get_modrinth_mod_files(
                     date: version.date_published.clone(),
                     file_size: Some(file.size),
                     hash: file.hashes.get("sha1").cloned(),
+                    dependencies: deps,
                 });
             }
         }

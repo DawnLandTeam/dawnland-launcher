@@ -205,6 +205,9 @@ pub struct InstanceConfig {
     /// Whether this instance is currently being installed
     #[serde(default)]
     pub is_installing: bool,
+    /// Map of installed mod keys to filenames
+    #[serde(default)]
+    pub installed_mods: std::collections::HashMap<String, String>,
     /// Preserve any unknown fields when modifying settings so we don't accidentally clear server bindings
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
