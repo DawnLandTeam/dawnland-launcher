@@ -251,12 +251,21 @@ impl ModParser {
                             let parts: Vec<&str> = line.splitn(2, '=').collect();
                             if parts.len() == 2 {
                                 let val = parts[1].trim();
-                                if val.starts_with('"') && val.ends_with('"') {
-                                    return Some(val[1..val.len()-1].to_string());
-                                } else if val.starts_with('\'') && val.ends_with('\'') {
-                                    return Some(val[1..val.len()-1].to_string());
+                                
+                                // Look for matching quotes at the start and end of the string value
+                                if let Some(start) = val.find(|c| c == '"' || c == '\'') {
+                                    let quote = val.chars().nth(start).unwrap();
+                                    if let Some(end) = val[start+1..].rfind(quote) {
+                                        return Some(val[start+1..start+1+end].to_string());
+                                    }
                                 }
-                                return Some(val.to_string());
+                                
+                                // If no quotes, return up to the first '#' or space
+                                let mut no_comment = val;
+                                if let Some(idx) = no_comment.find('#') {
+                                    no_comment = &no_comment[..idx];
+                                }
+                                return Some(no_comment.trim().to_string());
                             }
                         }
                     }
