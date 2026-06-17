@@ -651,31 +651,26 @@ pub async fn delete_local_mod(version_id: String, filename: String, is_enabled: 
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
-    // Check in main mods directory
     let mod_file = mods_dir.join(&filename);
-
-    // Check in disabled directory
     let disabled_file = mods_dir.join(format!("{}.disable", filename));
 
-    let file_to_delete = if let Some(enabled) = is_enabled {
-        if enabled { mod_file.clone() } else { disabled_file.clone() }
-    } else {
-        if mod_file.exists() {
-            mod_file.clone()
-        } else if disabled_file.exists() {
-            disabled_file.clone()
-        } else {
-            return Err(format!("Mod file not found: {}", filename));
-        }
+    let (primary, fallback) = match is_enabled {
+        Some(true) => (&mod_file, &disabled_file),
+        Some(false) => (&disabled_file, &mod_file),
+        None => (&mod_file, &disabled_file),
     };
 
-    if !file_to_delete.exists() {
-        return Err(format!("Mod file not found: {}", file_to_delete.display()));
+    if primary.exists() {
+        tokio::fs::remove_file(primary)
+            .await
+            .map_err(|e| format!("Failed to delete mod file {}: {}", primary.display(), e))?;
+    } else if fallback.exists() {
+        tokio::fs::remove_file(fallback)
+            .await
+            .map_err(|e| format!("Failed to delete mod file {}: {}", fallback.display(), e))?;
+    } else {
+        return Err(format!("Mod file not found for '{}' in instance '{}'", filename, version_id));
     }
-
-    tokio::fs::remove_file(&file_to_delete)
-        .await
-        .map_err(|e| format!("Failed to delete mod file: {}", e))?;
 
     // Only remove from dlml.json if both the enabled and disabled variants are gone
     if !mod_file.exists() && !disabled_file.exists() {
@@ -709,6 +704,7 @@ pub struct ModInstallProgress {
 
 async fn download_mod_file_stream(
     app: &tauri::AppHandle,
+    client: &reqwest::Client,
     url: &str,
     target_path: &std::path::Path,
     filename: &str,
@@ -717,7 +713,6 @@ async fn download_mod_file_stream(
     use tokio::io::AsyncWriteExt;
     use tauri::Emitter;
 
-    let client = reqwest::Client::new();
     let mut response = client
         .get(url)
         .send()
@@ -854,6 +849,8 @@ pub async fn install_mod_to_instance(
     let mc_version = item.mc_version;
     let loader = item.loader_type;
 
+    let client = reqwest::Client::new();
+
     let filename = extract_filename_from_url(&download_url, &project_id);
     let target_path = mods_dir.join(&filename);
 
@@ -878,7 +875,7 @@ pub async fn install_mod_to_instance(
     }
 
     if !target_path.exists() {
-        download_mod_file_stream(&app, &download_url, &target_path, &filename).await?;
+        download_mod_file_stream(&app, &client, &download_url, &target_path, &filename).await?;
     }
 
     tracing::info!("Installed mod {} to instance {} (file: {})", project_id, version_id, filename);
@@ -899,7 +896,7 @@ pub async fn install_mod_to_instance(
                 if mod_source == "modrinth" {
                     if let Some(vid) = dep.version_id {
                         tracing::info!("Fetching Modrinth dependency version: {}", vid);
-                        if let Ok(res) = reqwest::get(&format!("https://api.modrinth.com/v2/version/{}", vid)).await {
+                        if let Ok(res) = client.get(&format!("https://api.modrinth.com/v2/version/{}", vid)).send().await {
                             if let Ok(json) = res.json::<serde_json::Value>().await {
                                 if let Some(files) = json.get("files").and_then(|f| f.as_array()) {
                                     if let Some(primary) = files.first() {
@@ -912,7 +909,7 @@ pub async fn install_mod_to_instance(
                                             }
                                             let dep_path = mods_dir.join(fname);
                                             if !dep_path.exists() {
-                                                let _ = download_mod_file_stream(&app, url, &dep_path, fname).await;
+                                                let _ = download_mod_file_stream(&app, &client, url, &dep_path, fname).await;
                                             }
                                             // Enforce 1-to-1 mapping
                                             installed_map.retain(|_, v| v != fname);
@@ -939,7 +936,7 @@ pub async fn install_mod_to_instance(
                                 }
                                 let dep_path = mods_dir.join(fname);
                                 if !dep_path.exists() {
-                                    let _ = download_mod_file_stream(&app, url, &dep_path, fname).await;
+                                    let _ = download_mod_file_stream(&app, &client, url, &dep_path, fname).await;
                                 }
                                 // Enforce 1-to-1 mapping
                                 installed_map.retain(|_, v| v != fname);
@@ -963,7 +960,7 @@ pub async fn install_mod_to_instance(
                             }
                             let dep_path = mods_dir.join(fname);
                             if !dep_path.exists() {
-                                let _ = download_mod_file_stream(&app, url, &dep_path, fname).await;
+                                let _ = download_mod_file_stream(&app, &client, url, &dep_path, fname).await;
                             }
                             // Enforce 1-to-1 mapping
                             installed_map.retain(|_, v| v != fname);
