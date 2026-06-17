@@ -89,14 +89,21 @@ pub struct CfAuthor {
     pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CfFileHash {
     pub value: String,
     pub algo: i32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CfDependency {
+    pub mod_id: i64,
+    pub relation_type: i32, // 3 = requiredDependency
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CfFile {
     pub id: i64,
@@ -109,6 +116,9 @@ pub struct CfFile {
     pub loaders: Option<Vec<String>>,
     pub release_type: i32,
     pub file_date: String,
+    pub dependencies: Option<Vec<CfDependency>>,
+    pub parent_project_file_id: Option<i64>,
+    pub is_server_pack: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,7 +169,7 @@ pub async fn search_curseforge(
 
     // Build query string for the proxy
     let query_string = format!(
-        "gameId={}&classId={}&searchFilter={}&gameVersion={}&modLoaderType={}&sortField=2&sortOrder=desc",
+        "gameId={}&classId={}&searchFilter={}&gameVersion={}&modLoaderType={}&sortField=6&sortOrder=desc",
         CF_GAME_ID_MINECRAFT,
         CF_CLASS_ID_MODS,
         urlencoding::encode(&query),
@@ -291,6 +301,9 @@ pub async fn get_cf_mod_files(
 
     // Sort by file ID descending (higher ID = newer)
     let mut sorted_files = files_result.data;
+    sorted_files.retain(|f| {
+        f.parent_project_file_id.unwrap_or(0) == 0 && !f.is_server_pack.unwrap_or(false)
+    });
     sorted_files.sort_by(|a, b| b.id.cmp(&a.id));
 
     let mut compatible_files = Vec::new();
@@ -313,6 +326,16 @@ pub async fn get_cf_mod_files(
             }
         }
 
+        let deps = file.dependencies.as_ref().map(|d_list| {
+            d_list.iter().map(|d| {
+                super::modrinth::UnifiedDependency {
+                    project_id: d.mod_id.to_string(),
+                    version_id: None,
+                    required: d.relation_type == 3,
+                }
+            }).collect()
+        }).unwrap_or_default();
+
         compatible_files.push(UnifiedModFile {
             id: file.id.to_string(),
             filename: file.file_name.clone(),
@@ -322,6 +345,7 @@ pub async fn get_cf_mod_files(
             date: file.file_date.clone(),
             file_size: file.file_length,
             hash,
+            dependencies: deps,
         });
     }
 
@@ -400,6 +424,16 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
             }
         }
 
+        let deps = file.dependencies.as_ref().map(|d_list| {
+            d_list.iter().map(|d| {
+                super::modrinth::UnifiedDependency {
+                    project_id: d.mod_id.to_string(),
+                    version_id: None,
+                    required: d.relation_type == 3,
+                }
+            }).collect()
+        }).unwrap_or_default();
+
         compatible_files.push(UnifiedModFile {
             id: file.id.to_string(),
             filename: file.file_name.clone(),
@@ -409,6 +443,7 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
             date: file.file_date.clone(),
             file_size: file.file_length,
             hash,
+            dependencies: deps,
         });
     }
 
