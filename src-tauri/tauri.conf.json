@@ -28,6 +28,13 @@
       }
     ],
     "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["**/.mod_cache/**/*"],
+          "requireLiteralLeadingDot": false
+        }
+      },
       "csp": null
     }
   },
