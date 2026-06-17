@@ -215,6 +215,7 @@ impl ModParser {
         has_forge = found;
 
         if has_forge && !content.is_empty() {
+            let mut parsed_ok = false;
             if let Ok(toml_val) = content.parse::<toml::Value>() {
                 if let Some(mods) = toml_val.get("mods").and_then(|m| m.as_array()).and_then(|arr| arr.get(0)) {
                     meta.mod_id = mods.get("modId").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -234,6 +235,50 @@ impl ModParser {
                                 if fs::write(dest_path, &buffer).is_ok() {
                                     meta.has_icon = true;
                                 }
+                            }
+                        }
+                    }
+                    parsed_ok = true;
+                }
+            }
+
+            if !parsed_ok {
+                // Fallback: manually parse lines if TOML syntax is invalid (common with some Forge mods)
+                let extract_val = |key: &str| -> Option<String> {
+                    for line in content.lines() {
+                        let line = line.trim();
+                        if line.starts_with(key) {
+                            let parts: Vec<&str> = line.splitn(2, '=').collect();
+                            if parts.len() == 2 {
+                                let val = parts[1].trim();
+                                if val.starts_with('"') && val.ends_with('"') {
+                                    return Some(val[1..val.len()-1].to_string());
+                                } else if val.starts_with('\'') && val.ends_with('\'') {
+                                    return Some(val[1..val.len()-1].to_string());
+                                }
+                                return Some(val.to_string());
+                            }
+                        }
+                    }
+                    None
+                };
+
+                meta.mod_id = extract_val("modId");
+                meta.name = extract_val("displayName");
+                meta.version = extract_val("version");
+
+                if let Some(logo_path) = extract_val("logoFile") {
+                    let logo_path = logo_path.trim_start_matches('/');
+                    let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
+                    let dest_path = self.get_icon_path(icon_name);
+                    
+                    if dest_path.exists() {
+                        meta.has_icon = true;
+                    } else if let Ok(mut icon_file) = archive.by_name(logo_path) {
+                        let mut buffer = Vec::new();
+                        if icon_file.read_to_end(&mut buffer).is_ok() {
+                            if fs::write(dest_path, &buffer).is_ok() {
+                                meta.has_icon = true;
                             }
                         }
                     }
