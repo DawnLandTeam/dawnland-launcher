@@ -87,7 +87,7 @@ const filteredLocalMods = computed(() => {
   const q = localSearchQuery.value.toLowerCase().replace(/[-_ ]/g, '');
   return localMods.value.filter(mod => {
     const matchName = mod.name && mod.name.toLowerCase().replace(/[-_ ]/g, '').includes(q);
-    const matchId = mod.mod_id && mod.mod_id.toLowerCase().replace(/[-_ ]/g, '').includes(q);
+    const matchId = mod.modId && mod.modId.toLowerCase().replace(/[-_ ]/g, '').includes(q);
     const matchFile = mod.filename.toLowerCase().replace(/[-_ ]/g, '').includes(q);
     return matchName || matchId || matchFile;
   });
@@ -955,7 +955,13 @@ const groupedModFiles = computed(() => {
 
     </DialogContent>
 
-  <AlertDialog :open="duplicateDialogState.show" @update:open="duplicateDialogState.show = $event; if (!$event && duplicateDialogState.resolve) duplicateDialogState.resolve('cancel')">
+  <AlertDialog :open="duplicateDialogState.show" @update:open="
+    duplicateDialogState.show = $event; 
+    if (!$event && duplicateDialogState.resolve) { 
+      duplicateDialogState.resolve('cancel'); 
+      duplicateDialogState.resolve = null; 
+    }
+  ">
     <div class="flex flex-col gap-5">
       <div class="flex gap-4">
         <div class="shrink-0 w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
@@ -982,19 +988,28 @@ const groupedModFiles = computed(() => {
       <div class="flex justify-end gap-3 pt-2 border-t border-neutral-100 dark:border-zinc-800">
         <button
           class="px-4 py-2 rounded-lg border border-neutral-200 dark:border-zinc-700 text-sm font-medium hover:bg-neutral-100 dark:hover:bg-zinc-800 transition-colors focus:ring-2 focus:ring-neutral-200 outline-none"
-          @click="duplicateDialogState.show = false; duplicateDialogState.resolve?.('cancel')"
+          @click="
+            if (duplicateDialogState.resolve) { duplicateDialogState.resolve('cancel'); duplicateDialogState.resolve = null; }
+            duplicateDialogState.show = false;
+          "
         >
           {{ t('instanceMods.cancel', 'Cancel') }}
         </button>
         <button
           class="px-4 py-2 rounded-lg bg-neutral-800 text-white dark:bg-neutral-200 dark:text-neutral-900 text-sm font-medium hover:bg-neutral-700 dark:hover:bg-neutral-300 transition-colors shadow-sm focus:ring-2 focus:ring-neutral-500 outline-none"
-          @click="duplicateDialogState.show = false; duplicateDialogState.resolve?.('keep')"
+          @click="
+            if (duplicateDialogState.resolve) { duplicateDialogState.resolve('keep'); duplicateDialogState.resolve = null; }
+            duplicateDialogState.show = false;
+          "
         >
           {{ t('instanceMods.keepBoth', 'Keep Both') }}
         </button>
         <button
           class="px-6 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors shadow-sm focus:ring-2 focus:ring-red-600/50 outline-none flex items-center gap-2"
-          @click="duplicateDialogState.show = false; duplicateDialogState.resolve?.('overwrite')"
+          @click="
+            if (duplicateDialogState.resolve) { duplicateDialogState.resolve('overwrite'); duplicateDialogState.resolve = null; }
+            duplicateDialogState.show = false;
+          "
         >
           <AlertTriangle class="h-4 w-4" />
           {{ t('instanceMods.overwrite', 'Overwrite') }}
