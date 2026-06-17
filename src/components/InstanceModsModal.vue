@@ -3,7 +3,7 @@ import { ref, watch, computed, onMounted, onUnmounted } from "vue";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { Package, Search, Download, Trash2, Loader2, UploadCloud, CheckCircle2, AlertTriangle } from "@lucide/vue";
-import { DialogContent, DialogTitle, DialogDescription, Dialog } from "./ui/dialog";
+import { DialogContent, DialogTitle, DialogDescription } from "./ui/dialog";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "./ui/alert-dialog";
 import { getErrorMessage } from "../utils/error";
 import { useI18n } from "vue-i18n";
