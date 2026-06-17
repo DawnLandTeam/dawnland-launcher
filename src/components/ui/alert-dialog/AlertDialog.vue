@@ -15,7 +15,7 @@ const emit = defineEmits<{
 <template>
   <Teleport to="body">
     <Transition name="alert-dialog">
-      <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div v-if="open" class="fixed inset-0 z-[200] flex items-center justify-center">
         <!-- Backdrop -->
         <div
           class="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto"
