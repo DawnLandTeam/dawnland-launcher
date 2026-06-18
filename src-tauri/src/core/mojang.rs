@@ -373,11 +373,7 @@ fn matches_current_arch(rule_arch: &str) -> bool {
 pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
     tracing::info!("Fetching vanilla versions from Mojang...");
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Dawnland-Launcher/1.0")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    let client = crate::core::utils::get_http_client().clone();
 
     let settings = crate::core::settings::get_launcher_settings_sync();
     let url = crate::core::settings::replace_download_url(
@@ -457,11 +453,7 @@ impl ExecutableTask for InstallVanillaTask {
         let _ = tokio::fs::create_dir_all(&version_dir).await;
         crate::core::launcher::InstanceConfig::ensure_installing(&version_dir, is_dependency.unwrap_or(false)).await;
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .user_agent("Dawnland-Launcher/1.0")
-            .build()
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to create HTTP client: {e}")))?;
+        let client = crate::core::utils::get_http_client().clone();
 
         // Step A: Download and save version JSON.
         tracing::info!("Downloading version JSON from: {}", version_json_url);

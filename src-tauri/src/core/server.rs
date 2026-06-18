@@ -77,7 +77,7 @@ pub async fn get_servers(
     let url = build_server_url("", Some(&query_string));
     tracing::debug!("Server API URL: {}", url);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .header("Accept", "application/json")
         .send()
@@ -113,7 +113,7 @@ pub async fn get_recommended_servers() -> Result<Vec<Server>, String> {
     let url = build_server_url("/recommended", None);
     tracing::debug!("Server API URL: {}", url);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .header("Accept", "application/json")
         .send()
@@ -142,7 +142,7 @@ pub async fn get_filter_options() -> Result<FilterOptionsResponse, String> {
     tracing::info!("Fetching server filter options");
 
     let url = build_server_url("/filter-options", None);
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .header("Accept", "application/json")
         .send()
@@ -176,7 +176,7 @@ pub async fn get_server(id: String) -> Result<Server, String> {
     tracing::info!("Fetching server {} from web backend", id);
 
     let url = build_server_url(&format!("/{}", id), None);
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .header("Accept", "application/json")
         .send()
@@ -210,7 +210,7 @@ pub async fn create_server(input: CreateServerInput) -> Result<Server, String> {
     tracing::info!("Creating server: {}", input.name);
 
     let url = build_server_url("", None);
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let body_str = serde_json::to_string(&input).unwrap_or_default();
     let response = crate::core::security::secure_request(&client, reqwest::Method::POST, &url, &body_str)
         .header("Content-Type", "application/json")
@@ -247,7 +247,7 @@ pub async fn update_server(id: String, input: UpdateServerInput) -> Result<Serve
     tracing::info!("Updating server: {}", id);
 
     let url = build_server_url(&format!("/{}", id), None);
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .put(&url)
         .header("Content-Type", "application/json")
@@ -285,7 +285,7 @@ pub async fn delete_server(id: String) -> Result<(), String> {
     tracing::info!("Deleting server: {}", id);
 
     let url = build_server_url(&format!("/{}", id), None);
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .delete(&url)
         .header("Accept", "application/json")
@@ -332,7 +332,7 @@ pub async fn get_pending_servers(
     let url = build_server_url("/pending", Some(&query_string));
     tracing::debug!("Pending servers URL: {}", url);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .get(&url)
         .header("Accept", "application/json")
@@ -362,7 +362,7 @@ pub async fn approve_server(id: String) -> Result<Server, String> {
     tracing::info!("Approving server: {}", id);
 
     let url = build_server_url(&format!("/{}/approve", id), None);
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .post(&url)
         .header("Accept", "application/json")
@@ -397,7 +397,7 @@ pub async fn reject_server(id: String) -> Result<(), String> {
     tracing::info!("Rejecting server: {}", id);
 
     let url = build_server_url(&format!("/{}/reject", id), None);
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .post(&url)
         .header("Accept", "application/json")
@@ -442,7 +442,7 @@ pub async fn upload_pack_file(
         .unwrap_or("modpack.zip");
 
     // Create multipart form
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let form = reqwest::multipart::Part::bytes(file_content)
         .file_name(file_name.to_string())
         .mime_str("application/zip")
@@ -487,7 +487,7 @@ pub async fn download_pack_file(
 
     let url = build_server_url(&format!("/{}/pack", server_id), None);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = crate::core::security::secure_request(&client, reqwest::Method::GET, &url, "")
         .send()
         .await

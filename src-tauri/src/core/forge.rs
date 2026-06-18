@@ -164,11 +164,7 @@ fn parse_forge_version(version: &str) -> Option<(String, String)> {
 
 /// Get all available Forge versions from Maven metadata
 async fn fetch_forge_versions(maven_base: &str) -> Result<Vec<String>, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Dawnland-Launcher/1.0")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = crate::core::utils::get_http_client().clone();
 
     // Try XML metadata first (more reliable for Maven)
     let url = format!("{}/maven-metadata.xml", maven_base);
@@ -242,11 +238,7 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
     );
 
     let url = format!("{}/minecraft/{}", BMCLAPI_FORGE_BASE, mc_version);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Dawnland-Launcher/1.0")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = crate::core::utils::get_http_client().clone();
 
     let response = match client.get(&url).send().await {
         Ok(resp) => resp,
@@ -299,7 +291,8 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
         tracing::info!("Fetching NeoForge loaders for Minecraft {} via Official Maven", mc_version);
         let versions = fetch_forge_versions(NEOFORGE_MAVEN).await.unwrap_or_default();
         
-        let mut filtered: Vec<String> = versions.into_iter().filter(|v| v.starts_with(&mc_version)).collect();
+        let prefix = format!("{}-", mc_version);
+        let mut filtered: Vec<String> = versions.into_iter().filter(|v| v.starts_with(&prefix)).collect();
         filtered.sort_by(|a, b| compare_versions(b, a));
 
         let loader_versions: Vec<LoaderVersion> = filtered
@@ -318,11 +311,7 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
 
     tracing::info!("Fetching NeoForge loaders for Minecraft {} via BMCLAPI", mc_version);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Dawnland-Launcher/1.0")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = crate::core::utils::get_http_client().clone();
 
     let url = format!("https://bmclapi2.bangbang93.com/neoforge/list/{}", mc_version);
 
@@ -353,7 +342,8 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
         for item in array {
             if let Some(obj) = item.as_object() {
                 if let Some(v) = obj.get("version").and_then(|v| v.as_str()) {
-                    if v.starts_with(&mc_version) {
+                    let prefix = format!("{}-", mc_version);
+                    if v.starts_with(&prefix) {
                         versions.push(v.to_string());
                     } else {
                         versions.push(format!("{}-{}", mc_version, v));
@@ -603,11 +593,7 @@ impl ExecutableTask for InstallForgeTask {
         FORGE_MAVEN
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .user_agent("Dawnland-Launcher/1.0")
-        .build()
-        .map_err(|e| TaskError::ExecutionError(format!("Failed to create HTTP client: {}", e)))?;
+    let client = crate::core::utils::get_http_client().clone();
 
     // ========== Step 1: Ensure base vanilla version is installed ==========
     let dawnland_cache = crate::core::mojang::get_dawnland_cache();

@@ -51,11 +51,7 @@ const FABRIC_META_BASE: &str = "https://meta.fabricmc.net/v2";
 pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, AppError> {
     tracing::info!("Fetching Fabric loaders for Minecraft {}", mc_version);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Dawnland-Launcher/1.0")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    let client = crate::core::utils::get_http_client();
 
     let settings = crate::core::settings::get_launcher_settings_sync();
     let url = format!("{}/versions/loader/{}", FABRIC_META_BASE, mc_version);
@@ -63,7 +59,6 @@ pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, 
 
     let response = client
         .get(&url)
-        .header("User-Agent", "Dawnland-Launcher/1.0")
         .send()
         .await
         .map_err(|e| format!("Failed to fetch Fabric loaders: {}", e))?;
@@ -145,11 +140,7 @@ impl ExecutableTask for InstallFabricTask {
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, is_dependency.unwrap_or(false)).await;
     
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .user_agent("Dawnland-Launcher/1.0")
-        .build()
-        .map_err(|e| TaskError::ExecutionError(format!("Failed to create HTTP client: {e}")))?;
+    let client = crate::core::utils::get_http_client();
 
     // Step 1: Check if base vanilla version is installed
     let dawnland_cache = crate::core::mojang::get_dawnland_cache();
@@ -185,7 +176,6 @@ impl ExecutableTask for InstallFabricTask {
         
         let manifest: serde_json::Value = client
             .get(&manifest_url)
-            .header("User-Agent", "Dawnland-Launcher/1.0")
             .send()
             .await
             .map_err(|e| TaskError::ExecutionError(format!("Failed to download version JSON: {}", e)))?
@@ -247,7 +237,6 @@ impl ExecutableTask for InstallFabricTask {
 
     let profile_json = client
         .get(&fabric_url)
-        .header("User-Agent", "Dawnland-Launcher/1.0")
         .send()
         .await
         .map_err(|e| TaskError::ExecutionError(format!("Failed to download Fabric profile: {}", e)))?
