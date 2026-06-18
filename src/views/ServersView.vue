@@ -261,21 +261,28 @@ watch(() => newServer.value.email, (newVal) => {
   }
 });
 
-watch(() => newServer.value.port, (newVal) => {
+watch(() => newServer.value.port, () => {
   if (ipSuccessMsg.value) {
     ipSuccessMsg.value = null;
   }
   if (ipErrorMsg.value) {
     ipErrorMsg.value = null;
   }
-  if (newVal !== undefined && newVal !== null) {
-    if (newVal > 65535) {
+});
+
+const onPortInput = (event: Event) => {
+  const target = event.target as HTMLInputElement;
+  const val = parseInt(target.value);
+  if (!isNaN(val)) {
+    if (val > 65535) {
       newServer.value.port = 65535;
-    } else if (newVal < 1 && newVal !== 0) { // allow 0 temporarily while typing if user clears it? Wait, type="number" might give '' or 0.
+      target.value = '65535';
+    } else if (val < 1 && val !== 0) {
       newServer.value.port = 1;
+      target.value = '1';
     }
   }
-});
+};
 
 const checkServerConnection = async () => {
   const ip = newServer.value.ip.trim();
@@ -473,7 +480,15 @@ const groupedVersions = computed(() => {
       case 'release':
         release.push(v);
         break;
-      // We intentionally ignore snapshot, old_beta, old_alpha
+      case 'snapshot':
+      case 'old_beta':
+      case 'old_alpha':
+        // We intentionally ignore snapshot, old_beta, old_alpha
+        break;
+      default:
+        // Default to release for unknown types so they aren't lost
+        release.push(v);
+        break;
     }
   }
   
@@ -1214,7 +1229,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
                 </div>
                 <div class="w-24 space-y-1">
                   <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.port') }}</label>
-                  <input v-model.number="newServer.port" @blur="checkServerConnection" type="number" min="1" max="65535" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <input v-model.number="newServer.port" @input="onPortInput" @blur="checkServerConnection" type="number" min="1" max="65535" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
                 </div>
               </div>
             </template>
