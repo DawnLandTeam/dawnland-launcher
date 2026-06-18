@@ -20,6 +20,18 @@ export interface TaskProgress {
   step: number;
   total_steps: number;
   detail: string;
+  speed: number;
+  remaining_files: number;
+  sub_tasks: SubTaskState[];
+}
+
+export interface SubTaskState {
+  key: string;
+  name: string;
+  status: TaskStatus;
+  current: number;
+  total: number;
+  weight: number;
 }
 
 export interface TaskState {

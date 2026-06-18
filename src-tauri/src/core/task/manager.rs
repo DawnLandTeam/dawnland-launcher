@@ -1,5 +1,6 @@
 use super::db::TaskDatabase;
 use super::state::{TaskError, TaskState, TaskStatus, TaskType};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -13,14 +14,76 @@ pub struct TaskContext {
     pub cancel_token: CancellationToken,
     pub manager: TaskManager,
     state: Arc<RwLock<TaskState>>,
+    pub sub_task_key: Option<String>,
 }
 
 impl TaskContext {
+    pub fn with_sub_task(&self, key: &str) -> Self {
+        let mut new_ctx = self.clone();
+        new_ctx.sub_task_key = Some(key.to_string());
+        new_ctx
+    }
+
+    pub async fn init_sub_tasks(&self, tasks: Vec<crate::core::task::state::SubTaskState>) {
+        let mut state = self.state.write().await;
+        state.progress.sub_tasks = tasks;
+        state.updated_at = chrono::Utc::now().timestamp();
+        self.manager.emit_state(&state).await;
+    }
+
+    pub async fn append_sub_tasks(&self, mut tasks: Vec<crate::core::task::state::SubTaskState>) {
+        let mut state = self.state.write().await;
+        for task in tasks.drain(..) {
+            if !state.progress.sub_tasks.iter().any(|s| s.key == task.key) {
+                state.progress.sub_tasks.push(task);
+            }
+        }
+        state.updated_at = chrono::Utc::now().timestamp();
+        self.manager.emit_state(&state).await;
+    }
+
     pub async fn update_progress(&self, current: u64, total: u64, detail: &str) {
         let mut state = self.state.write().await;
-        state.progress.current = current;
-        state.progress.total = total;
-        state.progress.detail = detail.to_string();
+        
+        if let Some(key) = &self.sub_task_key {
+            // Update the specific sub-task
+            if let Some(sub) = state.progress.sub_tasks.iter_mut().find(|s| &s.key == key) {
+                if sub.status == crate::core::task::state::SubTaskStatus::Pending {
+                    sub.status = crate::core::task::state::SubTaskStatus::Running;
+                }
+                sub.current = current;
+                sub.total = total;
+                if current == total && total > 0 {
+                    sub.status = crate::core::task::state::SubTaskStatus::Completed;
+                }
+            }
+            
+            // Recalculate global progress
+            let mut global_progress = 0.0;
+            for s in &state.progress.sub_tasks {
+                let p = if s.total > 0 { s.current as f64 / s.total as f64 } else { 
+                    if s.status == crate::core::task::state::SubTaskStatus::Completed { 1.0 } else { 0.0 }
+                };
+                global_progress += p * (s.weight as f64 / 100.0);
+            }
+            state.progress.current = (global_progress * 10000.0) as u64;
+            state.progress.total = 10000;
+            state.progress.detail = detail.to_string();
+        } else {
+            // Fallback for tasks without sub-tasks
+            state.progress.current = current;
+            state.progress.total = total;
+            state.progress.detail = detail.to_string();
+        }
+        
+        state.updated_at = chrono::Utc::now().timestamp();
+        self.manager.emit_state(&state).await;
+    }
+
+    pub async fn update_download_metrics(&self, speed: u64, remaining_files: u32) {
+        let mut state = self.state.write().await;
+        state.progress.speed = speed;
+        state.progress.remaining_files = remaining_files;
         state.updated_at = chrono::Utc::now().timestamp();
         self.manager.emit_state(&state).await;
     }
@@ -213,6 +276,7 @@ impl TaskManager {
             cancel_token,
             manager: manager.clone(),
             state: state_arc.clone(),
+            sub_task_key: None,
         };
 
         tokio::spawn(async move {

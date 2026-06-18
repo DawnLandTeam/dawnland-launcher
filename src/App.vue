@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
 import { useTaskStore } from "./composables/useTaskStore";
 import TaskCenter from "./components/TaskCenter.vue";
+import TaskDetailModal from "./components/TaskDetailModal.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
 import Toaster from "./components/Toaster.vue";
 import DeepLinkReceiveModal, { type DeepLinkData } from "./components/DeepLinkReceiveModal.vue";
@@ -225,6 +226,7 @@ onUnmounted(() => {
   <MainLayout />
   <UpdaterModal v-model:open="isUpdateModalOpen" :update-info="updateInfo" />
   <TaskCenter />
+  <TaskDetailModal />
   <NotificationCenter />
   <DeepLinkReceiveModal v-model:open="showDeepLinkModal" :data="incomingLinkData" @confirm="handleDeepLinkConfirm" />
   <Toaster />

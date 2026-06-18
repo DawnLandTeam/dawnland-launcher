@@ -10,6 +10,8 @@ import i18n from '../i18n';
 const tasks = ref<TaskState[]>([]);
 const isInitialized = ref(false);
 const isTaskCenterOpen = ref(false);
+const isTaskDetailOpen = ref(false);
+const selectedTaskId = ref<string | null>(null);
 
 export function useTaskStore() {
   // Init task history from backend
@@ -154,6 +156,19 @@ export function useTaskStore() {
 
   function toggleTaskCenter() {
     isTaskCenterOpen.value = !isTaskCenterOpen.value;
+    if (!isTaskCenterOpen.value) {
+      closeTaskDetail();
+    }
+  }
+
+  function openTaskDetail(id: string) {
+    selectedTaskId.value = id;
+    isTaskDetailOpen.value = true;
+  }
+
+  function closeTaskDetail() {
+    selectedTaskId.value = null;
+    isTaskDetailOpen.value = false;
   }
 
   return {
@@ -162,10 +177,14 @@ export function useTaskStore() {
     hasActiveTasks,
     activeTaskCount,
     isTaskCenterOpen,
+    isTaskDetailOpen,
+    selectedTaskId,
     init,
     cancelTask,
     retryTask,
     clearHistory,
     toggleTaskCenter,
+    openTaskDetail,
+    closeTaskDetail,
   };
 }
