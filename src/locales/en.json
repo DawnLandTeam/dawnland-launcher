@@ -269,7 +269,9 @@
       "downloadSourceTitle": "Download Source",
       "downloadSourceDesc": "Select the download source for Minecraft assets, libraries, and mod loaders.",
       "downloadSourceOfficial": "Official",
-      "downloadSourceBmclapi": "BMCLAPI"
+      "downloadSourceBmclapi": "BMCLAPI",
+      "concurrentDownloadsTitle": "Max Concurrent Downloads",
+      "concurrentDownloadsDesc": "Maximum number of simultaneous download tasks allowed"
     },
     "java": {
       "title": "Java Management",
@@ -493,11 +495,25 @@
     "failedDesc": "Task encountered an error. The incomplete instance has been removed safely.",
     "cancelledTitle": "{name} Cancelled",
     "cancelledDesc": "Task was cancelled. The incomplete instance has been removed safely.",
+    "cancelledError": "Task cancelled",
     "completedTitle": "{name} Completed",
     "completedDesc": "Task finished successfully!",
     "startedTitle": "{name} Started",
     "runningTitle": "Running: {name}",
     "submitted": "Submitted to task queue",
-    "checkProgress": "You can check the progress in the task center"
+    "checkProgress": "You can check the progress in the task center",
+    "subTasksCompleted": "{completed} / {total} sub-tasks completed",
+    "noSubTasks": "No detailed sub-tasks",
+    "installing": "Installing...",
+    "cancel": "Cancel",
+    "sub": {
+      "resolve_loader": "Fetch installer",
+      "download_loader_libs": "Download loader libraries",
+      "install_loader": "Run installer",
+      "download_vanilla_json": "Fetch vanilla configuration",
+      "download_vanilla_libs": "Download library files",
+      "download_vanilla_assets": "Download asset files",
+      "download_vanilla_client": "Download core files"
+    }
   }
 }

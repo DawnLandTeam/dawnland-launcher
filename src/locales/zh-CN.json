@@ -269,7 +269,9 @@
       "downloadSourceTitle": "下载源",
       "downloadSourceDesc": "选择 Minecraft 资源、依赖库和加载器的下载源。",
       "downloadSourceOfficial": "官方源 (Official)",
-      "downloadSourceBmclapi": "BMCLAPI"
+      "downloadSourceBmclapi": "BMCLAPI",
+      "concurrentDownloadsTitle": "最大并发下载数",
+      "concurrentDownloadsDesc": "允许的最大同时下载任务数量"
     },
     "java": {
       "title": "Java 管理",
@@ -493,11 +495,25 @@
     "failedDesc": "由于发生错误，该任务已失败，尚未完成的实例已被安全移除。",
     "cancelledTitle": "{name} 取消",
     "cancelledDesc": "该任务已被您取消，尚未完成的实例已被安全移除。",
+    "cancelledError": "任务已取消",
     "completedTitle": "{name} 完成",
     "completedDesc": "任务已成功完成！",
     "startedTitle": "{name} 开始",
     "runningTitle": "正在执行: {name}",
     "submitted": "已提交至任务队列",
-    "checkProgress": "您可以在任务中心查看进度"
+    "checkProgress": "您可以在任务中心查看进度",
+    "subTasksCompleted": "{completed} / {total} 个子任务已完成",
+    "noSubTasks": "暂无详细子任务",
+    "installing": "正在安装...",
+    "cancel": "取消任务",
+    "sub": {
+      "resolve_loader": "获取安装文件",
+      "download_loader_libs": "下载加载器支持库",
+      "install_loader": "运行安装程序",
+      "download_vanilla_json": "获取原版配置",
+      "download_vanilla_libs": "下载支持库文件",
+      "download_vanilla_assets": "下载资源文件",
+      "download_vanilla_client": "下载核心文件"
+    }
   }
 }

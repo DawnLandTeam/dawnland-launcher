@@ -291,7 +291,17 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
         tracing::info!("Fetching NeoForge loaders for Minecraft {} via Official Maven", mc_version);
         let versions = fetch_forge_versions(NEOFORGE_MAVEN).await.unwrap_or_default();
         
-        let prefix = format!("{}-", mc_version);
+        let mc_parts: Vec<&str> = mc_version.split('.').collect();
+        let prefix = if mc_parts.len() >= 2 {
+            let minor = mc_parts[1];
+            if mc_parts.len() >= 3 {
+                format!("{}.{}.", minor, mc_parts[2])
+            } else {
+                format!("{}.0.", minor)
+            }
+        } else {
+            "".to_string()
+        };
         let mut filtered: Vec<String> = versions.into_iter().filter(|v| v.starts_with(&prefix)).collect();
         filtered.sort_by(|a, b| compare_versions(b, a));
 
@@ -342,12 +352,7 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
         for item in array {
             if let Some(obj) = item.as_object() {
                 if let Some(v) = obj.get("version").and_then(|v| v.as_str()) {
-                    let prefix = format!("{}-", mc_version);
-                    if v.starts_with(&prefix) {
-                        versions.push(v.to_string());
-                    } else {
-                        versions.push(format!("{}-{}", mc_version, v));
-                    }
+                    versions.push(v.to_string());
                 }
             }
         }
@@ -563,6 +568,39 @@ pub struct InstallForgeTask {
     pub options: InstallForgeOptions,
 }
 
+impl InstallForgeTask {
+    pub fn get_sub_tasks() -> Vec<crate::core::task::state::SubTaskState> {
+        let mut tasks = crate::core::mojang::InstallVanillaTask::get_sub_tasks();
+        tasks.extend(vec![
+            crate::core::task::state::SubTaskState {
+                key: "resolve_loader".to_string(),
+                name: "Fetch installer".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 5,
+            },
+            crate::core::task::state::SubTaskState {
+                key: "download_loader_libs".to_string(),
+                name: "Download loader libraries".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 20,
+            },
+            crate::core::task::state::SubTaskState {
+                key: "install_loader".to_string(),
+                name: "Run installer".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 25,
+            },
+        ]);
+        tasks
+    }
+}
+
 #[async_trait::async_trait]
 impl ExecutableTask for InstallForgeTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
@@ -579,6 +617,13 @@ impl ExecutableTask for InstallForgeTask {
         loader_version
     );
 
+    let is_dep = is_dependency.unwrap_or(false);
+
+    // Define sub-tasks if running standalone
+    if !is_dep && ctx.sub_task_key.is_none() {
+        ctx.init_sub_tasks(Self::get_sub_tasks()).await;
+    }
+
     let base_dir = get_minecraft_base();
     let instance_dir = if is_dependency.unwrap_or(false) {
         crate::core::mojang::get_dawnland_cache().join(custom_instance_name)
@@ -589,8 +634,19 @@ impl ExecutableTask for InstallForgeTask {
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, is_dependency.unwrap_or(false)).await;
     
+    let mc_version_parsed = mc_version.split('.')
+        .map(|s| s.parse::<u32>().unwrap_or(0))
+        .collect::<Vec<u32>>();
+    let is_legacy_neoforge = mc_version_parsed.len() >= 2 && 
+        mc_version_parsed[0] == 1 && 
+        (mc_version_parsed[1] < 20 || (mc_version_parsed[1] == 20 && mc_version_parsed.get(2).copied().unwrap_or(0) < 4));
+        
     let maven_base = if loader_type == "neoforge" {
-        NEOFORGE_MAVEN
+        if is_legacy_neoforge {
+            "https://maven.neoforged.net/releases/net/neoforged/forge"
+        } else {
+            NEOFORGE_MAVEN
+        }
     } else {
         FORGE_MAVEN
     };
@@ -620,8 +676,7 @@ impl ExecutableTask for InstallForgeTask {
             mc_version
         );
 
-        ctx.update_progress(0, 0, "Installing base Minecraft..."
-            ).await;
+        ctx.update_progress(0, 0, "Installing base Minecraft...").await;
 
         // Get version JSON URL from Mojang
         let manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
@@ -658,6 +713,10 @@ impl ExecutableTask for InstallForgeTask {
         tracing::info!("Base vanilla {} installed successfully", mc_version);
     } else {
         tracing::info!("Base Minecraft {} already installed, skipping", mc_version);
+        ctx.with_sub_task("download_vanilla_json").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_vanilla_libs").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_vanilla_assets").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_vanilla_client").update_progress(100, 100, "Skipped (Already exists)").await;
     }
 
     
@@ -665,18 +724,22 @@ impl ExecutableTask for InstallForgeTask {
             return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
         }
 
-    let is_dep = self.options.is_dependency.unwrap_or(false);
-
+    let ctx_resolve = ctx.with_sub_task("resolve_loader");
+    
     if !is_dep {
         ctx.set_total_steps(3).await;
         // ========== Step 2: Download and extract Forge installer ==========
-        ctx.next_step("Downloading Forge installer...").await;
+        ctx_resolve.update_progress(0, 100, "Downloading Forge installer...").await;
     } else {
-        ctx.update_progress(0, 0, "Downloading Forge installer...").await;
+        ctx_resolve.update_progress(0, 100, "Downloading Forge installer...").await;
     }
 
     let prefix = if loader_type == "neoforge" {
-        "neoforge"
+        if is_legacy_neoforge {
+            "forge"
+        } else {
+            "neoforge"
+        }
     } else {
         "forge"
     };
@@ -767,12 +830,14 @@ impl ExecutableTask for InstallForgeTask {
         .to_string();
     tracing::info!("Parsed Forge version JSON, original id: {:?}", original_id);
 
-    
         if ctx.is_cancelled() {
             return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
         }
+        
+        ctx_resolve.update_progress(100, 100, "Installer resolved").await;
         // ========== Step 3: Download Forge libraries ==========
-    ctx.update_progress(0, 0, "Complete").await;
+    let ctx_libs = ctx.with_sub_task("download_loader_libs");
+    ctx_libs.update_progress(0, 0, "Resolving Forge libraries").await;
 
     let mut tasks: Vec<crate::downloader::DownloadTask> = Vec::new();
 
@@ -836,7 +901,7 @@ impl ExecutableTask for InstallForgeTask {
 
 
     if !tasks.is_empty() {
-        if let Err(e) = crate::downloader::run_batch_download_task(tasks, ctx.clone()).await {
+        if let Err(e) = crate::downloader::run_batch_download_task(tasks, ctx_libs).await {
             tracing::warn!("Installation failed during batch download, cleaning up...");
             let version_dir = instance_dir.clone();
             let _ = tokio::fs::remove_dir_all(&version_dir).await;
@@ -851,15 +916,16 @@ impl ExecutableTask for InstallForgeTask {
         return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
     }
 
-    
         if ctx.is_cancelled() {
             return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
         }
+        
+        let ctx_install = ctx.with_sub_task("install_loader");
         // ========== Step 3.5: Run Forge Installer Processors ==========
     if !is_dep {
-        ctx.next_step("Running Forge processors (this may take a while)...").await;
+        ctx_install.update_progress(0, 100, "Running Forge processors (this may take a while)...").await;
     } else {
-        ctx.update_progress(0, 0, "Running Forge processors (this may take a while)...").await;
+        ctx_install.update_progress(0, 100, "Running Forge processors (this may take a while)...").await;
     }
 
     tracing::info!("Running Forge installer processors...");
@@ -915,7 +981,7 @@ impl ExecutableTask for InstallForgeTask {
     let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
     let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
 
-    let ctx_clone1 = ctx.clone();
+    let ctx_clone1 = ctx_install.clone();
     let stdout_task = tokio::spawn(async move {
         while let Ok(Some(line)) = stdout_reader.next_line().await {
             tracing::debug!("Forge stdout: {}", line);
@@ -924,11 +990,11 @@ impl ExecutableTask for InstallForgeTask {
             } else {
                 line
             };
-            ctx_clone1.update_progress(0, 0, &display_line).await;
+            ctx_clone1.update_progress(0, 100, &display_line).await;
         }
     });
 
-    let ctx_clone2 = ctx.clone();
+    let ctx_clone2 = ctx_install.clone();
     let stderr_task = tokio::spawn(async move {
         while let Ok(Some(line)) = stderr_reader.next_line().await {
             tracing::warn!("Forge stderr: {}", line);
@@ -937,7 +1003,7 @@ impl ExecutableTask for InstallForgeTask {
             } else {
                 line
             };
-            ctx_clone2.update_progress(0, 0, &display_line).await;
+            ctx_clone2.update_progress(0, 100, &display_line).await;
         }
     });
 
@@ -963,6 +1029,7 @@ impl ExecutableTask for InstallForgeTask {
         return Err(TaskError::ExecutionError(err_msg));
     } else {
         tracing::info!("Forge installer processors completed successfully");
+        ctx_install.update_progress(100, 100, "Forge installer processors completed").await;
     }
 
     

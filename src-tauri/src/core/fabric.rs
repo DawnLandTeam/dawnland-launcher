@@ -116,6 +116,31 @@ pub struct InstallFabricTask {
     pub options: InstallFabricOptions,
 }
 
+impl InstallFabricTask {
+    pub fn get_sub_tasks() -> Vec<crate::core::task::state::SubTaskState> {
+        let mut tasks = crate::core::mojang::InstallVanillaTask::get_sub_tasks();
+        tasks.extend(vec![
+            crate::core::task::state::SubTaskState {
+                key: "resolve_loader".to_string(),
+                name: "Fetch installer".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 5,
+            },
+            crate::core::task::state::SubTaskState {
+                key: "download_loader_libs".to_string(),
+                name: "Download loader libraries".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 45,
+            },
+        ]);
+        tasks
+    }
+}
+
 #[async_trait::async_trait]
 impl ExecutableTask for InstallFabricTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
@@ -129,6 +154,13 @@ impl ExecutableTask for InstallFabricTask {
         mc_version,
         fabric_version
     );
+
+    let is_dep = is_dependency.unwrap_or(false);
+
+    // Define sub-tasks if running standalone
+    if !is_dep && ctx.sub_task_key.is_none() {
+        ctx.init_sub_tasks(Self::get_sub_tasks()).await;
+    }
 
     let base_dir = get_minecraft_base();
     let instance_dir = if is_dependency.unwrap_or(false) {
@@ -166,8 +198,7 @@ impl ExecutableTask for InstallFabricTask {
             mc_version
         );
 
-        ctx.update_progress(0, 0, "Fetching Minecraft version manifest..."
-            ).await;
+        ctx.update_progress(0, 0, "Fetching Minecraft version manifest...").await;
 
         // Get version JSON URL from Mojang
         let manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
@@ -208,6 +239,10 @@ impl ExecutableTask for InstallFabricTask {
         tracing::info!("Base vanilla {} installed successfully", mc_version);
     } else {
         tracing::info!("Base Minecraft {} already installed, skipping", mc_version);
+        ctx.with_sub_task("download_vanilla_json").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_vanilla_libs").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_vanilla_assets").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_vanilla_client").update_progress(100, 100, "Skipped (Already exists)").await;
     }
 
     
@@ -215,14 +250,14 @@ impl ExecutableTask for InstallFabricTask {
             return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
         }
 
-    let is_dep = self.options.is_dependency.unwrap_or(false);
-
+    let ctx_resolve = ctx.with_sub_task("resolve_loader");
+    
     if !is_dep {
         ctx.set_total_steps(2).await;
         // Step 2: Install Fabric profile
-        ctx.next_step("Fetching Fabric profile...").await;
+        ctx_resolve.update_progress(0, 100, "Fetching Fabric profile...").await;
     } else {
-        ctx.update_progress(0, 0, "Fetching Fabric profile...").await;
+        ctx_resolve.update_progress(0, 100, "Fetching Fabric profile...").await;
     }
 
     // Fetch Fabric profile JSON
@@ -301,15 +336,19 @@ impl ExecutableTask for InstallFabricTask {
 
     tracing::info!("Saved Fabric profile to: {:?}", version_json_path);
 
-    
         if ctx.is_cancelled() {
             return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
         }
+        
+    ctx_resolve.update_progress(100, 100, "Fabric profile resolved").await;
+
     // Step 3: Download Fabric libraries
+    let ctx_libs = ctx.with_sub_task("download_loader_libs");
+    
     if !is_dep {
-        ctx.next_step("Resolving Fabric libraries...").await;
+        ctx_libs.update_progress(0, 0, "Resolving Fabric libraries...").await;
     } else {
-        ctx.update_progress(0, 0, "Resolving Fabric libraries...").await;
+        ctx_libs.update_progress(0, 0, "Resolving Fabric libraries...").await;
     }
 
     let libraries: &[serde_json::Value] = match profile.get("libraries").and_then(|l| l.as_array())
@@ -347,7 +386,7 @@ impl ExecutableTask for InstallFabricTask {
     
 
     if !tasks.is_empty() {
-        if let Err(e) = crate::downloader::run_batch_download_task(tasks, ctx.clone()).await {
+        if let Err(e) = crate::downloader::run_batch_download_task(tasks, ctx_libs).await {
             tracing::warn!("Installation failed during batch download, cleaning up...");
             let version_dir = instance_dir.clone();
             let _ = tokio::fs::remove_dir_all(&version_dir).await;
@@ -402,7 +441,7 @@ impl ExecutableTask for InstallFabricTask {
     tracing::info!("Created instance config at: {:?}", config_path);
 
     // Emit complete
-    ctx.update_progress(0, 0, "Complete").await;
+    ctx.update_progress(100, 100, "Complete").await;
 
     tracing::info!(
         "Fabric instance '{}' installed successfully!",

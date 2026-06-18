@@ -16,6 +16,9 @@ use crate::error::{AppError, DawnlandError};
 // TASKS
 // ==========================================
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct SubTasksInitialized;
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ModpackResumeContext {
     mc_version: String,
@@ -35,6 +38,45 @@ pub struct InstallModpackOptions {
 
 pub struct InstallModpackTask {
     pub options: InstallModpackOptions,
+}
+
+impl InstallModpackTask {
+    pub fn get_sub_tasks() -> Vec<crate::core::task::state::SubTaskState> {
+        vec![
+            crate::core::task::state::SubTaskState {
+                key: "extract_modpack".to_string(),
+                name: "解压整合包文件".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 5,
+            },
+            crate::core::task::state::SubTaskState {
+                key: "resolve_mods".to_string(),
+                name: "解析 Mod 下载信息".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 5,
+            },
+            crate::core::task::state::SubTaskState {
+                key: "download_mods".to_string(),
+                name: "下载 Mod".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 50,
+            },
+            crate::core::task::state::SubTaskState {
+                key: "apply_overrides".to_string(),
+                name: "应用 Overrides".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 5,
+            },
+        ]
+    }
 }
 
 #[async_trait::async_trait]
@@ -69,22 +111,28 @@ impl ExecutableTask for InstallModpackTask {
             };
         }
 
+        if ctx.get_context_data::<SubTasksInitialized>().await.is_none() {
+            ctx.init_sub_tasks(Self::get_sub_tasks()).await;
+            ctx.set_context_data(&SubTasksInitialized).await;
+        }
         let (mc_version, loader, tasks, overrides_folder, modpack_version, modpack_type_str) = if let Some(context) = ctx.get_context_data::<ModpackResumeContext>().await {
             tracing::info!("Found resume context for task {}, skipping extraction and resolution", ctx.id);
             (context.mc_version, context.loader, context.tasks, context.overrides_folder, context.modpack_version, context.modpack_type)
         } else {
+            let ctx_extract = ctx.with_sub_task("extract_modpack");
             // 1. Emit phase 1: Extracting
-            ctx.set_total_steps(7).await;
-            ctx.next_step("Extracting modpack archive...").await;
+            ctx_extract.update_progress(0, 100, "Extracting modpack archive...").await;
 
             let zip = PathBuf::from(zip_path);
             let temp = temp_dir.clone();
             extract_zip(zip, temp).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
+            ctx_extract.update_progress(100, 100, "Extract complete").await;
             check_cancel!();
 
             // 2. Parse Manifest
-            ctx.next_step("Reading modpack manifest...").await;
+            let ctx_resolve = ctx.with_sub_task("resolve_mods");
+            ctx_resolve.update_progress(0, 100, "Reading modpack manifest...").await;
 
             let modpack = parse_modpack_manifest(&temp_dir).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
@@ -95,7 +143,7 @@ impl ExecutableTask for InstallModpackTask {
 
             let (mc_version, loader, tasks, overrides_folder, modpack_version) = match modpack {
             ModpackType::CurseForge(manifest) => {
-                ctx.next_step("Resolving CurseForge download links...").await;
+                ctx_resolve.update_progress(0, 100, "Resolving CurseForge download links...").await;
 
                 let mc_version = manifest.minecraft.version.clone();
                 let loader = manifest
@@ -185,69 +233,24 @@ impl ExecutableTask for InstallModpackTask {
             };
             ctx.set_context_data(&context).await;
 
+            ctx_resolve.update_progress(100, 100, "Manifest resolved").await;
             (mc_version, loader, tasks, overrides_folder, modpack_version, modpack_type_str.to_string())
         };
 
         // 3. Setup Instance
-        ctx.set_step(4, 7, &format!("Preparing instance {}...", instance_name)).await;
-
-        let actual_loader = ensure_dependencies(&mc_version, &loader, ctx.clone()).await?;
+        let ctx_vanilla_forge = ctx.clone();
+        let mc_version_clone = mc_version.clone();
+        let loader_clone = loader.clone();
+        
+        let actual_loader_task = tokio::spawn(async move {
+            ensure_dependencies(&mc_version_clone, &loader_clone, ctx_vanilla_forge).await
+        });
 
         check_cancel!();
 
         tokio::fs::create_dir_all(&instance_dir).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
-        let inherits_from = actual_loader;
 
-        let mut version_json_map = serde_json::Map::new();
-        version_json_map.insert("id".to_string(), serde_json::json!(instance_name));
-        version_json_map.insert("type".to_string(), serde_json::json!("release"));
-        version_json_map.insert("modpackVersion".to_string(), serde_json::json!(modpack_version));
-        version_json_map.insert("modpackType".to_string(), serde_json::json!(modpack_type_str));
-        version_json_map.insert("modpackProjectId".to_string(), serde_json::json!(project_id));
-
-        let settings = crate::core::settings::load_launcher_settings().await.unwrap_or_default();
-        if !settings.enable_instance_inheritance {
-            crate::core::utils::flatten_instance_json_recursive(&inherits_from, &mut version_json_map).await.map_err(|e| TaskError::ExecutionError(e))?;
-            version_json_map.insert("clientVersion".to_string(), serde_json::json!(mc_version));
-            // Copy the vanilla jar to isolated sandbox
-            let dawnland_cache = crate::core::mojang::get_dawnland_cache();
-            let source_jar = dawnland_cache.join(&mc_version).join(format!("{}.jar", mc_version));
-            if source_jar.exists() {
-                let target_jar = instance_dir.join(format!("{}.jar", instance_name));
-                let _ = tokio::fs::copy(&source_jar, &target_jar).await;
-            }
-        } else {
-            version_json_map.insert("inheritsFrom".to_string(), serde_json::json!(inherits_from));
-            
-            // Copy from cache to versions
-            let dawnland_cache = crate::core::mojang::get_dawnland_cache();
-            let versions_dir = base_dir.join("versions");
-            
-            // Vanilla
-            let vanilla_src = dawnland_cache.join(&mc_version);
-            let vanilla_dest = versions_dir.join(&mc_version);
-            if vanilla_src.exists() && !vanilla_dest.exists() {
-                let _ = crate::core::utils::copy_dir_all(&vanilla_src, &vanilla_dest).await;
-            }
-            
-            // Loader
-            if inherits_from != mc_version {
-                let loader_src = dawnland_cache.join(&inherits_from);
-                let loader_dest = versions_dir.join(&inherits_from);
-                if loader_src.exists() && !loader_dest.exists() {
-                    let _ = crate::core::utils::copy_dir_all(&loader_src, &loader_dest).await;
-                }
-            }
-        }
-
-        let version_json = serde_json::Value::Object(version_json_map);
-
-        std::fs::write(
-            instance_dir.join(format!("{}.json", instance_name)),
-            serde_json::to_string_pretty(&version_json).unwrap(),
-        )
-        .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
         // Smart Cleanup if is_update is true
         let modpack_files_path = instance_dir.join("modpack_files.json");
@@ -262,7 +265,6 @@ impl ExecutableTask for InstallModpackTask {
         }
 
         if is_update {
-            ctx.set_step(5, 7, "Cleaning up old modpack files...").await;
 
             if modpack_files_path.exists() {
                 if let Ok(content) = tokio::fs::read_to_string(&modpack_files_path).await {
@@ -307,23 +309,88 @@ impl ExecutableTask for InstallModpackTask {
 
         // 4. Batch Download Mods
         check_cancel!();
-        ctx.set_step(6, 7, "Downloading mod files...").await;
 
-        if !tasks.is_empty() {
-            if let Err(e) = run_batch_download_task(tasks, ctx.clone()).await {
-                if ctx.is_cancelled() {
-                    tracing::warn!("Modpack installation cancelled during batch download, cleaning up...");
-                    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-                    let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-                    return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+        let ctx_download_mods = ctx.with_sub_task("download_mods");
+
+        let download_task = tokio::spawn(async move {
+            if !tasks.is_empty() {
+                if let Err(e) = run_batch_download_task(tasks, ctx_download_mods.clone()).await {
+                    if ctx_download_mods.is_cancelled() {
+                        tracing::warn!("Modpack installation cancelled during batch download, cleaning up...");
+                        return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+                    }
+                    tracing::warn!("Installation failed during batch download. Temp dir preserved for resume.");
+                    return Err(TaskError::ExecutionError(e));
                 }
-                tracing::warn!("Installation failed during batch download. Temp dir preserved for resume.");
-                return Err(TaskError::ExecutionError(e));
+            }
+            Ok(())
+        });
+
+        // Wait for both loader installation and mods download to complete
+        let (actual_loader_res, download_res) = tokio::join!(actual_loader_task, download_task);
+        
+        check_cancel!();
+        
+        let actual_loader = actual_loader_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
+        download_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
+        
+        // Setup Instance JSON based on the resolved loader
+        let inherits_from = actual_loader;
+
+        let mut version_json_map = serde_json::Map::new();
+        version_json_map.insert("id".to_string(), serde_json::json!(instance_name));
+        version_json_map.insert("type".to_string(), serde_json::json!("release"));
+        version_json_map.insert("modpackVersion".to_string(), serde_json::json!(modpack_version));
+        version_json_map.insert("modpackType".to_string(), serde_json::json!(modpack_type_str));
+        version_json_map.insert("modpackProjectId".to_string(), serde_json::json!(project_id));
+
+        let settings = crate::core::settings::get_launcher_settings_sync();
+        if !settings.enable_instance_inheritance {
+            crate::core::utils::flatten_instance_json_recursive(&inherits_from, &mut version_json_map).await.map_err(|e| TaskError::ExecutionError(e))?;
+            version_json_map.insert("clientVersion".to_string(), serde_json::json!(mc_version));
+            // Copy the vanilla jar to isolated sandbox
+            let dawnland_cache = crate::core::mojang::get_dawnland_cache();
+            let source_jar = dawnland_cache.join(&mc_version).join(format!("{}.jar", mc_version));
+            if source_jar.exists() {
+                let target_jar = instance_dir.join(format!("{}.jar", instance_name));
+                let _ = tokio::fs::copy(&source_jar, &target_jar).await;
+            }
+        } else {
+            version_json_map.insert("inheritsFrom".to_string(), serde_json::json!(inherits_from));
+            
+            // Copy from cache to versions
+            let dawnland_cache = crate::core::mojang::get_dawnland_cache();
+            let versions_dir = base_dir.join("versions");
+            
+            // Vanilla
+            let vanilla_src = dawnland_cache.join(&mc_version);
+            let vanilla_dest = versions_dir.join(&mc_version);
+            if vanilla_src.exists() && !vanilla_dest.exists() {
+                let _ = crate::core::utils::copy_dir_all(&vanilla_src, &vanilla_dest).await;
+            }
+            
+            // Loader
+            if inherits_from != mc_version {
+                let loader_src = dawnland_cache.join(&inherits_from);
+                let loader_dest = versions_dir.join(&inherits_from);
+                if loader_src.exists() && !loader_dest.exists() {
+                    let _ = crate::core::utils::copy_dir_all(&loader_src, &loader_dest).await;
+                }
             }
         }
 
+        let version_json = serde_json::Value::Object(version_json_map);
+
+        std::fs::write(
+            instance_dir.join(format!("{}.json", instance_name)),
+            serde_json::to_string_pretty(&version_json).unwrap(),
+        )
+        .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+
+
         // 5. Apply Overrides
-        ctx.set_step(7, 7, "Applying overrides...").await;
+        let ctx_overrides = ctx.with_sub_task("apply_overrides");
+        ctx_overrides.update_progress(0, 100, "Applying overrides...").await;
         
         let overrides_dir = temp_dir.join(&overrides_folder);
         if overrides_dir.exists() {
@@ -332,9 +399,9 @@ impl ExecutableTask for InstallModpackTask {
             let folder = overrides_folder.clone();
             copy_overrides(&src, &dst, &folder).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
         }
+        ctx_overrides.update_progress(100, 100, "Overrides applied").await;
 
         // 6. Cleanup Temp
-        ctx.set_step(7, 7, "Cleaning up temp files...").await;
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
         let config_path = instance_dir.join("dlml.json");
@@ -347,7 +414,6 @@ impl ExecutableTask for InstallModpackTask {
             }
         }
 
-        ctx.set_step(7, 7, "Complete").await;
         Ok(())
     }
 }
@@ -385,9 +451,25 @@ impl ExecutableTask for InstallOnlineModpackTask {
         
         let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp");
         let _ = tokio::fs::create_dir_all(&temp_dir).await;
+        let mut sub_tasks = vec![
+            crate::core::task::state::SubTaskState {
+                key: "download_modpack_zip".to_string(),
+                name: "下载整合包文件".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 30,
+            },
+        ];
+        sub_tasks.extend(InstallModpackTask::get_sub_tasks());
+
+        ctx.init_sub_tasks(sub_tasks).await;
+        ctx.set_context_data(&SubTasksInitialized).await;
+
         let temp_zip_path = temp_dir.join(format!("{}.zip", ctx.id));
 
-        ctx.update_progress(0, 0, "Downloading modpack archive...").await;
+        let ctx_zip = ctx.with_sub_task("download_modpack_zip");
+        ctx_zip.update_progress(0, 100, "Downloading modpack archive...").await;
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
@@ -454,15 +536,15 @@ impl ExecutableTask for InstallOnlineModpackTask {
                 let progress = (downloaded as f64 / total_size as f64) * 100.0;
                 let downloaded_mb = downloaded as f64 / 1024.0 / 1024.0;
                 let total_mb = total_size as f64 / 1024.0 / 1024.0;
-                let speed_mb = current_speed / 1024.0 / 1024.0;
 
-                ctx.update_progress(downloaded, total_size, &format!("Downloading archive... {:.1} MB / {:.1} MB ({:.1} MB/s)", downloaded_mb, total_mb, speed_mb)).await;
+                ctx_zip.update_progress(downloaded, total_size, &format!("Downloading archive... {:.1} MB / {:.1} MB", downloaded_mb, total_mb)).await;
+                ctx_zip.update_download_metrics(current_speed as u64, 1).await;
                 last_emit_time = tokio::time::Instant::now();
             }
         }
         } // End of skip_download check
 
-        ctx.update_progress(0, 0, "Download complete. Starting installation...").await;
+        ctx_zip.update_progress(100, 100, "Download complete. Starting installation...").await;
 
         // Instantiate internal modpack task
         let modpack_task = InstallModpackTask {
@@ -521,8 +603,16 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
                     is_dependency: Some(true),
                 },
             };
+            ctx.append_sub_tasks(crate::core::mojang::InstallVanillaTask::get_sub_tasks()).await;
             vanilla_task.execute(ctx.clone()).await?;
+        } else {
+            ctx.append_sub_tasks(crate::core::mojang::InstallVanillaTask::get_sub_tasks()).await;
+            ctx.with_sub_task("download_vanilla_json").update_progress(100, 100, "Skipped (Already exists)").await;
+            ctx.with_sub_task("download_vanilla_libs").update_progress(100, 100, "Skipped (Already exists)").await;
+            ctx.with_sub_task("download_vanilla_assets").update_progress(100, 100, "Skipped (Already exists)").await;
+            ctx.with_sub_task("download_vanilla_client").update_progress(100, 100, "Skipped (Already exists)").await;
         }
+
         return Ok(mc_version.to_string());
     }
 
@@ -540,6 +630,7 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
         ctx.update_progress(0, 0, &format!("Installing dependency {}...", custom_instance_name)).await;
 
         if loader.starts_with("fabric-") {
+            ctx.append_sub_tasks(crate::core::fabric::InstallFabricTask::get_sub_tasks()).await;
             let loader_version = loader.strip_prefix("fabric-").unwrap().to_string();
             let fabric_task = InstallFabricTask {
                 options: InstallFabricOptions {
@@ -551,6 +642,7 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
             };
             fabric_task.execute(ctx.clone()).await?;
         } else if loader.starts_with("forge-") {
+            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks()).await;
             let loader_version = loader.strip_prefix("forge-").unwrap().to_string();
             let forge_task = InstallForgeTask {
                 options: InstallForgeOptions {
@@ -563,6 +655,7 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
             };
             forge_task.execute(ctx.clone()).await?;
         } else if loader.starts_with("neoforge-") {
+            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks()).await;
             let loader_version = loader.strip_prefix("neoforge-").unwrap().to_string();
             let forge_task = InstallForgeTask {
                 options: InstallForgeOptions {
@@ -576,6 +669,24 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
             forge_task.execute(ctx.clone()).await?;
         } else {
             return Err(TaskError::ExecutionError(format!("Unsupported loader type: {}", loader)));
+        }
+    } else {
+        if loader.starts_with("fabric-") {
+            ctx.append_sub_tasks(crate::core::fabric::InstallFabricTask::get_sub_tasks()).await;
+        } else if loader.starts_with("forge-") || loader.starts_with("neoforge-") {
+            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks()).await;
+        }
+        
+        ctx.with_sub_task("download_vanilla_json").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_vanilla_libs").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_vanilla_assets").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_vanilla_client").update_progress(100, 100, "Skipped (Already exists)").await;
+        
+        ctx.with_sub_task("resolve_loader").update_progress(100, 100, "Skipped (Already exists)").await;
+        ctx.with_sub_task("download_loader_libs").update_progress(100, 100, "Skipped (Already exists)").await;
+        
+        if loader.starts_with("forge-") || loader.starts_with("neoforge-") {
+            ctx.with_sub_task("install_loader").update_progress(100, 100, "Skipped (Already exists)").await;
         }
     }
 

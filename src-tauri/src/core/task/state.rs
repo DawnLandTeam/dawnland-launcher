@@ -63,6 +63,24 @@ pub enum TaskStatus {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SubTaskStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubTaskState {
+    pub key: String,
+    pub name: String,
+    pub status: SubTaskStatus,
+    pub current: u64,
+    pub total: u64,
+    pub weight: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskProgress {
     pub current: u64,
@@ -70,6 +88,12 @@ pub struct TaskProgress {
     pub step: u32,
     pub total_steps: u32,
     pub detail: String,
+    #[serde(default)]
+    pub speed: u64,
+    #[serde(default)]
+    pub remaining_files: u32,
+    #[serde(default)]
+    pub sub_tasks: Vec<SubTaskState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,10 +117,13 @@ impl TaskState {
             status: TaskStatus::Pending,
             progress: TaskProgress {
                 current: 0,
-                total: 100,
+                total: 10000,
                 step: 1,
                 total_steps: 1,
                 detail: "Pending...".to_string(),
+                speed: 0,
+                remaining_files: 0,
+                sub_tasks: Vec::new(),
             },
             error: None,
             created_at: now,

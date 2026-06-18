@@ -19,7 +19,7 @@ onClickOutside(taskCenterRef, () => {
     taskStore.toggleTaskCenter();
   }
 }, {
-  ignore: ['.task-center-toggle']
+  ignore: ['.task-center-toggle', '.task-detail-modal']
 });
 </script>
 

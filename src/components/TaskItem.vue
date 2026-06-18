@@ -14,6 +14,23 @@ const taskStore = useTaskStore();
 const percentage = computed(() => {
   if (props.task.status === 'Completed') return 100;
   
+  if (props.task.progress.sub_tasks && props.task.progress.sub_tasks.length > 0) {
+    let totalProgress = 0;
+    for (const sub of props.task.progress.sub_tasks) {
+      if (sub.status === 'Completed') {
+        totalProgress += sub.weight;
+      } else if (sub.status === 'Running' || sub.status === 'Pending') {
+        if (sub.total > 0) {
+          totalProgress += (sub.current / sub.total) * sub.weight;
+        }
+      }
+    }
+    const totalWeight = props.task.progress.sub_tasks.reduce((acc, s) => acc + s.weight, 0);
+    if (totalWeight > 0) {
+        return Math.min(100, Math.round((totalProgress / totalWeight) * 100));
+    }
+  }
+
   const { current, total, step, total_steps } = props.task.progress;
   const safeStep = Math.max(1, step || 1);
   const safeTotalSteps = Math.max(1, total_steps || 1);
@@ -32,13 +49,22 @@ const isCancelable = computed(() => {
   return ['Pending', 'Running', 'Paused'].includes(props.task.status);
 });
 
-function handleCancel() {
+function handleCancel(e: Event) {
+  e.stopPropagation();
   if (isCancelable.value) {
     taskStore.cancelTask(props.task.id);
   }
 }
 
-function handleRetry() {
+function formatSpeed(speed: number | undefined) {
+  if (speed === undefined || speed === 0) return '';
+  if (speed > 1024 * 1024) return `${(speed / 1024 / 1024).toFixed(1)} MB/s`;
+  if (speed > 1024) return `${(speed / 1024).toFixed(1)} KB/s`;
+  return `${speed} B/s`;
+}
+
+function handleRetry(e: Event) {
+  e.stopPropagation();
   if (props.task.status === 'Failed' || props.task.status === 'Cancelled') {
     taskStore.retryTask(props.task.id);
   }
@@ -46,7 +72,10 @@ function handleRetry() {
 </script>
 
 <template>
-  <div class="group relative flex flex-col p-3 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 transition-all hover:bg-black/10 dark:hover:bg-white/10">
+  <div 
+    class="group relative flex flex-col p-3 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 transition-all hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+    @click="taskStore.openTaskDetail(task.id)"
+  >
     <div class="flex items-center justify-between mb-2">
       <div class="flex items-center gap-3 overflow-hidden">
         <!-- Status Icon -->
@@ -67,9 +96,22 @@ function handleRetry() {
               ({{ task.progress.step || 1 }}/{{ task.progress.total_steps }})
             </span>
           </span>
-          <span class="text-xs text-neutral-500 dark:text-neutral-400 truncate mt-0.5" :title="(task.status === 'Failed' || task.status === 'Cancelled') ? (task.error || '') : task.progress.detail">
-            {{ (task.status === 'Failed' || task.status === 'Cancelled') ? task.error : task.progress.detail }}
-          </span>
+          <div class="flex items-center gap-2 mt-0.5">
+            <span v-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 truncate" :title="task.error || ''">
+              {{ task.error === 'Task cancelled' ? $t('task.cancelledError') : task.error }}
+            </span>
+            <template v-else>
+              <span v-if="task.progress.sub_tasks && task.progress.sub_tasks.length > 0" class="text-xs text-neutral-500 dark:text-neutral-400 truncate">
+                {{ $t('task.subTasksCompleted', { completed: task.progress.sub_tasks.filter(t => t.status === 'Completed').length, total: task.progress.sub_tasks.length }) }}
+              </span>
+              <span v-else-if="task.progress.detail" class="text-xs text-neutral-500 dark:text-neutral-400 truncate" :title="task.progress.detail">
+                {{ task.progress.detail }}
+              </span>
+              <span v-if="task.progress.speed > 0" class="shrink-0 text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                {{ formatSpeed(task.progress.speed) }}
+              </span>
+            </template>
+          </div>
         </div>
       </div>
 
