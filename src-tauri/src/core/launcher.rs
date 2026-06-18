@@ -605,9 +605,9 @@ pub fn build_classpath(
                     } else {
                         tracing::warn!("Library not found: {:?}", lib_path);
                     }
-                    continue; // Done with this library
                 }
             }
+            continue; // Done with this library
         }
 
         // Fallback: use Maven coordinates (Fabric/Forge style)
@@ -763,10 +763,57 @@ pub async fn verify_and_collect_missing_files(
                                 artifact.size,
                             ));
                         }
+                        }
                     }
-                    continue;
+                }
+            
+
+            // Also verify classifiers (natives)
+            if let Some(classifiers) = &downloads.classifiers {
+                let default_os_key = match std::env::consts::OS {
+                    "windows" => "natives-windows",
+                    "macos" => "natives-macos",
+                    "linux" => "natives-linux",
+                    _ => "",
+                };
+                
+                let os_name_for_json = match std::env::consts::OS {
+                    "windows" => "windows",
+                    "macos" => "osx",
+                    "linux" => "linux",
+                    _ => "",
+                };
+
+                let classifier_name = if let Some(natives) = &lib.natives {
+                    natives.get(os_name_for_json).map(|s| s.as_str()).unwrap_or(default_os_key)
+                } else {
+                    default_os_key
+                };
+
+                if let Some(classifier) = classifiers.get(classifier_name) {
+                    if let Some(path) = &classifier.path {
+                        let lib_path = base_dir.join("libraries").join(path);
+                        if !lib_path.exists() {
+                            let url = classifier.url.clone().unwrap_or_default();
+                            if !url.is_empty() {
+                                tracing::info!(
+                                    "Missing native library (Mojang): {:?} - will download from {}",
+                                    lib_path,
+                                    url
+                                );
+                                missing_tasks.push(DownloadTask::new(
+                                    url,
+                                    lib_path.to_string_lossy().to_string(),
+                                    classifier.sha1.clone(),
+                                    classifier.size,
+                                ));
+                            }
+                        }
+                    }
                 }
             }
+            
+            continue;
         }
 
         // Fallback: use Maven coordinates (Fabric/Forge style)
@@ -907,17 +954,16 @@ pub fn parse_jvm_arguments(
 ) -> Result<Vec<String>, String> {
     let mut args = Vec::new();
 
-    // Handle old format (minecraftArguments - deprecated)
-    if let Some(mc_args) = &version_meta.minecraft_arguments {
-        // Old format: just a string with all args
-        args.extend(mc_args.split_whitespace().map(String::from));
-    }
-
     // Handle new format (arguments.jvm)
     if let Some(arguments) = &version_meta.arguments {
         if let Some(jvm) = &arguments.jvm {
             parse_argument_list(jvm, &mut args)?;
         }
+    } else {
+        // Fallback for older versions (like 1.12.2)
+        args.push("-Djava.library.path=${natives_directory}".to_string());
+        args.push("-cp".to_string());
+        args.push("${classpath}".to_string());
     }
 
     // Apply template substitutions

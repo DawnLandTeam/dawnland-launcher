@@ -362,6 +362,10 @@ function loaderBadgeClass(loaderType: string): string {
       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300";
   }
 }
+
+function normalizedModpackVersion(version: string): string {
+  return version.toLowerCase().startsWith('v') ? version : `v${version}`;
+}
 </script>
 
 <template>
@@ -473,7 +477,7 @@ function loaderBadgeClass(loaderType: string): string {
                     v-if="instance.modpackVersion"
                     class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
                   >
-                    v{{ instance.modpackVersion }}
+                    {{ normalizedModpackVersion(instance.modpackVersion) }}
                   </span>
                 </div>
               </div>
