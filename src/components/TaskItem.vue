@@ -98,7 +98,7 @@ function handleRetry(e: Event) {
           </span>
           <div class="flex items-center gap-2 mt-0.5">
             <span v-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 truncate" :title="task.error || ''">
-              {{ task.error }}
+              {{ task.error === 'Task cancelled' ? $t('task.cancelledError') : task.error }}
             </span>
             <template v-else>
               <span v-if="task.progress.sub_tasks && task.progress.sub_tasks.length > 0" class="text-xs text-neutral-500 dark:text-neutral-400 truncate">

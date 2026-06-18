@@ -59,7 +59,7 @@ function getSubTaskPercentage(sub: any) {
     leave-to-class="opacity-0 translate-x-[-16px] scale-95"
   >
     <div
-      v-if="taskStore.isTaskDetailOpen.value && task"
+      v-if="taskStore.isTaskDetailOpen && task"
       class="task-detail-modal fixed bottom-4 left-[400px] w-96 max-h-[80vh] flex flex-col rounded-2xl bg-white/80 dark:bg-black/80 backdrop-blur-xl border border-black/10 dark:border-white/10 shadow-2xl z-[100]"
     >
       <!-- Header -->
@@ -79,7 +79,7 @@ function getSubTaskPercentage(sub: any) {
           </div>
         </div>
         <p v-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 line-clamp-2 mt-1">
-          {{ task.error }}
+          {{ task.error === 'Task cancelled' ? $t('task.cancelledError') : task.error }}
         </p>
         <div v-else-if="!task.progress.sub_tasks || task.progress.sub_tasks.length === 0" class="flex items-center gap-2 mt-1">
           <span class="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2">
@@ -118,15 +118,16 @@ function getSubTaskPercentage(sub: any) {
           <div class="flex justify-between items-center text-sm">
             <span class="flex items-center gap-2 text-neutral-700 dark:text-neutral-300 font-medium truncate">
               <!-- Icon based on subtask status -->
-              <Clock v-if="sub.status === 'Pending'" class="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-              <Loader2 v-else-if="sub.status === 'Running'" class="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" />
-              <CheckCircle v-else-if="sub.status === 'Completed'" class="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-              <XCircle v-else-if="sub.status === 'Failed'" class="w-3.5 h-3.5 text-red-500 shrink-0" />
+              <CheckCircle v-if="sub.status === 'Completed'" class="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <XCircle v-else-if="sub.status === 'Failed' || (sub.status === 'Running' && task.status === 'Failed')" class="w-3.5 h-3.5 text-red-500 shrink-0" />
+              <Ban v-else-if="task.status === 'Cancelled'" class="w-3.5 h-3.5 text-orange-400 dark:text-orange-500 shrink-0" />
+              <Clock v-else-if="sub.status === 'Pending' && task.status !== 'Failed'" class="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+              <Loader2 v-else-if="sub.status === 'Running' && task.status !== 'Failed'" class="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" />
               <ArrowRight v-else class="w-3.5 h-3.5 text-neutral-400 shrink-0" />
               
               <span class="truncate">{{ getSubTaskName(sub) }}</span>
             </span>
-            <span class="text-xs font-mono text-neutral-500 shrink-0" v-if="sub.status === 'Running' || sub.status === 'Completed'">
+            <span class="text-xs font-mono text-neutral-500 shrink-0" v-if="(sub.status === 'Running' || sub.status === 'Completed') && task.status !== 'Cancelled' && task.status !== 'Failed'">
               <span v-if="sub.status === 'Running' && sub.current === 0 && sub.total === 100" class="text-emerald-500 animate-pulse">
                 {{ $t('task.installing') }}
               </span>
@@ -137,7 +138,7 @@ function getSubTaskPercentage(sub: any) {
           </div>
           
           <!-- Progress bar (only for running tasks) -->
-          <div v-if="sub.status === 'Running'" class="w-full bg-black/10 dark:bg-white/10 rounded-full h-1 overflow-hidden">
+          <div v-if="sub.status === 'Running' && task.status !== 'Cancelled' && task.status !== 'Failed'" class="w-full bg-black/10 dark:bg-white/10 rounded-full h-1 overflow-hidden">
             <div 
               v-if="sub.current > 0 || sub.total === 0"
               class="h-full rounded-full transition-all duration-300 relative bg-emerald-400"

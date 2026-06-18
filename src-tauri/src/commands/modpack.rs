@@ -329,6 +329,8 @@ impl ExecutableTask for InstallModpackTask {
         // Wait for both loader installation and mods download to complete
         let (actual_loader_res, download_res) = tokio::join!(actual_loader_task, download_task);
         
+        check_cancel!();
+        
         let actual_loader = actual_loader_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
         download_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
         
@@ -611,11 +613,6 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
             ctx.with_sub_task("download_vanilla_client").update_progress(100, 100, "Skipped (Already exists)").await;
         }
 
-        ctx.append_sub_tasks(crate::core::fabric::InstallFabricTask::get_sub_tasks()).await;
-        ctx.with_sub_task("resolve_loader").update_progress(100, 100, "Skipped (No loader)").await;
-        ctx.with_sub_task("download_loader_libs").update_progress(100, 100, "Skipped (No loader)").await;
-        ctx.with_sub_task("install_loader").update_progress(100, 100, "Skipped (No loader)").await;
-
         return Ok(mc_version.to_string());
     }
 
@@ -674,7 +671,12 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
             return Err(TaskError::ExecutionError(format!("Unsupported loader type: {}", loader)));
         }
     } else {
-        ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks()).await;
+        if loader.starts_with("fabric-") {
+            ctx.append_sub_tasks(crate::core::fabric::InstallFabricTask::get_sub_tasks()).await;
+        } else if loader.starts_with("forge-") || loader.starts_with("neoforge-") {
+            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks()).await;
+        }
+        
         ctx.with_sub_task("download_vanilla_json").update_progress(100, 100, "Skipped (Already exists)").await;
         ctx.with_sub_task("download_vanilla_libs").update_progress(100, 100, "Skipped (Already exists)").await;
         ctx.with_sub_task("download_vanilla_assets").update_progress(100, 100, "Skipped (Already exists)").await;
@@ -682,7 +684,10 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
         
         ctx.with_sub_task("resolve_loader").update_progress(100, 100, "Skipped (Already exists)").await;
         ctx.with_sub_task("download_loader_libs").update_progress(100, 100, "Skipped (Already exists)").await;
-        ctx.with_sub_task("install_loader").update_progress(100, 100, "Skipped (Already exists)").await;
+        
+        if loader.starts_with("forge-") || loader.starts_with("neoforge-") {
+            ctx.with_sub_task("install_loader").update_progress(100, 100, "Skipped (Already exists)").await;
+        }
     }
 
     Ok(custom_instance_name)
