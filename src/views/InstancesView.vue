@@ -473,7 +473,7 @@ function loaderBadgeClass(loaderType: string): string {
                     v-if="instance.modpackVersion"
                     class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
                   >
-                    v{{ instance.modpackVersion }}
+                    {{ instance.modpackVersion.toLowerCase().startsWith('v') ? instance.modpackVersion : `v${instance.modpackVersion}` }}
                   </span>
                 </div>
               </div>
