@@ -252,12 +252,7 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
     tracing::info!("Starting batch download of {} files", total_tasks);
 
     // Create a single shared HTTP client with connection pooling.
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
-        .pool_max_idle_per_host(16) // Keep connections alive
-        .http2_adaptive_window(true)
-        .build()
-        .expect("Failed to create HTTP client");
+    let client = crate::core::utils::get_http_client().clone();
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
     let completed_files = Arc::new(AtomicUsize::new(0));
@@ -504,12 +499,7 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle, cancel
     }
 
     let total_tasks = tasks.len();
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
-        .pool_max_idle_per_host(16)
-        .http2_adaptive_window(true)
-        .build()
-        .expect("Failed to create HTTP client");
+    let client = crate::core::utils::get_http_client().clone();
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
     let handles: Vec<_> = tasks

@@ -52,7 +52,7 @@ pub struct ForgeInstallProfile {
     pub processors: Vec<Processor>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Library {
     pub name: Option<String>,
@@ -61,13 +61,13 @@ pub struct Library {
     pub rules: Option<Vec<Rule>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryDownloads {
     pub artifact: Option<Artifact>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Artifact {
     pub path: Option<String>,
@@ -76,14 +76,14 @@ pub struct Artifact {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rule {
     pub action: Option<String>,
     pub os: Option<RuleOs>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleOs {
     pub name: Option<String>,
@@ -116,8 +116,8 @@ pub struct Processor {
 
 // ============ Constants ============
 
-const FORGE_MAVEN: &str = "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge";
-const NEOFORGE_MAVEN: &str = "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge";
+const FORGE_MAVEN: &str = "https://maven.minecraftforge.net/net/minecraftforge/forge";
+const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
 const BMCLAPI_FORGE_BASE: &str = "https://bmclapi2.bangbang93.com/forge";
 
 /// BMCLAPI response structure for Forge versions
@@ -164,10 +164,7 @@ fn parse_forge_version(version: &str) -> Option<(String, String)> {
 
 /// Get all available Forge versions from Maven metadata
 async fn fetch_forge_versions(maven_base: &str) -> Result<Vec<String>, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = crate::core::utils::get_http_client().clone();
 
     // Try XML metadata first (more reliable for Maven)
     let url = format!("{}/maven-metadata.xml", maven_base);
@@ -211,26 +208,37 @@ async fn fetch_forge_versions(maven_base: &str) -> Result<Vec<String>, String> {
 /// Uses BMCLAPI for stable and fast access in China
 #[tauri::command]
 pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, AppError> {
+    let settings = crate::core::settings::get_launcher_settings_sync();
+
+    if settings.download_source == crate::core::settings::DownloadSource::Official {
+        tracing::info!("Fetching Forge loaders for Minecraft {} via Official Maven", mc_version);
+        let versions = fetch_forge_versions(FORGE_MAVEN).await.unwrap_or_default();
+        
+        // Filter by MC version prefix and sort
+        let mut filtered: Vec<String> = versions.into_iter().filter(|v| v.starts_with(&format!("{}-", mc_version))).collect();
+        filtered.sort_by(|a, b| compare_versions(b, a));
+
+        let loader_versions: Vec<LoaderVersion> = filtered
+            .into_iter()
+            .map(|v| {
+                LoaderVersion {
+                    version: v.clone(),
+                    mc_version: mc_version.clone(),
+                    installer_url: format!("{}/{}/forge-{}-installer.jar", FORGE_MAVEN, v, v),
+                }
+            })
+            .collect();
+            
+        return Ok(LoaderVersionList { versions: loader_versions });
+    }
+
     tracing::info!(
         "Fetching Forge loaders for Minecraft {} via BMCLAPI",
         mc_version
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    // Use BMCLAPI for stable access - correct path includes /minecraft/
     let url = format!("{}/minecraft/{}", BMCLAPI_FORGE_BASE, mc_version);
-    tracing::info!("Requesting Forge versions from BMCLAPI: {}", url);
-
-    // Add User-Agent to avoid WAF blocking
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Dawnland-Launcher/1.0")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let client = crate::core::utils::get_http_client().clone();
 
     let response = match client.get(&url).send().await {
         Ok(resp) => resp,
@@ -241,10 +249,7 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
     };
 
     if !response.status().is_success() {
-        tracing::warn!(
-            "BMCLAPI returned error status for Forge: {}",
-            response.status()
-        );
+        tracing::warn!("BMCLAPI returned error status for Forge: {}", response.status());
         return Ok(LoaderVersionList { versions: vec![] });
     }
 
@@ -256,31 +261,20 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
         }
     };
 
-    // Sort versions descending (newest first) using numeric comparison
     versions.sort_by(|a, b| compare_versions(&b.version, &a.version));
 
-    // Convert to LoaderVersion format with proper installer URLs
-    // BMCLAPI returns versions like "41.1.0", we need to prepend MC version for full version
     let loader_versions: Vec<LoaderVersion> = versions
         .into_iter()
         .map(|v| {
             let full_version = format!("{}-{}", mc_version, v.version);
+            let replaced_maven = crate::core::settings::replace_download_url(FORGE_MAVEN, &settings.download_source);
             LoaderVersion {
                 version: full_version.clone(),
                 mc_version: mc_version.clone(),
-                installer_url: format!(
-                    "{}/{}/forge-{}-installer.jar",
-                    FORGE_MAVEN, full_version, full_version
-                ),
+                installer_url: format!("{}/{}/forge-{}-installer.jar", replaced_maven, full_version, full_version),
             }
         })
         .collect();
-
-    tracing::info!(
-        "Found {} Forge versions for MC {}",
-        loader_versions.len(),
-        mc_version
-    );
 
     Ok(LoaderVersionList {
         versions: loader_versions,
@@ -291,20 +285,35 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
 /// Uses BMCLAPI for stable access - correct endpoint: /neoforge/list/{mc_version}
 #[tauri::command]
 pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionList, AppError> {
-    tracing::info!("Fetching NeoForge loaders for Minecraft {}", mc_version);
+    let settings = crate::core::settings::get_launcher_settings_sync();
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("Dawnland-Launcher/1.0")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    if settings.download_source == crate::core::settings::DownloadSource::Official {
+        tracing::info!("Fetching NeoForge loaders for Minecraft {} via Official Maven", mc_version);
+        let versions = fetch_forge_versions(NEOFORGE_MAVEN).await.unwrap_or_default();
+        
+        let prefix = format!("{}-", mc_version);
+        let mut filtered: Vec<String> = versions.into_iter().filter(|v| v.starts_with(&prefix)).collect();
+        filtered.sort_by(|a, b| compare_versions(b, a));
 
-    // Use correct BMCLAPI NeoForge endpoint
-    let url = format!(
-        "https://bmclapi2.bangbang93.com/neoforge/list/{}",
-        mc_version
-    );
-    tracing::info!("Requesting NeoForge versions from BMCLAPI: {}", url);
+        let loader_versions: Vec<LoaderVersion> = filtered
+            .into_iter()
+            .map(|v| {
+                LoaderVersion {
+                    version: v.clone(),
+                    mc_version: mc_version.clone(),
+                    installer_url: format!("{}/{}/neoforge-{}-installer.jar", NEOFORGE_MAVEN, v, v),
+                }
+            })
+            .collect();
+            
+        return Ok(LoaderVersionList { versions: loader_versions });
+    }
+
+    tracing::info!("Fetching NeoForge loaders for Minecraft {} via BMCLAPI", mc_version);
+
+    let client = crate::core::utils::get_http_client().clone();
+
+    let url = format!("https://bmclapi2.bangbang93.com/neoforge/list/{}", mc_version);
 
     let response = match client.get(&url).send().await {
         Ok(resp) => resp,
@@ -319,7 +328,6 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
         return Ok(LoaderVersionList { versions: vec![] });
     }
 
-    // Dynamic JSON parsing - BMCLAPI returns array of objects with version field
     let json_data: serde_json::Value = match response.json().await {
         Ok(v) => v,
         Err(e) => {
@@ -333,11 +341,9 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
     if let Some(array) = json_data.as_array() {
         for item in array {
             if let Some(obj) = item.as_object() {
-                // BMCLAPI returns: {"version": "47.1.5", "mcversion": "1.20.1", ...}
-                // or newer format: {"version": "1.20.1-47.1.85", ...}
                 if let Some(v) = obj.get("version").and_then(|v| v.as_str()) {
-                    // If version doesn't include MC version, prepend it
-                    if v.starts_with(&mc_version) {
+                    let prefix = format!("{}-", mc_version);
+                    if v.starts_with(&prefix) {
                         versions.push(v.to_string());
                     } else {
                         versions.push(format!("{}-{}", mc_version, v));
@@ -346,22 +352,15 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
             }
         }
     }
-    // Sort to have latest version first using numeric comparison
     versions.sort_by(|a, b| compare_versions(b, a));
 
-    tracing::info!(
-        "Found {} NeoForge versions for MC {}",
-        versions.len(),
-        mc_version
-    );
-
-    // Convert to LoaderVersion format
+    let replaced_maven = crate::core::settings::replace_download_url(NEOFORGE_MAVEN, &settings.download_source);
     let loader_versions: Vec<LoaderVersion> = versions
         .into_iter()
         .map(|v| LoaderVersion {
             version: v.clone(),
             mc_version: mc_version.clone(),
-            installer_url: format!("{}/{}/forge-{}-installer.jar", NEOFORGE_MAVEN, v, v),
+            installer_url: format!("{}/{}/neoforge-{}-installer.jar", replaced_maven, v, v),
         })
         .collect();
 
@@ -505,24 +504,22 @@ fn maven_name_to_path(name: &str) -> Option<String> {
 }
 
 /// Get download URL for a library from its JSON definition
-fn get_library_download_info_json(lib: &serde_json::Value) -> Option<(String, String)> {
+fn get_library_download_info_json(lib: &serde_json::Value, source: &crate::core::settings::DownloadSource) -> Option<(String, String)> {
     // Try downloads.artifact first (this is the standard Mojang/Forge format)
     if let Some(downloads) = lib.get("downloads") {
         if let Some(artifact) = downloads.get("artifact") {
             if let Some(url) = artifact.get("url").and_then(|u| u.as_str()) {
                 if !url.is_empty() {
                     if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
-                        // artifact.path is relative to libraries/ root, e.g. "net/minecraftforge/..."
-                        // or for patched client: "net/minecraft/client/1.20.1/client-1.20.1-patched.jar"
                         let lib_path = if path.starts_with("libraries/") {
                             path.to_string()
                         } else {
                             format!("libraries/{}", path)
                         };
-                        return Some((url.to_string(), lib_path));
+                        let replaced_url = crate::core::settings::replace_download_url(url, source);
+                        return Some((replaced_url, lib_path));
                     }
                 } else {
-                    // url is explicitly empty. This means it's provided by the installer and shouldn't be downloaded.
                     return None;
                 }
             }
@@ -530,18 +527,16 @@ fn get_library_download_info_json(lib: &serde_json::Value) -> Option<(String, St
     }
 
     // Fallback to Maven coordinate format
-    // Handle special cases like "net.minecraft:client:1.20.1:patched"
     let name = lib.get("name")?.as_str()?;
     let path = maven_name_to_path(name)?;
 
-    // Get base URL - for Minecraft libraries use Mojang Maven
     let group = name.split(':').next().unwrap_or("");
     let base_url = if group == "net.minecraft" {
         "https://libraries.minecraft.net/"
     } else if group == "net.minecraftforge" {
         "https://maven.minecraftforge.net/"
     } else if group.starts_with("net.neoforged") {
-        "https://maven.neoforged.net/"
+        "https://maven.neoforged.net/releases/"
     } else {
         lib.get("url")
             .and_then(|u| u.as_str())
@@ -549,8 +544,9 @@ fn get_library_download_info_json(lib: &serde_json::Value) -> Option<(String, St
     };
 
     let download_url = format!("{}{}", base_url, path);
+    let replaced_url = crate::core::settings::replace_download_url(&download_url, source);
 
-    Some((download_url, format!("libraries/{}", path)))
+    Some((replaced_url, format!("libraries/{}", path)))
 }
 
 pub struct InstallForgeOptions {
@@ -597,10 +593,7 @@ impl ExecutableTask for InstallForgeTask {
         FORGE_MAVEN
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| TaskError::ExecutionError(format!("Failed to create HTTP client: {}", e)))?;
+    let client = crate::core::utils::get_http_client().clone();
 
     // ========== Step 1: Ensure base vanilla version is installed ==========
     let dawnland_cache = crate::core::mojang::get_dawnland_cache();
@@ -630,8 +623,9 @@ impl ExecutableTask for InstallForgeTask {
 
         // Get version JSON URL from Mojang
         let manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
+        let manifest_url = crate::core::settings::replace_download_url(manifest_url, &settings.download_source);
         let manifest: serde_json::Value = client
-            .get(manifest_url)
+            .get(&manifest_url)
             .send()
             .await
             .map_err(|e| TaskError::ExecutionError(format!("Failed to fetch version manifest: {}", e)))?
@@ -695,6 +689,7 @@ impl ExecutableTask for InstallForgeTask {
         }
     };
 
+    let maven_base = crate::core::settings::replace_download_url(maven_base, &settings.download_source);
     let installer_url = format!(
         "{}/{}/{}-{}-installer.jar",
         maven_base, full_loader_version, prefix, full_loader_version
@@ -779,14 +774,26 @@ impl ExecutableTask for InstallForgeTask {
 
     let mut tasks: Vec<crate::downloader::DownloadTask> = Vec::new();
 
+    let mut all_libraries = Vec::new();
+    
     // Add libraries from the version JSON
     if let Some(libraries) = version_json.get("libraries").and_then(|l| l.as_array()) {
-        tracing::info!(
-            "Processing {} libraries from Forge version JSON",
-            libraries.len()
-        );
+        all_libraries.extend(libraries.clone());
+    }
+    
+    // Add libraries from install_profile.json (required by installer processors like neoform)
+    if let Ok(profile_libs_val) = serde_json::to_value(&install_profile.libraries) {
+        if let Some(profile_libs) = profile_libs_val.as_array() {
+            all_libraries.extend(profile_libs.clone());
+        }
+    }
 
-        for lib in libraries {
+    tracing::info!(
+        "Processing {} libraries from Forge version and install profile",
+        all_libraries.len()
+    );
+
+    for lib in all_libraries.iter() {
             // Debug: log library name
             if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
                 if name.contains("patched") || name.contains("client") {
@@ -798,18 +805,28 @@ impl ExecutableTask for InstallForgeTask {
                 continue;
             }
 
-            if let Some((url, path)) = get_library_download_info_json(lib) {
+            if let Some((url, path)) = get_library_download_info_json(lib, &settings.download_source) {
                 let dest = base_dir.join(&path);
-                tracing::debug!("Added Forge library: {} -> {}", path, url);
-                tasks.push(crate::downloader::DownloadTask::new(
-                    url,
-                    dest.to_string_lossy().to_string(),
-                    None,
-                    None,
-                ));
+                
+                // Exclude empty URLs, we only download if there's a valid URL
+                if !url.is_empty() {
+                    tracing::debug!("Added Forge library: {} -> {}", path, url);
+                    let hash = lib
+                        .get("downloads")
+                        .and_then(|d| d.get("artifact"))
+                        .and_then(|a| a.get("sha1"))
+                        .and_then(|s| s.as_str())
+                        .map(String::from);
+                        
+                    tasks.push(crate::downloader::DownloadTask::new(
+                        url,
+                        dest.to_string_lossy().to_string(),
+                        hash,
+                        None,
+                    ));
+                }
             }
         }
-    }
 
     let total_tasks = tasks.len();
     tracing::info!("Resolved {} Forge library files", total_tasks);
@@ -1212,7 +1229,7 @@ mod tests {
             }
         }"#;
         let lib1: serde_json::Value = serde_json::from_str(json1).unwrap();
-        let info1 = get_library_download_info_json(&lib1).unwrap();
+        let info1 = get_library_download_info_json(&lib1, &crate::core::settings::DownloadSource::Official).unwrap();
         assert_eq!(info1.0, "https://maven.minecraftforge.net/org/ow2/asm/asm/9.5/asm-9.5.jar");
         assert_eq!(info1.1, "libraries/org/ow2/asm/asm/9.5/asm-9.5.jar");
 
@@ -1221,7 +1238,7 @@ mod tests {
             "name": "net.minecraftforge:forge:1.20.1"
         }"#;
         let lib2: serde_json::Value = serde_json::from_str(json2).unwrap();
-        let info2 = get_library_download_info_json(&lib2).unwrap();
+        let info2 = get_library_download_info_json(&lib2, &crate::core::settings::DownloadSource::Official).unwrap();
         assert_eq!(info2.0, "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1/forge-1.20.1-universal.jar");
         assert_eq!(info2.1, "libraries/net/minecraftforge/forge/1.20.1/forge-1.20.1-universal.jar");
     }

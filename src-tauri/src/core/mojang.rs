@@ -373,13 +373,16 @@ fn matches_current_arch(rule_arch: &str) -> bool {
 pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
     tracing::info!("Fetching vanilla versions from Mojang...");
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    let client = crate::core::utils::get_http_client().clone();
+
+    let settings = crate::core::settings::get_launcher_settings_sync();
+    let url = crate::core::settings::replace_download_url(
+        "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json",
+        &settings.download_source,
+    );
 
     let response = client
-        .get("https://launchermeta.mojang.com/mc/game/version_manifest_v2.json")
+        .get(&url)
         .send()
         .await
         .map_err(|e| format!("Failed to fetch version manifest: {e}"))?;
@@ -425,8 +428,12 @@ pub struct InstallVanillaTask {
 impl ExecutableTask for InstallVanillaTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
         let version_id = &self.options.version_id;
-        let version_json_url = &self.options.version_json_url;
         let is_dependency = self.options.is_dependency;
+        let settings = crate::core::settings::get_launcher_settings_sync();
+        let version_json_url = crate::core::settings::replace_download_url(
+            &self.options.version_json_url,
+            &settings.download_source,
+        );
 
         let is_dep = is_dependency.unwrap_or(false);
         if !is_dep {
@@ -446,20 +453,19 @@ impl ExecutableTask for InstallVanillaTask {
         let _ = tokio::fs::create_dir_all(&version_dir).await;
         crate::core::launcher::InstanceConfig::ensure_installing(&version_dir, is_dependency.unwrap_or(false)).await;
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to create HTTP client: {e}")))?;
+        let client = crate::core::utils::get_http_client().clone();
 
         // Step A: Download and save version JSON.
         tracing::info!("Downloading version JSON from: {}", version_json_url);
         ctx.update_progress(0, 0, "Downloading version JSON").await;
 
         let version_json_content = client
-            .get(version_json_url)
+            .get(&version_json_url)
             .send()
             .await
             .map_err(|e| TaskError::ExecutionError(format!("Failed to download version JSON: {}", e)))?
+            .error_for_status()
+            .map_err(|e| TaskError::ExecutionError(format!("HTTP error downloading version JSON: {}", e)))?
             .text()
             .await
             .map_err(|e| TaskError::ExecutionError(format!("Failed to read version JSON: {}", e)))?;
@@ -502,9 +508,11 @@ impl ExecutableTask for InstallVanillaTask {
                     let dest = base_dir.join(&path);
 
                     let url = artifact.url.as_ref().cloned().unwrap_or_default();
+                    let url = crate::core::settings::replace_download_url(&url, &settings.download_source);
                     let hash = artifact.sha1.as_ref().cloned();
 
                     if !url.is_empty() {
+                        tracing::debug!("Added library: {} -> {}", path, url);
                         tasks.push(DownloadTask::new(
                             url,
                             dest.to_string_lossy().to_string(),
@@ -531,9 +539,11 @@ impl ExecutableTask for InstallVanillaTask {
                         let dest = base_dir.join(&path);
 
                         let url = classifier.url.as_ref().cloned().unwrap_or_default();
+                        let url = crate::core::settings::replace_download_url(&url, &settings.download_source);
                         let hash = classifier.sha1.as_ref().cloned();
 
                         if !url.is_empty() {
+                            tracing::debug!("Added library (classifier): {} -> {}", path, url);
                             tasks.push(DownloadTask::new(
                                 url,
                                 dest.to_string_lossy().to_string(),
@@ -556,6 +566,7 @@ impl ExecutableTask for InstallVanillaTask {
 
         if let Some(ref client_download) = downloads.client {
             let url = client_download.url.as_ref().cloned().unwrap_or_default();
+            let url = crate::core::settings::replace_download_url(&url, &settings.download_source);
             let hash = client_download.sha1.as_ref().cloned();
 
             if !url.is_empty() {
@@ -583,7 +594,9 @@ impl ExecutableTask for InstallVanillaTask {
         };
 
         let asset_index_url = match &asset_index.url {
-            Some(url) if !url.is_empty() => url.clone(),
+            Some(url) if !url.is_empty() => {
+                crate::core::settings::replace_download_url(url, &settings.download_source)
+            },
             _ => {
                 return Err(TaskError::ExecutionError("Version JSON missing asset index URL".to_string()));
             }
@@ -593,10 +606,12 @@ impl ExecutableTask for InstallVanillaTask {
             .get(&asset_index_url)
             .send()
             .await
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to download asset index: {}", e)))?
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to fetch asset index: {e}")))?
+            .error_for_status()
+            .map_err(|e| TaskError::ExecutionError(format!("HTTP error fetching asset index: {e}")))?
             .text()
             .await
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to read asset index: {e}")))?;
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to read asset index response: {e}")))?;
 
         let asset_index_dir = base_dir.join("assets").join("indexes");
         fs::create_dir_all(&asset_index_dir)
@@ -624,6 +639,7 @@ impl ExecutableTask for InstallVanillaTask {
                     "https://resources.download.minecraft.net/{}/{}",
                     hash_prefix, hash
                 );
+                let url = crate::core::settings::replace_download_url(&url, &settings.download_source);
                 let dest_path = format!("assets/objects/{}/{}", hash_prefix, hash);
                 let dest = base_dir.join(&dest_path);
 
