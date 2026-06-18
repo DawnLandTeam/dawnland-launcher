@@ -425,6 +425,45 @@ pub struct InstallVanillaTask {
     pub options: VanillaInstallOptions,
 }
 
+impl InstallVanillaTask {
+    pub fn get_sub_tasks() -> Vec<crate::core::task::state::SubTaskState> {
+        vec![
+            crate::core::task::state::SubTaskState {
+                key: "download_vanilla_json".to_string(),
+                name: "Fetch vanilla configuration".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 2,
+            },
+            crate::core::task::state::SubTaskState {
+                key: "download_vanilla_libs".to_string(),
+                name: "Download library files".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 30,
+            },
+            crate::core::task::state::SubTaskState {
+                key: "download_vanilla_assets".to_string(),
+                name: "Download asset files".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 60,
+            },
+            crate::core::task::state::SubTaskState {
+                key: "download_vanilla_client".to_string(),
+                name: "Download core files".to_string(),
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 8,
+            },
+        ]
+    }
+}
+
 #[async_trait::async_trait]
 impl ExecutableTask for InstallVanillaTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
@@ -437,9 +476,15 @@ impl ExecutableTask for InstallVanillaTask {
         );
 
         let is_dep = is_dependency.unwrap_or(false);
+
+        // Define sub-tasks if running standalone
+        if !is_dep && ctx.sub_task_key.is_none() {
+            ctx.init_sub_tasks(Self::get_sub_tasks()).await;
+        }
+
         if !is_dep {
             ctx.set_total_steps(1).await;
-            ctx.next_step(&format!("Resolving version: {}", version_id)).await;
+            ctx.update_progress(0, 0, &format!("Resolving version: {}", version_id)).await;
         } else {
             ctx.update_progress(0, 0, &format!("Resolving version: {}", version_id)).await;
         }
@@ -458,7 +503,8 @@ impl ExecutableTask for InstallVanillaTask {
 
         // Step A: Download and save version JSON.
         tracing::info!("Downloading version JSON from: {}", version_json_url);
-        ctx.update_progress(0, 0, "Downloading version JSON").await;
+        let ctx_json = ctx.with_sub_task("download_vanilla_json");
+        ctx_json.update_progress(0, 100, "Downloading version JSON").await;
 
         let version_json_content = client
             .get(&version_json_url)
@@ -486,8 +532,9 @@ impl ExecutableTask for InstallVanillaTask {
         }
 
         // Step B: Build libraries download queue.
+        ctx_json.update_progress(100, 100, "Version JSON downloaded").await;
         ctx.update_progress(0, 0, "Resolving libraries").await;
-        let mut tasks: Vec<DownloadTask> = Vec::new();
+        let mut lib_tasks: Vec<DownloadTask> = Vec::new();
 
         let libraries = match &version_meta.libraries {
             Some(libs) => libs,
@@ -514,7 +561,7 @@ impl ExecutableTask for InstallVanillaTask {
 
                     if !url.is_empty() {
                         tracing::debug!("Added library: {} -> {}", path, url);
-                        tasks.push(DownloadTask::new(
+                        lib_tasks.push(DownloadTask::new(
                             url,
                             dest.to_string_lossy().to_string(),
                             hash,
@@ -558,7 +605,7 @@ impl ExecutableTask for InstallVanillaTask {
 
                         if !url.is_empty() {
                             tracing::debug!("Added library (classifier): {} -> {}", path, url);
-                            tasks.push(DownloadTask::new(
+                            lib_tasks.push(DownloadTask::new(
                                 url,
                                 dest.to_string_lossy().to_string(),
                                 hash,
@@ -571,6 +618,7 @@ impl ExecutableTask for InstallVanillaTask {
         }
 
         // Step C: Add client.jar to download queue.
+        let mut client_tasks: Vec<DownloadTask> = Vec::new();
         let downloads = match &version_meta.downloads {
             Some(d) => d,
             None => {
@@ -585,7 +633,7 @@ impl ExecutableTask for InstallVanillaTask {
 
             if !url.is_empty() {
                 let dest = version_dir.join(format!("{}.jar", version_id));
-                tasks.push(DownloadTask::new(
+                client_tasks.push(DownloadTask::new(
                     url,
                     dest.to_string_lossy().to_string(),
                     hash,
@@ -599,6 +647,7 @@ impl ExecutableTask for InstallVanillaTask {
         }
 
         // Step D: Download and parse asset index.
+        let mut asset_tasks: Vec<DownloadTask> = Vec::new();
         ctx.update_progress(0, 0, "Resolving assets").await;
         let asset_index = match &version_meta.asset_index {
             Some(ai) => ai,
@@ -657,7 +706,7 @@ impl ExecutableTask for InstallVanillaTask {
                 let dest_path = format!("assets/objects/{}/{}", hash_prefix, hash);
                 let dest = base_dir.join(&dest_path);
 
-                tasks.push(DownloadTask::new(
+                asset_tasks.push(DownloadTask::new(
                     url,
                     dest.to_string_lossy().to_string(),
                     Some(hash),
@@ -666,15 +715,38 @@ impl ExecutableTask for InstallVanillaTask {
             }
         }
 
-        // Step E: Run batch download.
-        let total_tasks = tasks.len();
-        ctx.update_progress(0, total_tasks as u64, &format!("Downloading {} files", total_tasks)).await;
+        // Step E: Run batch downloads.
+        let ctx_libs = ctx.with_sub_task("download_vanilla_libs");
+        let ctx_assets = ctx.with_sub_task("download_vanilla_assets");
+        let ctx_client = ctx.with_sub_task("download_vanilla_client");
         
-        if total_tasks == 0 {
-            return Err(TaskError::ExecutionError("No files to download".to_string()));
-        }
-
-        run_batch_download_task(tasks, ctx.clone()).await.map_err(|e| TaskError::ExecutionError(e))?;
+        let (r1, r2, r3) = tokio::join!(
+            async {
+                if !lib_tasks.is_empty() {
+                    run_batch_download_task(lib_tasks, ctx_libs).await
+                } else {
+                    Ok(())
+                }
+            },
+            async {
+                if !asset_tasks.is_empty() {
+                    run_batch_download_task(asset_tasks, ctx_assets).await
+                } else {
+                    Ok(())
+                }
+            },
+            async {
+                if !client_tasks.is_empty() {
+                    run_batch_download_task(client_tasks, ctx_client).await
+                } else {
+                    Ok(())
+                }
+            }
+        );
+        
+        r1.map_err(|e| TaskError::ExecutionError(e))?;
+        r2.map_err(|e| TaskError::ExecutionError(e))?;
+        r3.map_err(|e| TaskError::ExecutionError(e))?;
 
         if ctx.is_cancelled() {
             let version_dir = if is_dependency.unwrap_or(false) {
@@ -686,7 +758,7 @@ impl ExecutableTask for InstallVanillaTask {
             return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
         }
 
-        ctx.update_progress(total_tasks as u64, total_tasks as u64, "Complete").await;
+        ctx.update_progress(100, 100, "Complete").await;
 
         let version_dir = if is_dependency.unwrap_or(false) {
             get_dawnland_cache().join(version_id)

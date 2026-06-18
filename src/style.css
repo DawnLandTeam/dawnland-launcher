@@ -95,3 +95,13 @@ body {
     color: hsl(var(--foreground));
   }
 }
+
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+.indeterminate-progress {
+  width: 50%;
+  animation: indeterminate 1.5s infinite linear;
+}

@@ -99,12 +99,14 @@ const updateChannel = ref(normalizeUpdateChannel(localStorage.getItem('updateCha
 // Launcher Settings state
 const enableInstanceInheritance = ref(false);
 const downloadSource = ref<'official' | 'bmclapi'>('official');
+const maxConcurrentDownloads = ref(32);
 
 async function loadLauncherSettings() {
   try {
     const settings = await invoke<any>('load_launcher_settings');
     enableInstanceInheritance.value = settings.enableInstanceInheritance;
     downloadSource.value = settings.downloadSource === 'bmclapi' ? 'bmclapi' : 'official';
+    maxConcurrentDownloads.value = settings.maxConcurrentDownloads || 32;
   } catch (e) {
     console.error('Failed to load launcher settings:', e);
   }
@@ -115,7 +117,8 @@ async function saveLauncherSettings() {
     await invoke('save_launcher_settings', {
       settings: {
         enableInstanceInheritance: enableInstanceInheritance.value,
-        downloadSource: downloadSource.value
+        downloadSource: downloadSource.value,
+        maxConcurrentDownloads: maxConcurrentDownloads.value
       }
     });
   } catch (e) {
@@ -538,6 +541,33 @@ function changeLanguage(lang: string) {
           <option value="official">{{ $t('settings.general.downloadSourceOfficial') }}</option>
           <option value="bmclapi">{{ $t('settings.general.downloadSourceBmclapi') }}</option>
         </select>
+      </div>
+
+      <!-- Concurrent Downloads Settings -->
+      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
+        <h2 class="mb-4 text-lg font-semibold flex items-center gap-2">
+          <Download :size="20" class="text-primary" />
+          {{ $t('settings.general.concurrentDownloadsTitle', '最大并发下载数') }}
+        </h2>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="text-sm font-medium">{{ $t('settings.general.concurrentDownloadsDesc', '允许的最大同时下载任务数量') }}</label>
+            <span class="text-sm font-mono text-primary">{{ maxConcurrentDownloads }}</span>
+          </div>
+          <input
+            v-model.number="maxConcurrentDownloads"
+            @change="saveLauncherSettings"
+            type="range"
+            min="1"
+            max="128"
+            step="1"
+            class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-800 accent-primary"
+          />
+          <div class="flex justify-between text-xs text-muted-foreground">
+            <span>1</span>
+            <span>128</span>
+          </div>
+        </div>
       </div>
 
       <!-- Global Memory Settings -->

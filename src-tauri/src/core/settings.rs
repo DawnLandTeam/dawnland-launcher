@@ -23,6 +23,12 @@ pub struct LauncherSettings {
     pub enable_instance_inheritance: bool,
     #[serde(default)]
     pub download_source: DownloadSource,
+    #[serde(default = "default_max_concurrent_downloads")]
+    pub max_concurrent_downloads: u32,
+}
+
+fn default_max_concurrent_downloads() -> u32 {
+    32
 }
 
 impl Default for LauncherSettings {
@@ -30,6 +36,7 @@ impl Default for LauncherSettings {
         Self {
             enable_instance_inheritance: false,
             download_source: DownloadSource::default(),
+            max_concurrent_downloads: 32,
         }
     }
 }
