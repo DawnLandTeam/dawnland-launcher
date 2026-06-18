@@ -230,6 +230,18 @@ const emailErrorMsg = ref<string | null>(null);
 const isCheckingConnection = ref(false);
 
 const isValidDomainOrIP = (ip: string) => {
+  if (!ip) return false;
+  const ipLower = ip.toLowerCase();
+  if (ipLower === 'localhost' || ipLower.endsWith('.local') || ipLower.startsWith('127.') || ipLower.startsWith('10.') || ipLower.startsWith('192.168.')) {
+    return false;
+  }
+  if (ipLower.startsWith('172.')) {
+    const parts = ipLower.split('.');
+    if (parts.length >= 2) {
+      const second = parseInt(parts[1]);
+      if (second >= 16 && second <= 31) return false;
+    }
+  }
   const re = /^[a-zA-Z0-9.-]+$/;
   return re.test(ip);
 };
@@ -246,6 +258,22 @@ watch(() => newServer.value.email, (newVal) => {
     emailErrorMsg.value = t('servers.publishDialog.invalidEmail');
   } else {
     emailErrorMsg.value = null;
+  }
+});
+
+watch(() => newServer.value.port, (newVal) => {
+  if (ipSuccessMsg.value) {
+    ipSuccessMsg.value = null;
+  }
+  if (ipErrorMsg.value) {
+    ipErrorMsg.value = null;
+  }
+  if (newVal !== undefined && newVal !== null) {
+    if (newVal > 65535) {
+      newServer.value.port = 65535;
+    } else if (newVal < 1 && newVal !== 0) { // allow 0 temporarily while typing if user clears it? Wait, type="number" might give '' or 0.
+      newServer.value.port = 1;
+    }
   }
 });
 
@@ -431,23 +459,21 @@ const groupedVersions = computed(() => {
   
   for (const v of filtered) {
     const type = v.versionType || v.type || '';
+    
+    if (newServer.value.serverType === 'modded' && type === 'release') {
+      const parts = v.id.split('.').map(Number);
+      if (parts.length >= 2) {
+        if (parts[0] < 1 || (parts[0] === 1 && parts[1] < 7)) {
+          continue; 
+        }
+      }
+    }
+
     switch (type) {
       case 'release':
         release.push(v);
         break;
-      case 'snapshot':
-        snapshot.push(v);
-        break;
-      case 'old_beta':
-        old_beta.push(v);
-        break;
-      case 'old_alpha':
-        old_alpha.push(v);
-        break;
-      default:
-        // Default to release for unknown types
-        release.push(v);
-        break;
+      // We intentionally ignore snapshot, old_beta, old_alpha
     }
   }
   
@@ -1188,7 +1214,7 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
                 </div>
                 <div class="w-24 space-y-1">
                   <label class="text-sm font-medium text-neutral-900 dark:text-neutral-200">{{ $t('servers.publishDialog.port') }}</label>
-                  <input v-model.number="newServer.port" type="number" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
+                  <input v-model.number="newServer.port" @blur="checkServerConnection" type="number" min="1" max="65535" placeholder="25565" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500" />
                 </div>
               </div>
             </template>

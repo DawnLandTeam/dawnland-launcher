@@ -27,6 +27,11 @@ if (import.meta.env.PROD) {
         return;
       }
     }
+
+    if (e.altKey && e.shiftKey && e.key.toLowerCase() === "p") {
+      e.preventDefault();
+      return;
+    }
   });
 }
 
