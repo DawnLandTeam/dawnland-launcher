@@ -519,11 +519,13 @@ fn get_library_download_info_json(lib: &serde_json::Value, source: &crate::core:
                         let replaced_url = crate::core::settings::replace_download_url(url, source);
                         return Some((replaced_url, lib_path));
                     }
-                } else {
-                    return None;
                 }
             }
         }
+        
+        // If it has a downloads block, we should trust it. If artifact is missing, it's likely a native-only lib.
+        // DO NOT fallback to Maven coordinates.
+        return None;
     }
 
     // Fallback to Maven coordinate format
