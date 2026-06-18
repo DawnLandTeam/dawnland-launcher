@@ -5,7 +5,6 @@ use crate::models::{
     CreateServerInput, FilterOptionsResponse, PackFileResponse, Server, UpdateServerInput,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 use tokio::task;
 
 fn extract_api_error(status: reqwest::StatusCode, body: &str) -> String {
@@ -14,7 +13,7 @@ fn extract_api_error(status: reqwest::StatusCode, body: &str) -> String {
             return format!("{}: {}", status, err_msg);
         }
     }
-    format!("{} - {}", status, body)
+    format!("{} - An unexpected error occurred.", status)
 }
 
 /// Get the web backend URL from environment or use default.
