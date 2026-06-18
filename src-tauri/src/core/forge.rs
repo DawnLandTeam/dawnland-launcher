@@ -1229,7 +1229,7 @@ mod tests {
             }
         }"#;
         let lib1: serde_json::Value = serde_json::from_str(json1).unwrap();
-        let info1 = get_library_download_info_json(&lib1).unwrap();
+        let info1 = get_library_download_info_json(&lib1, &crate::core::settings::DownloadSource::Official).unwrap();
         assert_eq!(info1.0, "https://maven.minecraftforge.net/org/ow2/asm/asm/9.5/asm-9.5.jar");
         assert_eq!(info1.1, "libraries/org/ow2/asm/asm/9.5/asm-9.5.jar");
 
@@ -1238,7 +1238,7 @@ mod tests {
             "name": "net.minecraftforge:forge:1.20.1"
         }"#;
         let lib2: serde_json::Value = serde_json::from_str(json2).unwrap();
-        let info2 = get_library_download_info_json(&lib2).unwrap();
+        let info2 = get_library_download_info_json(&lib2, &crate::core::settings::DownloadSource::Official).unwrap();
         assert_eq!(info2.0, "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1/forge-1.20.1-universal.jar");
         assert_eq!(info2.1, "libraries/net/minecraftforge/forge/1.20.1/forge-1.20.1-universal.jar");
     }
