@@ -243,22 +243,38 @@ fn parse_version_json(
                     "Forge"
                 } else if id_lower.contains("fabric") || inherits_lower.contains("fabric") {
                     "Fabric"
-                } else if let Some(main_class) = json.get("mainClass").and_then(|v| v.as_str()) {
-                    let mc_lower = main_class.to_lowercase();
-                    if mc_lower.contains("fabric") {
+                } else {
+                    let main_class = json.get("mainClass").and_then(|v| v.as_str()).unwrap_or("");
+                    let mc_args = json.get("minecraftArguments").and_then(|v| v.as_str()).unwrap_or("");
+                    
+                    let mut extra_args = String::new();
+                    if let Some(args) = json.get("arguments") {
+                        if let Some(game) = args.get("game") {
+                            if let Some(arr) = game.as_array() {
+                                for item in arr {
+                                    if let Some(s) = item.as_str() {
+                                        extra_args.push_str(s);
+                                        extra_args.push(' ');
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let combined_lower = format!("{} {} {}", main_class, mc_args, extra_args).to_lowercase();
+                    
+                    if combined_lower.contains("fabric") {
                         "Fabric"
-                    } else if mc_lower.contains("neoforge") {
+                    } else if combined_lower.contains("neoforge") {
                         "NeoForge"
-                    } else if mc_lower.contains("forge")
-                        || mc_lower.contains("fml")
-                        || mc_lower.contains("bootstraplauncher")
+                    } else if combined_lower.contains("forge")
+                        || combined_lower.contains("fml")
+                        || combined_lower.contains("bootstraplauncher")
                     {
                         "Forge"
                     } else {
                         "Vanilla"
                     }
-                } else {
-                    "Vanilla"
                 };
 
             // Extract Minecraft version
