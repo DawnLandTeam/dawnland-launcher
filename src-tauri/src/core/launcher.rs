@@ -954,17 +954,16 @@ pub fn parse_jvm_arguments(
 ) -> Result<Vec<String>, String> {
     let mut args = Vec::new();
 
-    // Handle old format (minecraftArguments - deprecated)
-    if let Some(mc_args) = &version_meta.minecraft_arguments {
-        // Old format: just a string with all args
-        args.extend(mc_args.split_whitespace().map(String::from));
-    }
-
     // Handle new format (arguments.jvm)
     if let Some(arguments) = &version_meta.arguments {
         if let Some(jvm) = &arguments.jvm {
             parse_argument_list(jvm, &mut args)?;
         }
+    } else {
+        // Fallback for older versions (like 1.12.2)
+        args.push("-Djava.library.path=${natives_directory}".to_string());
+        args.push("-cp".to_string());
+        args.push("${classpath}".to_string());
     }
 
     // Apply template substitutions
