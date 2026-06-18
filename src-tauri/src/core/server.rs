@@ -5,7 +5,17 @@ use crate::models::{
     CreateServerInput, FilterOptionsResponse, PackFileResponse, Server, UpdateServerInput,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 use tokio::task;
+
+fn extract_api_error(status: reqwest::StatusCode, body: &str) -> String {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(err_msg) = json.get("error").and_then(|v| v.as_str()) {
+            return format!("{}: {}", status, err_msg);
+        }
+    }
+    format!("{} - {}", status, body)
+}
 
 /// Get the web backend URL from environment or use default.
 fn get_web_backend_url() -> String {
@@ -224,7 +234,7 @@ pub async fn create_server(input: CreateServerInput) -> Result<Server, String> {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         tracing::error!("Server API error: {} - {}", status, body);
-        return Err(format!("Failed to create server: {}", status));
+        return Err(format!("Failed to create server: {}", extract_api_error(status, &body)));
     }
 
     #[derive(Deserialize)]
@@ -259,10 +269,11 @@ pub async fn update_server(id: String, input: UpdateServerInput) -> Result<Serve
 
     if !response.status().is_success() {
         let status = response.status();
+        let body = response.text().await.unwrap_or_default();
         if status.as_u16() == 404 {
             return Err("Server not found".to_string());
         }
-        return Err(format!("Failed to update server: {}", status));
+        return Err(format!("Failed to update server: {}", extract_api_error(status, &body)));
     }
 
     #[derive(Deserialize)]
