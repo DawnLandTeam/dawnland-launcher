@@ -265,7 +265,11 @@
       "channelStable": "Stable (Recommended)",
       "channelPrerelease": "Pre-release",
       "inheritanceTitle": "Instance Inheritance",
-      "inheritanceDesc": "When enabled, newly installed instances will only contain modifications and inherit from vanilla files (saves space). When disabled, instance configurations are flattened (better for portability). Recommended: Disabled."
+      "inheritanceDesc": "When enabled, newly installed instances will only contain modifications and inherit from vanilla files (saves space). When disabled, instance configurations are flattened (better for portability). Recommended: Disabled.",
+      "downloadSourceTitle": "Download Source",
+      "downloadSourceDesc": "Select the download source for Minecraft assets, libraries, and mod loaders.",
+      "downloadSourceOfficial": "Official",
+      "downloadSourceBmclapi": "BMCLAPI"
     },
     "java": {
       "title": "Java Management",
