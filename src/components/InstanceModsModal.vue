@@ -52,13 +52,6 @@ interface UnifiedModFile {
   dependencies: any[];
 }
 
-interface ModInstallProgress {
-  event: string;
-  filename: string;
-  contentLength: number | null;
-  chunkLength: number | null;
-}
-
 // Props
 const props = defineProps<{
   open: boolean;
@@ -860,7 +853,7 @@ const groupedModFiles = computed(() => {
             <button @click="selectedMod = null" class="px-4 py-2 text-sm font-medium border rounded-lg hover:bg-muted transition-colors">
               {{ t('instanceMods.close', 'Close') }}
             </button>
-            <button @click="const mod = selectedMod; selectedMod = null; if(mod) openInstallModal(mod);" class="flex items-center gap-2 px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-sm">
+            <button @click="selectedMod && openInstallModal(selectedMod); selectedMod = null;" class="flex items-center gap-2 px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-sm">
               <Download class="h-4 w-4" /> {{ t('instanceMods.installMod', 'Install Mod') }}
             </button>
           </div>
