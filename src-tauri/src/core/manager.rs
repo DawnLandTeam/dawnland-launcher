@@ -247,30 +247,53 @@ fn parse_version_json(
                     let main_class = json.get("mainClass").and_then(|v| v.as_str()).unwrap_or("");
                     let mc_args = json.get("minecraftArguments").and_then(|v| v.as_str()).unwrap_or("");
                     
-                    let mut extra_args = String::new();
+                    let mut check_forge = false;
+                    let mut check_fabric = false;
+                    let mut check_neoforge = false;
+                    
+                    let mut check_str = |s: &str| {
+                        let lower = s.to_lowercase();
+                        if lower.contains("fabric") { check_fabric = true; }
+                        if lower.contains("neoforge") { check_neoforge = true; }
+                        if lower.contains("forge") || lower.contains("fml") || lower.contains("bootstraplauncher") {
+                            check_forge = true;
+                        }
+                    };
+
+                    check_str(main_class);
+                    check_str(mc_args);
+
                     if let Some(args) = json.get("arguments") {
                         if let Some(game) = args.get("game") {
                             if let Some(arr) = game.as_array() {
                                 for item in arr {
                                     if let Some(s) = item.as_str() {
-                                        extra_args.push_str(s);
-                                        extra_args.push(' ');
+                                        check_str(s);
+                                    } else if let Some(obj) = item.as_object() {
+                                        if let Some(value) = obj.get("value") {
+                                            match value {
+                                                serde_json::Value::String(s) => check_str(s),
+                                                serde_json::Value::Array(values) => {
+                                                    for v in values {
+                                                        if let Some(s) = v.as_str() {
+                                                            check_str(s);
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
 
-                    let combined_lower = format!("{} {} {}", main_class, mc_args, extra_args).to_lowercase();
-                    
-                    if combined_lower.contains("fabric") {
+                    if check_fabric {
                         "Fabric"
-                    } else if combined_lower.contains("neoforge") {
+                    } else if check_neoforge {
                         "NeoForge"
-                    } else if combined_lower.contains("forge")
-                        || combined_lower.contains("fml")
-                        || combined_lower.contains("bootstraplauncher")
-                    {
+                    } else if check_forge {
                         "Forge"
                     } else {
                         "Vanilla"
