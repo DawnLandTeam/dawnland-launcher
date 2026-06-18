@@ -56,6 +56,9 @@ importers:
       vue-router:
         specifier: ^5.0.7
         version: 5.1.0(@vue/compiler-sfc@3.5.35)(vite@6.4.3(jiti@1.21.7)(tsx@4.22.4)(yaml@2.9.0))(vue@3.5.35(typescript@5.6.3))
+      vue-turnstile:
+        specifier: ^1.0.11
+        version: 1.0.11(vue@3.5.35(typescript@5.6.3))
     devDependencies:
       '@aws-sdk/client-s3':
         specifier: ^3.1060.0
@@ -2035,6 +2038,11 @@ packages:
     peerDependencies:
       typescript: '>=5.0.0'
 
+  vue-turnstile@1.0.11:
+    resolution: {integrity: sha512-iaTBoZ5oUqtNRto6bmbn6FQvW0h/sK7mPUJc1Qn4em+cELXN59U2FQTcpWfKssV3OY6lEZzmCpcn/zrb7htK3A==}
+    peerDependencies:
+      vue: ^3.2.45
+
   vue@3.5.35:
     resolution: {integrity: sha512-cx89fnr+0kVGHiNFG6y6s0bdjypJRFNZn6x3WPstNdQR1bi1mbB7h4v5IBGTsPJU3nK1+0Iqj3Zf+hZWMieR4Q==}
     peerDependencies:
@@ -3913,6 +3921,10 @@ snapshots:
       '@volar/typescript': 2.4.15
       '@vue/language-core': 2.2.12(typescript@5.6.3)
       typescript: 5.6.3
+
+  vue-turnstile@1.0.11(vue@3.5.35(typescript@5.6.3)):
+    dependencies:
+      vue: 3.5.35(typescript@5.6.3)
 
   vue@3.5.35(typescript@5.6.3):
     dependencies:
