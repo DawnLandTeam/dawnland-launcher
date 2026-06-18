@@ -12,7 +12,7 @@ pub enum DownloadSource {
 
 impl Default for DownloadSource {
     fn default() -> Self {
-        Self::Official
+        Self::Bmclapi
     }
 }
 
