@@ -51,12 +51,11 @@ const FABRIC_META_BASE: &str = "https://meta.fabricmc.net/v2";
 pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, AppError> {
     tracing::info!("Fetching Fabric loaders for Minecraft {}", mc_version);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    let client = crate::core::utils::get_http_client();
 
+    let settings = crate::core::settings::get_launcher_settings_sync();
     let url = format!("{}/versions/loader/{}", FABRIC_META_BASE, mc_version);
+    let url = crate::core::settings::replace_download_url(&url, &settings.download_source);
 
     let response = client
         .get(&url)
@@ -66,7 +65,7 @@ pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, 
 
     if !response.status().is_success() {
         return Err(format!(
-            "Fabric loader API request failed: {}",
+            "Fabric loaders request failed: {}",
             response.status()
         ).into());
     }
@@ -141,10 +140,7 @@ impl ExecutableTask for InstallFabricTask {
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, is_dependency.unwrap_or(false)).await;
     
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| TaskError::ExecutionError(format!("Failed to create HTTP client: {e}")))?;
+    let client = crate::core::utils::get_http_client();
 
     // Step 1: Check if base vanilla version is installed
     let dawnland_cache = crate::core::mojang::get_dawnland_cache();
@@ -175,11 +171,16 @@ impl ExecutableTask for InstallFabricTask {
 
         // Get version JSON URL from Mojang
         let manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
+        let settings = crate::core::settings::get_launcher_settings_sync();
+        let manifest_url = crate::core::settings::replace_download_url(manifest_url, &settings.download_source);
+        
         let manifest: serde_json::Value = client
-            .get(manifest_url)
+            .get(&manifest_url)
             .send()
             .await
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to fetch version manifest: {}", e)))?
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to download version JSON: {}", e)))?
+            .error_for_status()
+            .map_err(|e| TaskError::ExecutionError(format!("HTTP error downloading version JSON: {}", e)))?
             .json()
             .await
             .map_err(|e| TaskError::ExecutionError(format!("Failed to parse version manifest: {}", e)))?;
@@ -229,6 +230,8 @@ impl ExecutableTask for InstallFabricTask {
         "{}/versions/loader/{}/{}/profile/json",
         FABRIC_META_BASE, mc_version, fabric_version
     );
+    let settings = crate::core::settings::get_launcher_settings_sync();
+    let fabric_url = crate::core::settings::replace_download_url(&fabric_url, &settings.download_source);
 
     tracing::info!("Fetching Fabric profile from: {}", fabric_url);
 
@@ -236,7 +239,9 @@ impl ExecutableTask for InstallFabricTask {
         .get(&fabric_url)
         .send()
         .await
-        .map_err(|e| TaskError::ExecutionError(format!("Failed to fetch Fabric profile: {}", e)))?
+        .map_err(|e| TaskError::ExecutionError(format!("Failed to download Fabric profile: {}", e)))?
+        .error_for_status()
+        .map_err(|e| TaskError::ExecutionError(format!("HTTP error downloading Fabric profile: {}", e)))?
         .text()
         .await
         .map_err(|e| TaskError::ExecutionError(format!("Failed to read Fabric profile: {}", e)))?;
@@ -321,13 +326,14 @@ impl ExecutableTask for InstallFabricTask {
             crate::core::mojang::get_library_download_info_from_json(lib)
         {
             let dest = base_dir.join("libraries").join(&relative_path);
+            let replaced_url = crate::core::settings::replace_download_url(&download_url, &settings.download_source);
             tracing::debug!(
                 "Added Fabric library: {} -> {}",
                 relative_path,
-                download_url
+                replaced_url
             );
             tasks.push(crate::downloader::DownloadTask::new(
-                download_url,
+                replaced_url,
                 dest.to_string_lossy().to_string(),
                 None, // SHA1 not available for Maven coordinates
                 None,

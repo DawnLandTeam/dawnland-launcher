@@ -1,3 +1,17 @@
+use std::sync::OnceLock;
+
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+pub fn get_http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .user_agent("Dawnland-Launcher/1.0")
+            .build()
+            .unwrap_or_default()
+    })
+}
+
 /// Compare two version strings numerically (segment by segment)
 /// e.g., "0.9.1" < "0.10.1" < "0.19.1"
 #[async_recursion::async_recursion]

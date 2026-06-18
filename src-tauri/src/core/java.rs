@@ -444,7 +444,7 @@ pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<
         .map_err(|e| format!("Failed to create runtimes directory: {}", e))?;
 
     // Download the file from the URL directly (reqwest follows redirects automatically)
-    let download_client = reqwest::Client::new();
+    let download_client = crate::core::utils::get_http_client().clone();
     let response = download_client
         .get(&url)
         .send()

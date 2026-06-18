@@ -98,11 +98,13 @@ const updateChannel = ref(normalizeUpdateChannel(localStorage.getItem('updateCha
 
 // Launcher Settings state
 const enableInstanceInheritance = ref(false);
+const downloadSource = ref<'official' | 'bmclapi'>('official');
 
 async function loadLauncherSettings() {
   try {
     const settings = await invoke<any>('load_launcher_settings');
     enableInstanceInheritance.value = settings.enableInstanceInheritance;
+    downloadSource.value = settings.downloadSource === 'bmclapi' ? 'bmclapi' : 'official';
   } catch (e) {
     console.error('Failed to load launcher settings:', e);
   }
@@ -112,7 +114,8 @@ async function saveLauncherSettings() {
   try {
     await invoke('save_launcher_settings', {
       settings: {
-        enableInstanceInheritance: enableInstanceInheritance.value
+        enableInstanceInheritance: enableInstanceInheritance.value,
+        downloadSource: downloadSource.value
       }
     });
   } catch (e) {
@@ -516,6 +519,25 @@ function changeLanguage(lang: string) {
           <input type="checkbox" v-model="enableInstanceInheritance" @change="saveLauncherSettings" class="sr-only peer">
           <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
         </label>
+      </div>
+
+      <!-- Download Source Settings -->
+      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div>
+          <h2 class="text-lg font-semibold flex items-center gap-2">
+            <Download :size="20" class="text-primary" />
+            {{ $t('settings.general.downloadSourceTitle') }}
+          </h2>
+          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.downloadSourceDesc') }}</p>
+        </div>
+        <select 
+          v-model="downloadSource"
+          @change="saveLauncherSettings"
+          class="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700 min-w-[120px]"
+        >
+          <option value="official">{{ $t('settings.general.downloadSourceOfficial') }}</option>
+          <option value="bmclapi">{{ $t('settings.general.downloadSourceBmclapi') }}</option>
+        </select>
       </div>
 
       <!-- Global Memory Settings -->
