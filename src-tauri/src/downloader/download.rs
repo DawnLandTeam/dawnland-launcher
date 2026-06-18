@@ -375,6 +375,7 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
             Ok(Ok(())) => {},
             Ok(Err(e)) => {
                 if e == "Cancelled" {
+                    let _ = monitor_handle.abort();
                     return Err("Cancelled".to_string());
                 }
                 error_count += 1;
@@ -392,6 +393,7 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
         tracing::warn!("Batch download finished with {} errors", error_count);
         return Err(format!("{} downloads failed", error_count));
     } else {
+        let _ = monitor_handle.await;
         tracing::info!("Batch download completed successfully");
     }
 

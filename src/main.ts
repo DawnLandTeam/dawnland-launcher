@@ -5,9 +5,29 @@ import i18n from "./i18n";
 import { safeHtml } from "./directives/safeHtml";
 import "./style.css";
 
-// Disable right-click context menu in production
 if (import.meta.env.PROD) {
+  // Disable right-click context menu globally
   document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // Disable common webview shortcuts (DevTools, Search, Print, Reload, etc.)
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "F12" || e.key === "F5") {
+      e.preventDefault();
+      return;
+    }
+    
+    if (e.ctrlKey) {
+      const key = e.key.toLowerCase();
+      if (["r", "f", "p", "u", "s", "g", "+", "-", "0", "="].includes(key)) {
+        e.preventDefault();
+        return;
+      }
+      if (e.shiftKey && ["i", "j", "c"].includes(key)) {
+        e.preventDefault();
+        return;
+      }
+    }
+  });
 }
 
 import { trackEvent } from "./utils/analytics";
