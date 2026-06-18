@@ -263,6 +263,7 @@ pub fn get_library_download_info_from_json(lib: &serde_json::Value) -> Option<(S
                 }
             }
         }
+        return None;
     }
 
     // Fallback to Maven coordinate format (Fabric/Forge style)
@@ -523,14 +524,27 @@ impl ExecutableTask for InstallVanillaTask {
                 }
 
                 if let Some(ref classifiers) = downloads.classifiers {
-                    let os_key = match std::env::consts::OS {
+                    let default_os_key = match std::env::consts::OS {
                         "windows" => "natives-windows",
                         "macos" => "natives-macos",
                         "linux" => "natives-linux",
                         _ => continue,
                     };
+                    
+                    let os_name_for_json = match std::env::consts::OS {
+                        "windows" => "windows",
+                        "macos" => "osx",
+                        "linux" => "linux",
+                        _ => "",
+                    };
 
-                    if let Some(ref classifier) = classifiers.get(os_key) {
+                    let classifier_name = if let Some(ref natives) = lib.natives {
+                        natives.get(os_name_for_json).map(|s| s.as_str()).unwrap_or(default_os_key)
+                    } else {
+                        default_os_key
+                    };
+
+                    if let Some(ref classifier) = classifiers.get(classifier_name) {
                         let path = classifier
                             .path
                             .as_ref()
