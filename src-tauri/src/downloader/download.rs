@@ -2,7 +2,7 @@ use crate::core::task::TaskContext;
 use crate::downloader::{DownloadProgress, DownloadTask};
 use futures_util::StreamExt;
 use sha1::{Digest, Sha1};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::fs::File;
@@ -10,8 +10,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 use tokio::time::Duration;
 
-/// Maximum concurrent downloads.
-const MAX_CONCURRENT: usize = 16;
+
 
 /// Minimum time between progress emissions (milliseconds).
 const PROGRESS_THROTTLE_MS: u64 = 500;
@@ -49,6 +48,7 @@ async fn download_file_task(
     task: DownloadTask,
     client: &reqwest::Client,
     ctx: &TaskContext,
+    global_downloaded: &Arc<AtomicU64>,
 ) -> Result<(), String> {
     tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
 
@@ -191,6 +191,9 @@ async fn download_file_task(
 
                 downloaded += chunk.len() as u64;
 
+                // Update global downloaded counter
+                global_downloaded.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+
                 // Throttle: only emit every PROGRESS_THROTTLE_MS or every 512KB.
                 let elapsed = last_emit_time.elapsed().as_millis() as u64;
                 let since_last_emit = downloaded.saturating_sub(last_downloaded);
@@ -254,8 +257,41 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
     // Create a single shared HTTP client with connection pooling.
     let client = crate::core::utils::get_http_client().clone();
 
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
+    let settings = crate::core::settings::get_launcher_settings_sync();
+    let max_concurrent = settings.max_concurrent_downloads as usize;
+    let semaphore = Arc::new(Semaphore::new(max_concurrent.max(1)));
     let completed_files = Arc::new(AtomicUsize::new(0));
+
+    // Global speed tracking
+    let global_downloaded = Arc::new(AtomicU64::new(0));
+    let global_dl_clone = global_downloaded.clone();
+    let ctx_monitor = ctx.clone();
+    let total_files = total_tasks as u32;
+    let completed_files_clone = completed_files.clone();
+    
+    let monitor_handle = tokio::spawn(async move {
+        let mut last_bytes = 0;
+        let mut last_time = tokio::time::Instant::now();
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if ctx_monitor.is_cancelled() { break; }
+            let current_bytes = global_dl_clone.load(Ordering::Relaxed);
+            let elapsed = last_time.elapsed().as_secs_f64();
+            if elapsed > 0.0 {
+                let speed = ((current_bytes - last_bytes) as f64 / elapsed) as u64;
+                let remaining = total_files.saturating_sub(completed_files_clone.load(Ordering::SeqCst) as u32);
+                ctx_monitor.update_download_metrics(speed, remaining).await;
+            }
+            last_bytes = current_bytes;
+            last_time = tokio::time::Instant::now();
+            
+            if completed_files_clone.load(Ordering::SeqCst) >= total_tasks {
+                break;
+            }
+        }
+        // Reset speed to 0 when done
+        ctx_monitor.update_download_metrics(0, 0).await;
+    });
 
     // Spawn download tasks with error isolation.
     let handles: Vec<_> = tasks
@@ -267,6 +303,7 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
             let ctx = ctx.clone();
             let semaphore = semaphore.clone();
             let completed_files = completed_files.clone();
+            let global_downloaded_clone = global_downloaded.clone();
 
             tokio::spawn(async move {
                 if ctx.is_cancelled() {
@@ -292,7 +329,7 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
                     }
 
                     // Execute download and handle errors gracefully.
-                    match download_file_task(task.clone(), &client, &ctx).await {
+                    match download_file_task(task.clone(), &client, &ctx, &global_downloaded_clone).await {
                         Ok(()) => {
                             // Emit completion.
                             tracing::info!("Emitting completed for task: {}", task_id);
@@ -351,6 +388,7 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
     }
 
     if error_count > 0 {
+        let _ = monitor_handle.abort();
         tracing::warn!("Batch download finished with {} errors", error_count);
         return Err(format!("{} downloads failed", error_count));
     } else {
@@ -501,7 +539,9 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle, cancel
     let total_tasks = tasks.len();
     let client = crate::core::utils::get_http_client().clone();
 
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
+    let settings = crate::core::settings::get_launcher_settings_sync();
+    let max_concurrent = settings.max_concurrent_downloads as usize;
+    let semaphore = Arc::new(Semaphore::new(max_concurrent.max(1)));
     let handles: Vec<_> = tasks
         .into_iter()
         .map(|task| {
