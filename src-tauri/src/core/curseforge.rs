@@ -180,7 +180,7 @@ pub async fn search_curseforge(
     let cf_url = build_cf_url("/mods/search", Some(&query_string));
     tracing::info!("CF API URL: {}", cf_url);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
@@ -283,7 +283,7 @@ pub async fn get_cf_mod_files(
     let cf_url = build_cf_url(&format!("/mods/{}/files", project_id), Some(&query_string));
     tracing::info!("CF API URL: {}", cf_url);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
@@ -385,7 +385,7 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
 
     let request_body = CfBatchFilesRequest { file_ids };
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = cf_request(&client, reqwest::Method::POST, &cf_url)?
         .json(&request_body)
         .send()
@@ -461,7 +461,7 @@ pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject,
     let cf_url = build_cf_url(&format!("/mods/{}", project_id), None);
     tracing::info!("CF API URL: {}", cf_url);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
@@ -531,7 +531,7 @@ pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModP
 
     let cf_url = build_cf_url("/mods/search", Some(&query_string));
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await
@@ -619,7 +619,7 @@ pub async fn get_curseforge_modpack_versions(
     // I'll assume `build_proxy_url(&format!("/mods/{}/files", project_id), None)`
     let cf_url = build_cf_url(&format!("/mods/{}/files", project_id), None);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
         .send()
         .await

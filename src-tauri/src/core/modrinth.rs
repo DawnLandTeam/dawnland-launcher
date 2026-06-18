@@ -187,7 +187,7 @@ pub async fn search_modrinth(
         facets_query
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .get(&search_url)
         .header("Accept", "application/json")
@@ -262,7 +262,7 @@ pub async fn get_modrinth_mod_files(
     let versions_url = format!("{}/project/{}/version", MODRINTH_BASE_URL, project_id);
     tracing::info!("Fetching Modrinth files from URL: {}", versions_url);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .get(&versions_url)
         .header("Accept", "application/json")
@@ -349,7 +349,7 @@ pub async fn get_modrinth_mod_details(project_id: String) -> Result<UnifiedModPr
 
     let project_url = format!("{}/project/{}", MODRINTH_BASE_URL, project_id);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .get(&project_url)
         .header("Accept", "application/json")
@@ -390,7 +390,7 @@ pub async fn get_modrinth_mod_versions(project_id: String) -> Result<Vec<String>
 
     let versions_url = format!("{}/project/{}/version", MODRINTH_BASE_URL, project_id);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .get(&versions_url)
         .header("Accept", "application/json")
@@ -446,7 +446,7 @@ pub async fn search_modrinth_modpacks(query: String) -> Result<Vec<UnifiedModPro
         urlencoding::encode(facets)
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .get(&search_url)
         .header("Accept", "application/json")
@@ -502,7 +502,7 @@ pub async fn get_modrinth_modpack_versions(
 
     let versions_url = format!("{}/project/{}/version", MODRINTH_BASE_URL, project_id);
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
     let response = client
         .get(&versions_url)
         .header("Accept", "application/json")
