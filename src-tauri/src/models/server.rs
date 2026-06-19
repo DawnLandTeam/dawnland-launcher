@@ -13,7 +13,6 @@ pub struct Server {
     pub port: i32,
     pub motd: String,
     pub version: String,
-    pub loader_type: String,
     pub server_type: String, // "vanilla", "modded", "custom"
     pub auth_type: String,   // "offline", "online", "authlib"
     pub authlib_api: Option<String>,

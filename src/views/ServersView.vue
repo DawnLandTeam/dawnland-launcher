@@ -16,7 +16,6 @@ interface ServerInfo {
   port: number;
   motd: string;
   version: string;
-  loaderType: string;
   serverType: string;        // "vanilla", "modded", "custom"
   authType: string;          // "offline", "online", "authlib"
   authlibApi?: string;
@@ -399,7 +398,7 @@ async function launchAndConnect(server: ServerInfo) {
       server_id: String(server.id),
       server_name: server.name,
       server_version: server.version,
-      server_loader: server.serverType === 'modded' ? (server.loaderType || 'forge') : 'vanilla',
+      server_loader: server.serverType === 'modded' ? 'forge' : 'vanilla',
       server_ip: server.ip,
       server_port: String(server.port),
       auth_type: server.authType,
