@@ -91,9 +91,7 @@ const renderedDescription = computed(() => {
                 <span class="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-semibold text-neutral-800 dark:bg-zinc-800 dark:text-neutral-300">
                   {{ server?.serverType === 'vanilla' ? t('servers.details.vanilla') : server?.serverType === 'modded' ? t('servers.details.modded') : t('servers.details.custom', '自定义 (Custom)') }}
                 </span>
-                <span v-if="server?.loaderType" class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
-                  {{ server.loaderType }}
-                </span>
+
               </div>
             </div>
           </div>

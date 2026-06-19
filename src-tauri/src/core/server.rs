@@ -402,7 +402,6 @@ pub async fn install_server_modpack(
     let config = serde_json::json!({
         "name": instance_name,
         "version": version,
-        "loaderType": server.loader_type,
         "serverAddress": format!("{}:{}", server.ip, server.port),
         "source": "server",
         "sourceServerId": server_id,
