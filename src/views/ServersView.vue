@@ -3,8 +3,10 @@ import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watc
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Server, Gamepad2, Search, Copy, Check, Loader2, Download, Users, Star, RefreshCw } from "@lucide/vue";
 import { getErrorMessage } from "../utils/error";
+import { EXTERNAL_URLS } from "../utils/constants";
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -494,7 +496,17 @@ function cancelPrompt() {
   }
   promptState.value.show = false;
 }
+
 import ServerDetailsModal from '../components/ServerDetailsModal.vue';
+
+async function openPublishUrl() {
+  try {
+    await openUrl(EXTERNAL_URLS.PUBLISH_SERVER);
+  } catch (err) {
+    console.error("Failed to open publish URL:", err);
+    showAlert(t('servers.publishError', 'Failed to open the browser. Please manually visit: ' + EXTERNAL_URLS.PUBLISH_SERVER));
+  }
+}
 </script>
 
 <template>
@@ -511,6 +523,12 @@ import ServerDetailsModal from '../components/ServerDetailsModal.vue';
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <button
+          @click="openPublishUrl"
+          class="flex items-center justify-center h-8 px-3 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm text-sm font-medium"
+        >
+          {{ $t('servers.publish') }}
+        </button>
         <button
           @click="refreshAllServerStatuses"
           :disabled="isRefreshing"
