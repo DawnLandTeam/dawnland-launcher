@@ -398,7 +398,7 @@ async function launchAndConnect(server: ServerInfo) {
       server_id: String(server.id),
       server_name: server.name,
       server_version: server.version,
-      server_loader: server.serverType === 'modded' ? 'forge' : 'vanilla',
+
       server_ip: server.ip,
       server_port: String(server.port),
       auth_type: server.authType,
