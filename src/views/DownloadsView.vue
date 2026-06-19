@@ -117,7 +117,7 @@ function handleProgress(payload: DownloadProgress): void {
   task.speed = formatSpeed(payload.speed);
 
   if (payload.total > 0) {
-    task.progress = Math.round((payload.downloaded / payload.total) * 100);
+    task.progress = Math.floor((payload.downloaded / payload.total) * 100);
   }
 
   if (payload.completed) {
