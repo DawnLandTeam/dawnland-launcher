@@ -27,7 +27,7 @@ const percentage = computed(() => {
     }
     const totalWeight = props.task.progress.sub_tasks.reduce((acc, s) => acc + s.weight, 0);
     if (totalWeight > 0) {
-        return Math.min(100, Math.round((totalProgress / totalWeight) * 100));
+        return Math.min(100, Math.floor((totalProgress / totalWeight) * 100));
     }
   }
 
@@ -42,7 +42,7 @@ const percentage = computed(() => {
     stepProgress = (current / total) * (100 / safeTotalSteps);
   }
   
-  return Math.min(100, Math.round(basePercent + stepProgress));
+  return Math.min(100, Math.floor(basePercent + stepProgress));
 });
 
 const isCancelable = computed(() => {

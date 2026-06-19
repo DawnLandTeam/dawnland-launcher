@@ -382,7 +382,7 @@ async function downloadJava(majorVersion: number): Promise<void> {
     unlisten = await listen<DownloadProgress>("download-progress", (event) => {
       const payload = event.payload;
       if (payload.total > 0) {
-        javaDownloadProgress.value = Math.round((payload.downloaded / payload.total) * 100);
+        javaDownloadProgress.value = Math.floor((payload.downloaded / payload.total) * 100);
         javaDownloadedBytes.value = payload.downloaded;
         javaTotalBytes.value = payload.total;
 

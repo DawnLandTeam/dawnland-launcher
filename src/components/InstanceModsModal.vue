@@ -239,7 +239,7 @@ onMounted(async () => {
       const baseProgress = ((currentInstallFileIndex.value - 1) / totalInstallFiles.value) * 100;
       const currentProgress = (fileProgress / 100) * (100 / totalInstallFiles.value);
       
-      installProgress.value = Math.round(Math.min(100, Math.max(0, baseProgress + currentProgress)));
+      installProgress.value = Math.floor(Math.min(100, Math.max(0, baseProgress + currentProgress)));
       installStatusText.value = `Downloading (${currentInstallFileIndex.value}/${totalInstallFiles.value}): ${decodedFilename}...`;
     });
 

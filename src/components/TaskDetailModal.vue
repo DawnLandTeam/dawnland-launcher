@@ -45,7 +45,7 @@ function handleCancel() {
 function getSubTaskPercentage(sub: any) {
   if (sub.status === 'Completed') return 100;
   if (sub.total === 0) return 0;
-  return Math.min(100, Math.round((sub.current / sub.total) * 100));
+  return Math.min(100, Math.floor((sub.current / sub.total) * 100));
 }
 </script>
 
