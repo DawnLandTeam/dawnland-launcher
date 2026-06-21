@@ -67,3 +67,5 @@ mockito = "1.7.2"
 
 [target.x86_64-pc-windows-msvc.dependencies]
 winreg = "0.56.0"
+webview2-com = "0.38.2"
+windows-core = "0.61.2"

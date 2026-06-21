@@ -97,6 +97,41 @@ pub fn run() {
             });
 
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "windows")]
+                {
+                    use webview2_com::Microsoft::Web::WebView2::Win32::{
+                        ICoreWebView2Settings3, ICoreWebView2Settings4,
+                        ICoreWebView2Settings5, ICoreWebView2Settings6,
+                    };
+                    use windows_core::Interface;
+                    
+                    let _ = window.with_webview(|webview| {
+                        unsafe {
+                            if let Ok(core) = webview.controller().CoreWebView2() {
+                                if let Ok(settings) = core.Settings() {
+                                    let _ = settings.SetAreDefaultContextMenusEnabled(false);
+                                    let _ = settings.SetIsBuiltInErrorPageEnabled(false);
+                                    let _ = settings.SetIsZoomControlEnabled(false);
+                                    
+                                    if let Ok(settings5) = settings.cast::<ICoreWebView2Settings5>() {
+                                        let _ = settings5.SetIsPinchZoomEnabled(false);
+                                    }
+                                    if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
+                                        let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
+                                    }
+                                    if let Ok(settings4) = settings.cast::<ICoreWebView2Settings4>() {
+                                        let _ = settings4.SetIsPasswordAutosaveEnabled(false);
+                                        let _ = settings4.SetIsGeneralAutofillEnabled(false);
+                                    }
+                                    if let Ok(settings6) = settings.cast::<ICoreWebView2Settings6>() {
+                                        let _ = settings6.SetIsSwipeNavigationEnabled(false);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+
                 if let Ok(Some(monitor)) = window.current_monitor() {
                     let size = monitor.size();
                     let scale_factor = monitor.scale_factor();
