@@ -57,6 +57,94 @@ fn register_deep_link() {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn configure_webview2_settings(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Settings3, ICoreWebView2Settings4,
+        ICoreWebView2Settings5, ICoreWebView2Settings6,
+    };
+    use windows_core::Interface;
+    
+    if let Err(e) = window.with_webview(|webview| {
+        unsafe {
+            let core = match webview.controller().CoreWebView2() {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("Failed to get CoreWebView2: {:?}", e);
+                    return;
+                }
+            };
+
+            let settings = match core.Settings() {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to get CoreWebView2Settings: {:?}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = settings.SetAreDefaultContextMenusEnabled(false) {
+                tracing::warn!("Failed to disable default context menus: {:?}", e);
+            }
+            if let Err(e) = settings.SetIsBuiltInErrorPageEnabled(false) {
+                tracing::warn!("Failed to disable built-in error page: {:?}", e);
+            }
+            if let Err(e) = settings.SetIsZoomControlEnabled(false) {
+                tracing::warn!("Failed to disable zoom control: {:?}", e);
+            }
+
+            match settings.cast::<ICoreWebView2Settings5>() {
+                Ok(settings5) => {
+                    if let Err(e) = settings5.SetIsPinchZoomEnabled(false) {
+                        tracing::warn!("Failed to disable pinch zoom: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("ICoreWebView2Settings5 not available; pinch-zoom may remain enabled: {:?}", e);
+                }
+            }
+
+            match settings.cast::<ICoreWebView2Settings3>() {
+                Ok(settings3) => {
+                    if let Err(e) = settings3.SetAreBrowserAcceleratorKeysEnabled(false) {
+                        tracing::warn!("Failed to disable browser accelerator keys: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("ICoreWebView2Settings3 not available; accelerator keys may remain enabled: {:?}", e);
+                }
+            }
+
+            match settings.cast::<ICoreWebView2Settings4>() {
+                Ok(settings4) => {
+                    if let Err(e) = settings4.SetIsPasswordAutosaveEnabled(false) {
+                        tracing::warn!("Failed to disable password autosave: {:?}", e);
+                    }
+                    if let Err(e) = settings4.SetIsGeneralAutofillEnabled(false) {
+                        tracing::warn!("Failed to disable general autofill: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("ICoreWebView2Settings4 not available; autofill settings may remain enabled: {:?}", e);
+                }
+            }
+
+            match settings.cast::<ICoreWebView2Settings6>() {
+                Ok(settings6) => {
+                    if let Err(e) = settings6.SetIsSwipeNavigationEnabled(false) {
+                        tracing::warn!("Failed to disable swipe navigation: {:?}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("ICoreWebView2Settings6 not available; swipe navigation may remain enabled: {:?}", e);
+                }
+            }
+        }
+    }) {
+        tracing::error!("Failed to execute with_webview: {:?}", e);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize the logging system before anything else.
@@ -97,6 +185,9 @@ pub fn run() {
             });
 
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "windows")]
+                configure_webview2_settings(&window);
+
                 if let Ok(Some(monitor)) = window.current_monitor() {
                     let size = monitor.size();
                     let scale_factor = monitor.scale_factor();
