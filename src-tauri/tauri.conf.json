@@ -35,7 +35,7 @@
           "requireLiteralLeadingDot": false
         }
       },
-      "csp": null
+      "csp": "default-src 'self' tauri:; connect-src 'self' https://* http://localhost:* ws://localhost:* wss://*; img-src 'self' asset: https://* data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; font-src 'self' data:;"
     }
   },
   "bundle": {
