@@ -1,36 +1,39 @@
 import { notificationStore } from './useNotificationStore';
 
 export const useToast = () => {
-  const success = (title: string, description?: string) => {
+  const success = (title: string, description?: string, options?: { transient?: boolean }) => {
     notificationStore.addNotification({
       title,
       description: description || '',
       type: 'success',
       isPopup: true,
       status: 'read',
-      duration: 3000
+      duration: 3000,
+      transient: options?.transient
     });
   };
 
-  const error = (title: string, description?: string) => {
+  const error = (title: string, description?: string, options?: { transient?: boolean }) => {
     notificationStore.addNotification({
       title,
       description: description || '',
       type: 'error',
       isPopup: true,
       status: 'read',
-      duration: 3000
+      duration: 3000,
+      transient: options?.transient
     });
   };
 
-  const info = (title: string, description?: string) => {
+  const info = (title: string, description?: string, options?: { transient?: boolean }) => {
     notificationStore.addNotification({
       title,
       description: description || '',
       type: 'info',
       isPopup: true,
       status: 'read',
-      duration: 3000
+      duration: 3000,
+      transient: options?.transient
     });
   };
 

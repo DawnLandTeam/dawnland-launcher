@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, shallowRef, onMounted, onActivated, watch, onUnmounted } from "vue";
+import { ref, shallowRef, onMounted, onActivated, watch, onUnmounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from '@tauri-apps/plugin-dialog';
+import DInput from '../components/ui/DInput.vue';
 import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages } from "@lucide/vue";
-import { useI18n } from "vue-i18n";
+import { useI18n } from 'vue-i18n';
+import DSelect from '../components/ui/DSelect.vue';
 import { useRoute, useRouter } from "vue-router";
 import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
@@ -419,6 +421,28 @@ async function downloadJava(majorVersion: number): Promise<void> {
 
 
 const { t, locale } = useI18n();
+
+const languageOptions = [
+  { label: 'English', value: 'en' },
+  { label: '简体中文', value: 'zh-CN' }
+];
+
+const updateChannelOptions = computed(() => [
+  { label: t('settings.general.channelStable'), value: 'stable' },
+  { label: t('settings.general.channelPrerelease'), value: 'prerelease' }
+]);
+
+const downloadSourceOptions = computed(() => [
+  { label: t('settings.general.downloadSourceOfficial'), value: 'official' },
+  { label: t('settings.general.downloadSourceBmclapi'), value: 'bmclapi' }
+]);
+
+const javaVersionOptions = computed(() => isFetchingJavaVersions.value 
+  ? [{ label: `${t('settings.java.scanning')}...`, value: 0, disabled: true }] 
+  : availableJavaVersions.value.map(v => ({ label: `Java ${v}`, value: v }))
+);
+
+// --- General State ---
 function changeLanguage(lang: string) {
   locale.value = lang;
   localStorage.setItem('language', lang);
@@ -472,7 +496,7 @@ function changeLanguage(lang: string) {
     <!-- General Settings Tab -->
     <div v-if="activeTab === 'general'" class="space-y-6">
       <!-- Language Settings -->
-      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+      <div class="relative z-50 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
         <div>
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <Languages :size="20" class="text-primary" />
@@ -480,18 +504,16 @@ function changeLanguage(lang: string) {
           </h2>
           <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.languageDesc') }}</p>
         </div>
-        <select 
-          :value="locale"
-          @change="changeLanguage(($event.target as HTMLSelectElement).value)"
-          class="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700 min-w-[120px]"
-        >
-          <option value="en">English</option>
-          <option value="zh-CN">简体中文</option>
-        </select>
+        <DSelect 
+          :model-value="locale"
+          :options="languageOptions"
+          @update:model-value="changeLanguage($event as string)"
+          class="min-w-[120px]"
+        />
       </div>
 
       <!-- Update Channel Settings -->
-      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+      <div class="relative z-40 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
         <div>
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <Download :size="20" class="text-primary" />
@@ -499,18 +521,16 @@ function changeLanguage(lang: string) {
           </h2>
           <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.updateChannelDesc') }}</p>
         </div>
-        <select 
-          :value="updateChannel"
-          @change="changeUpdateChannel(($event.target as HTMLSelectElement).value)"
-          class="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700 min-w-[120px]"
-        >
-          <option value="stable">{{ $t('settings.general.channelStable') }}</option>
-          <option value="prerelease">{{ $t('settings.general.channelPrerelease') }}</option>
-        </select>
+        <DSelect 
+          :model-value="updateChannel"
+          :options="updateChannelOptions"
+          @update:model-value="changeUpdateChannel($event as string)"
+          class="min-w-[120px]"
+        />
       </div>
 
       <!-- Instance Inheritance Settings -->
-      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+      <div class="relative z-30 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
         <div>
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <Package :size="20" class="text-primary" />
@@ -525,7 +545,7 @@ function changeLanguage(lang: string) {
       </div>
 
       <!-- Download Source Settings -->
-      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+      <div class="relative z-20 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
         <div>
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <Download :size="20" class="text-primary" />
@@ -533,18 +553,16 @@ function changeLanguage(lang: string) {
           </h2>
           <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.downloadSourceDesc') }}</p>
         </div>
-        <select 
+        <DSelect 
           v-model="downloadSource"
-          @change="saveLauncherSettings"
-          class="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700 min-w-[120px]"
-        >
-          <option value="official">{{ $t('settings.general.downloadSourceOfficial') }}</option>
-          <option value="bmclapi">{{ $t('settings.general.downloadSourceBmclapi') }}</option>
-        </select>
+          :options="downloadSourceOptions"
+          @update:model-value="saveLauncherSettings"
+          class="min-w-[120px]"
+        />
       </div>
 
       <!-- Concurrent Downloads Settings -->
-      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
+      <div class="relative z-10 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
         <h2 class="mb-4 text-lg font-semibold flex items-center gap-2">
           <Download :size="20" class="text-primary" />
           {{ $t('settings.general.concurrentDownloadsTitle', '最大并发下载数') }}
@@ -571,7 +589,7 @@ function changeLanguage(lang: string) {
       </div>
 
       <!-- Global Memory Settings -->
-      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
+      <div class="relative z-0 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
         <h2 class="mb-4 text-lg font-semibold">{{ $t('settings.general.memoryTitle') }}</h2>
         <div class="space-y-3">
           <div class="flex items-center justify-between">
@@ -641,12 +659,11 @@ function changeLanguage(lang: string) {
       <div class="mb-4 space-y-1">
         <label class="text-sm font-medium">{{ $t('settings.java.customPath') }}</label>
         <div class="flex gap-2">
-          <input
+          <DInput
             v-model="customJavaDownloadPath"
-            type="text"
             readonly
             :placeholder="$t('settings.java.defaultPath')"
-            class="flex-1 rounded-md border border-neutral-300 bg-neutral-50 px-3 py-1.5 text-sm text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800/50"
+            class="flex-1"
           />
           <button
             class="rounded-lg bg-secondary px-3 py-1.5 text-sm font-medium hover:bg-secondary/80"
@@ -668,14 +685,11 @@ function changeLanguage(lang: string) {
       <div class="mb-4 p-3 bg-muted/30 rounded-lg">
         <p class="text-sm text-muted-foreground mb-3">{{ $t('settings.java.download') }}</p>
         <div class="flex items-center gap-2">
-          <select 
+          <DSelect 
             v-model="selectedJavaVersion"
+            :options="javaVersionOptions"
             :disabled="isFetchingJavaVersions || isDownloadingJava"
-            class="rounded-md border border-neutral-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700"
-          >
-            <option v-if="isFetchingJavaVersions" disabled>{{ $t('settings.java.scanning') }}...</option>
-            <option v-else v-for="v in availableJavaVersions" :key="v" :value="v">Java {{ v }}</option>
-          </select>
+          />
           <button
             class="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
             :disabled="isDownloadingJava"
@@ -752,11 +766,10 @@ function changeLanguage(lang: string) {
         <div class="mb-6 space-y-1">
           <label class="text-sm font-medium">{{ $t('settings.authlib.addServer') }}</label>
           <div class="flex gap-2">
-            <input
+            <DInput
               v-model="newAuthlibUrl"
-              type="text"
               :placeholder="$t('settings.authlib.addServerPlaceholder')"
-              class="flex-1 rounded-md border border-neutral-300 bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700"
+              class="flex-1"
               @keyup.enter="addAuthlibServer"
             />
             <button

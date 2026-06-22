@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { useDark, useToggle } from "@vueuse/core";
-import { Gamepad2, Library, Server, Users, Settings, Sun, Moon, DownloadCloud, Palette } from "@lucide/vue";
+import { Gamepad2, Library, Server, Users, Settings, Sun, Moon, DownloadCloud, Download, Palette } from "@lucide/vue";
 import { hasUpdateAvailable } from "../composables/useUpdate";
 import { isAppBusy } from "../composables/useAppStatus";
 import { useTaskStore } from "../composables/useTaskStore";
@@ -19,6 +19,7 @@ const navItems = computed(() => {
     { name: "home", path: "/", label: t("sidebar.home"), icon: Gamepad2 },
     { name: "instances", path: "/instances", label: t("sidebar.instances"), icon: Library },
     { name: "servers", path: "/servers", label: t("sidebar.servers"), icon: Server },
+    { name: "downloads", path: "/downloads", label: t("sidebar.downloads", "下载中心"), icon: Download },
     { name: "accounts", path: "/accounts", label: t("sidebar.accounts"), icon: Users },
     { name: "settings", path: "/settings", label: t("sidebar.settings"), icon: Settings },
   ];

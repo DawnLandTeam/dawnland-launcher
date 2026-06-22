@@ -1,24 +1,27 @@
 <template>
   <div
-    class="relative flex flex-col items-center justify-center p-5 border rounded-xl transition-all duration-200 select-none"
+    class="relative flex flex-col items-center justify-center p-3 border rounded-xl transition-all duration-200 select-none"
     :class="[
       isDisabled ? 'bg-gray-50 border-gray-200 cursor-not-allowed opacity-75' : 'bg-white dark:bg-zinc-800 border-gray-200 dark:border-zinc-700 hover:shadow-md cursor-pointer',
-      isSelected ? 'border-primary/50 dark:border-primary/50' : ''
+      (isSelected || isConfiguring) ? 'border-primary/50 dark:border-primary/50 ring-1 ring-primary/20' : ''
     ]"
     @click="handleCardClick"
   >
-    <div class="h-12 flex items-center justify-center mb-3">
+    <div class="h-10 flex items-center justify-center mb-3">
       <img v-if="iconUrl" :src="iconUrl" class="max-h-full max-w-full object-contain" :alt="title" />
       <div v-else class="w-10 h-10 bg-gray-200 dark:bg-zinc-700 rounded-md"></div>
     </div>
 
     <span class="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1">{{ title }}</span>
 
-    <div class="h-10 flex flex-col items-center justify-center w-full">
+    <div class="flex flex-col mt-2 items-center justify-center w-full">
       <span v-if="isDisabled" class="text-xs text-gray-500 dark:text-gray-400 text-center px-2">
         {{ conflictReason }}
       </span>
 
+      <div v-if="isConfiguring" class="w-full mt-2">
+        <slot name="configurator"></slot>
+      </div>
       <div v-else-if="isSelected" class="flex flex-col items-center w-full">
         <span class="text-xs text-gray-600 dark:text-gray-300 mb-1.5 font-medium truncate w-full text-center px-2">{{ version }}</span>
         <div class="flex items-center gap-6 text-gray-600 dark:text-gray-400">
@@ -51,6 +54,7 @@ interface Props {
   status: 'pending' | 'selected' | 'disabled';
   version?: string;
   conflictReason?: string;
+  isConfiguring?: boolean;
 }
 
 const props = defineProps<Props>();

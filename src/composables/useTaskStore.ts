@@ -43,17 +43,20 @@ export function useTaskStore() {
                 description: desc,
                 type: 'error',
                 isPopup: true,
-                status: 'unread'
+                status: 'unread',
+                transient: false
               });
             } else if (updatedTask.status === 'Completed') {
-              const title = i18n.global.t('task.completedTitle', { name: getTaskName(updatedTask.task_type) });
+              const title = i18n.global.t('task.completedTitle', { name: getTaskName(updatedTask.task_type) }) || `Completed: ${getTaskName(updatedTask.task_type)}`;
               const desc = i18n.global.t('task.completedDesc');
+              const isTransient = 'InstallMod' in updatedTask.task_type || 'InstallResourcepack' in updatedTask.task_type;
               notificationStore.updateNotification(updatedTask.id, {
                 title,
                 description: desc,
                 type: 'success',
                 isPopup: true,
-                status: 'unread'
+                status: 'unread',
+                transient: isTransient
               });
             } else if (updatedTask.status === 'Cancelled') {
               const title = i18n.global.t('task.cancelledTitle', { name: getTaskName(updatedTask.task_type) }) || 'Task Cancelled';
@@ -62,7 +65,8 @@ export function useTaskStore() {
                 description: '',
                 type: 'info',
                 isPopup: true,
-                status: 'unread'
+                status: 'unread',
+                transient: false
               });
             }
           } else if (updatedTask.status === 'Running') {
@@ -87,7 +91,8 @@ export function useTaskStore() {
             description: '',
             type: 'info',
             isPopup: true,
-            duration: 3000
+            duration: 3000,
+            transient: false
           });
         }
       });
@@ -154,10 +159,19 @@ export function useTaskStore() {
     }
   }
 
-  function toggleTaskCenter() {
+  async function toggleTaskCenter() {
     isTaskCenterOpen.value = !isTaskCenterOpen.value;
     if (!isTaskCenterOpen.value) {
       closeTaskDetail();
+      
+      const tasksToClear = tasks.value.filter(t => t.auto_clear && t.status === 'Completed');
+      for (const t of tasksToClear) {
+        try {
+          await invoke('delete_task', { taskId: t.id });
+        } catch (e) {
+          console.error('Failed to auto-clear task', e);
+        }
+      }
     }
   }
 
