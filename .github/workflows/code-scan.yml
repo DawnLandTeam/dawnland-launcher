@@ -36,8 +36,10 @@ jobs:
           cd src-tauri
           cargo clippy --all-targets --all-features --message-format=json > clippy-report.json || true
           
-      - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v2.3.0
+      - name: SonarQube Scan (Node.js Version)
+        run: |
+          pnpm add -g sonarqube-scanner
+          sonar-scanner
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
