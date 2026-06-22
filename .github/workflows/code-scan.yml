@@ -1,0 +1,43 @@
+name: "SonarQube Code Analysis"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  analyze:
+    runs-on: self-hosted
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js & pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 11
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install Frontend Dependencies
+        run: pnpm install
+
+      - name: Run Rust Clippy (Export for SonarQube)
+        run: |
+          cd src-tauri
+          cargo clippy --all-targets --all-features --message-format=json > clippy-report.json || true
+          
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v2.3.0
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
