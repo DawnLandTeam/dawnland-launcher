@@ -9,7 +9,7 @@ on:
 jobs:
   analyze:
     runs-on: [ 'self-hosted', 'debian-13' ]
-    
+    environment: SonarQube
     steps:
       - uses: actions/checkout@v4
         with:
