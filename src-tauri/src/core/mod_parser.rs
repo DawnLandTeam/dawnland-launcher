@@ -34,10 +34,10 @@ impl ModParser {
             db_path,
             icons_dir,
         };
-        
+
         // Initialize DB and run migration
         let _ = parser.init_db();
-        
+
         parser
     }
 
@@ -92,7 +92,9 @@ impl ModParser {
     pub fn load_all_cache(&self) -> HashMap<String, ModMetadata> {
         let mut map = HashMap::new();
         if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
-            if let Ok(mut stmt) = conn.prepare("SELECT cache_key, mod_id, name, version, has_icon FROM mod_cache") {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT cache_key, mod_id, name, version, has_icon FROM mod_cache")
+            {
                 if let Ok(mut rows) = stmt.query([]) {
                     while let Ok(Some(row)) = rows.next() {
                         if let Ok(key) = row.get::<_, String>(0) {
@@ -158,7 +160,7 @@ impl ModParser {
 
         let mut has_fabric = false;
         let mut content = String::new();
-        
+
         let mut found = false;
         if let Ok(mut f) = archive.by_name("fabric.mod.json") {
             let _ = f.read_to_string(&mut content);
@@ -174,15 +176,24 @@ impl ModParser {
 
         if has_fabric && !content.is_empty() {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                meta.mod_id = json.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                meta.name = json.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                meta.version = json.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
-                
+                meta.mod_id = json
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                meta.name = json
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                meta.version = json
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
                 if let Some(icon_path) = json.get("icon").and_then(|v| v.as_str()) {
                     let icon_path = icon_path.trim_start_matches('/');
                     let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
                     let dest_path = self.get_icon_path(icon_name);
-                    
+
                     if dest_path.exists() {
                         meta.has_icon = true;
                     } else if let Ok(mut icon_file) = archive.by_name(icon_path) {
@@ -200,7 +211,7 @@ impl ModParser {
 
         let mut has_forge = false;
         let mut content = String::new();
-        
+
         let mut found = false;
         if let Ok(mut f) = archive.by_name("META-INF/mods.toml") {
             let _ = f.read_to_string(&mut content);
@@ -216,16 +227,29 @@ impl ModParser {
 
         if has_forge && !content.is_empty() {
             if let Ok(toml_val) = content.parse::<toml::Value>() {
-                if let Some(mods) = toml_val.get("mods").and_then(|m| m.as_array()).and_then(|arr| arr.get(0)) {
-                    meta.mod_id = mods.get("modId").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    meta.name = mods.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    meta.version = mods.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    
+                if let Some(mods) = toml_val
+                    .get("mods")
+                    .and_then(|m| m.as_array())
+                    .and_then(|arr| arr.get(0))
+                {
+                    meta.mod_id = mods
+                        .get("modId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    meta.name = mods
+                        .get("displayName")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    meta.version = mods
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
                     if let Some(logo_path) = mods.get("logoFile").and_then(|v| v.as_str()) {
                         let logo_path = logo_path.trim_start_matches('/');
                         let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
                         let dest_path = self.get_icon_path(icon_name);
-                        
+
                         if dest_path.exists() {
                             meta.has_icon = true;
                         } else if let Ok(mut icon_file) = archive.by_name(logo_path) {

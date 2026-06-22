@@ -1,16 +1,16 @@
 use crate::core::curseforge::get_cf_files_batch;
-use crate::core::modpack::{copy_overrides, extract_zip, parse_modpack_manifest, ModpackType};
-use crate::core::mojang::{get_minecraft_base, InstallVanillaTask, VanillaInstallOptions};
 use crate::core::fabric::{InstallFabricOptions, InstallFabricTask};
 use crate::core::forge::{InstallForgeOptions, InstallForgeTask};
+use crate::core::modpack::{copy_overrides, extract_zip, parse_modpack_manifest, ModpackType};
+use crate::core::mojang::{get_minecraft_base, InstallVanillaTask, VanillaInstallOptions};
 use crate::core::task::{ExecutableTask, TaskContext, TaskError, TaskManager, TaskType};
 use crate::downloader::{run_batch_download_task, DownloadTask};
+use crate::error::{AppError, DawnlandError};
+use futures_util::StreamExt;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
-use uuid::Uuid;
-use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
-use crate::error::{AppError, DawnlandError};
+use uuid::Uuid;
 
 // ==========================================
 // TASKS
@@ -94,7 +94,12 @@ impl ExecutableTask for InstallModpackTask {
         );
 
         let base_dir = get_minecraft_base();
-        let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp").join(&ctx.id);
+        let temp_dir = base_dir
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(".dawnland")
+            .join("temp")
+            .join(&ctx.id);
         let instance_dir = base_dir.join("versions").join(instance_name);
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
@@ -106,151 +111,194 @@ impl ExecutableTask for InstallModpackTask {
                     tracing::warn!("Modpack installation cancelled, cleaning up...");
                     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
                     let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-                    return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+                    return Err(TaskError::ExecutionError(
+                        "Installation cancelled by user".to_string(),
+                    ));
                 }
             };
         }
 
-        if ctx.get_context_data::<SubTasksInitialized>().await.is_none() {
+        if ctx
+            .get_context_data::<SubTasksInitialized>()
+            .await
+            .is_none()
+        {
             ctx.init_sub_tasks(Self::get_sub_tasks()).await;
             ctx.set_context_data(&SubTasksInitialized).await;
         }
-        let (mc_version, loader, tasks, overrides_folder, modpack_version, modpack_type_str) = if let Some(context) = ctx.get_context_data::<ModpackResumeContext>().await {
-            tracing::info!("Found resume context for task {}, skipping extraction and resolution", ctx.id);
-            (context.mc_version, context.loader, context.tasks, context.overrides_folder, context.modpack_version, context.modpack_type)
-        } else {
-            let ctx_extract = ctx.with_sub_task("extract_modpack");
-            // 1. Emit phase 1: Extracting
-            ctx_extract.update_progress(0, 100, "Extracting modpack archive...").await;
+        let (mc_version, loader, tasks, overrides_folder, modpack_version, modpack_type_str) =
+            if let Some(context) = ctx.get_context_data::<ModpackResumeContext>().await {
+                tracing::info!(
+                    "Found resume context for task {}, skipping extraction and resolution",
+                    ctx.id
+                );
+                (
+                    context.mc_version,
+                    context.loader,
+                    context.tasks,
+                    context.overrides_folder,
+                    context.modpack_version,
+                    context.modpack_type,
+                )
+            } else {
+                let ctx_extract = ctx.with_sub_task("extract_modpack");
+                // 1. Emit phase 1: Extracting
+                ctx_extract
+                    .update_progress(0, 100, "Extracting modpack archive...")
+                    .await;
 
-            let zip = PathBuf::from(zip_path);
-            let temp = temp_dir.clone();
-            extract_zip(zip, temp).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+                let zip = PathBuf::from(zip_path);
+                let temp = temp_dir.clone();
+                extract_zip(zip, temp)
+                    .await
+                    .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
-            ctx_extract.update_progress(100, 100, "Extract complete").await;
-            check_cancel!();
-
-            // 2. Parse Manifest
-            let ctx_resolve = ctx.with_sub_task("resolve_mods");
-            ctx_resolve.update_progress(0, 100, "Reading modpack manifest...").await;
-
-            let modpack = parse_modpack_manifest(&temp_dir).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-
-            let modpack_type_str = match &modpack {
-                ModpackType::CurseForge(_) => "CurseForge",
-                ModpackType::Modrinth(_) => "Modrinth",
-            };
-
-            let (mc_version, loader, tasks, overrides_folder, modpack_version) = match modpack {
-            ModpackType::CurseForge(manifest) => {
-                ctx_resolve.update_progress(0, 100, "Resolving CurseForge download links...").await;
-
-                let mc_version = manifest.minecraft.version.clone();
-                let loader = manifest
-                    .minecraft
-                    .mod_loaders
-                    .first()
-                    .map(|l| l.id.clone())
-                    .unwrap_or_default();
-                let mp_version = manifest.version.clone();
-
-                let file_ids: Vec<u32> = manifest.files.iter().map(|f| f.file_id).collect();
-
-                // Get URLs from Proxy
-                let resolved_files = get_cf_files_batch(file_ids).await.map_err(|e| TaskError::ExecutionError(e))?;
-
+                ctx_extract
+                    .update_progress(100, 100, "Extract complete")
+                    .await;
                 check_cancel!();
 
-                let mut tasks = Vec::new();
-                for file in resolved_files {
-                    let mut dest = instance_dir.join("mods").join(&file.filename);
-                    let disabled_dest = instance_dir.join("mods").join(format!("{}.disable", file.filename));
-                    if disabled_dest.exists() {
-                        dest = disabled_dest;
-                    }
+                // 2. Parse Manifest
+                let ctx_resolve = ctx.with_sub_task("resolve_mods");
+                ctx_resolve
+                    .update_progress(0, 100, "Reading modpack manifest...")
+                    .await;
 
-                    tasks.push(DownloadTask::new(
-                        file.download_url,
-                        dest.to_string_lossy().to_string(),
-                        file.hash,
-                        file.file_size,
-                    ));
-                }
+                let modpack = parse_modpack_manifest(&temp_dir)
+                    .await
+                    .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
-                (mc_version, loader, tasks, manifest.overrides, mp_version)
-            }
-            ModpackType::Modrinth(manifest) => {
-                let mc_version = manifest.dependencies.minecraft.clone();
-                let mut loader = String::new();
-                if let Some(forge) = manifest.dependencies.forge {
-                    loader = format!("forge-{}", forge);
-                } else if let Some(fabric) = manifest.dependencies.fabric_loader {
-                    loader = format!("fabric-{}", fabric);
-                } else if let Some(neoforge) = manifest.dependencies.neoforge {
-                    loader = format!("neoforge-{}", neoforge);
-                }
-                let mp_version = manifest.version_id.clone();
+                let modpack_type_str = match &modpack {
+                    ModpackType::CurseForge(_) => "CurseForge",
+                    ModpackType::Modrinth(_) => "Modrinth",
+                };
 
-                let mut tasks = Vec::new();
-                for file in manifest.files {
-                    if let Some(url) = file.downloads.first() {
-                        let mut dest = instance_dir.join(&file.path);
-                        if let Some(filename) = dest.file_name().and_then(|n| n.to_str()) {
-                            let disabled_dest = dest.with_file_name(format!("{}.disable", filename));
+                let (mc_version, loader, tasks, overrides_folder, modpack_version) = match modpack {
+                    ModpackType::CurseForge(manifest) => {
+                        ctx_resolve
+                            .update_progress(0, 100, "Resolving CurseForge download links...")
+                            .await;
+
+                        let mc_version = manifest.minecraft.version.clone();
+                        let loader = manifest
+                            .minecraft
+                            .mod_loaders
+                            .first()
+                            .map(|l| l.id.clone())
+                            .unwrap_or_default();
+                        let mp_version = manifest.version.clone();
+
+                        let file_ids: Vec<u32> = manifest.files.iter().map(|f| f.file_id).collect();
+
+                        // Get URLs from Proxy
+                        let resolved_files = get_cf_files_batch(file_ids)
+                            .await
+                            .map_err(|e| TaskError::ExecutionError(e))?;
+
+                        check_cancel!();
+
+                        let mut tasks = Vec::new();
+                        for file in resolved_files {
+                            let mut dest = instance_dir.join("mods").join(&file.filename);
+                            let disabled_dest = instance_dir
+                                .join("mods")
+                                .join(format!("{}.disable", file.filename));
                             if disabled_dest.exists() {
                                 dest = disabled_dest;
                             }
+
+                            tasks.push(DownloadTask::new(
+                                file.download_url,
+                                dest.to_string_lossy().to_string(),
+                                file.hash,
+                                file.file_size,
+                            ));
                         }
 
-                        let hash = file.hashes.get("sha1").cloned();
-                        tasks.push(DownloadTask::new(
-                            url.clone(),
-                            dest.to_string_lossy().to_string(),
-                            hash,
-                            Some(file.file_size),
-                        ));
+                        (mc_version, loader, tasks, manifest.overrides, mp_version)
                     }
-                }
+                    ModpackType::Modrinth(manifest) => {
+                        let mc_version = manifest.dependencies.minecraft.clone();
+                        let mut loader = String::new();
+                        if let Some(forge) = manifest.dependencies.forge {
+                            loader = format!("forge-{}", forge);
+                        } else if let Some(fabric) = manifest.dependencies.fabric_loader {
+                            loader = format!("fabric-{}", fabric);
+                        } else if let Some(neoforge) = manifest.dependencies.neoforge {
+                            loader = format!("neoforge-{}", neoforge);
+                        }
+                        let mp_version = manifest.version_id.clone();
 
+                        let mut tasks = Vec::new();
+                        for file in manifest.files {
+                            if let Some(url) = file.downloads.first() {
+                                let mut dest = instance_dir.join(&file.path);
+                                if let Some(filename) = dest.file_name().and_then(|n| n.to_str()) {
+                                    let disabled_dest =
+                                        dest.with_file_name(format!("{}.disable", filename));
+                                    if disabled_dest.exists() {
+                                        dest = disabled_dest;
+                                    }
+                                }
+
+                                let hash = file.hashes.get("sha1").cloned();
+                                tasks.push(DownloadTask::new(
+                                    url.clone(),
+                                    dest.to_string_lossy().to_string(),
+                                    hash,
+                                    Some(file.file_size),
+                                ));
+                            }
+                        }
+
+                        (
+                            mc_version,
+                            loader,
+                            tasks,
+                            "overrides".to_string(),
+                            mp_version,
+                        )
+                    }
+                }; // End of match modpack
+
+                // Save resume context
+                let context = ModpackResumeContext {
+                    mc_version: mc_version.clone(),
+                    loader: loader.clone(),
+                    tasks: tasks.clone(),
+                    overrides_folder: overrides_folder.clone(),
+                    modpack_version: modpack_version.clone(),
+                    modpack_type: modpack_type_str.to_string(),
+                };
+                ctx.set_context_data(&context).await;
+
+                ctx_resolve
+                    .update_progress(100, 100, "Manifest resolved")
+                    .await;
                 (
                     mc_version,
                     loader,
                     tasks,
-                    "overrides".to_string(),
-                    mp_version,
+                    overrides_folder,
+                    modpack_version,
+                    modpack_type_str.to_string(),
                 )
-            }
-            }; // End of match modpack
-
-            // Save resume context
-            let context = ModpackResumeContext {
-                mc_version: mc_version.clone(),
-                loader: loader.clone(),
-                tasks: tasks.clone(),
-                overrides_folder: overrides_folder.clone(),
-                modpack_version: modpack_version.clone(),
-                modpack_type: modpack_type_str.to_string(),
             };
-            ctx.set_context_data(&context).await;
-
-            ctx_resolve.update_progress(100, 100, "Manifest resolved").await;
-            (mc_version, loader, tasks, overrides_folder, modpack_version, modpack_type_str.to_string())
-        };
 
         // 3. Setup Instance
         let ctx_vanilla_forge = ctx.clone();
         let mc_version_clone = mc_version.clone();
         let loader_clone = loader.clone();
-        
+
         let actual_loader_task = tokio::spawn(async move {
             ensure_dependencies(&mc_version_clone, &loader_clone, ctx_vanilla_forge).await
         });
 
         check_cancel!();
 
-        tokio::fs::create_dir_all(&instance_dir).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-
-
+        tokio::fs::create_dir_all(&instance_dir)
+            .await
+            .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
         // Smart Cleanup if is_update is true
         let modpack_files_path = instance_dir.join("modpack_files.json");
@@ -265,7 +313,6 @@ impl ExecutableTask for InstallModpackTask {
         }
 
         if is_update {
-
             if modpack_files_path.exists() {
                 if let Ok(content) = tokio::fs::read_to_string(&modpack_files_path).await {
                     if let Ok(old_files) = serde_json::from_str::<Vec<String>>(&content) {
@@ -274,15 +321,16 @@ impl ExecutableTask for InstallModpackTask {
                             if let Some(filename) = file_path.file_name() {
                                 let name_str = filename.to_string_lossy().to_string();
                                 let base_name = name_str.trim_end_matches(".disable").to_string();
-                                
+
                                 if !expected_mod_filenames.contains(&base_name) {
                                     tracing::info!("Removing old modpack file: {}", old_file);
                                     let _ = tokio::fs::remove_file(&file_path).await;
-                                    
+
                                     // Also try removing variants
-                                    let disabled_path = file_path.with_file_name(format!("{}.disable", base_name));
+                                    let disabled_path =
+                                        file_path.with_file_name(format!("{}.disable", base_name));
                                     let _ = tokio::fs::remove_file(&disabled_path).await;
-                                    
+
                                     let enabled_path = file_path.with_file_name(&base_name);
                                     let _ = tokio::fs::remove_file(&enabled_path).await;
                                 }
@@ -296,7 +344,8 @@ impl ExecutableTask for InstallModpackTask {
         // Save list of expected mod files for future updates
         let mut new_modpack_files = Vec::new();
         for task in &tasks {
-            if let Ok(rel_path) = std::path::Path::new(&task.dest_path).strip_prefix(&instance_dir) {
+            if let Ok(rel_path) = std::path::Path::new(&task.dest_path).strip_prefix(&instance_dir)
+            {
                 let rel_str = rel_path.to_string_lossy().to_string().replace("\\\\", "/");
                 let base_rel_str = rel_str.trim_end_matches(".disable").to_string();
                 new_modpack_files.push(base_rel_str);
@@ -304,8 +353,10 @@ impl ExecutableTask for InstallModpackTask {
         }
         let _ = tokio::fs::write(
             &modpack_files_path,
-            serde_json::to_string_pretty(&new_modpack_files).map_err(|e| TaskError::ExecutionError(e.to_string()))?,
-        ).await;
+            serde_json::to_string_pretty(&new_modpack_files)
+                .map_err(|e| TaskError::ExecutionError(e.to_string()))?,
+        )
+        .await;
 
         // 4. Batch Download Mods
         check_cancel!();
@@ -316,10 +367,16 @@ impl ExecutableTask for InstallModpackTask {
             if !tasks.is_empty() {
                 if let Err(e) = run_batch_download_task(tasks, ctx_download_mods.clone()).await {
                     if ctx_download_mods.is_cancelled() {
-                        tracing::warn!("Modpack installation cancelled during batch download, cleaning up...");
-                        return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+                        tracing::warn!(
+                            "Modpack installation cancelled during batch download, cleaning up..."
+                        );
+                        return Err(TaskError::ExecutionError(
+                            "Installation cancelled by user".to_string(),
+                        ));
                     }
-                    tracing::warn!("Installation failed during batch download. Temp dir preserved for resume.");
+                    tracing::warn!(
+                        "Installation failed during batch download. Temp dir preserved for resume."
+                    );
                     return Err(TaskError::ExecutionError(e));
                 }
             }
@@ -328,47 +385,64 @@ impl ExecutableTask for InstallModpackTask {
 
         // Wait for both loader installation and mods download to complete
         let (actual_loader_res, download_res) = tokio::join!(actual_loader_task, download_task);
-        
+
         check_cancel!();
-        
-        let actual_loader = actual_loader_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
+
+        let actual_loader =
+            actual_loader_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
         download_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
-        
+
         // Setup Instance JSON based on the resolved loader
         let inherits_from = actual_loader;
 
         let mut version_json_map = serde_json::Map::new();
         version_json_map.insert("id".to_string(), serde_json::json!(instance_name));
         version_json_map.insert("type".to_string(), serde_json::json!("release"));
-        version_json_map.insert("modpackVersion".to_string(), serde_json::json!(modpack_version));
-        version_json_map.insert("modpackType".to_string(), serde_json::json!(modpack_type_str));
-        version_json_map.insert("modpackProjectId".to_string(), serde_json::json!(project_id));
+        version_json_map.insert(
+            "modpackVersion".to_string(),
+            serde_json::json!(modpack_version),
+        );
+        version_json_map.insert(
+            "modpackType".to_string(),
+            serde_json::json!(modpack_type_str),
+        );
+        version_json_map.insert(
+            "modpackProjectId".to_string(),
+            serde_json::json!(project_id),
+        );
 
         let settings = crate::core::settings::get_launcher_settings_sync();
         if !settings.enable_instance_inheritance {
-            crate::core::utils::flatten_instance_json_recursive(&inherits_from, &mut version_json_map).await.map_err(|e| TaskError::ExecutionError(e))?;
+            crate::core::utils::flatten_instance_json_recursive(
+                &inherits_from,
+                &mut version_json_map,
+            )
+            .await
+            .map_err(|e| TaskError::ExecutionError(e))?;
             version_json_map.insert("clientVersion".to_string(), serde_json::json!(mc_version));
             // Copy the vanilla jar to isolated sandbox
             let dawnland_cache = crate::core::mojang::get_dawnland_cache();
-            let source_jar = dawnland_cache.join(&mc_version).join(format!("{}.jar", mc_version));
+            let source_jar = dawnland_cache
+                .join(&mc_version)
+                .join(format!("{}.jar", mc_version));
             if source_jar.exists() {
                 let target_jar = instance_dir.join(format!("{}.jar", instance_name));
                 let _ = tokio::fs::copy(&source_jar, &target_jar).await;
             }
         } else {
             version_json_map.insert("inheritsFrom".to_string(), serde_json::json!(inherits_from));
-            
+
             // Copy from cache to versions
             let dawnland_cache = crate::core::mojang::get_dawnland_cache();
             let versions_dir = base_dir.join("versions");
-            
+
             // Vanilla
             let vanilla_src = dawnland_cache.join(&mc_version);
             let vanilla_dest = versions_dir.join(&mc_version);
             if vanilla_src.exists() && !vanilla_dest.exists() {
                 let _ = crate::core::utils::copy_dir_all(&vanilla_src, &vanilla_dest).await;
             }
-            
+
             // Loader
             if inherits_from != mc_version {
                 let loader_src = dawnland_cache.join(&inherits_from);
@@ -387,19 +461,24 @@ impl ExecutableTask for InstallModpackTask {
         )
         .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
-
         // 5. Apply Overrides
         let ctx_overrides = ctx.with_sub_task("apply_overrides");
-        ctx_overrides.update_progress(0, 100, "Applying overrides...").await;
-        
+        ctx_overrides
+            .update_progress(0, 100, "Applying overrides...")
+            .await;
+
         let overrides_dir = temp_dir.join(&overrides_folder);
         if overrides_dir.exists() {
             let src = temp_dir.clone();
             let dst = instance_dir.clone();
             let folder = overrides_folder.clone();
-            copy_overrides(&src, &dst, &folder).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+            copy_overrides(&src, &dst, &folder)
+                .await
+                .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
         }
-        ctx_overrides.update_progress(100, 100, "Overrides applied").await;
+        ctx_overrides
+            .update_progress(100, 100, "Overrides applied")
+            .await;
 
         // 6. Cleanup Temp
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
@@ -407,9 +486,15 @@ impl ExecutableTask for InstallModpackTask {
         let config_path = instance_dir.join("dlml.json");
         if config_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-                if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                if let Ok(mut config) =
+                    serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
+                {
                     config.is_installing = false;
-                    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).await;
+                    let _ = tokio::fs::write(
+                        &config_path,
+                        serde_json::to_string_pretty(&config).unwrap(),
+                    )
+                    .await;
                 }
             }
         }
@@ -448,19 +533,21 @@ impl ExecutableTask for InstallOnlineModpackTask {
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
         crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
-        
-        let temp_dir = base_dir.parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland").join("temp");
+
+        let temp_dir = base_dir
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(".dawnland")
+            .join("temp");
         let _ = tokio::fs::create_dir_all(&temp_dir).await;
-        let mut sub_tasks = vec![
-            crate::core::task::state::SubTaskState {
-                key: "download_modpack_zip".to_string(),
-                name: "下载整合包文件".to_string(),
-                status: crate::core::task::state::SubTaskStatus::Pending,
-                current: 0,
-                total: 100,
-                weight: 30,
-            },
-        ];
+        let mut sub_tasks = vec![crate::core::task::state::SubTaskState {
+            key: "download_modpack_zip".to_string(),
+            name: "下载整合包文件".to_string(),
+            status: crate::core::task::state::SubTaskStatus::Pending,
+            current: 0,
+            total: 100,
+            weight: 30,
+        }];
         sub_tasks.extend(InstallModpackTask::get_sub_tasks());
 
         ctx.init_sub_tasks(sub_tasks).await;
@@ -469,21 +556,25 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let temp_zip_path = temp_dir.join(format!("{}.zip", ctx.id));
 
         let ctx_zip = ctx.with_sub_task("download_modpack_zip");
-        ctx_zip.update_progress(0, 100, "Downloading modpack archive...").await;
+        ctx_zip
+            .update_progress(0, 100, "Downloading modpack archive...")
+            .await;
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()
             .unwrap_or_default();
 
-        let mut response = client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to start download: {}", e)))?;
+        let mut response =
+            client.get(url).send().await.map_err(|e| {
+                TaskError::ExecutionError(format!("Failed to start download: {}", e))
+            })?;
 
         if !response.status().is_success() {
-            return Err(TaskError::ExecutionError(format!("Download failed: {}", response.status())));
+            return Err(TaskError::ExecutionError(format!(
+                "Download failed: {}",
+                response.status()
+            )));
         }
 
         let total_size = response.content_length().unwrap_or(0);
@@ -492,7 +583,10 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let skip_download = if total_size > 0 && temp_zip_path.exists() {
             if let Ok(metadata) = tokio::fs::metadata(&temp_zip_path).await {
                 if metadata.len() == total_size {
-                    tracing::info!("Found existing online modpack zip for task {}, skipping download", ctx.id);
+                    tracing::info!(
+                        "Found existing online modpack zip for task {}, skipping download",
+                        ctx.id
+                    );
                     true
                 } else {
                     false
@@ -505,46 +599,67 @@ impl ExecutableTask for InstallOnlineModpackTask {
         };
 
         if !skip_download {
-            let mut file = tokio::fs::File::create(&temp_zip_path)
-                .await
-                .map_err(|e| TaskError::ExecutionError(format!("Failed to create temp file: {}", e)))?;
+            let mut file = tokio::fs::File::create(&temp_zip_path).await.map_err(|e| {
+                TaskError::ExecutionError(format!("Failed to create temp file: {}", e))
+            })?;
 
             let mut speed_calc_time = tokio::time::Instant::now();
             let mut last_downloaded: u64 = 0;
             let mut current_speed: f64 = 0.0;
             let mut last_emit_time = tokio::time::Instant::now();
 
-        while let Some(chunk) = response.chunk().await.map_err(|e| TaskError::ExecutionError(e.to_string()))? {
-            if ctx.is_cancelled() {
-                drop(file);
-                let _ = tokio::fs::remove_file(&temp_zip_path).await;
-                let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-                return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
-            }
-
-            file.write_all(&chunk).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-            downloaded += chunk.len() as u64;
-
-            if total_size > 0 && last_emit_time.elapsed().as_millis() > 200 {
-                let elapsed_sec = speed_calc_time.elapsed().as_secs_f64();
-                if elapsed_sec > 0.5 {
-                    current_speed = (downloaded - last_downloaded) as f64 / elapsed_sec;
-                    last_downloaded = downloaded;
-                    speed_calc_time = tokio::time::Instant::now();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|e| TaskError::ExecutionError(e.to_string()))?
+            {
+                if ctx.is_cancelled() {
+                    drop(file);
+                    let _ = tokio::fs::remove_file(&temp_zip_path).await;
+                    let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+                    return Err(TaskError::ExecutionError(
+                        "Installation cancelled by user".to_string(),
+                    ));
                 }
 
-                let progress = (downloaded as f64 / total_size as f64) * 100.0;
-                let downloaded_mb = downloaded as f64 / 1024.0 / 1024.0;
-                let total_mb = total_size as f64 / 1024.0 / 1024.0;
+                file.write_all(&chunk)
+                    .await
+                    .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+                downloaded += chunk.len() as u64;
 
-                ctx_zip.update_progress(downloaded, total_size, &format!("Downloading archive... {:.1} MB / {:.1} MB", downloaded_mb, total_mb)).await;
-                ctx_zip.update_download_metrics(current_speed as u64, 1).await;
-                last_emit_time = tokio::time::Instant::now();
+                if total_size > 0 && last_emit_time.elapsed().as_millis() > 200 {
+                    let elapsed_sec = speed_calc_time.elapsed().as_secs_f64();
+                    if elapsed_sec > 0.5 {
+                        current_speed = (downloaded - last_downloaded) as f64 / elapsed_sec;
+                        last_downloaded = downloaded;
+                        speed_calc_time = tokio::time::Instant::now();
+                    }
+
+                    let progress = (downloaded as f64 / total_size as f64) * 100.0;
+                    let downloaded_mb = downloaded as f64 / 1024.0 / 1024.0;
+                    let total_mb = total_size as f64 / 1024.0 / 1024.0;
+
+                    ctx_zip
+                        .update_progress(
+                            downloaded,
+                            total_size,
+                            &format!(
+                                "Downloading archive... {:.1} MB / {:.1} MB",
+                                downloaded_mb, total_mb
+                            ),
+                        )
+                        .await;
+                    ctx_zip
+                        .update_download_metrics(current_speed as u64, 1)
+                        .await;
+                    last_emit_time = tokio::time::Instant::now();
+                }
             }
-        }
         } // End of skip_download check
 
-        ctx_zip.update_progress(100, 100, "Download complete. Starting installation...").await;
+        ctx_zip
+            .update_progress(100, 100, "Download complete. Starting installation...")
+            .await;
 
         // Instantiate internal modpack task
         let modpack_task = InstallModpackTask {
@@ -562,8 +677,8 @@ impl ExecutableTask for InstallOnlineModpackTask {
             // Clean up the downloaded modpack zip archive to save space
             let _ = tokio::fs::remove_file(&temp_zip_path).await;
         }
-        // Note: we intentionally do NOT delete the zip file on failure. If the task 
-        // fails during installation, retaining the fully downloaded zip allows 
+        // Note: we intentionally do NOT delete the zip file on failure. If the task
+        // fails during installation, retaining the fully downloaded zip allows
         // subsequent retries to skip the download phase and resume instantly.
 
         result
@@ -574,26 +689,38 @@ impl ExecutableTask for InstallOnlineModpackTask {
 // HELPERS
 // ==========================================
 
-async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -> Result<String, TaskError> {
+async fn ensure_dependencies(
+    mc_version: &str,
+    loader: &str,
+    ctx: TaskContext,
+) -> Result<String, TaskError> {
     let base_dir = crate::core::mojang::get_minecraft_base();
 
     // Check if loader is empty -> means only vanilla
     if loader.is_empty() {
-        ctx.manager.wait_for_instance(mc_version, &ctx.cancel_token).await;
+        ctx.manager
+            .wait_for_instance(mc_version, &ctx.cancel_token)
+            .await;
 
         let dawnland_cache = crate::core::mojang::get_dawnland_cache();
         let vanilla_json = dawnland_cache
             .join(mc_version)
             .join(format!("{}.json", mc_version));
         if !vanilla_json.exists() {
-            ctx.update_progress(0, 0, &format!("Installing Minecraft {}...", mc_version)).await;
+            ctx.update_progress(0, 0, &format!("Installing Minecraft {}...", mc_version))
+                .await;
 
-            let versions = crate::core::mojang::get_vanilla_versions().await.map_err(|e| TaskError::ExecutionError(e))?;
+            let versions = crate::core::mojang::get_vanilla_versions()
+                .await
+                .map_err(|e| TaskError::ExecutionError(e))?;
             let version_info = versions
                 .into_iter()
                 .find(|v| v.id == mc_version)
                 .ok_or_else(|| {
-                    TaskError::ExecutionError(format!("Minecraft version {} not found in Mojang API", mc_version))
+                    TaskError::ExecutionError(format!(
+                        "Minecraft version {} not found in Mojang API",
+                        mc_version
+                    ))
                 })?;
 
             let vanilla_task = InstallVanillaTask {
@@ -603,34 +730,54 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
                     is_dependency: Some(true),
                 },
             };
-            ctx.append_sub_tasks(crate::core::mojang::InstallVanillaTask::get_sub_tasks()).await;
+            ctx.append_sub_tasks(crate::core::mojang::InstallVanillaTask::get_sub_tasks())
+                .await;
             vanilla_task.execute(ctx.clone()).await?;
         } else {
-            ctx.append_sub_tasks(crate::core::mojang::InstallVanillaTask::get_sub_tasks()).await;
-            ctx.with_sub_task("download_vanilla_json").update_progress(100, 100, "Skipped (Already exists)").await;
-            ctx.with_sub_task("download_vanilla_libs").update_progress(100, 100, "Skipped (Already exists)").await;
-            ctx.with_sub_task("download_vanilla_assets").update_progress(100, 100, "Skipped (Already exists)").await;
-            ctx.with_sub_task("download_vanilla_client").update_progress(100, 100, "Skipped (Already exists)").await;
+            ctx.append_sub_tasks(crate::core::mojang::InstallVanillaTask::get_sub_tasks())
+                .await;
+            ctx.with_sub_task("download_vanilla_json")
+                .update_progress(100, 100, "Skipped (Already exists)")
+                .await;
+            ctx.with_sub_task("download_vanilla_libs")
+                .update_progress(100, 100, "Skipped (Already exists)")
+                .await;
+            ctx.with_sub_task("download_vanilla_assets")
+                .update_progress(100, 100, "Skipped (Already exists)")
+                .await;
+            ctx.with_sub_task("download_vanilla_client")
+                .update_progress(100, 100, "Skipped (Already exists)")
+                .await;
         }
 
         return Ok(mc_version.to_string());
     }
 
-    let base_loader = loader.strip_suffix(&format!("-{}", mc_version)).unwrap_or(loader);
+    let base_loader = loader
+        .strip_suffix(&format!("-{}", mc_version))
+        .unwrap_or(loader);
     let custom_instance_name = format!("{}-{}", base_loader, mc_version);
 
     // Loader is present
-    ctx.manager.wait_for_instance(&custom_instance_name, &ctx.cancel_token).await;
+    ctx.manager
+        .wait_for_instance(&custom_instance_name, &ctx.cancel_token)
+        .await;
 
     let dawnland_cache = crate::core::mojang::get_dawnland_cache();
     let loader_json = dawnland_cache
         .join(&custom_instance_name)
         .join(format!("{}.json", custom_instance_name));
     if !loader_json.exists() {
-        ctx.update_progress(0, 0, &format!("Installing dependency {}...", custom_instance_name)).await;
+        ctx.update_progress(
+            0,
+            0,
+            &format!("Installing dependency {}...", custom_instance_name),
+        )
+        .await;
 
         if loader.starts_with("fabric-") {
-            ctx.append_sub_tasks(crate::core::fabric::InstallFabricTask::get_sub_tasks()).await;
+            ctx.append_sub_tasks(crate::core::fabric::InstallFabricTask::get_sub_tasks())
+                .await;
             let loader_version = loader.strip_prefix("fabric-").unwrap().to_string();
             let fabric_task = InstallFabricTask {
                 options: InstallFabricOptions {
@@ -642,7 +789,8 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
             };
             fabric_task.execute(ctx.clone()).await?;
         } else if loader.starts_with("forge-") {
-            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks()).await;
+            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks())
+                .await;
             let loader_version = loader.strip_prefix("forge-").unwrap().to_string();
             let forge_task = InstallForgeTask {
                 options: InstallForgeOptions {
@@ -655,7 +803,8 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
             };
             forge_task.execute(ctx.clone()).await?;
         } else if loader.starts_with("neoforge-") {
-            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks()).await;
+            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks())
+                .await;
             let loader_version = loader.strip_prefix("neoforge-").unwrap().to_string();
             let forge_task = InstallForgeTask {
                 options: InstallForgeOptions {
@@ -668,25 +817,44 @@ async fn ensure_dependencies(mc_version: &str, loader: &str, ctx: TaskContext) -
             };
             forge_task.execute(ctx.clone()).await?;
         } else {
-            return Err(TaskError::ExecutionError(format!("Unsupported loader type: {}", loader)));
+            return Err(TaskError::ExecutionError(format!(
+                "Unsupported loader type: {}",
+                loader
+            )));
         }
     } else {
         if loader.starts_with("fabric-") {
-            ctx.append_sub_tasks(crate::core::fabric::InstallFabricTask::get_sub_tasks()).await;
+            ctx.append_sub_tasks(crate::core::fabric::InstallFabricTask::get_sub_tasks())
+                .await;
         } else if loader.starts_with("forge-") || loader.starts_with("neoforge-") {
-            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks()).await;
+            ctx.append_sub_tasks(crate::core::forge::InstallForgeTask::get_sub_tasks())
+                .await;
         }
-        
-        ctx.with_sub_task("download_vanilla_json").update_progress(100, 100, "Skipped (Already exists)").await;
-        ctx.with_sub_task("download_vanilla_libs").update_progress(100, 100, "Skipped (Already exists)").await;
-        ctx.with_sub_task("download_vanilla_assets").update_progress(100, 100, "Skipped (Already exists)").await;
-        ctx.with_sub_task("download_vanilla_client").update_progress(100, 100, "Skipped (Already exists)").await;
-        
-        ctx.with_sub_task("resolve_loader").update_progress(100, 100, "Skipped (Already exists)").await;
-        ctx.with_sub_task("download_loader_libs").update_progress(100, 100, "Skipped (Already exists)").await;
-        
+
+        ctx.with_sub_task("download_vanilla_json")
+            .update_progress(100, 100, "Skipped (Already exists)")
+            .await;
+        ctx.with_sub_task("download_vanilla_libs")
+            .update_progress(100, 100, "Skipped (Already exists)")
+            .await;
+        ctx.with_sub_task("download_vanilla_assets")
+            .update_progress(100, 100, "Skipped (Already exists)")
+            .await;
+        ctx.with_sub_task("download_vanilla_client")
+            .update_progress(100, 100, "Skipped (Already exists)")
+            .await;
+
+        ctx.with_sub_task("resolve_loader")
+            .update_progress(100, 100, "Skipped (Already exists)")
+            .await;
+        ctx.with_sub_task("download_loader_libs")
+            .update_progress(100, 100, "Skipped (Already exists)")
+            .await;
+
         if loader.starts_with("forge-") || loader.starts_with("neoforge-") {
-            ctx.with_sub_task("install_loader").update_progress(100, 100, "Skipped (Already exists)").await;
+            ctx.with_sub_task("install_loader")
+                .update_progress(100, 100, "Skipped (Already exists)")
+                .await;
         }
     }
 
@@ -706,7 +874,7 @@ pub async fn install_modpack(
     app: AppHandle,
 ) -> Result<String, AppError> {
     let task_manager = app.state::<TaskManager>().inner().clone();
-    
+
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
@@ -726,12 +894,15 @@ pub async fn install_modpack(
     };
 
     let task_id = task_manager
-        .spawn_task(TaskType::InstallModpack { 
-            zip_path: zip_path.clone(),
-            instance_name: instance_name.clone(),
-            is_update,
-            project_id,
-        }, task)
+        .spawn_task(
+            TaskType::InstallModpack {
+                zip_path: zip_path.clone(),
+                instance_name: instance_name.clone(),
+                is_update,
+                project_id,
+            },
+            task,
+        )
         .await
         .map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
@@ -747,7 +918,7 @@ pub async fn download_and_install_online_modpack(
     app: AppHandle,
 ) -> Result<String, AppError> {
     let task_manager = app.state::<TaskManager>().inner().clone();
-    
+
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
@@ -767,12 +938,15 @@ pub async fn download_and_install_online_modpack(
     };
 
     let task_id = task_manager
-        .spawn_task(TaskType::InstallOnlineModpack { 
-            url: url.clone(),
-            instance_name: instance_name.clone(),
-            is_update,
-            project_id: project_id.clone(),
-        }, task)
+        .spawn_task(
+            TaskType::InstallOnlineModpack {
+                url: url.clone(),
+                instance_name: instance_name.clone(),
+                is_update,
+                project_id: project_id.clone(),
+            },
+            task,
+        )
         .await
         .map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
@@ -782,10 +956,10 @@ pub async fn download_and_install_online_modpack(
 #[tauri::command]
 pub async fn get_modpack_name(zip_path: String) -> Result<String, AppError> {
     let name = tokio::task::spawn_blocking(move || -> Result<String, DawnlandError> {
-        let file =
-            std::fs::File::open(&zip_path).map_err(|e| DawnlandError::Unknown(format!("Failed to open zip: {}", e)))?;
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| DawnlandError::Unknown(format!("Failed to read zip: {}", e)))?;
+        let file = std::fs::File::open(&zip_path)
+            .map_err(|e| DawnlandError::Unknown(format!("Failed to open zip: {}", e)))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| DawnlandError::Unknown(format!("Failed to read zip: {}", e)))?;
 
         if let Ok(mut manifest_file) = archive.by_name("manifest.json") {
             let mut contents = String::new();
@@ -811,7 +985,9 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, AppError> {
             }
         }
 
-        Err(DawnlandError::Unknown("Could not find manifest.json or modrinth.index.json with a valid name".to_string()))
+        Err(DawnlandError::Unknown(
+            "Could not find manifest.json or modrinth.index.json with a valid name".to_string(),
+        ))
     })
     .await
     .map_err(|e| DawnlandError::ProcessError(format!("Task join error: {}", e)))??;

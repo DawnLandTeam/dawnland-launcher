@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { useAttrs } from 'vue';
 
-const props = defineProps<{
+defineProps<{
+  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline';
+  size?: 'sm' | 'md' | 'lg' | 'icon';
   disabled?: boolean;
 }>();
 

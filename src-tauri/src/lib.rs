@@ -3,9 +3,9 @@ mod auth;
 mod commands;
 mod core;
 mod downloader;
+pub mod error;
 mod logger;
 mod models;
-pub mod error;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -14,9 +14,9 @@ fn greet(name: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn register_deep_link() {
+    use std::env;
     use winreg::enums::*;
     use winreg::RegKey;
-    use std::env;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path = "Software\\Classes\\dlml";
@@ -38,7 +38,10 @@ fn register_deep_link() {
                             let exe_path_str = exe_path.to_string_lossy();
                             let command_val = format!("\"{}\" \"%1\"", exe_path_str);
                             if let Err(e) = cmd_key.set_value("", &command_val) {
-                                tracing::error!("Failed to set deep link command value in registry: {}", e);
+                                tracing::error!(
+                                    "Failed to set deep link command value in registry: {}",
+                                    e
+                                );
                             }
                         }
                         Err(e) => {
@@ -47,7 +50,10 @@ fn register_deep_link() {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to create shell\\open\\command registry subkey: {}", e);
+                    tracing::error!(
+                        "Failed to create shell\\open\\command registry subkey: {}",
+                        e
+                    );
                 }
             }
         }
@@ -60,11 +66,11 @@ fn register_deep_link() {
 #[cfg(target_os = "windows")]
 fn configure_webview2_settings(window: &tauri::WebviewWindow) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2Settings3, ICoreWebView2Settings4,
-        ICoreWebView2Settings5, ICoreWebView2Settings6,
+        ICoreWebView2Settings3, ICoreWebView2Settings4, ICoreWebView2Settings5,
+        ICoreWebView2Settings6,
     };
     use windows_core::Interface;
-    
+
     if let Err(e) = window.with_webview(|webview| {
         unsafe {
             let core = match webview.controller().CoreWebView2() {
@@ -83,6 +89,7 @@ fn configure_webview2_settings(window: &tauri::WebviewWindow) {
                 }
             };
 
+            #[cfg(not(debug_assertions))]
             if let Err(e) = settings.SetAreDefaultContextMenusEnabled(false) {
                 tracing::warn!("Failed to disable default context menus: {:?}", e);
             }
@@ -106,6 +113,7 @@ fn configure_webview2_settings(window: &tauri::WebviewWindow) {
 
             match settings.cast::<ICoreWebView2Settings3>() {
                 Ok(settings3) => {
+                    #[cfg(not(debug_assertions))]
                     if let Err(e) = settings3.SetAreBrowserAcceleratorKeysEnabled(false) {
                         tracing::warn!("Failed to disable browser accelerator keys: {:?}", e);
                     }
@@ -154,15 +162,20 @@ pub fn run() {
     }
 
     let mut builder = tauri::Builder::default()
-        .manage(core::launcher::RunningInstances(std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))))
+        .manage(core::launcher::RunningInstances(std::sync::Arc::new(
+            tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        )))
         .setup(|app| {
             use tauri::Manager;
             let app_handle = app.handle().clone();
-            
+
             #[cfg(target_os = "windows")]
             register_deep_link();
 
-            let app_dir = core::mojang::get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland");
+            let app_dir = core::mojang::get_minecraft_base()
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(".dawnland");
             std::fs::create_dir_all(&app_dir).unwrap_or_default();
             let db_path = app_dir.join("tasks.db");
 
@@ -191,7 +204,7 @@ pub fn run() {
                 if let Ok(Some(monitor)) = window.current_monitor() {
                     let size = monitor.size();
                     let scale_factor = monitor.scale_factor();
-                    
+
                     // Convert physical size to logical size based on scale factor
                     let mut width = (size.width as f64 / scale_factor * 0.6) as u32;
                     let mut height = (size.height as f64 / scale_factor * 0.7) as u32;
@@ -201,7 +214,7 @@ pub fn run() {
 
                     let _ = window.set_size(tauri::LogicalSize::new(width, height));
                 }
-                
+
                 let _ = window.center();
                 let _ = window.show();
             }
@@ -235,7 +248,11 @@ pub fn run() {
         if let Some(url) = aptabase_url {
             opts.host = Some(url);
         }
-        builder = builder.plugin(tauri_plugin_aptabase::Builder::new(&key).with_options(opts).build());
+        builder = builder.plugin(
+            tauri_plugin_aptabase::Builder::new(&key)
+                .with_options(opts)
+                .build(),
+        );
     }
 
     builder
@@ -252,6 +269,10 @@ pub fn run() {
             commands::modpack::get_modpack_name,
             core::curseforge::set_curseforge_api_key,
             core::curseforge::get_curseforge_api_key,
+            core::curseforge::get_curseforge_game_versions,
+            core::curseforge::get_curseforge_loaders,
+            core::modrinth::get_modrinth_game_versions,
+            core::modrinth::get_modrinth_loaders,
             // Auth commands
             commands::get_accounts,
             commands::add_offline_account,
@@ -310,18 +331,29 @@ pub fn run() {
             core::java::fetch_available_javas,
             // CurseForge commands
             core::curseforge::search_curseforge,
-            core::curseforge::get_cf_mod_files,
-            core::curseforge::get_cf_mod_details,
-            core::curseforge::get_cf_files_batch,
+            core::curseforge::search_curseforge_resourcepacks,
             core::curseforge::search_curseforge_modpacks,
             core::curseforge::get_curseforge_modpack_versions,
+            core::curseforge::get_cf_mod_files,
+            core::curseforge::get_curseforge_categories,
+            core::curseforge::get_curseforge_resourcepack_categories,
+            core::curseforge::get_curseforge_shaderpack_categories,
+            core::curseforge::search_curseforge_shaderpacks,
+            core::curseforge::get_curseforge_world_categories,
+            core::curseforge::search_curseforge_worlds,
             // Modrinth commands
             core::modrinth::search_modrinth,
-            core::modrinth::get_modrinth_mod_files,
-            core::modrinth::get_modrinth_mod_details,
-            core::modrinth::get_modrinth_mod_versions,
+            core::modrinth::search_modrinth_resourcepacks,
             core::modrinth::search_modrinth_modpacks,
             core::modrinth::get_modrinth_modpack_versions,
+            core::modrinth::get_modrinth_mod_files,
+            core::modrinth::get_modrinth_mod_details,
+            core::modrinth::get_modrinth_categories,
+            core::modrinth::get_modrinth_resourcepack_categories,
+            core::modrinth::get_modrinth_shaderpack_categories,
+            core::modrinth::search_modrinth_shaderpacks,
+            core::curseforge::get_cf_mod_details,
+            core::modrinth::get_modrinth_mod_versions,
             // Server commands (proxies to Go web backend)
             core::server::get_servers,
             core::server::get_recommended_servers,
@@ -332,15 +364,16 @@ pub fn run() {
             core::ping::ping_server,
             // Task commands
             commands::task::get_task_history,
+            commands::task::task_create,
             commands::task::cancel_task,
             commands::task::clear_task_history,
+            commands::task::delete_task,
             commands::task::retry_task,
             // Custom Updater commands
             commands::update_launcher,
             // Settings commands
             core::settings::load_launcher_settings,
             core::settings::save_launcher_settings,
-
             // Custom Analytics Command
             commands::app_track_event,
         ])
@@ -352,21 +385,22 @@ async fn cleanup_orphan_temp_files(app_dir: &std::path::Path, db: &core::task::d
     if let Ok(tasks) = db.load_all_tasks().await {
         let mut keep_ids = std::collections::HashSet::new();
         for task in tasks {
-            if task.status == core::task::TaskStatus::Pending 
-                || task.status == core::task::TaskStatus::Running 
-                || task.status == core::task::TaskStatus::Paused 
-                || task.status == core::task::TaskStatus::Failed {
+            if task.status == core::task::TaskStatus::Pending
+                || task.status == core::task::TaskStatus::Running
+                || task.status == core::task::TaskStatus::Paused
+                || task.status == core::task::TaskStatus::Failed
+            {
                 keep_ids.insert(task.id);
             }
         }
-        
+
         let temp_dir = app_dir.join("temp");
         if temp_dir.exists() {
             if let Ok(mut entries) = tokio::fs::read_dir(&temp_dir).await {
                 while let Ok(Some(entry)) = entries.next_entry().await {
                     let name = entry.file_name().to_string_lossy().to_string();
                     let is_keep = keep_ids.iter().any(|id| name.starts_with(id));
-                    
+
                     if !is_keep {
                         tracing::info!("Cleaning up orphaned temp file/dir: {}", name);
                         if let Ok(meta) = entry.metadata().await {

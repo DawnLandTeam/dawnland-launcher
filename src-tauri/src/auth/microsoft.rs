@@ -59,7 +59,8 @@ fn get_web_backend_url() -> String {
 }
 
 #[cfg(test)]
-pub static MOCK_SERVER_URL: std::sync::LazyLock<std::sync::RwLock<String>> = std::sync::LazyLock::new(|| std::sync::RwLock::new("".to_string()));
+pub static MOCK_SERVER_URL: std::sync::LazyLock<std::sync::RwLock<String>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new("".to_string()));
 
 #[cfg(test)]
 fn get_mock_server_url() -> String {
@@ -135,7 +136,11 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, AppError> {
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(DawnlandError::Unknown(format!("Device code request failed: {} - {}", status, body)).into());
+        return Err(DawnlandError::Unknown(format!(
+            "Device code request failed: {} - {}",
+            status, body
+        ))
+        .into());
     }
 
     // Debug: print raw response body
@@ -178,12 +183,13 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), AppError>
         let url = format!("{}/api/microsoft/token", get_web_backend_url());
 
         let body_str = serde_json::to_string(&payload).unwrap_or_default();
-        let response = crate::core::security::secure_request(&client, reqwest::Method::POST, &url, &body_str)
-            .header("Content-Type", "application/json")
-            .body(body_str)
-            .send()
-            .await
-            .map_err(|e| format!("Token request failed: {e:?}"))?;
+        let response =
+            crate::core::security::secure_request(&client, reqwest::Method::POST, &url, &body_str)
+                .header("Content-Type", "application/json")
+                .body(body_str)
+                .send()
+                .await
+                .map_err(|e| format!("Token request failed: {e:?}"))?;
 
         let raw_text = response
             .text()
@@ -216,17 +222,24 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), AppError>
             }
             // authorization_declined means user cancelled
             if error == "authorization_declined" {
-                return Err(DawnlandError::Unknown("Authorization was declined by the user".to_string()).into());
+                return Err(DawnlandError::Unknown(
+                    "Authorization was declined by the user".to_string(),
+                )
+                .into());
             }
             // expired_token means the flow expired
             if error == "expired_token" {
-                return Err(DawnlandError::Unknown("Device code flow expired. Please try again.".to_string()).into());
+                return Err(DawnlandError::Unknown(
+                    "Device code flow expired. Please try again.".to_string(),
+                )
+                .into());
             }
             return Err(DawnlandError::Unknown(format!(
                 "Token error: {} - {}",
                 error,
                 token_resp.error_description.unwrap_or_default()
-            )).into());
+            ))
+            .into());
         }
 
         // No access_token and no error - wait and continue
@@ -282,7 +295,11 @@ async fn get_xbox_live_token(ms_token: &str) -> Result<String, AppError> {
 
     if !status.is_success() {
         tracing::error!("Xbox Live auth failed: {} - {}", status, raw_text);
-        return Err(DawnlandError::Unknown(format!("Xbox Live auth failed: {} - {}", status, raw_text)).into());
+        return Err(DawnlandError::Unknown(format!(
+            "Xbox Live auth failed: {} - {}",
+            status, raw_text
+        ))
+        .into());
     }
 
     #[derive(Deserialize)]
@@ -369,10 +386,16 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), AppError> {
                     2148916237 => "This account requires parental consent for Xbox Live.",
                     _ => xerr_resp.message.as_deref().unwrap_or("Unknown XSTS error"),
                 };
-                return Err(DawnlandError::Unknown(format!("XSTS error ({}): {}", xerr, detailed_error)).into());
+                return Err(DawnlandError::Unknown(format!(
+                    "XSTS error ({}): {}",
+                    xerr, detailed_error
+                ))
+                .into());
             }
         }
-        return Err(DawnlandError::Unknown(format!("XSTS auth failed: {} - {}", status, raw_text)).into());
+        return Err(
+            DawnlandError::Unknown(format!("XSTS auth failed: {} - {}", status, raw_text)).into(),
+        );
     }
 
     #[derive(Deserialize)]
@@ -442,7 +465,11 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, AppE
 
     if !status.is_success() {
         tracing::error!("Minecraft auth failed: {} - {}", status, raw_text);
-        return Err(DawnlandError::Unknown(format!("Minecraft auth failed: {} - {}", status, raw_text)).into());
+        return Err(DawnlandError::Unknown(format!(
+            "Minecraft auth failed: {} - {}",
+            status, raw_text
+        ))
+        .into());
     }
 
     #[derive(Deserialize)]
@@ -467,7 +494,8 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, AppE
             "Minecraft auth error: {} - {}",
             error,
             mc_resp.error_message.unwrap_or_default()
-        )).into());
+        ))
+        .into());
     }
 
     let token = mc_resp
@@ -498,7 +526,8 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), AppEr
             return Err(DawnlandError::Unknown(
                 "Account does not own Minecraft Java Edition. Please purchase the game first."
                     .to_string(),
-            ).into());
+            )
+            .into());
         }
         tracing::error!(
             "Minecraft profile request failed: {} - {}",
@@ -508,7 +537,8 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), AppEr
         return Err(DawnlandError::Unknown(format!(
             "Minecraft profile request failed: {} - {}",
             status, raw_text
-        )).into());
+        ))
+        .into());
     }
 
     #[derive(Deserialize)]
@@ -606,7 +636,9 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppErr
 
     // Must be a Microsoft account with refresh token
     if account.account_type != AccountType::Microsoft {
-        return Err(DawnlandError::Unknown("Account is not a Microsoft account".to_string()).into());
+        return Err(
+            DawnlandError::Unknown("Account is not a Microsoft account".to_string()).into(),
+        );
     }
 
     let refresh_token = account
@@ -651,18 +683,25 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppErr
 
     if let Some(error) = &refresh_resp.error {
         let error_desc = refresh_resp.error_description.clone().unwrap_or_default();
-        
+
         // If refresh token is invalid/expired, user needs to re-authenticate
         if error == "invalid_grant"
             || error == "refresh_token_expired"
             || error == "invalid_request"
         {
-            tracing::info!("Microsoft token has expired normally ({}). User needs to re-authenticate.", error);
+            tracing::info!(
+                "Microsoft token has expired normally ({}). User needs to re-authenticate.",
+                error
+            );
             return Err(DawnlandError::Unknown("REAUTH_REQUIRED".to_string()).into());
         }
 
         tracing::error!("Token refresh failed: {} - {}", error, error_desc);
-        return Err(DawnlandError::Unknown(format!("Token refresh error: {} - {}", error, error_desc)).into());
+        return Err(DawnlandError::Unknown(format!(
+            "Token refresh error: {} - {}",
+            error, error_desc
+        ))
+        .into());
     }
 
     let new_ms_token = refresh_resp
@@ -794,7 +833,11 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     let code = match callback_result {
         Ok(Ok(c)) => c,
         Ok(Err(e)) => return Err(DawnlandError::Unknown(e).into()),
-        Err(_) => return Err(DawnlandError::Unknown("Login timed out after 5 minutes.".to_string()).into()),
+        Err(_) => {
+            return Err(
+                DawnlandError::Unknown("Login timed out after 5 minutes.".to_string()).into(),
+            )
+        }
     };
 
     tracing::info!("Received authorization code from browser callback.");
@@ -832,15 +875,20 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
         error_description: Option<String>,
     }
 
-    let token_resp: TokenResponse = serde_json::from_str(&raw_text)
-        .map_err(|e| DawnlandError::Unknown(format!("Failed to parse token response: {}. Raw: {}", e, raw_text)))?;
+    let token_resp: TokenResponse = serde_json::from_str(&raw_text).map_err(|e| {
+        DawnlandError::Unknown(format!(
+            "Failed to parse token response: {}. Raw: {}",
+            e, raw_text
+        ))
+    })?;
 
     if let Some(error) = token_resp.error {
         return Err(DawnlandError::Unknown(format!(
             "Token error: {} - {}",
             error,
             token_resp.error_description.unwrap_or_default()
-        )).into());
+        ))
+        .into());
     }
 
     let ms_token = token_resp
@@ -888,8 +936,8 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
 mod tests {
     use super::*;
     use mockito::Server;
-    use tokio::sync::Mutex;
     use std::sync::LazyLock;
+    use tokio::sync::Mutex;
 
     static TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -901,31 +949,35 @@ mod tests {
     async fn test_start_microsoft_login() {
         let _guard = TEST_MUTEX.lock().await;
         let mut server = Server::new_async().await;
-        
+
         {
             let mut url = MOCK_SERVER_URL.write().unwrap();
             *url = server.url();
         }
 
-        let mock = server.mock("POST", "/api/microsoft/devicecode")
+        let mock = server
+            .mock("POST", "/api/microsoft/devicecode")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{
+            .with_body(
+                r#"{
                 "user_code": "ABCDEFGH",
                 "device_code": "device_code_123",
                 "verification_uri": "https://microsoft.com/link",
                 "expires_in": 900,
                 "interval": 5,
                 "message": "Enter code ABCDEFGH at https://microsoft.com/link"
-            }"#)
-            .create_async().await;
+            }"#,
+            )
+            .create_async()
+            .await;
 
         let result = start_microsoft_login().await;
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.user_code, "ABCDEFGH");
         assert_eq!(response.device_code, "device_code_123");
-        
+
         mock.assert_async().await;
     }
 
@@ -933,62 +985,86 @@ mod tests {
     async fn test_poll_microsoft_token_success() {
         let _guard = TEST_MUTEX.lock().await;
         let mut server = Server::new_async().await;
-        
+
         {
             let mut url = MOCK_SERVER_URL.write().unwrap();
             *url = server.url();
         }
 
-        let mock_token = server.mock("POST", "/api/microsoft/token")
+        let mock_token = server
+            .mock("POST", "/api/microsoft/token")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{
+            .with_body(
+                r#"{
                 "access_token": "ms_access_token",
                 "refresh_token": "ms_refresh_token"
-            }"#)
-            .create_async().await;
+            }"#,
+            )
+            .create_async()
+            .await;
 
-        let mock_xbl = server.mock("POST", "/user/authenticate")
+        let mock_xbl = server
+            .mock("POST", "/user/authenticate")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{
+            .with_body(
+                r#"{
                 "Token": "xbl_token"
-            }"#)
-            .create_async().await;
+            }"#,
+            )
+            .create_async()
+            .await;
 
-        let mock_xsts = server.mock("POST", "/xsts/authorize")
+        let mock_xsts = server
+            .mock("POST", "/xsts/authorize")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{
+            .with_body(
+                r#"{
                 "Token": "xsts_token",
                 "DisplayClaims": {
                     "xui": [{"uhs": "user_hash"}]
                 }
-            }"#)
-            .create_async().await;
+            }"#,
+            )
+            .create_async()
+            .await;
 
-        let mock_mc = server.mock("POST", "/authentication/login_with_xbox")
+        let mock_mc = server
+            .mock("POST", "/authentication/login_with_xbox")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{
+            .with_body(
+                r#"{
                 "access_token": "mc_access_token"
-            }"#)
-            .create_async().await;
+            }"#,
+            )
+            .create_async()
+            .await;
 
-        let mock_profile = server.mock("GET", "/minecraft/profile")
+        let mock_profile = server
+            .mock("GET", "/minecraft/profile")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{
+            .with_body(
+                r#"{
                 "id": "uuid-1234",
                 "name": "TestPlayer"
-            }"#)
-            .create_async().await;
+            }"#,
+            )
+            .create_async()
+            .await;
 
         clear_accounts().await;
 
         let result = poll_microsoft_token("dummy_device_code").await;
-        assert!(result.is_ok(), "Failed to poll microsoft token: {:?}", result.err());
-        
+        assert!(
+            result.is_ok(),
+            "Failed to poll microsoft token: {:?}",
+            result.err()
+        );
+
         let account = result.unwrap();
         assert_eq!(account.username, "TestPlayer");
         assert_eq!(account.id, "uuid-1234");
