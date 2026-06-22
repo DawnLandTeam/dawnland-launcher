@@ -37,4 +37,7 @@ jobs:
           cargo clippy --all-targets --all-features --message-format=json > clippy-report.json || true
           
       - name: SonarQube Scan (Node.js Version)
-        run: pnpm --package=sonarqube-scanner dlx sonar-scanner -Dsonar.host.url="${{ secrets.SONAR_HOST_URL }}" -Dsonar.token="${{ secrets.SONAR_TOKEN }}"
+        run: pnpm --package=sonarqube-scanner dlx sonar-scanner
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
