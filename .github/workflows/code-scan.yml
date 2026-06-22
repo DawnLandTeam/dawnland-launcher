@@ -38,8 +38,7 @@ jobs:
           
       - name: SonarQube Scan (Node.js Version)
         run: |
-          pnpm add -g sonarqube-scanner
-          sonar-scanner
+          pnpm dlx sonarqube-scanner
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
