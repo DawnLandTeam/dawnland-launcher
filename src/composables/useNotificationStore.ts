@@ -9,6 +9,7 @@ export interface NotificationMessage {
   isPopup: boolean;
   duration: number; // in ms
   timestamp: number;
+  transient?: boolean;
 }
 
 // Global state
@@ -44,7 +45,8 @@ export const useNotificationStore = () => {
       status: payload.status || 'unread',
       isPopup: payload.isPopup ?? true,
       duration: payload.duration ?? 3000,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      transient: payload.transient
     };
 
     if (existingIndex !== -1) {
@@ -83,7 +85,8 @@ export const useNotificationStore = () => {
         type: payload.type || 'info',
         isPopup: payload.isPopup ?? true,
         duration: payload.duration ?? 3000,
-        status: payload.status || 'unread'
+        status: payload.status || 'unread',
+        transient: payload.transient
       });
     }
   };
@@ -94,7 +97,11 @@ export const useNotificationStore = () => {
       const timeoutId = window.setTimeout(() => {
         const index = notifications.value.findIndex(n => n.id === id);
         if (index !== -1) {
-          notifications.value[index].isPopup = false;
+          if (notifications.value[index].transient) {
+            notifications.value.splice(index, 1);
+          } else {
+            notifications.value[index].isPopup = false;
+          }
         }
         popupTimeouts.delete(id);
       }, duration);
@@ -130,9 +137,13 @@ export const useNotificationStore = () => {
   const dismissPopup = (id: string | number) => {
     const index = notifications.value.findIndex(n => n.id === id);
     if (index !== -1) {
-      notifications.value[index].isPopup = false;
-      // Also mark as read if user manually dismisses it
-      notifications.value[index].status = 'read';
+      if (notifications.value[index].transient) {
+        notifications.value.splice(index, 1);
+      } else {
+        notifications.value[index].isPopup = false;
+        // Also mark as read if user manually dismisses it
+        notifications.value[index].status = 'read';
+      }
     }
     clearPopupTimeout(id);
   };

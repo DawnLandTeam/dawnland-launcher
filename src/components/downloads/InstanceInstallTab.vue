@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, reactive } from "vue";
+import { onClickOutside } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
+import type { SelectOption } from "../ui/DSelect.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Download, Loader2, Check, AlertCircle, RefreshCw, Box, Puzzle, X } from "@lucide/vue";
-import {
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-} from "./ui/dialog";
-import InstallCard from "./InstallCard.vue";
-import { setAppBusy } from "../composables/useAppStatus";
-import { getErrorMessage } from "../utils/error";
+import { Download, Loader2, Check, Puzzle,  } from "@lucide/vue";
+import DInput from "../ui/DInput.vue";
+import DSelect from "../ui/DSelect.vue";
+import InstallCard from "../InstallCard.vue";
+import TaskDetailView from "../TaskDetailView.vue";
+import { useTaskStore } from "../../composables/useTaskStore";
+import { getErrorMessage } from "../../utils/error";
 
 // Types
 interface VanillaVersion {
@@ -55,17 +55,68 @@ interface LoaderVersionList {
 
 // Props & Emits - Using explicit props for compatibility
 const props = defineProps<{
-  open: boolean;
   initialVersion?: string;
   initialLoader?: string;
 }>();
 
-const emit = defineEmits<{
-  (e: "update:open", value: boolean): void;
-  (e: "installed-success"): void;
-}>();
+
+const taskStore = useTaskStore();
+const currentTaskId = ref<string | null>(null);
+const currentTask = computed(() => {
+  if (!currentTaskId.value) return null;
+  return taskStore.tasks.value.find((t: any) => t.id === currentTaskId.value) || null;
+});
 
 const { t } = useI18n();
+
+const searchQuery = ref('');
+const selectedTypeFilter = ref('all');
+
+const typeFilterOptions = computed<SelectOption[]>(() => [
+  { label: t('install.all'), value: 'all' },
+  { label: t('install.releases'), value: 'release' },
+  { label: t('install.snapshots'), value: 'snapshot' },
+  { label: t('install.other'), value: 'other' }
+]);
+
+const filteredVersions = computed(() => {
+  return sortedVersions.value.filter(v => {
+    if (selectedTypeFilter.value !== 'all') {
+      if (selectedTypeFilter.value === 'other') {
+         if (['release', 'snapshot'].includes(v.versionType)) return false;
+      } else if (v.versionType !== selectedTypeFilter.value) {
+        return false;
+      }
+    }
+    if (searchQuery.value && !v.id.toLowerCase().includes(searchQuery.value.toLowerCase())) {
+      return false;
+    }
+    return true;
+  });
+});
+
+function selectVersionAndNext(id: string) {
+  if (selectedVersion.value !== id) {
+    selectedVersion.value = id;
+    
+    // Clear mod loader cache
+    forgeLoaders.value = [];
+    neoForgeLoaders.value = [];
+    stableFabricLoaders.value = [];
+    unstableFabricLoaders.value = [];
+    
+    // Clear selected components
+    selectedComponents.Forge = null;
+    selectedComponents.Fabric = null;
+    selectedComponents.NeoForge = null;
+    selectedComponents.OptiFine = null;
+    selectedComponents['Fabric API'] = null;
+    
+    // Clear configuring state
+    activeConfiguringComponent.value = null;
+  }
+  goToStep2();
+}
 
 // State
 const currentStep = ref<number>(1); // 1: Base version, 2: Mod loader (optional), 3: Name & Install
@@ -83,6 +134,22 @@ const selectedNeoForgeLoader = ref<string>("");
 const isLoadingFabric = ref(false);
 const isLoadingForge = ref(false);
 const isLoadingNeoForge = ref(false);
+
+const forgeLoaderOptions = computed<SelectOption[]>(() => forgeLoaders.value.map(loader => ({
+  label: loader.version,
+  value: loader.version
+})));
+
+const fabricLoaderOptions = computed<SelectOption[]>(() => stableFabricLoaders.value.map(v => ({
+  label: v,
+  value: v
+})));
+
+const neoForgeLoaderOptions = computed<SelectOption[]>(() => neoForgeLoaders.value.map(loader => ({
+  label: loader.version,
+  value: loader.version
+})));
+
 const customInstanceName = ref<string>("");
 const isLoadingVersions = ref(false);
 const isInstalling = ref(false);
@@ -114,6 +181,11 @@ const selectedComponents = reactive<Record<string, string | null>>({
 });
 
 const activeConfiguringComponent = ref<string | null>(null);
+const gridRef = ref<HTMLElement | null>(null);
+
+onClickOutside(gridRef, () => {
+  activeConfiguringComponent.value = null;
+});
 
 function getConflictReason(target: string): string | undefined {
   // Check exclusions
@@ -142,10 +214,15 @@ function getCardStatus(target: string): 'pending' | 'selected' | 'disabled' {
 }
 
 function handleCardClick(target: string) {
+  if (isLoadingFabric.value || isLoadingForge.value || isLoadingNeoForge.value) return;
   activeConfiguringComponent.value = target;
-  if (target === 'Fabric') loadFabricLoaders();
-  else if (target === 'Forge') loadForgeLoaders();
-  else if (target === 'NeoForge') loadNeoForgeLoaders();
+  if (target === 'Fabric') {
+    if (stableFabricLoaders.value.length === 0 && unstableFabricLoaders.value.length === 0) loadFabricLoaders();
+  } else if (target === 'Forge') {
+    if (forgeLoaders.value.length === 0) loadForgeLoaders();
+  } else if (target === 'NeoForge') {
+    if (neoForgeLoaders.value.length === 0) loadNeoForgeLoaders();
+  }
   else if (target === 'OptiFine' || target === 'Fabric API') {
     // Mock version selection for OptiFine and Fabric API
     if (!selectedComponents[target as keyof typeof selectedComponents]) {
@@ -204,9 +281,9 @@ const releaseVersions = computed(() =>
   versions.value.filter((v) => v.versionType === "release")
 );
 
-const snapshotVersions = computed(() =>
-  versions.value.filter((v) => v.versionType === "snapshot")
-);
+// const snapshotVersions = computed(() => {
+//   return versions.value.filter((v) => v.versionType === "snapshot").slice(0, 50);
+// });
 
 const sortedVersions = computed(() =>
   [...versions.value].sort((a, b) => {
@@ -219,7 +296,7 @@ const sortedVersions = computed(() =>
     const orderA = order[a.versionType] ?? 4;
     const orderB = order[b.versionType] ?? 4;
     if (orderA !== orderB) return orderA - orderB;
-    return b.id.localeCompare(a.id);
+    return b.id.localeCompare(a.id, undefined, { numeric: true, sensitivity: 'base' });
   })
 );
 
@@ -246,14 +323,7 @@ const canProceedToStep3 = computed(() => {
   return true;
 });
 
-const downloadProgressPercent = computed(() => {
-  if (!installProgress.value?.totalTasks) return 0;
-  const completedTasks = installProgress.value.completedTasks ?? 0;
-  const totalTasks = installProgress.value.totalTasks;
-  const percent = Math.floor((completedTasks / totalTasks) * 100);
-  if (percent === 0 && completedTasks > 0) return 1;
-  return percent;
-});
+
 
 // Generate default instance name based on selections
 function generateInstanceName(): string {
@@ -269,8 +339,9 @@ function generateInstanceName(): string {
 }
 
 // When dialog opens, load versions if not yet loaded
-watch(() => props.open, async (isOpen) => {
-  if (isOpen) {
+onMounted(async () => {
+    const isOpen = true;
+    if (isOpen) {
     // Reset ALL state - critical for proper reopen
     currentStep.value = 1;
     selectedVersion.value = props.initialVersion || "";
@@ -315,17 +386,9 @@ watch(() => props.open, async (isOpen) => {
       currentStep.value = 3;
     }
   }
-}, { immediate: true });
+});
 
-// Prevent closing dialog during installation
-function handleOpenChange(open: boolean) {
-  // If trying to close during installation, prevent it
-  if (!open && isInstalling.value) {
-    return; // Prevent closing
-  }
-  emit('update:open', open);
-}
-
+// removed handleOpenChange
 // Watch version changes to reset mod loader if version changes
 watch(selectedVersion, (_, oldVal) => {
   if (!oldVal) return; // Do not reset on initial initialization from props
@@ -402,6 +465,7 @@ async function loadFabricLoaders(): Promise<void> {
     if (selectedFabricLoader.value) {
       selectedComponents.Fabric = selectedFabricLoader.value;
       customInstanceName.value = generateInstanceName();
+      if (activeConfiguringComponent.value === 'Fabric') activeConfiguringComponent.value = null; // Auto close
     }
   } catch (err) {
     error.value = getErrorMessage(err);
@@ -435,6 +499,7 @@ async function loadForgeLoaders(): Promise<void> {
     if (selectedForgeLoader.value) {
       selectedComponents.Forge = selectedForgeLoader.value;
       customInstanceName.value = generateInstanceName();
+      if (activeConfiguringComponent.value === 'Forge') activeConfiguringComponent.value = null; // Auto close
     }
   } catch (err) {
     error.value = getErrorMessage(err);
@@ -468,6 +533,7 @@ async function loadNeoForgeLoaders(): Promise<void> {
     if (selectedNeoForgeLoader.value) {
       selectedComponents.NeoForge = selectedNeoForgeLoader.value;
       customInstanceName.value = generateInstanceName();
+      if (activeConfiguringComponent.value === 'NeoForge') activeConfiguringComponent.value = null; // Auto close
     }
   } catch (err) {
     error.value = getErrorMessage(err);
@@ -504,6 +570,29 @@ function goBackToStep2() {
   error.value = null;
 }
 
+
+watch(currentTask, (newTask) => {
+  if (isInstalling.value && !newTask) {
+    // If the task was cleared from the manager, we should reset to initial state
+    resetToInitialState();
+  }
+});
+
+function resetToInitialState() {
+  currentStep.value = 1;
+  isInstalling.value = false;
+  currentTaskId.value = null;
+  selectedVersion.value = "";
+  selectedComponents.Forge = null;
+  selectedComponents.Fabric = null;
+  selectedComponents.NeoForge = null;
+  selectedComponents.OptiFine = null;
+  selectedComponents['Fabric API'] = null;
+  customInstanceName.value = "";
+  activeConfiguringComponent.value = null;
+  mapComponentsToLegacyState();
+}
+
 // Install selected version
 async function installVersion(): Promise<void> {
   if (!selectedVersion.value) {
@@ -518,29 +607,29 @@ async function installVersion(): Promise<void> {
   }
 
   isInstalling.value = true;
-  setAppBusy(true);
   error.value = null;
   installProgress.value = { phase: "resolving_version" };
   downloadProgress.value.clear();
 
   try {
+    let taskId = "";
     // If mod loader is selected, install the appropriate loader on top
     if (installModLoader.value) {
       if (selectedLoaderType.value === "fabric" && selectedFabricLoader.value) {
-        await invoke<string>("install_fabric_instance", {
+        taskId = await invoke<string>("install_fabric_instance", {
           mcVersion: selectedVersion.value,
           fabricVersion: selectedFabricLoader.value,
           customInstanceName: customInstanceName.value,
         });
       } else if (selectedLoaderType.value === "forge" && selectedForgeLoader.value) {
-        await invoke<string>("install_forge_instance", {
+        taskId = await invoke<string>("install_forge_instance", {
           mcVersion: selectedVersion.value,
           loaderVersion: selectedForgeLoader.value,
           loaderType: "forge",
           customInstanceName: customInstanceName.value,
         });
       } else if (selectedLoaderType.value === "neoforge" && selectedNeoForgeLoader.value) {
-        await invoke<string>("install_forge_instance", {
+        taskId = await invoke<string>("install_forge_instance", {
           mcVersion: selectedVersion.value,
           loaderVersion: selectedNeoForgeLoader.value,
           loaderType: "neoforge",
@@ -548,64 +637,23 @@ async function installVersion(): Promise<void> {
         });
       }
     } else {
-      await invoke<string>("install_vanilla_version", {
+      taskId = await invoke<string>("install_vanilla_version", {
         versionId: selectedVersion.value,
         versionJsonUrl: version.url,
       });
     }
 
-    isInstalling.value = false;
-    setAppBusy(false);
+    currentTaskId.value = taskId;
     
-    emit("installed-success");
-    emit("update:open", false);
+    // We do not set isInstalling = false here anymore because the task runs in the background.
+    // The user will see the task progress via TaskDetailView.
   } catch (err) {
     error.value = getErrorMessage(err);
     isInstalling.value = false;
-    setAppBusy(false);
   }
 }
 
-// Format phase label
-function formatPhase(phase: string): string {
-  const labels: Record<string, string> = {
-    resolving_version: t("install.fetchingVersion"),
-    resolving_libraries: t("install.filteringLibraries"),
-    resolving_assets: t("install.preparingAssets"),
-    downloading: t("install.downloadingFiles"),
-    complete: t("install.installComplete"),
-    error: t("install.installFailed"),
-  };
-  return labels[phase] || phase;
-}
-
-// Format backend progress file strings
-function formatCurrentFile(file: string): string {
-  const backendMessages: Record<string, string> = {
-    "Fetching Minecraft version manifest...": t("install.status.fetchingManifest"),
-    "Installing base Minecraft...": t("install.status.installingBase"),
-    "Downloading Forge installer...": t("install.status.downloadingForge"),
-    "Running Forge processors (this may take a while)...": t("install.status.runningProcessors"),
-  };
-  return backendMessages[file] || file;
-}
-
-// Cancel current installation
-const cancelInstallation = async () => {
-  try {
-    await invoke("cancel_installation");
-  } catch (e) {
-    console.error("Failed to cancel installation:", e);
-  }
-};
-
-// Format speed for display
-function formatSpeed(bytesPerSec: number): string {
-  if (bytesPerSec < 1024) return `${bytesPerSec.toFixed(0)} B/s`;
-  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
-  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
-}
-
+// Helper functions removed as they are now handled by TaskDetailView
 // Register event listeners once on mount
 onMounted(async () => {
   const un1 = await listen<InstallProgress>("install-progress", (event) => {
@@ -613,8 +661,7 @@ onMounted(async () => {
 
     if (event.payload.phase === "error") {
       isInstalling.value = false;
-      setAppBusy(false);
-    }
+      }
   });
 
   const un2 = await listen<DownloadProgress>("download-progress", (event) => {
@@ -649,11 +696,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <DialogContent :open="props.open" @update:open="handleOpenChange" class="max-w-lg">
-    <DialogTitle>{{ t("install.title") }}</DialogTitle>
-    <DialogDescription>
-      {{ t("install.subtitle") }}
-    </DialogDescription>
+  <div class="h-full flex flex-col p-6 overflow-y-auto w-full">
+    
+    
 
     <!-- Step Indicator -->
     <div class="flex items-center justify-center gap-2 py-2">
@@ -692,84 +737,80 @@ onUnmounted(() => {
     </div>
 
     <!-- Step 1: Base Minecraft Version -->
-    <div v-if="currentStep === 1" class="space-y-4">
-      <div class="flex items-center gap-2 text-lg font-semibold text-neutral-900 dark:text-white">
-        <Box class="w-5 h-5" />
-        {{ t("install.step1Title") }}
-      </div>
-      
-      <div class="space-y-3">
-        <div class="flex items-center justify-between">
-          <label class="text-sm font-medium">{{ t("install.mcVersion") }}</label>
-          <button
-            @click="loadVersions"
-            :disabled="isLoadingVersions"
-            class="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-          >
-            <RefreshCw
-              v-if="isLoadingVersions"
-              class="w-3.5 h-3.5 animate-spin"
-            />
-            <RefreshCw v-else class="w-3.5 h-3.5" /> {{ t("install.refresh") }} </button>
+    <div v-if="currentStep === 1" class="flex-1 flex flex-col min-h-0 space-y-4">
+      <!-- Search & Filter bar -->
+      <div class="flex items-center gap-3 bg-white dark:bg-zinc-900 p-2 rounded-lg border border-neutral-200 dark:border-zinc-800 shrink-0 shadow-sm">
+        <div class="flex-1 flex items-center px-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-neutral-400 mr-2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <DInput
+            v-model="searchQuery"
+            :placeholder="$t('install.searchPlaceholder')"
+            class="!border-none !ring-0 !bg-transparent !px-0 !h-auto"
+          />
         </div>
-
-        <select
-          v-model="selectedVersion"
-          :disabled="isLoadingVersions || isInstalling"
-          class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white disabled:opacity-50"
+        <div class="flex items-center gap-2 px-3 border-l border-neutral-200 dark:border-zinc-800">
+          <span class="text-sm text-neutral-500 whitespace-nowrap">{{ $t('install.versionType') }}</span>
+          <DSelect
+            v-model="selectedTypeFilter"
+            :options="typeFilterOptions"
+            class="bg-transparent border-none focus:outline-none text-sm font-medium pr-2 text-neutral-900 dark:text-white cursor-pointer w-32"
+          />
+        </div>
+        <button
+          @click="loadVersions"
+          :disabled="isLoadingVersions"
+          class="flex items-center justify-center bg-emerald-600 hover:bg-emerald-700 text-white rounded-md px-4 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 shrink-0"
         >
-          <option value="" disabled>{{ t("install.selectVersion") }}</option>
-
-          <optgroup v-if="releaseVersions.length" :label="t('install.releases')">
-            <option
-              v-for="v in releaseVersions"
-              :key="v.id"
-              :value="v.id"
-            >
-              {{ v.id }}
-            </option>
-          </optgroup>
-
-          <optgroup v-if="snapshotVersions.length" :label="t('install.snapshots')">
-            <option
-              v-for="v in snapshotVersions"
-              :key="v.id"
-              :value="v.id"
-            >
-              {{ v.id }}
-            </option>
-          </optgroup>
-
-          <optgroup
-            v-if="versions.length > releaseVersions.length + snapshotVersions.length"
-            :label="t('install.other')"
-          >
-            <option
-              v-for="v in sortedVersions.filter(
-                (v) => !['release', 'snapshot'].includes(v.versionType)
-              )"
-              :key="v.id"
-              :value="v.id"
-            >
-              {{ v.id }} ({{ v.versionType }})
-            </option>
-          </optgroup>
-        </select>
+          <svg v-if="isLoadingVersions" class="w-3.5 h-3.5 animate-spin mr-1.5" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          <svg v-else class="w-3.5 h-3.5 mr-1.5" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          {{ $t('install.refresh') }}
+        </button>
       </div>
 
-      <div class="flex justify-end">
-        <button
-          @click="goToStep2"
-          :disabled="!canProceedToStep2"
-          class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
-        >
-          {{ t("install.next") }}
-          <span class="text-lg">→</span>
-        </button>
+      <!-- List -->
+      <div class="flex-1 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg border border-neutral-200 dark:border-zinc-800 shadow-sm">
+        <div v-if="isLoadingVersions" class="flex items-center justify-center h-full text-neutral-500 min-h-[300px]">
+          <svg class="w-8 h-8 animate-spin" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        </div>
+        <div v-else-if="filteredVersions.length === 0" class="flex items-center justify-center h-full text-neutral-500 min-h-[300px]">
+          {{ $t('install.noVersionsFound') }}
+        </div>
+        <div v-else class="flex flex-col">
+          <div
+            v-for="v in filteredVersions"
+            :key="v.id"
+            class="flex items-center justify-between p-4 hover:bg-neutral-50 dark:hover:bg-zinc-800/50 transition-colors group border-b border-neutral-100 dark:border-zinc-800 last:border-0 cursor-pointer"
+            @click="selectVersionAndNext(v.id)"
+          >
+            <div class="flex items-center gap-4">
+              <div class="w-10 h-10 bg-neutral-100 dark:bg-zinc-800 rounded flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6 text-neutral-500"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" x2="12" y1="22" y2="12"/></svg>
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="font-semibold text-base text-neutral-900 dark:text-white">{{ v.id }}</span>
+                  <span
+                    class="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                    :class="v.versionType === 'release' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300' : 'bg-neutral-100 text-neutral-700 dark:bg-zinc-800 dark:text-neutral-300'"
+                  >
+                    {{ v.versionType === 'release' ? $t('install.releases') : (v.versionType === 'snapshot' ? $t('install.snapshots') : $t('install.oldVersions')) }}
+                  </span>
+                </div>
+                
+              </div>
+            </div>
+            
+            <button
+              class="w-8 h-8 rounded-full flex items-center justify-center bg-transparent group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/40 text-neutral-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- Step 2: Modular Installation Workbench -->
+<!-- Step 2: Modular Installation Workbench -->
     <div v-if="currentStep === 2" class="space-y-4">
       <div class="flex items-center gap-2 text-lg font-medium text-neutral-900 dark:text-white">
         <Puzzle class="w-5 h-5" />
@@ -777,7 +818,7 @@ onUnmounted(() => {
       </div>
       <p class="text-sm text-muted-foreground">{{ t('install.modularDesc') }}</p>
 
-      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div ref="gridRef" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <InstallCard
           title="Forge"
           iconUrl="/forge.png"
@@ -787,7 +828,12 @@ onUnmounted(() => {
           @click="handleCardClick('Forge')"
           @remove="removeComponent('Forge')"
           @change="handleCardClick('Forge')"
-        />
+          :isConfiguring="activeConfiguringComponent === 'Forge'">
+          <template #configurator>
+            <div v-if="isLoadingForge" class="text-xs text-primary flex justify-center items-center gap-1.5 w-full py-1"><Loader2 class="w-3.5 h-3.5 animate-spin"/>{{ $t('install.fetchingVersions') }}</div>
+            <DSelect v-else @click.stop @update:model-value="activeConfiguringComponent = null" v-model="selectedComponents.Forge" :options="forgeLoaderOptions" class="w-full text-xs" />
+          </template>
+        </InstallCard>
         <InstallCard
           title="Fabric"
           iconUrl="/fabric.png"
@@ -797,7 +843,12 @@ onUnmounted(() => {
           @click="handleCardClick('Fabric')"
           @remove="removeComponent('Fabric')"
           @change="handleCardClick('Fabric')"
-        />
+          :isConfiguring="activeConfiguringComponent === 'Fabric'">
+          <template #configurator>
+            <div v-if="isLoadingFabric" class="text-xs text-primary flex justify-center items-center gap-1.5 w-full py-1"><Loader2 class="w-3.5 h-3.5 animate-spin"/>{{ $t('install.fetchingVersions') }}</div>
+            <DSelect v-else @click.stop @update:model-value="activeConfiguringComponent = null" v-model="selectedComponents.Fabric" :options="fabricLoaderOptions" class="w-full text-xs" />
+          </template>
+        </InstallCard>
         <InstallCard
           title="NeoForge"
           iconUrl="/neoforge.png"
@@ -807,7 +858,12 @@ onUnmounted(() => {
           @click="handleCardClick('NeoForge')"
           @remove="removeComponent('NeoForge')"
           @change="handleCardClick('NeoForge')"
-        />
+          :isConfiguring="activeConfiguringComponent === 'NeoForge'">
+          <template #configurator>
+            <div v-if="isLoadingNeoForge" class="text-xs text-primary flex justify-center items-center gap-1.5 w-full py-1"><Loader2 class="w-3.5 h-3.5 animate-spin"/>{{ $t('install.fetchingVersions') }}</div>
+            <DSelect v-else @click.stop @update:model-value="activeConfiguringComponent = null" v-model="selectedComponents.NeoForge" :options="neoForgeLoaderOptions" class="w-full text-xs" />
+          </template>
+        </InstallCard>
         <InstallCard
           title="OptiFine"
           iconUrl="/optifine.png"
@@ -817,7 +873,11 @@ onUnmounted(() => {
           @click="handleCardClick('OptiFine')"
           @remove="removeComponent('OptiFine')"
           @change="handleCardClick('OptiFine')"
-        />
+          :isConfiguring="activeConfiguringComponent === 'OptiFine'">
+          <template #configurator>
+            <div class="text-xs text-center text-muted-foreground w-full">Automatically handled</div>
+          </template>
+        </InstallCard>
         <InstallCard
           title="Fabric API"
           iconUrl="/fabric-api.png"
@@ -827,52 +887,16 @@ onUnmounted(() => {
           @click="handleCardClick('Fabric API')"
           @remove="removeComponent('Fabric API')"
           @change="handleCardClick('Fabric API')"
-        />
-      </div>
-
-      <!-- Active Configurator for selected card -->
-      <div v-if="activeConfiguringComponent" class="mt-4 p-4 border rounded-lg bg-neutral-50 dark:bg-zinc-800/50 animate-in fade-in slide-in-from-top-2">
-        <div class="flex items-center justify-between mb-3">
-          <label class="text-sm font-medium">{{ activeConfiguringComponent === 'Fabric' ? t('install.selectFabric') : activeConfiguringComponent === 'Forge' ? t('install.selectForge') : t('install.selectNeoForge') }}</label>
-        </div>
-
-        <template v-if="activeConfiguringComponent === 'Fabric'">
-          <div v-if="isLoadingFabric" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> {{ t('install.loading') }}</div>
-          <select v-else v-model="selectedComponents.Fabric" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm">
-            <option value="" disabled>{{ t('install.selectVersion') }}</option>
-            <optgroup v-if="stableFabricLoaders.length" label="Stable">
-              <option v-for="loader in stableFabricLoaders" :key="loader" :value="loader">{{ loader }}</option>
-            </optgroup>
-            <optgroup v-if="unstableFabricLoaders.length" label="Unstable">
-              <option v-for="loader in unstableFabricLoaders" :key="loader" :value="loader">{{ loader }}</option>
-            </optgroup>
-          </select>
-        </template>
-
-        <template v-else-if="activeConfiguringComponent === 'Forge'">
-          <div v-if="isLoadingForge" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> {{ t('install.loading') }}</div>
-          <select v-else v-model="selectedComponents.Forge" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm">
-            <option value="" disabled>{{ t('install.selectVersion') }}</option>
-            <option v-for="loader in forgeLoaders" :key="loader.version" :value="loader.version">{{ loader.version }}</option>
-          </select>
-        </template>
-
-        <template v-else-if="activeConfiguringComponent === 'NeoForge'">
-          <div v-if="isLoadingNeoForge" class="text-sm text-muted-foreground flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin"/> {{ t('install.loading') }}</div>
-          <select v-else v-model="selectedComponents.NeoForge" class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm">
-            <option value="" disabled>{{ t('install.selectVersion') }}</option>
-            <option v-for="loader in neoForgeLoaders" :key="loader.version" :value="loader.version">{{ loader.version }}</option>
-          </select>
-        </template>
-        
-        <template v-else>
-          <div class="text-sm text-muted-foreground">{{ t('install.noVersionNeeded') }}</div>
-        </template>
+          :isConfiguring="activeConfiguringComponent === 'Fabric API'">
+          <template #configurator>
+            <div class="text-xs text-center text-muted-foreground w-full">Automatically handled</div>
+          </template>
+        </InstallCard>
       </div>
 
       <div class="flex justify-between mt-6">
-        <button @click="goBackToStep1" class="px-3 py-1.5 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white font-medium">← 返回</button>
-        <button @click="goToStep3" :disabled="!canProceedToStep3" class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium">下一步 <span class="text-lg">→</span></button>
+        <button @click="goBackToStep1" class="px-4 py-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white font-medium transition-colors">← {{ $t('install.back') }}</button>
+        <button @click="goToStep3" :disabled="!canProceedToStep3" class="flex items-center gap-2 px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors text-sm font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">{{ $t('install.next') }} <span class="text-lg">→</span></button>
       </div>
     </div>
 
@@ -898,8 +922,8 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Show form only when NOT installing AND installation is complete -->
-      <template v-else>
+      <!-- Show form only when NOT installing -->
+      <template v-if="!isInstalling">
         <div class="p-4 bg-muted/30 rounded-lg space-y-2">
           <div class="flex justify-between text-sm">
             <span class="text-muted-foreground">{{ t("install.baseVersion") }}:</span>
@@ -915,167 +939,54 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <template v-if="installProgress?.phase !== 'complete'">
-          <div class="space-y-3">
-            <label class="text-sm font-medium">{{ t("install.instanceName") }}</label>
-            <input
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">{{ $t('install.instanceName') }}</label>
+            <DInput
               v-model="customInstanceName"
-              type="text"
-              :placeholder="t('install.instanceNamePlaceholder')"
-              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
+              :placeholder="(currentTask as any)?.metadata?.versionId || $t('install.defaultName')"
             />
-            <p class="text-xs text-muted-foreground">
-              {{ t("install.instanceNameDesc") }}
-            </p>
           </div>
+          <p class="text-xs text-muted-foreground">
+            {{ t("install.instanceNameDesc") }}
+          </p>
+        </div>
 
-          <!-- Install Button -->
-          <div class="flex items-center gap-3">
-            <button
-              @click="installVersion"
-              :disabled="!customInstanceName || isLoadingVersions || isLoadingFabric || isLoadingForge || isLoadingNeoForge"
-              class="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
-            >
-              <Download class="w-4 h-4" />
-              <span>
-              {{ t("install.installInstance") }}
+        <div class="flex items-center justify-between mt-6">
+          <button
+            @click="goBackToStep2"
+            class="px-4 py-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white font-medium transition-colors"
+          >
+            ← {{ t("install.back") }}
+          </button>
+
+          <button
+            @click="installVersion"
+            :disabled="!customInstanceName || isLoadingVersions || isLoadingFabric || isLoadingForge || isLoadingNeoForge"
+            class="flex items-center gap-2 px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors text-sm font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download class="w-4 h-4" />
+            <span>
+            {{ t("install.installInstance") }}
             </span>
-            </button>
-          </div>
-
-          <!-- Back Button -->
-          <div class="flex justify-start mt-4">
-            <button
-              @click="goBackToStep2"
-              class="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              ← {{ t("install.back") }}
-            </button>
-          </div>
-        </template>
-        <!-- The finish button has been moved to the bottom of the modal -->
+          </button>
+        </div>
       </template>
     </div>
 
-    <!-- Installation Progress (always show during installation) -->
-    <div
-      v-if="installProgress"
-      class="rounded-lg border bg-muted/30 p-4 space-y-3"
-    >
-      <!-- Phase indicator -->
-      <div class="flex items-center gap-2 text-sm">
-        <Loader2
-          v-if="!['complete', 'error'].includes(installProgress.phase)"
-          class="w-4 h-4 animate-spin text-primary"
-        />
-        <Check
-          v-else-if="installProgress.phase === 'complete'"
-          class="w-4 h-4 text-green-500"
-        />
-        <AlertCircle v-else class="w-4 h-4 text-red-500" />
-        <span>{{ formatPhase(installProgress.phase) }}</span>
-      </div>
-
-      <!-- Progress bar -->
-      <div v-if="installProgress.totalTasks" class="space-y-1.5">
-        <div class="flex justify-between text-xs text-muted-foreground">
-          <span>
-            {{ installProgress.completedTasks || 0 }} /
-            {{ installProgress.totalTasks }} {{ t("install.files") }}
-          </span>
-          <span>{{ downloadProgressPercent }}%</span>
-        </div>
-        <div class="h-2 bg-muted rounded-full overflow-hidden">
-          <div
-            class="h-full bg-primary transition-all duration-300 rounded-full"
-            :style="{ width: `${downloadProgressPercent}%` }"
-          />
-        </div>
-      </div>
-
-      <!-- Current file -->
-      <div
-        v-if="installProgress.currentFile"
-        class="text-xs text-muted-foreground truncate"
-      >
-        {{ t("install.current") }}: {{ formatCurrentFile(installProgress.currentFile) }}
-      </div>
-
-      <!-- Error -->
-      <div
-        v-if="error"
-        class="flex items-center gap-2 text-red-500 text-sm"
-      >
-        <AlertCircle class="w-4 h-4 shrink-0" />
-        <span>{{ error }}</span>
-      </div>
-
-      <!-- Success -->
-      <div
-        v-if="installProgress.phase === 'complete'"
-        class="flex items-center gap-2 text-green-500 text-sm"
-      >
-        <Check class="w-4 h-4 shrink-0" />
-        <span
-          >Instance {{ installProgress.versionId }} installed
-          successfully!</span
-        >
-      </div>
-
-      <!-- Cancel Button -->
-      <div v-if="!['complete', 'error'].includes(installProgress.phase) && isInstalling" class="flex justify-end mt-2">
-        <button
-          @click="cancelInstallation"
-          class="px-3 py-1.5 text-xs text-red-500 hover:text-red-600 hover:bg-red-500/10 rounded-md transition-colors font-medium flex items-center gap-1.5"
-        >
-          <X class="w-3.5 h-3.5" />
-          {{ t("install.cancel") }}
-        </button>
-      </div>
+    <!-- Installation Task View -->
+    <div v-if="isInstalling && currentTask" class="mt-4">
+      <TaskDetailView :task="currentTask" />
     </div>
 
-    <!-- {{ t("install.activeDownloads") }} -->
-    <div
-      v-if="downloadProgress.size > 0"
-      class="rounded-lg border bg-muted/30 p-3 space-y-2"
-    >
-      <h4 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-        {{ t("install.activeDownloads") }}
-      </h4>
-      <div class="space-y-1.5 max-h-32 overflow-y-auto">
-        <div
-          v-for="[taskId, progress] of downloadProgress"
-          :key="taskId"
-          class="flex items-center gap-2 text-xs"
-        >
-          <div class="flex-1 min-w-0">
-            <div class="truncate text-muted-foreground">
-              {{ progress.taskId }}
-            </div>
-            <div class="h-1 bg-muted rounded-full overflow-hidden mt-0.5">
-              <div
-                class="h-full bg-primary/70 rounded-full transition-all duration-200"
-                :style="{
-                  width: `${progress.total > 0 ? (progress.downloaded / progress.total) * 100 : 0}%`,
-                }"
-              />
-            </div>
-          </div>
-          <span class="text-muted-foreground tabular-nums whitespace-nowrap">
-            {{ formatSpeed(progress.speed) }}
-          </span>
-        </div>
-      </div>
-    </div>
-    
-    <!-- Success Button (Shown at the very bottom) -->
-    <div v-if="installProgress?.phase === 'complete'" class="flex justify-end mt-4">
+    <!-- Back/Finish floating button (Installing State) -->
+    <div v-if="isInstalling && currentTask && ['Completed', 'Failed', 'Cancelled'].includes(currentTask.status)" class="absolute top-6 right-6 z-50">
       <button
-        @click="emit('update:open', false)"
-        class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors text-sm font-medium shadow-sm"
+        @click="resetToInitialState"
+        class="flex items-center gap-2 px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors text-sm font-medium shadow-sm"
       >
-        完成
+        {{ currentTask.status === 'Completed' ? $t('install.finish') : $t('install.back') }}
       </button>
     </div>
-  </DialogContent>
+  </div>
 </template>

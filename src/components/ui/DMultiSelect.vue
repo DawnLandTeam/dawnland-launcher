@@ -93,14 +93,14 @@ const selectedLabels = computed(() => {
 </script>
 
 <template>
-  <div class="relative w-full" ref="targetRef">
+  <div class="relative" ref="targetRef">
     <button
       type="button"
       @click="toggleOpen"
       :disabled="disabled"
       class="flex h-10 w-full items-center justify-between rounded-md border border-neutral-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-neutral-900 dark:text-zinc-100 placeholder:text-neutral-500 dark:placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
     >
-      <span class="truncate">{{ selectedLabels }}</span>
+      <span class="truncate flex-1 min-w-0 text-left block w-full pr-2" :title="selectedLabels">{{ selectedLabels }}</span>
       <ChevronDown class="h-4 w-4 opacity-50 shrink-0" />
     </button>
 
@@ -114,7 +114,7 @@ const selectedLabels = computed(() => {
     >
       <div
         v-if="isOpen"
-        class="absolute z-50 mt-1 max-h-80 w-full overflow-hidden flex flex-col rounded-md border border-neutral-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm"
+        class="absolute z-50 mt-1 max-h-80 min-w-full w-max left-1/2 -translate-x-1/2 max-w-[90vw] sm:max-w-md overflow-hidden flex flex-col rounded-md border border-neutral-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm"
       >
         <!-- Search Input -->
         <div class="p-1 pb-2 border-b border-neutral-100 dark:border-zinc-800 shrink-0">
@@ -123,7 +123,7 @@ const selectedLabels = computed(() => {
             <input
               type="text"
               v-model="searchQuery"
-              placeholder="搜索..."
+              :placeholder="$t('common.searchPlaceholder')"
               class="flex h-8 w-full rounded-md border border-neutral-300 dark:border-zinc-700 bg-transparent px-3 py-1 pl-9 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-500"
             />
           </div>
@@ -150,7 +150,7 @@ const selectedLabels = computed(() => {
                 <Check v-if="modelValue.includes(option.value)" class="h-4 w-4 text-emerald-600 dark:text-emerald-500" />
               </span>
               <component v-if="option.icon" :is="option.icon" class="h-4 w-4 shrink-0 opacity-70 mr-2" />
-              <span class="truncate">{{ option.label }}</span>
+              <span class="truncate" :title="option.label">{{ option.label }}</span>
             </div>
           </div>
           <div v-if="filteredOptions.length === 0" class="py-6 text-center text-sm text-neutral-500">

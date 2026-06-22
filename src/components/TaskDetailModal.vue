@@ -69,7 +69,10 @@ function getSubTaskPercentage(sub: any) {
             {{ getTaskName(task.task_type) }}
           </h3>
           <!-- Status Icon -->
-          <div class="shrink-0 flex items-center justify-center">
+          <div class="shrink-0 flex items-center justify-center gap-3">
+            <span v-if="task.progress.speed > 0" class="shrink-0 text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+              {{ formatSpeed(task.progress.speed) }}
+            </span>
             <Clock v-if="task.status === 'Pending'" class="w-5 h-5 text-neutral-400" />
             <Loader2 v-else-if="task.status === 'Running'" class="w-5 h-5 text-emerald-400 animate-spin" />
             <Pause v-else-if="task.status === 'Paused'" class="w-5 h-5 text-yellow-400" />
@@ -85,15 +88,9 @@ function getSubTaskPercentage(sub: any) {
           <span class="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2">
             {{ task.progress.detail }}
           </span>
-          <span v-if="task.progress.speed > 0" class="shrink-0 text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
-            {{ formatSpeed(task.progress.speed) }}
-          </span>
+          
         </div>
-        <div v-else-if="task.progress.speed > 0" class="flex items-center mt-1">
-          <span class="text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
-            {{ formatSpeed(task.progress.speed) }}
-          </span>
-        </div>
+        
         
         <button 
           @click="handleClose"

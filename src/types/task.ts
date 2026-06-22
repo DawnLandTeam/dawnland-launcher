@@ -4,6 +4,10 @@ export type TaskType =
   | { InstallFabric: { mc_version: string; fabric_version: string; custom_instance_name: string; is_dependency?: boolean } }
   | { InstallModpack: { zip_path: string; instance_name: string; is_update: boolean; project_id?: string } }
   | { InstallOnlineModpack: { url: string; instance_name: string; is_update: boolean; project_id?: string } }
+  | { InstallMod: { source: string; project_id: string; mod_name: string; instance_id: string; target_dir: string; download_url: string; file_id: string; keep_both: boolean } }
+  | { InstallResourcepack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
+  | { InstallShaderpack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
+  | { InstallWorld: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { Generic: { name: string } };
 
 export type TaskStatus = 
@@ -42,6 +46,7 @@ export interface TaskState {
   error: string | null;
   created_at: number;
   updated_at: number;
+  auto_clear: boolean;
 }
 
 import i18n from '../i18n';
@@ -53,6 +58,10 @@ export function getTaskName(taskType: TaskType): string {
   if ('InstallFabric' in taskType) return t('task.installLoader', { loader: 'Fabric', version: taskType.InstallFabric.mc_version });
   if ('InstallModpack' in taskType) return t('task.installModpack', { name: taskType.InstallModpack.instance_name });
   if ('InstallOnlineModpack' in taskType) return t('task.downloadModpack', { name: taskType.InstallOnlineModpack.instance_name });
+  if ('InstallMod' in taskType) return t('task.installMod', { name: taskType.InstallMod.mod_name });
+  if ('InstallResourcepack' in taskType) return t('task.installResourcepack', { name: taskType.InstallResourcepack.pack_name });
+  if ('InstallShaderpack' in taskType) return t('task.installShaderpack', { name: taskType.InstallShaderpack.pack_name });
+  if ('InstallWorld' in taskType) return t('task.installWorld', { name: taskType.InstallWorld.pack_name });
   if ('Generic' in taskType) return taskType.Generic.name;
   return t('task.unknown');
 }
