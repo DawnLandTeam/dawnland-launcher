@@ -3,7 +3,8 @@
     "search": "搜索",
     "searchPlaceholder": "搜索...",
     "cancel": "取消",
-    "confirm": "确认"
+    "confirm": "确认",
+    "select": "请选择..."
   },
   "sidebar": {
     "home": "主页",
@@ -70,6 +71,20 @@
     "installInstance": "安装实例",
     "installModpack": "安装整合包",
     "updateModpack": "更新整合包",
+    "modpackVersion": "版本",
+    "modpackType": "类型",
+    "shareModpack": "分享整合包",
+    "shareCopied": "链接已复制",
+    "localModsTitle": "本地模组管理",
+    "downloadMoreMods": "下载更多模组",
+    "noLocalMods": "该实例还没有安装任何模组",
+    "searchLocalMods": "搜索已安装的模组...",
+    "deleteModConfirm": "确定要删除该模组吗？",
+    "deleteModConfirmDesc": "此操作无法撤销，该模组文件将被永久删除。",
+    "delete": "删除",
+    "cancel": "取消",
+    "enable": "启用",
+    "disable": "禁用",
     "openFolder": "打开文件夹",
     "settingsDialog": {
       "title": "实例设置",
@@ -260,7 +275,17 @@
     "homePage": "主页",
     "register": "注册",
     "forgotPassword": "忘记密码",
-    "verificationLink": "验证链接"
+    "verificationLink": "验证链接",
+    "waitingForBrowser": "正在等待浏览器授权...",
+    "emailOrUsername": "邮箱 / 用户名",
+    "password": "密码",
+    "login": "登录验证",
+    "selectCharacters": "选择要添加的角色",
+    "allCharactersAdded": "所有角色均已添加，无可添加角色",
+    "added": "已添加",
+    "back": "返回",
+    "saving": "保存中...",
+    "confirmAdd": "确认添加"
   },
   "errors": {
     "conflictingTask": "有冲突的任务正在运行: {taskName}"
@@ -549,24 +574,6 @@
     "publishDate": "发布日期",
     "actions": "操作",
     "installBtn": "安装"
-  },
-  "instances": {
-    "title": "实例管理",
-    "modpackVersion": "版本",
-    "modpackType": "类型",
-    "shareModpack": "分享整合包",
-    "shareCopied": "链接已复制",
-    "updateModpack": "更新整合包",
-    "localModsTitle": "本地模组管理",
-    "downloadMoreMods": "下载更多模组",
-    "noLocalMods": "该实例还没有安装任何模组",
-    "searchLocalMods": "搜索已安装的模组...",
-    "deleteModConfirm": "确定要删除该模组吗？",
-    "deleteModConfirmDesc": "此操作无法撤销，该模组文件将被永久删除。",
-    "delete": "删除",
-    "cancel": "取消",
-    "enable": "启用",
-    "disable": "禁用"
   },
   "task": {
     "installVanilla": "安装原版 {version}",

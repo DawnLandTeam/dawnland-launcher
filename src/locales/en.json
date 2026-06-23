@@ -3,7 +3,8 @@
     "search": "Search",
     "searchPlaceholder": "Search...",
     "cancel": "Cancel",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "select": "Please select..."
   },
   "sidebar": {
     "home": "Home",
@@ -274,7 +275,17 @@
     "homePage": "Home",
     "register": "Register",
     "forgotPassword": "Forgot Password",
-    "verificationLink": "Verification Link"
+    "verificationLink": "Verification Link",
+    "waitingForBrowser": "Waiting for browser authorization...",
+    "emailOrUsername": "Email / Username",
+    "password": "Password",
+    "login": "Login Verification",
+    "selectCharacters": "Select character(s) to add",
+    "allCharactersAdded": "All characters have been added, no characters available to add",
+    "added": "Added",
+    "back": "Back",
+    "saving": "Saving...",
+    "confirmAdd": "Confirm Add"
   },
   "errors": {
     "conflictingTask": "A conflicting task is already running: {taskName}"

@@ -71,7 +71,7 @@ const groupedOptions = computed(() => {
 
 const selectedLabel = computed(() => {
   const opt = props.options.find(o => o.value === props.modelValue);
-  return opt ? opt.label : props.placeholder || '请选择';
+  return opt ? opt.label : props.placeholder || 'Please select...';
 });
 
 const selectedIcon = computed(() => {
