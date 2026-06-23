@@ -4,7 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
-import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages } from "@lucide/vue";
+import DSidebarTabs from '../components/ui/DSidebarTabs.vue';
+import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info } from "@lucide/vue";
 import { useI18n } from 'vue-i18n';
 import DSelect from '../components/ui/DSelect.vue';
 import { useRoute, useRouter } from "vue-router";
@@ -46,6 +47,19 @@ onActivated(async () => {
 });
 
 const activeTab = ref<'general' | 'java' | 'authlib' | 'about'>('general');
+
+const tabs = [
+  { id: 'general', name: 'settings.tabs.general', icon: Settings },
+  { id: 'java', name: 'settings.tabs.java', icon: Coffee },
+  { id: 'authlib', name: 'settings.authlib.tab', icon: Shield },
+  { id: 'about', name: 'settings.tabs.about', icon: Info },
+];
+
+const translatedTabs = computed(() => tabs.map(tab => ({
+  ...tab,
+  name: t(tab.name),
+  hasDot: tab.id === 'about' && hasUpdateAvailable.value
+})));
 
 watch(
   () => route.query.tab,
@@ -451,47 +465,16 @@ function changeLanguage(lang: string) {
 </script>
 
 <template>
-  <div class="flex h-full flex-col p-4 gap-4 overflow-y-auto">
-    <div>
-      <h1 class="text-2xl font-bold">{{ $t('settings.title') }}</h1>
-      <p class="text-sm text-neutral-500 mt-1">{{ $t('settings.desc') }}</p>
-    </div>
+  <div class="flex h-full p-4 gap-4 bg-transparent">
+    <!-- Left Sidebar -->
+    <DSidebarTabs
+      :title="$t('settings.title')"
+      :tabs="translatedTabs"
+      v-model="activeTab"
+    />
 
-    <!-- Tabs Navigation -->
-    <div class="flex border-b border-neutral-200 dark:border-zinc-800">
-      <button
-        class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
-        :class="activeTab === 'general' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
-        @click="activeTab = 'general'"
-      >
-        {{ $t('settings.tabs.general') }}
-      </button>
-      <button
-        class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
-        :class="activeTab === 'java' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
-        @click="activeTab = 'java'"
-      >
-        {{ $t('settings.tabs.java') }}
-      </button>
-      <button
-        class="px-3 py-1.5 text-sm font-medium border-b-2 transition-colors"
-        :class="activeTab === 'authlib' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
-        @click="activeTab = 'authlib'"
-      >
-        {{ $t('settings.authlib.tab') }}
-      </button>
-      <button
-        class="relative px-3 py-1.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5"
-        :class="activeTab === 'about' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'"
-        @click="activeTab = 'about'"
-      >
-        {{ $t('settings.tabs.about') }}
-        <span v-if="hasUpdateAvailable" class="relative flex h-2 w-2">
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-          <span class="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-        </span>
-      </button>
-    </div>
+    <!-- Right Content Area -->
+    <div class="flex-1 relative bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md rounded-xl border border-neutral-200/50 dark:border-zinc-800/50 shadow-sm overflow-y-auto p-6">
 
     <!-- General Settings Tab -->
     <div v-if="activeTab === 'general'" class="space-y-6">
@@ -816,8 +799,8 @@ function changeLanguage(lang: string) {
     </div>
 
     <!-- About Tab -->
-    <div v-if="activeTab === 'about'" class="space-y-6">
-      <div class="rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex flex-col items-center text-center shadow-sm">
+    <div v-if="activeTab === 'about'" class="h-full">
+      <div class="rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex flex-col items-center justify-center text-center shadow-sm min-h-full">
         <div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mb-4 text-primary">
           <!-- Temporary logo placeholder -->
           <Package :size="40" />
@@ -874,5 +857,6 @@ function changeLanguage(lang: string) {
     </div>
     
     <UpdaterModal v-model:open="showUpdaterModal" :update-info="updateInfo" />
+    </div>
   </div>
 </template>

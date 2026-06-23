@@ -270,7 +270,7 @@
     "desc": "管理启动器相关配置",
     "tabs": {
       "general": "常用设置",
-      "java": "Java 管理",
+      "java": "Java",
       "about": "关于"
     },
     "general": {
