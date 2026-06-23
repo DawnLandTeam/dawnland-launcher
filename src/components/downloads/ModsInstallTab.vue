@@ -507,7 +507,6 @@ async function checkDependenciesForSelectedFile() {
         }
         pendingDependencyTitles.value[dep.project_id] = title;
         (dep as any).name = title;
-        (dep as any).name = title;
       } catch (err) {
         console.error("Failed to resolve dependency title", dep.project_id, err);
       }

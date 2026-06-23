@@ -212,11 +212,6 @@ const instanceOptions = computed(() => [
   }))
 ]);
 
-const sourceOptions = [
-  { label: 'CurseForge', value: 'curseforge' },
-  { label: 'Modrinth', value: 'modrinth' }
-];
-
 const getValidMcVersions = (f: UnifiedModFile): string[] => {
   if (!f.mc_versions || f.mc_versions.length === 0) return ["Other"];
   const excluded = ['forge', 'fabric', 'quilt', 'neoforge', 'liteloader', 'rift', 'vanilla', 'client', 'server', 'optifine', 'iris'];
