@@ -3,6 +3,7 @@ import { ref, computed } from 'vue';
 import type { Component } from 'vue';
 import { onClickOutside } from '@vueuse/core';
 import { ChevronDown } from '@lucide/vue';
+import { useI18n } from 'vue-i18n';
 
 export interface SelectOption {
   label: string;
@@ -11,6 +12,8 @@ export interface SelectOption {
   group?: string;
   icon?: Component;
 }
+
+const { t } = useI18n();
 
 const props = defineProps<{
   options: SelectOption[];
@@ -71,7 +74,7 @@ const groupedOptions = computed(() => {
 
 const selectedLabel = computed(() => {
   const opt = props.options.find(o => o.value === props.modelValue);
-  return opt ? opt.label : props.placeholder || '请选择';
+  return opt ? opt.label : props.placeholder || t('common.select', 'Please select...');
 });
 
 const selectedIcon = computed(() => {

@@ -606,7 +606,7 @@ watch(
             <!-- Seamless logging in -->
             <div v-else-if="isLoggingInMicrosoft && !microsoftLoginData && !showDeviceCodeFlow" class="flex flex-col items-center justify-center gap-3 py-4">
               <Loader2 :size="24" class="animate-spin text-emerald-500" />
-              <span class="text-sm text-neutral-600 dark:text-neutral-400">正在等待浏览器授权...</span>
+              <span class="text-sm text-neutral-600 dark:text-neutral-400">{{ $t('accounts.waitingForBrowser') }}</span>
             </div>
 
             <!-- Device Code Flow (Fallback) Initial -->
@@ -687,14 +687,14 @@ watch(
                   </span>
                 </div>
                 <div class="flex items-center gap-2 text-xs" v-if="authlibMeta?.meta?.links">
-                  <a v-if="authlibMeta.meta.links.homepage" :href="authlibMeta.meta.links.homepage" target="_blank" class="text-blue-500 hover:underline">{{ $t('common.homepage', '主页') }}</a>
-                  <a v-if="authlibMeta.meta.links.register" :href="authlibMeta.meta.links.register" target="_blank" class="text-blue-500 hover:underline">{{ $t('common.register', '注册') }}</a>
-                  <a v-if="authlibMeta.meta.links.register && authlibMeta.meta.links.register.includes('/register')" :href="authlibMeta.meta.links.register.replace('/register', '/forgot')" target="_blank" class="text-blue-500 hover:underline">{{ $t('common.forgotPassword', '忘记密码') }}</a>
+                  <a v-if="authlibMeta.meta.links.homepage" :href="authlibMeta.meta.links.homepage" target="_blank" class="text-blue-500 hover:underline">{{ $t('accounts.homePage') }}</a>
+                  <a v-if="authlibMeta.meta.links.register" :href="authlibMeta.meta.links.register" target="_blank" class="text-blue-500 hover:underline">{{ $t('accounts.register') }}</a>
+                  <a v-if="authlibMeta.meta.links.register && authlibMeta.meta.links.register.includes('/register')" :href="authlibMeta.meta.links.register.replace('/register', '/forgot')" target="_blank" class="text-blue-500 hover:underline">{{ $t('accounts.forgotPassword') }}</a>
                 </div>
               </div>
               
               <div class="space-y-1">
-                <label class="text-sm font-medium">{{ $t('accounts.authlibServer', '认证服务器') }}</label>
+                <label class="text-sm font-medium">{{ $t('accounts.authServer') }}</label>
                 <DSelect
                   v-model="authlibUrl"
                   :options="authlibServerOptions"
@@ -705,13 +705,13 @@ watch(
               <!-- Login Form -->
               <div v-if="!authlibProfiles" class="space-y-3">
                 <div class="space-y-1">
-                  <label class="text-sm font-medium">Email / Username</label>
+                  <label class="text-sm font-medium">{{ $t('accounts.emailOrUsername') }}</label>
                   <DInput
                     v-model="authlibUsername"
                   />
                 </div>
                 <div class="space-y-1">
-                  <label class="text-sm font-medium">Password</label>
+                  <label class="text-sm font-medium">{{ $t('accounts.password') }}</label>
                   <DInput
                     v-model="authlibPassword"
                     type="password"
@@ -725,16 +725,16 @@ watch(
                 >
                   <Loader2 v-if="isAddingAuthlib" :size="16" class="animate-spin" />
                   <Globe v-else :size="16" />
-                  {{ isAddingAuthlib ? $t('accounts.adding') : $t('accounts.login', '登录验证') }}
+                  {{ isAddingAuthlib ? $t('accounts.adding') : $t('accounts.login') }}
                 </button>
               </div>
 
               <!-- Character Selection Form -->
               <div v-else class="space-y-3">
-                <p class="text-sm font-medium">{{ $t('accounts.selectCharacters', '选择要添加的角色') }}</p>
+                <p class="text-sm font-medium">{{ $t('accounts.selectCharacters') }}</p>
 
                 <div v-if="allProfilesAdded" class="p-3 mb-2 rounded-lg bg-neutral-100 dark:bg-zinc-800 border border-neutral-200 dark:border-zinc-700">
-                  <p class="text-sm text-center text-neutral-500 dark:text-neutral-400">所有角色均已添加，无可添加角色</p>
+                  <p class="text-sm text-center text-neutral-500 dark:text-neutral-400">{{ $t('accounts.allCharactersAdded') }}</p>
                 </div>
 
                 <div class="max-h-48 overflow-y-auto space-y-1.5 border border-neutral-200 dark:border-zinc-700 rounded-lg p-2 bg-white/50 dark:bg-zinc-900/50">
@@ -753,7 +753,7 @@ watch(
                       </div>
                       <span class="text-sm font-medium" :class="isProfileAlreadyAdded(profile) ? 'text-neutral-500 dark:text-neutral-500' : 'text-neutral-900 dark:text-neutral-100'">
                         {{ profile.name }}
-                        <span v-if="isProfileAlreadyAdded(profile)" class="ml-2 text-xs font-normal text-neutral-400">(已添加)</span>
+                        <span v-if="isProfileAlreadyAdded(profile)" class="ml-2 text-xs font-normal text-neutral-400">({{ $t('accounts.added') }})</span>
                       </span>
                     </div>
                   </label>
@@ -764,7 +764,7 @@ watch(
                     class="flex-1 rounded-lg bg-neutral-200 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 transition-colors"
                     @click="authlibProfiles = null; selectedAuthlibProfiles = []; tempAuthData = null;"
                   >
-                    {{ $t('accounts.back', '返回') }}
+                    {{ $t('accounts.back') }}
                   </button>
                   <button
                     class="flex-1 flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -773,7 +773,7 @@ watch(
                   >
                     <Loader2 v-if="isAddingAuthlib" :size="16" class="animate-spin" />
                     <Plus v-else :size="16" />
-                    {{ isAddingAuthlib ? $t('accounts.saving', '保存中') : $t('accounts.confirmAdd', '确认添加') }}
+                    {{ isAddingAuthlib ? $t('accounts.saving') : $t('accounts.confirmAdd') }}
                   </button>
                 </div>
               </div>
