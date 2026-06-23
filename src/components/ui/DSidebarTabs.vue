@@ -8,6 +8,7 @@ export interface SidebarTab {
   icon?: Component;
   disabled?: boolean;
   group?: string;
+  hasDot?: boolean;
 }
 
 const props = defineProps<{
@@ -80,6 +81,10 @@ const groupedTabs = computed(() => {
       >
         <component v-if="tab.icon" :is="tab.icon" class="w-4 h-4 shrink-0" />
         <span class="truncate">{{ tab.name }}</span>
+        <span v-if="tab.hasDot" class="relative flex h-2 w-2 ml-auto shrink-0">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+        </span>
       </button>
     </template>
   </div>
