@@ -10,6 +10,7 @@ import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from "../../composables/useToast";
+import { useTaskStatusReload } from "../../composables/useTaskStatusReload";
 
 // UI Components
 import { DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
@@ -636,16 +637,9 @@ watch([selectedInstanceId], () => {
 });
 
 
-const handleTaskStatusChanged = (e: Event) => {
-  const customEvent = e as CustomEvent;
-  const status = customEvent.detail?.status;
-  if (status === 'Completed' || status === 'Failed' || status === 'Cancelled') {
-    loadInstances();
-  }
-};
+useTaskStatusReload(loadInstances);
 
 onMounted(async () => {
-  window.addEventListener('task-status-changed', handleTaskStatusChanged);
   await loadInstances();
   loadCategories();
   loadOptions();
@@ -658,7 +652,6 @@ onActivated(async () => {
 });
 
 onUnmounted(() => {
-  window.removeEventListener('task-status-changed', handleTaskStatusChanged);
 });
 </script>
 
