@@ -24,6 +24,7 @@ import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
 import { useI18n } from "vue-i18n";
 import { fetchApi } from "../utils/api";
+import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 // Types
 interface InstanceItem {
   id: string;
@@ -155,17 +156,10 @@ const handleTaskAdded = () => {
   loadInstances();
 };
 
-const handleTaskStatusChanged = (e: Event) => {
-  const customEvent = e as CustomEvent;
-  const status = customEvent.detail?.status;
-  if (status === 'Completed' || status === 'Failed' || status === 'Cancelled') {
-    loadInstances();
-  }
-};
+useTaskStatusReload(loadInstances);
 
 onMounted(async () => {
   window.addEventListener('task-added', handleTaskAdded);
-  window.addEventListener('task-status-changed', handleTaskStatusChanged);
 
   await loadInstances();
   await loadAccounts();
@@ -322,7 +316,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('task-added', handleTaskAdded);
-  window.removeEventListener('task-status-changed', handleTaskStatusChanged);
 });
 
 onActivated(() => {

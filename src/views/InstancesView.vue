@@ -6,6 +6,7 @@ import DSelect from "../components/ui/DSelect.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw, Share2, Check } from "@lucide/vue";
 import { getErrorMessage } from "../utils/error";
+import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
@@ -136,13 +137,7 @@ const handleTaskAdded = () => {
   loadInstances();
 };
 
-const handleTaskStatusChanged = (e: Event) => {
-  const customEvent = e as CustomEvent;
-  const status = customEvent.detail?.status;
-  if (status === 'Completed' || status === 'Failed' || status === 'Cancelled') {
-    loadInstances();
-  }
-};
+useTaskStatusReload(loadInstances);
 
 const windowBehaviorOptions = computed(() => [
   { label: t('instances.settingsDialog.keepVisible'), value: 'keep' },
@@ -160,7 +155,6 @@ const javaPathOptions = computed(() => [
 
 onMounted(async () => {
   window.addEventListener('task-added', handleTaskAdded);
-  window.addEventListener('task-status-changed', handleTaskStatusChanged);
   await loadInstances();
   await loadJavas();
 });
@@ -173,7 +167,6 @@ onActivated(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('task-added', handleTaskAdded);
-  window.removeEventListener('task-status-changed', handleTaskStatusChanged);
 });
 
 // ---------------------------------------------------------------------------

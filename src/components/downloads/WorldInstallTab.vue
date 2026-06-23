@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, h } from "vue";
+import { ref, onMounted, computed, watch, h, onActivated, onUnmounted } from "vue";
 import DMultiSelect from "../ui/DMultiSelect.vue";
 import DSelect from "../ui/DSelect.vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -10,6 +10,7 @@ import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from "../../composables/useToast";
+import { useTaskStatusReload } from "../../composables/useTaskStatusReload";
 
 // UI Components
 import { DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
@@ -496,12 +497,21 @@ watch([selectedInstanceId], () => {
 });
 
 
+useTaskStatusReload(loadInstances);
+
 onMounted(async () => {
   await loadInstances();
   loadCategories();
   loadOptions();
   performSearch(false);
   setupIntersectionObserver();
+});
+
+onActivated(async () => {
+  await loadInstances();
+});
+
+onUnmounted(() => {
 });
 </script>
 
