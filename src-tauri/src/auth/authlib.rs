@@ -95,7 +95,7 @@ pub async fn get_authlib_servers() -> Result<Vec<AuthlibServer>, DawnlandError> 
 
 #[tauri::command]
 pub async fn fetch_authlib_servers() -> Result<Vec<AuthlibServer>, AppError> {
-    get_authlib_servers().await.map_err(AppError::from)
+    Ok(get_authlib_servers().await?)
 }
 
 #[tauri::command]

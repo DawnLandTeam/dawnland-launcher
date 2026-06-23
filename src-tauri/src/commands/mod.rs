@@ -75,23 +75,21 @@ pub async fn batch_download(tasks: Vec<DownloadTask>, app: AppHandle) -> Result<
 /// Get all stored accounts.
 #[tauri::command]
 pub async fn get_accounts() -> Result<Vec<Account>, AppError> {
-    auth::get_accounts().await.map_err(AppError::from)
+    Ok(auth::get_accounts().await?)
 }
 
 /// Add a new offline account.
 #[tauri::command]
 pub async fn add_offline_account(username: String) -> Result<Account, AppError> {
     tracing::info!("Adding offline account: {}", username);
-    auth::add_offline_account(&username)
-        .await
-        .map_err(AppError::from)
+    Ok(auth::add_offline_account(&username).await?)
 }
 
 /// Remove an account by ID.
 #[tauri::command]
 pub async fn remove_account(id: String) -> Result<(), AppError> {
     tracing::info!("Removing account: {}", id);
-    auth::remove_account(&id).await.map_err(AppError::from)
+    Ok(auth::remove_account(&id).await?)
 }
 
 #[tauri::command]
