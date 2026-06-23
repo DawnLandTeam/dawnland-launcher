@@ -130,25 +130,21 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, AppError> {
 #[tauri::command]
 pub async fn poll_microsoft_token(device_code: String) -> Result<Account, AppError> {
     tracing::info!("Polling Microsoft token with device code");
-    auth::poll_microsoft_token(&device_code)
-        .await
-        .map_err(AppError::from)
+    auth::poll_microsoft_token(&device_code).await
 }
 
 /// Refresh Microsoft token for an existing account.
 #[tauri::command]
 pub async fn refresh_microsoft_token(account_id: String) -> Result<Account, AppError> {
     tracing::info!("Refreshing Microsoft token for account: {}", account_id);
-    auth::refresh_microsoft_token(&account_id)
-        .await
-        .map_err(AppError::from)
+    auth::refresh_microsoft_token(&account_id).await
 }
 
 /// Start seamless Microsoft OAuth 2.0 PKCE login flow.
 #[tauri::command]
 pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     tracing::info!("Invoking seamless Microsoft OAuth login");
-    auth::login_microsoft_oauth().await.map_err(AppError::from)
+    auth::login_microsoft_oauth().await
 }
 
 // ============ Custom Updater Commands ============
