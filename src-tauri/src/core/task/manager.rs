@@ -44,7 +44,7 @@ impl TaskContext {
 
     pub async fn update_progress(&self, current: u64, total: u64, detail: &str) {
         let mut state = self.state.write().await;
-        
+
         if let Some(key) = &self.sub_task_key {
             // Update the specific sub-task
             if let Some(sub) = state.progress.sub_tasks.iter_mut().find(|s| &s.key == key) {
@@ -57,12 +57,18 @@ impl TaskContext {
                     sub.status = crate::core::task::state::SubTaskStatus::Completed;
                 }
             }
-            
+
             // Recalculate global progress
             let mut global_progress = 0.0;
             for s in &state.progress.sub_tasks {
-                let p = if s.total > 0 { s.current as f64 / s.total as f64 } else { 
-                    if s.status == crate::core::task::state::SubTaskStatus::Completed { 1.0 } else { 0.0 }
+                let p = if s.total > 0 {
+                    s.current as f64 / s.total as f64
+                } else {
+                    if s.status == crate::core::task::state::SubTaskStatus::Completed {
+                        1.0
+                    } else {
+                        0.0
+                    }
                 };
                 global_progress += p * (s.weight as f64 / 100.0);
             }
@@ -75,7 +81,7 @@ impl TaskContext {
             state.progress.total = total;
             state.progress.detail = detail.to_string();
         }
-        
+
         state.updated_at = chrono::Utc::now().timestamp();
         self.manager.emit_state(&state).await;
     }
@@ -118,6 +124,10 @@ impl TaskContext {
 
     pub fn is_cancelled(&self) -> bool {
         self.cancel_token.is_cancelled()
+    }
+
+    pub async fn wait_cancelled(&self) {
+        self.cancel_token.cancelled().await
     }
 
     pub async fn get_context_data<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
@@ -182,7 +192,9 @@ impl TaskManager {
     }
 
     pub async fn delete_task(&self, id: String) -> Result<(), TaskError> {
-        self.db.delete_task(id).await
+        self.db.delete_task(id.clone()).await?;
+        let _ = self.app_handle.emit("task-deleted", id);
+        Ok(())
     }
 
     pub async fn emit_state(&self, state: &TaskState) {
@@ -201,7 +213,9 @@ impl TaskManager {
                 let mut running = false;
                 if let Ok(all_tasks) = self.db.load_all_tasks().await {
                     for task in all_tasks {
-                        if (task.status == TaskStatus::Pending || task.status == TaskStatus::Running || task.status == TaskStatus::Paused)
+                        if (task.status == TaskStatus::Pending
+                            || task.status == TaskStatus::Running
+                            || task.status == TaskStatus::Paused)
                             && task.task_type.instance_id() == Some(instance_id.to_string())
                         {
                             running = true;
@@ -227,8 +241,14 @@ impl TaskManager {
         if let Ok(all_tasks) = self.db.load_all_tasks().await {
             for task in all_tasks {
                 if task_type.conflicts_with(&task.task_type) {
-                    if task.status == TaskStatus::Pending || task.status == TaskStatus::Running || task.status == TaskStatus::Paused {
-                        return Err(TaskError::Database("A conflicting task is already running".to_string()));
+                    if task.status == TaskStatus::Pending
+                        || task.status == TaskStatus::Running
+                        || task.status == TaskStatus::Paused
+                    {
+                        return Err(TaskError::Database(format!(
+                            "CONFLICTING_TASK:{}",
+                            task.task_type.name()
+                        )));
                     } else {
                         // Delete the old inactive conflicting task (e.g. Failed/Cancelled tasks)
                         // so they don't clutter the history when superseded by this new task.
@@ -320,9 +340,15 @@ impl TaskManager {
                         let config_path = instance_dir.join("dlml.json");
                         if config_path.exists() {
                             if let Ok(content) = std::fs::read_to_string(&config_path) {
-                                if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                                if let Ok(config) = serde_json::from_str::<
+                                    crate::core::launcher::InstanceConfig,
+                                >(&content)
+                                {
                                     if config.is_installing {
-                                        tracing::info!("Cleaning up failed/cancelled instance: {}", instance_id);
+                                        tracing::info!(
+                                            "Cleaning up failed/cancelled instance: {}",
+                                            instance_id
+                                        );
                                         let _ = std::fs::remove_dir_all(&instance_dir);
                                     }
                                 }
@@ -342,7 +368,7 @@ impl TaskManager {
         let mut tasks = self.active_tasks.write().await;
         if let Some(token) = tasks.remove(id) {
             token.cancel();
-            
+
             // Eagerly update the state to Cancelled to provide instant feedback
             if let Ok(Some(mut state)) = self.db.get_task(id).await {
                 state.status = TaskStatus::Cancelled;
@@ -357,9 +383,15 @@ impl TaskManager {
                     let config_path = instance_dir.join("dlml.json");
                     if config_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&config_path) {
-                            if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                            if let Ok(config) = serde_json::from_str::<
+                                crate::core::launcher::InstanceConfig,
+                            >(&content)
+                            {
                                 if config.is_installing {
-                                    tracing::info!("Eagerly cleaning up cancelled instance: {}", instance_id);
+                                    tracing::info!(
+                                        "Eagerly cleaning up cancelled instance: {}",
+                                        instance_id
+                                    );
                                     let _ = std::fs::remove_dir_all(&instance_dir);
                                 }
                             }

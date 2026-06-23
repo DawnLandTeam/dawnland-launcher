@@ -6,6 +6,13 @@ const MODRINTH_BASE_URL: &str = "https://api.modrinth.com/v2";
 
 /// Unified mod project structure
 /// Re-use the same structure as curseforge for unified handling
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct UnifiedCategory {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedModProject {
     /// Source platform: "modrinth" or "curseforge"
@@ -37,6 +44,7 @@ pub struct UnifiedDependency {
     pub project_id: String,
     pub version_id: Option<String>, // Can be file_id for CF
     pub required: bool,
+    pub name: Option<String>,
 }
 
 /// Unified mod version file representing a downloadable mod file
@@ -51,6 +59,7 @@ pub struct UnifiedModFile {
     pub file_size: Option<u64>,
     pub hash: Option<String>,
     pub dependencies: Vec<UnifiedDependency>,
+    pub mc_versions: Vec<String>,
 }
 
 /// Online Modpack Version representing a modpack file to download
@@ -154,24 +163,113 @@ struct ModrinthFile {
 #[tauri::command]
 pub async fn search_modrinth(
     query: String,
-    mc_version: String,
-    loader: String,
+    mc_versions: Vec<String>,
+    loaders: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    search_modrinth_internal(
+        query,
+        mc_versions,
+        loaders,
+        categories,
+        offset,
+        limit,
+        "mod",
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn search_modrinth_resourcepacks(
+    query: String,
+    mc_versions: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    search_modrinth_internal(
+        query,
+        mc_versions,
+        vec![],
+        categories,
+        offset,
+        limit,
+        "resourcepack",
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn search_modrinth_shaderpacks(
+    query: String,
+    mc_versions: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    search_modrinth_internal(
+        query,
+        mc_versions,
+        vec![],
+        categories,
+        offset,
+        limit,
+        "shader",
+    )
+    .await
+}
+
+async fn search_modrinth_internal(
+    query: String,
+    mc_versions: Vec<String>,
+    loaders: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+    project_type: &str,
 ) -> Result<Vec<UnifiedModProject>, String> {
     tracing::info!(
-        "Searching Modrinth: query={}, mc_version={}, loader={}",
+        "Searching Modrinth ({}): query={}, mc_versions={:?}, loaders={:?}",
+        project_type,
         query,
-        mc_version,
-        loader
+        mc_versions,
+        loaders
     );
 
     let mut facets = Vec::new();
-    if !mc_version.is_empty() {
-        facets.push(format!("[\"versions:{}\"]", mc_version));
+
+    // Project Type filtering
+    facets.push(format!("[\"project_type:{}\"]", project_type));
+
+    if !mc_versions.is_empty() {
+        let v_arr = mc_versions
+            .iter()
+            .map(|v| format!("\"versions:{}\"", v))
+            .collect::<Vec<_>>()
+            .join(",");
+        facets.push(format!("[{}]", v_arr));
     }
-    if !loader.is_empty() {
-        facets.push(format!("[\"categories:{}\"]", loader.to_lowercase()));
+
+    if !loaders.is_empty() {
+        let l_arr = loaders
+            .iter()
+            .map(|l| format!("\"categories:{}\"", l.to_lowercase()))
+            .collect::<Vec<_>>()
+            .join(",");
+        facets.push(format!("[{}]", l_arr));
     }
-    
+
+    if !categories.is_empty() {
+        let c_arr = categories
+            .iter()
+            .map(|c| format!("\"categories:{}\"", c))
+            .collect::<Vec<_>>()
+            .join(",");
+        facets.push(format!("[{}]", c_arr));
+    }
+
     let facets_query = if !facets.is_empty() {
         let json_arr = format!("[{}]", facets.join(","));
         format!("&facets={}", urlencoding::encode(&json_arr))
@@ -179,11 +277,16 @@ pub async fn search_modrinth(
         String::new()
     };
 
+    let o = offset.unwrap_or(0);
+    let l = limit.unwrap_or(20);
+
     // Build search query parameters - use facets for server-side filtering
     let search_url = format!(
-        "{}/search?query={}&limit=20{}",
+        "{}/search?query={}&offset={}&limit={}{}",
         MODRINTH_BASE_URL,
         urlencoding::encode(&query),
+        o,
+        l,
         facets_query
     );
 
@@ -249,13 +352,13 @@ pub async fn search_modrinth(
 pub async fn get_modrinth_mod_files(
     project_id: String,
     mc_version: String,
-    loader: String,
+    loaders: Vec<String>,
 ) -> Result<Vec<UnifiedModFile>, String> {
     tracing::info!(
-        "Getting Modrinth mod files: project_id={}, mc_version={}, loader={}",
+        "Getting Modrinth mod files: project_id={}, mc_version={}, loaders={:?}",
         project_id,
         mc_version,
-        loader
+        loaders
     );
 
     // Get all versions for this project
@@ -285,34 +388,38 @@ pub async fn get_modrinth_mod_files(
     let mut sorted_versions = versions;
     sorted_versions.sort_by(|a, b| b.date_published.cmp(&a.date_published));
 
-    let target_loader = loader.to_lowercase();
     let mut compatible_files = Vec::new();
 
     for version in sorted_versions {
         // Check game version compatibility
-        let has_mc_version = version
-            .game_versions
-            .iter()
-            .any(|gv| {
-                gv == &mc_version || (mc_version.starts_with(gv) && mc_version[gv.len()..].starts_with('.'))
+        let has_mc_version = mc_version.is_empty()
+            || mc_version == "Other"
+            || version.game_versions.iter().any(|gv| {
+                gv == &mc_version
+                    || (mc_version.starts_with(gv) && mc_version[gv.len()..].starts_with('.'))
             });
 
         // Check loader compatibility
-        let has_loader = version
-            .loaders
-            .iter()
-            .any(|l| l.to_lowercase() == target_loader || target_loader.is_empty());
+        let has_loader = loaders.is_empty()
+            || version.loaders.iter().any(|l| {
+                loaders
+                    .iter()
+                    .any(|target_loader| l.to_lowercase() == target_loader.to_lowercase())
+            });
 
         if has_mc_version && has_loader {
             // Get the primary file (first one or primary file)
             if let Some(file) = version.files.first() {
-                let deps = version.dependencies.iter().map(|d| {
-                    super::modrinth::UnifiedDependency {
+                let deps = version
+                    .dependencies
+                    .iter()
+                    .map(|d| super::modrinth::UnifiedDependency {
                         project_id: d.project_id.clone().unwrap_or_default(),
                         version_id: d.version_id.clone(),
                         required: d.dependency_type == "required",
-                    }
-                }).collect();
+                        name: None,
+                    })
+                    .collect();
 
                 compatible_files.push(UnifiedModFile {
                     id: version.id.clone(),
@@ -324,6 +431,7 @@ pub async fn get_modrinth_mod_files(
                     file_size: Some(file.size),
                     hash: file.hashes.get("sha1").cloned(),
                     dependencies: deps,
+                    mc_versions: version.game_versions.clone(),
                 });
             }
         }
@@ -331,10 +439,10 @@ pub async fn get_modrinth_mod_files(
 
     if compatible_files.is_empty() {
         tracing::error!(
-            "No compatible version found for project_id={}, target_version={}, target_loader={}",
+            "No compatible version found for project_id={}, target_version={}, target_loaders={:?}",
             project_id,
             mc_version,
-            target_loader
+            loaders
         );
         return Err("No compatible version found".to_string());
     }
@@ -630,4 +738,133 @@ mod tests {
         assert_eq!(file.filename, "fabric-api-0.96.4+1.20.4.jar");
         assert_eq!(file.hashes.get("sha1").unwrap(), "1234567890abcdef");
     }
+}
+
+#[derive(Deserialize)]
+struct MrCategory {
+    icon: String,
+    name: String,
+    project_type: String,
+}
+
+#[tauri::command]
+pub async fn get_modrinth_categories() -> Result<Vec<UnifiedCategory>, String> {
+    get_modrinth_categories_internal("mod").await
+}
+
+#[tauri::command]
+pub async fn get_modrinth_resourcepack_categories() -> Result<Vec<UnifiedCategory>, String> {
+    get_modrinth_categories_internal("resourcepack").await
+}
+
+#[tauri::command]
+pub async fn get_modrinth_shaderpack_categories() -> Result<Vec<UnifiedCategory>, String> {
+    get_modrinth_categories_internal("shader").await
+}
+
+async fn get_modrinth_categories_internal(
+    project_type: &str,
+) -> Result<Vec<UnifiedCategory>, String> {
+    let client = crate::core::utils::get_http_client().clone();
+    let url = format!("{}/tag/category", MODRINTH_BASE_URL);
+
+    let res = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("Modrinth API error: {}", res.status()));
+    }
+
+    let tags: Vec<MrCategory> = res.json().await.map_err(|e| e.to_string())?;
+    let cats = tags
+        .into_iter()
+        .filter(|t| t.project_type == project_type)
+        .map(|t| UnifiedCategory {
+            id: t.name.clone(),
+            name: t.name,
+            icon: t.icon,
+        })
+        .collect();
+
+    Ok(cats)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ModrinthGameVersion {
+    pub version: String,
+    pub version_type: String,
+    pub date: String,
+    pub major: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ModrinthLoader {
+    pub icon: String,
+    pub name: String,
+    pub supported_project_types: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn get_modrinth_game_versions() -> Result<Vec<String>, String> {
+    let client = crate::core::utils::get_http_client().clone();
+    let url = format!("{}/tag/game_version", MODRINTH_BASE_URL);
+    let versions: Vec<ModrinthGameVersion> = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let releases: Vec<String> = versions
+        .into_iter()
+        .filter(|v| v.version_type == "release")
+        .map(|v| v.version)
+        .collect();
+
+    Ok(releases)
+}
+
+#[tauri::command]
+pub async fn get_modrinth_loaders() -> Result<Vec<String>, String> {
+    let client = crate::core::utils::get_http_client().clone();
+    let url = format!("{}/tag/loader", MODRINTH_BASE_URL);
+    let loaders: Vec<ModrinthLoader> = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut result: Vec<String> = loaders
+        .into_iter()
+        .filter(|l| l.supported_project_types.contains(&"mod".to_string()))
+        .map(|l| l.name.clone())
+        .collect();
+
+    // Sort by common usage: Forge, Fabric, NeoForge, Quilt first, then others alphabetically
+    let common_order = ["forge", "fabric", "neoforge", "quilt", "liteloader"];
+
+    result.sort_by(|a, b| {
+        let a_lower = a.to_lowercase();
+        let b_lower = b.to_lowercase();
+
+        let a_pos = common_order
+            .iter()
+            .position(|&x| x == a_lower)
+            .unwrap_or(usize::MAX);
+        let b_pos = common_order
+            .iter()
+            .position(|&x| x == b_lower)
+            .unwrap_or(usize::MAX);
+
+        if a_pos != b_pos {
+            a_pos.cmp(&b_pos)
+        } else {
+            a_lower.cmp(&b_lower)
+        }
+    });
+
+    Ok(result)
 }

@@ -4,13 +4,13 @@
 //! Provides functionality to scan, manage, and download Java runtimes.
 
 use crate::core::mojang::get_minecraft_base;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Mutex;
-use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
 
 static CACHED_JAVAS: Mutex<Option<Vec<JavaInfo>>> = Mutex::const_new(None);
 
@@ -52,11 +52,11 @@ pub async fn save_java_config(config: &JavaSettings) -> Result<(), String> {
     let config_path = get_java_config_path();
     let content = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize Java config: {}", e))?;
-        
+
     if let Some(parent) = config_path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-        
+
     tokio::fs::write(&config_path, content)
         .await
         .map_err(|e| format!("Failed to write Java config: {}", e))?;
@@ -135,7 +135,10 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
     let mut search_paths = get_java_search_paths();
 
     // Add default launcher runtimes dir
-    let dawnland_base = get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland");
+    let dawnland_base = get_minecraft_base()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(".dawnland");
     search_paths.push(dawnland_base.join("runtimes"));
     search_paths.push(dawnland_base.join("runtime"));
 
@@ -393,7 +396,10 @@ fn extract_vendor(output: &str) -> String {
 /// Download and install a specific Java version from Microsoft OpenJDK.
 #[tauri::command]
 pub async fn download_java(app: tauri::AppHandle, major_version: u32) -> Result<JavaInfo, String> {
-    tracing::info!("Downloading Java {} from Microsoft OpenJDK...", major_version);
+    tracing::info!(
+        "Downloading Java {} from Microsoft OpenJDK...",
+        major_version
+    );
 
     let arch = if cfg!(target_arch = "x86_64") {
         "x64"
@@ -713,13 +719,21 @@ pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
     // Spawn blocking so we don't hang the async executor
     tokio::task::spawn_blocking(move || {
         let mut drives = if cfg!(target_os = "windows") {
-            vec!["C:\\".to_string(), "D:\\".to_string(), "E:\\".to_string(), "F:\\".to_string()]
+            vec![
+                "C:\\".to_string(),
+                "D:\\".to_string(),
+                "E:\\".to_string(),
+                "F:\\".to_string(),
+            ]
         } else {
             vec!["/".to_string()]
         };
 
         // Explicitly include .dawnland directory since max_depth(5) from C:\ might miss it
-        let dawnland_base = get_minecraft_base().parent().unwrap_or_else(|| std::path::Path::new(".")).join(".dawnland");
+        let dawnland_base = get_minecraft_base()
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(".dawnland");
         drives.push(dawnland_base.to_string_lossy().to_string());
 
         let mut found_paths = Vec::new();
@@ -787,7 +801,7 @@ pub async fn scan_full_disk(app: tauri::AppHandle) -> Result<(), String> {
             if updated {
                 let _ = save_java_config(&config).await;
             }
-            
+
             // Clear the cache AFTER the scan so the frontend will fetch the newly found Javas
             *CACHED_JAVAS.lock().await = None;
         });

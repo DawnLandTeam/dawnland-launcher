@@ -38,7 +38,7 @@ test.describe('Accounts View', () => {
 
     // Type the username
     // The input is a text input, we can just grab the first input in the modal or by placeholder
-    const usernameInput = page.locator('input[type="text"]').first();
+    const usernameInput = page.locator('input').first();
     await usernameInput.fill('PlaywrightUser');
 
     // Click the confirm Add button

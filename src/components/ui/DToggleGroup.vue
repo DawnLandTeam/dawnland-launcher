@@ -4,7 +4,7 @@ export interface ToggleOption {
   value: string | number;
 }
 
-const props = defineProps<{
+defineProps<{
   options: ToggleOption[];
   modelValue?: string | number;
 }>();

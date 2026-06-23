@@ -40,10 +40,15 @@ pub async fn kill_instance(
                 .args(["/F", "/T", "/PID", &pid.to_string()])
                 .output()
                 .await
-                .map_err(|e| DawnlandError::ProcessError(format!("Failed to execute taskkill: {}", e)))?;
+                .map_err(|e| {
+                    DawnlandError::ProcessError(format!("Failed to execute taskkill: {}", e))
+                })?;
 
             if !output.status.success() {
-                return Err(DawnlandError::ProcessError(String::from_utf8_lossy(&output.stderr).to_string()).into());
+                return Err(DawnlandError::ProcessError(
+                    String::from_utf8_lossy(&output.stderr).to_string(),
+                )
+                .into());
             }
         }
         #[cfg(not(windows))]
@@ -52,10 +57,15 @@ pub async fn kill_instance(
                 .args(["-9", &pid.to_string()])
                 .output()
                 .await
-                .map_err(|e| DawnlandError::ProcessError(format!("Failed to execute kill: {}", e)))?;
+                .map_err(|e| {
+                    DawnlandError::ProcessError(format!("Failed to execute kill: {}", e))
+                })?;
 
             if !output.status.success() {
-                return Err(DawnlandError::ProcessError(String::from_utf8_lossy(&output.stderr).to_string()).into());
+                return Err(DawnlandError::ProcessError(
+                    String::from_utf8_lossy(&output.stderr).to_string(),
+                )
+                .into());
             }
         }
         Ok(())
@@ -229,7 +239,11 @@ impl InstanceConfig {
         if is_dependency {
             config.hidden = true;
         }
-        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap_or_default()).await;
+        let _ = tokio::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&config).unwrap_or_default(),
+        )
+        .await;
     }
 }
 
@@ -763,10 +777,9 @@ pub async fn verify_and_collect_missing_files(
                                 artifact.size,
                             ));
                         }
-                        }
                     }
                 }
-            
+            }
 
             // Also verify classifiers (natives)
             if let Some(classifiers) = &downloads.classifiers {
@@ -776,7 +789,7 @@ pub async fn verify_and_collect_missing_files(
                     "linux" => "natives-linux",
                     _ => "",
                 };
-                
+
                 let os_name_for_json = match std::env::consts::OS {
                     "windows" => "windows",
                     "macos" => "osx",
@@ -785,7 +798,10 @@ pub async fn verify_and_collect_missing_files(
                 };
 
                 let classifier_name = if let Some(natives) = &lib.natives {
-                    natives.get(os_name_for_json).map(|s| s.as_str()).unwrap_or(default_os_key)
+                    natives
+                        .get(os_name_for_json)
+                        .map(|s| s.as_str())
+                        .unwrap_or(default_os_key)
                 } else {
                     default_os_key
                 };
@@ -812,7 +828,7 @@ pub async fn verify_and_collect_missing_files(
                     }
                 }
             }
-            
+
             continue;
         }
 
@@ -889,15 +905,18 @@ pub async fn verify_and_collect_missing_files(
     // ========== Verify Assets ==========
     if let Some(asset_index) = &version_meta.asset_index {
         let asset_index_id = &asset_index.id;
-        let asset_index_path = base_dir.join("assets").join("indexes").join(format!("{}.json", asset_index_id));
-        
+        let asset_index_path = base_dir
+            .join("assets")
+            .join("indexes")
+            .join(format!("{}.json", asset_index_id));
+
         let mut asset_index_content = None;
         if asset_index_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&asset_index_path).await {
                 asset_index_content = Some(content);
             }
         }
-        
+
         if asset_index_content.is_none() {
             // Need to download asset index first
             if let Some(url) = &asset_index.url {
@@ -911,19 +930,25 @@ pub async fn verify_and_collect_missing_files(
                 }
             }
         }
-        
+
         if let Some(content) = asset_index_content {
-            if let Ok(meta) = serde_json::from_str::<crate::core::mojang::AssetIndexMeta>(&content) {
+            if let Ok(meta) = serde_json::from_str::<crate::core::mojang::AssetIndexMeta>(&content)
+            {
                 if let Some(objects) = meta.objects {
                     for (_path, obj) in objects {
                         if let Some(hash) = obj.hash {
-                            if hash.is_empty() { continue; }
+                            if hash.is_empty() {
+                                continue;
+                            }
                             let hash_prefix = &hash[..2];
                             let dest_path = format!("assets/objects/{}/{}", hash_prefix, hash);
                             let dest = base_dir.join(&dest_path);
-                            
+
                             if !dest.exists() {
-                                let url = format!("https://resources.download.minecraft.net/{}/{}", hash_prefix, hash);
+                                let url = format!(
+                                    "https://resources.download.minecraft.net/{}/{}",
+                                    hash_prefix, hash
+                                );
                                 missing_tasks.push(DownloadTask::new(
                                     url,
                                     dest.to_string_lossy().to_string(),
@@ -1022,7 +1047,10 @@ pub fn parse_jvm_arguments(
 
         // Inject the base vanilla jar into ignoreList for FML (e.g. NeoForge 1.20.6+)
         if arg.starts_with("-DignoreList=") {
-            let jar_version = version_meta.inherits_from.as_deref().unwrap_or(&config.version_id);
+            let jar_version = version_meta
+                .inherits_from
+                .as_deref()
+                .unwrap_or(&config.version_id);
             let jar_name = format!("{}.jar", jar_version);
             if !arg.contains(&jar_name) {
                 *arg = format!("{},{}", arg, jar_name);
@@ -1297,7 +1325,10 @@ fn apply_rules(rule_obj: &serde_json::Map<String, serde_json::Value>) -> Result<
 
 /// Auto-repair a missing instance by inferring its type and reinstalling it
 async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Result<(), AppError> {
-    tracing::info!("Attempting to auto-repair missing instance JSON for: {}", version_id);
+    tracing::info!(
+        "Attempting to auto-repair missing instance JSON for: {}",
+        version_id
+    );
 
     // Notify frontend
     let _ = app.emit(
@@ -1310,7 +1341,10 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
 
     // Try to parse the existing JSON if available to get the mc_version
     let base_dir = crate::core::mojang::get_minecraft_base();
-    let json_path = base_dir.join("versions").join(version_id).join(format!("{}.json", version_id));
+    let json_path = base_dir
+        .join("versions")
+        .join(version_id)
+        .join(format!("{}.json", version_id));
     let mut mc_version_from_json = None;
     if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
         if let Ok(meta) = serde_json::from_str::<crate::core::mojang::VersionMeta>(&content) {
@@ -1326,7 +1360,9 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
             (parts[2].to_string(), parts[3..].join("-"))
         } else {
             let l_version = parts[2..].join("-");
-            let m_version = mc_version_from_json.clone().unwrap_or_else(|| "unknown".to_string());
+            let m_version = mc_version_from_json
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
             (l_version, m_version)
         };
 
@@ -1336,12 +1372,13 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
             version_id.to_string(), // use the same ID as the folder name
             Some(true),
             app.clone(),
-        ).await?;
+        )
+        .await?;
         return Ok(());
     } else if version_id.starts_with("forge-") || version_id.starts_with("neoforge-") {
         let parts: Vec<&str> = version_id.split('-').collect();
         let loader_type = parts[0].to_string();
-        
+
         let (mc_version, loader_version) = if parts.len() >= 3 {
             // Format: {loader_type}-{mc_version}-{loader_version}
             (parts[1].to_string(), parts[2..].join("-"))
@@ -1367,7 +1404,8 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
             version_id.to_string(), // use the same ID
             Some(true),
             app.clone(),
-        ).await?;
+        )
+        .await?;
         return Ok(());
     } else {
         // Assume Vanilla
@@ -1378,12 +1416,17 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
                 version.url.clone(),
                 Some(true),
                 app.clone(),
-            ).await?;
+            )
+            .await?;
             return Ok(());
         }
     }
 
-    Err(DawnlandError::Unknown(format!("Could not determine how to auto-repair missing instance JSON: {}", version_id)).into())
+    Err(DawnlandError::Unknown(format!(
+        "Could not determine how to auto-repair missing instance JSON: {}",
+        version_id
+    ))
+    .into())
 }
 
 // ============ Process Launching ============
@@ -1409,8 +1452,9 @@ async fn verify_instance_integrity(
         .await
         .map_err(|e| DawnlandError::Unknown(format!("Failed to read modpack_tasks.json: {}", e)))?;
 
-    let tasks: Vec<DownloadTask> = serde_json::from_str(&content)
-        .map_err(|e| DawnlandError::Unknown(format!("Failed to parse modpack_tasks.json: {}", e)))?;
+    let tasks: Vec<DownloadTask> = serde_json::from_str(&content).map_err(|e| {
+        DawnlandError::Unknown(format!("Failed to parse modpack_tasks.json: {}", e))
+    })?;
 
     let mut repair_tasks = Vec::new();
 
@@ -1505,7 +1549,13 @@ async fn verify_instance_integrity(
             }),
         );
 
-        if let Err(e) = crate::downloader::run_batch_download(repair_tasks, app.clone(), crate::core::mojang::get_cancel_flag()).await {
+        if let Err(e) = crate::downloader::run_batch_download(
+            repair_tasks,
+            app.clone(),
+            crate::core::mojang::get_cancel_flag(),
+        )
+        .await
+        {
             return Err(DawnlandError::Unknown(format!("Auto-repair failed: {}", e)).into());
         }
 
@@ -1584,7 +1634,10 @@ pub async fn launch_instance(
         if let Ok(server) = crate::core::server::get_server(sid.clone()).await {
             actual_server_name = server.name;
             if server_ip.is_none() {
-                tracing::info!("Server IP not provided, fetched from backend for server ID: {}", sid);
+                tracing::info!(
+                    "Server IP not provided, fetched from backend for server ID: {}",
+                    sid
+                );
                 server_ip = Some(server.ip);
                 server_port = Some(server.port as u16);
             }
@@ -1597,18 +1650,28 @@ pub async fn launch_instance(
     if let Some(ip) = &server_ip {
         let port = server_port.unwrap_or(25565);
         let servers_dat_path = game_dir.join("servers.dat");
-        let default_options_path = game_dir.join("config").join("defaultoptions").join("servers.dat");
+        let default_options_path = game_dir
+            .join("config")
+            .join("defaultoptions")
+            .join("servers.dat");
 
         // Inject into main servers.dat
-        if let Err(e) = inject_server_to_dat(&servers_dat_path, &actual_server_name, ip, port).await {
+        if let Err(e) = inject_server_to_dat(&servers_dat_path, &actual_server_name, ip, port).await
+        {
             tracing::warn!("Failed to write servers.dat: {}", e);
         } else {
             tracing::info!("Injected server to servers.dat at {:?}", servers_dat_path);
         }
 
         // Also inject into defaultoptions if the folder exists
-        if default_options_path.parent().map(|p| p.exists()).unwrap_or(false) {
-            if let Err(e) = inject_server_to_dat(&default_options_path, &actual_server_name, ip, port).await {
+        if default_options_path
+            .parent()
+            .map(|p| p.exists())
+            .unwrap_or(false)
+        {
+            if let Err(e) =
+                inject_server_to_dat(&default_options_path, &actual_server_name, ip, port).await
+            {
                 tracing::warn!("Failed to write defaultoptions/servers.dat: {}", e);
             } else {
                 tracing::info!("Injected server to defaultoptions/servers.dat");
@@ -1650,11 +1713,17 @@ pub async fn launch_instance(
     let mut version_json_content = match tokio::fs::read_to_string(&version_json_path).await {
         Ok(c) => c,
         Err(e) => {
-            tracing::warn!("Failed to read version JSON for {}, attempting auto-repair... ({})", version_id, e);
+            tracing::warn!(
+                "Failed to read version JSON for {}, attempting auto-repair... ({})",
+                version_id,
+                e
+            );
             auto_repair_missing_instance(&app, &version_id).await?;
             tokio::fs::read_to_string(&version_json_path)
                 .await
-                .map_err(|e| format!("Auto-repair succeeded but failed to read JSON again: {}", e))?
+                .map_err(|e| {
+                    format!("Auto-repair succeeded but failed to read JSON again: {}", e)
+                })?
         }
     };
 
@@ -1668,8 +1737,13 @@ pub async fn launch_instance(
     let mut final_base_version = version_id.clone();
     let mut forge_version_id = None;
 
-    if version_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher") 
-       || version_meta.main_class.as_deref().unwrap_or("").contains("forge") {
+    if version_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher")
+        || version_meta
+            .main_class
+            .as_deref()
+            .unwrap_or("")
+            .contains("forge")
+    {
         forge_version_id = Some(version_id.clone());
     }
 
@@ -1688,19 +1762,30 @@ pub async fn launch_instance(
         let parent_content = match tokio::fs::read_to_string(&parent_json_path).await {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!("Failed to read parent JSON for {}, attempting auto-repair... ({})", parent_version, e);
+                tracing::warn!(
+                    "Failed to read parent JSON for {}, attempting auto-repair... ({})",
+                    parent_version,
+                    e
+                );
                 auto_repair_missing_instance(&app, &parent_version).await?;
                 tokio::fs::read_to_string(&parent_json_path)
                     .await
-                    .map_err(|e| format!("Auto-repair succeeded but failed to read JSON again: {}", e))?
+                    .map_err(|e| {
+                        format!("Auto-repair succeeded but failed to read JSON again: {}", e)
+                    })?
             }
         };
 
         let mut parent_meta: VersionMeta = serde_json::from_str(&parent_content)
             .map_err(|e| format!("Failed to parse parent version JSON: {e}"))?;
 
-        if parent_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher") 
-           || parent_meta.main_class.as_deref().unwrap_or("").contains("forge") {
+        if parent_meta.main_class.as_deref() == Some("cpw.mods.bootstraplauncher.BootstrapLauncher")
+            || parent_meta
+                .main_class
+                .as_deref()
+                .unwrap_or("")
+                .contains("forge")
+        {
             forge_version_id = Some(parent_version.clone());
         }
 
@@ -1843,12 +1928,22 @@ pub async fn launch_instance(
                                 continue;
                             }
                             if is_forge_arg {
-                                let neoforge_dir = base_dir.join("libraries").join("net").join("neoforged").join("neoforge").join(s);
+                                let neoforge_dir = base_dir
+                                    .join("libraries")
+                                    .join("net")
+                                    .join("neoforged")
+                                    .join("neoforge")
+                                    .join(s);
                                 let mut forge_found = false;
-                                
-                                let forge_base = base_dir.join("libraries").join("net").join("minecraftforge").join("forge");
+
+                                let forge_base = base_dir
+                                    .join("libraries")
+                                    .join("net")
+                                    .join("minecraftforge")
+                                    .join("forge");
                                 if forge_base.exists() {
-                                    if let Ok(mut entries) = tokio::fs::read_dir(&forge_base).await {
+                                    if let Ok(mut entries) = tokio::fs::read_dir(&forge_base).await
+                                    {
                                         while let Ok(Some(entry)) = entries.next_entry().await {
                                             if entry.file_name().to_string_lossy().contains(s) {
                                                 forge_found = true;
@@ -1857,9 +1952,12 @@ pub async fn launch_instance(
                                         }
                                     }
                                 }
-                                
+
                                 if !neoforge_dir.exists() && !forge_found {
-                                    tracing::warn!("Forge/NeoForge core directory for version {} is missing!", s);
+                                    tracing::warn!(
+                                        "Forge/NeoForge core directory for version {} is missing!",
+                                        s
+                                    );
                                     requires_forge_repair = true;
                                 }
                                 break;
@@ -1891,8 +1989,18 @@ pub async fn launch_instance(
         if !missing_files.is_empty() {
             // Download missing files
             let app_for_download = app.clone();
-            if let Err(e) = run_batch_download(missing_files, app_for_download, crate::core::mojang::get_cancel_flag()).await {
-                return Err(DawnlandError::Unknown(format!("Failed to auto-repair missing files: {}", e)).into());
+            if let Err(e) = run_batch_download(
+                missing_files,
+                app_for_download,
+                crate::core::mojang::get_cancel_flag(),
+            )
+            .await
+            {
+                return Err(DawnlandError::Unknown(format!(
+                    "Failed to auto-repair missing files: {}",
+                    e
+                ))
+                .into());
             }
         }
 
@@ -1962,10 +2070,7 @@ pub async fn launch_instance(
                 });
 
             if version_meta.java_version.is_some() {
-                tracing::info!(
-                    "Using Java major version from JSON: {}",
-                    recommended_major
-                );
+                tracing::info!("Using Java major version from JSON: {}", recommended_major);
             }
 
             // Try to find a scanned Java that matches the recommended version, or a newer one
@@ -1990,11 +2095,10 @@ pub async fn launch_instance(
                 );
                 j.path.clone()
             } else {
-                tracing::error!(
-                    "Could not find compatible Java >= {}",
-                    recommended_major
-                );
-                return Err(AppError::from(LaunchError::NoCompatibleJava { required_version: recommended_major }));
+                tracing::error!("Could not find compatible Java >= {}", recommended_major);
+                return Err(AppError::from(LaunchError::NoCompatibleJava {
+                    required_version: recommended_major,
+                }));
             }
         }
     };
@@ -2025,7 +2129,7 @@ pub async fn launch_instance(
                 java_major_version = major_version;
                 tracing::info!("Detected Java Major Version: {}", java_major_version);
             }
-            
+
             if crate::core::java::is_openj9(&stderr_output) {
                 is_openj9 = true;
                 tracing::info!("Detected OpenJ9 JVM");
@@ -2036,7 +2140,8 @@ pub async fn launch_instance(
             return Err(DawnlandError::ProcessError(format!(
                 "Java executable '{}' failed to run.\nError: {}",
                 java_executable, stderr_output
-            )).into());
+            ))
+            .into());
         }
         Err(e) => {
             return Err(DawnlandError::ProcessError(format!(
@@ -2090,7 +2195,13 @@ pub async fn launch_instance(
                             None,
                             None,
                         ));
-                        if let Err(e) = crate::downloader::run_batch_download(missing, app.clone(), crate::core::mojang::get_cancel_flag()).await {
+                        if let Err(e) = crate::downloader::run_batch_download(
+                            missing,
+                            app.clone(),
+                            crate::core::mojang::get_cancel_flag(),
+                        )
+                        .await
+                        {
                             tracing::warn!("Failed to download authlib-injector: {}", e);
                         }
                     }
@@ -2239,8 +2350,14 @@ pub async fn launch_instance(
     );
 
     // Get stdout and stderr
-    let stdout = child.stdout.take().ok_or_else(|| DawnlandError::ProcessError("Failed to capture stdout".to_string()))?;
-    let stderr = child.stderr.take().ok_or_else(|| DawnlandError::ProcessError("Failed to capture stderr".to_string()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| DawnlandError::ProcessError("Failed to capture stdout".to_string()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| DawnlandError::ProcessError("Failed to capture stderr".to_string()))?;
 
     // Spawn tasks to read output
     let app_clone = app.clone();
@@ -2371,18 +2488,29 @@ struct ServerEntry {
     hidden: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     icon: Option<String>,
-    #[serde(rename = "acceptTextures", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "acceptTextures",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     accept_textures: Option<u8>,
 }
 
 /// Helper to safely inject a server into an uncompressed servers.dat NBT file
-async fn inject_server_to_dat(path: &std::path::Path, server_name: &str, ip: &str, port: u16) -> Result<(), String> {
+async fn inject_server_to_dat(
+    path: &std::path::Path,
+    server_name: &str,
+    ip: &str,
+    port: u16,
+) -> Result<(), String> {
     let path_buf = path.to_path_buf();
     let server_name = server_name.to_string();
     let ip = ip.to_string();
 
     tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let mut dat = ServersDat { servers: Vec::new() };
+        let mut dat = ServersDat {
+            servers: Vec::new(),
+        };
 
         if path_buf.exists() {
             if let Ok(bytes) = std::fs::read(&path_buf) {
@@ -2407,16 +2535,18 @@ async fn inject_server_to_dat(path: &std::path::Path, server_name: &str, ip: &st
                 icon: None,
                 accept_textures: None,
             });
-            
+
             let new_bytes = fastnbt::to_bytes(&dat).map_err(|e| e.to_string())?;
             if let Some(parent) = path_buf.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             std::fs::write(&path_buf, new_bytes).map_err(|e| e.to_string())?;
         }
-        
+
         Ok(())
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -2447,7 +2577,11 @@ mod tests {
         assert!(matches_os_condition(Some(&current_os), None));
 
         // Test with wrong match
-        let wrong_os = if current_os == "windows" { "osx" } else { "windows" };
+        let wrong_os = if current_os == "windows" {
+            "osx"
+        } else {
+            "windows"
+        };
         assert!(!matches_os_condition(Some(wrong_os), None));
 
         // Test with no condition

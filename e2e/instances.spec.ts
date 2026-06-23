@@ -46,9 +46,7 @@ test.describe('Instances View', () => {
     await expect(addBtn).toBeVisible();
     await addBtn.click();
 
-    // Verify modal is open by checking for its title or a select input
-    // The install modal should have a "Version" or "Name" input
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog).toBeVisible();
+    // Verify we navigated to the downloads page with instance tab
+    await expect(page).toHaveURL(/.*downloads\?tab=instance/);
   });
 });

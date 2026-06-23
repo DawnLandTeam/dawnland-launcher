@@ -2,15 +2,13 @@ use crate::core::task::TaskContext;
 use crate::downloader::{DownloadProgress, DownloadTask};
 use futures_util::StreamExt;
 use sha1::{Digest, Sha1};
-use std::sync::atomic::{AtomicBool, AtomicUsize, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 use tokio::time::Duration;
-
-
 
 /// Minimum time between progress emissions (milliseconds).
 const PROGRESS_THROTTLE_MS: u64 = 500;
@@ -232,7 +230,7 @@ async fn download_file_task(
         let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(format!("Flush failed: {}", e));
     }
-    
+
     // Rename temporary file to original destination path
     drop(file); // Ensure file is closed before renaming
     if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
@@ -245,7 +243,10 @@ async fn download_file_task(
 }
 
 /// Run batch download with multiple files concurrently.
-pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext) -> Result<(), String> {
+pub async fn run_batch_download_task(
+    tasks: Vec<DownloadTask>,
+    ctx: TaskContext,
+) -> Result<(), String> {
     if tasks.is_empty() {
         tracing::warn!("batch_download called with empty task list");
         return Ok(());
@@ -268,23 +269,26 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
     let ctx_monitor = ctx.clone();
     let total_files = total_tasks as u32;
     let completed_files_clone = completed_files.clone();
-    
+
     let monitor_handle = tokio::spawn(async move {
         let mut last_bytes = 0;
         let mut last_time = tokio::time::Instant::now();
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            if ctx_monitor.is_cancelled() { break; }
+            if ctx_monitor.is_cancelled() {
+                break;
+            }
             let current_bytes = global_dl_clone.load(Ordering::Relaxed);
             let elapsed = last_time.elapsed().as_secs_f64();
             if elapsed > 0.0 {
                 let speed = ((current_bytes - last_bytes) as f64 / elapsed) as u64;
-                let remaining = total_files.saturating_sub(completed_files_clone.load(Ordering::SeqCst) as u32);
+                let remaining =
+                    total_files.saturating_sub(completed_files_clone.load(Ordering::SeqCst) as u32);
                 ctx_monitor.update_download_metrics(speed, remaining).await;
             }
             last_bytes = current_bytes;
             last_time = tokio::time::Instant::now();
-            
+
             if completed_files_clone.load(Ordering::SeqCst) >= total_tasks {
                 break;
             }
@@ -329,7 +333,9 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
                     }
 
                     // Execute download and handle errors gracefully.
-                    match download_file_task(task.clone(), &client, &ctx, &global_downloaded_clone).await {
+                    match download_file_task(task.clone(), &client, &ctx, &global_downloaded_clone)
+                        .await
+                    {
                         Ok(()) => {
                             // Emit completion.
                             tracing::info!("Emitting completed for task: {}", task_id);
@@ -338,18 +344,32 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
                                 .file_name()
                                 .map(|f| f.to_string_lossy().to_string());
                             let _ = ctx.app_handle.emit("download-progress", &progress);
-                            
+
                             // Update overall task progress
                             let count = completed_files.fetch_add(1, Ordering::SeqCst) + 1;
-                            let file_str = std::path::Path::new(&dest_path).file_name().unwrap_or_default().to_string_lossy();
-                            ctx.update_progress(count as u64, total_tasks as u64, &format!("Downloaded {}", file_str)).await;
+                            let file_str = std::path::Path::new(&dest_path)
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            ctx.update_progress(
+                                count as u64,
+                                total_tasks as u64,
+                                &format!("Downloaded {}", file_str),
+                            )
+                            .await;
                             return Ok(());
                         }
                         Err(err) => {
                             last_err = err;
                             attempts += 1;
                             if attempts < max_attempts {
-                                tracing::warn!("Download failed for {}, retrying {}/{}: {}", dest_path, attempts, max_attempts, last_err);
+                                tracing::warn!(
+                                    "Download failed for {}, retrying {}/{}: {}",
+                                    dest_path,
+                                    attempts,
+                                    max_attempts,
+                                    last_err
+                                );
                                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                             }
                         }
@@ -357,12 +377,17 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
                 }
 
                 // Log error but don't propagate - single failure shouldn't crash queue.
-                tracing::error!("Download failed after {} attempts: {} - {}", max_attempts, dest_path, last_err);
+                tracing::error!(
+                    "Download failed after {} attempts: {} - {}",
+                    max_attempts,
+                    dest_path,
+                    last_err
+                );
 
                 // Emit error progress so frontend knows.
                 let progress = DownloadProgress::failed(task_id, last_err.clone());
                 let _ = ctx.app_handle.emit("download-progress", &progress);
-                
+
                 Err(last_err)
             })
         })
@@ -372,7 +397,7 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
     let mut error_count = 0;
     for handle in handles {
         match handle.await {
-            Ok(Ok(())) => {},
+            Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 if e == "Cancelled" {
                     let _ = monitor_handle.abort();
@@ -380,7 +405,7 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
                 }
                 error_count += 1;
                 tracing::error!("Download task failed: {}", e);
-            },
+            }
             Err(e) => {
                 error_count += 1;
                 tracing::error!("Download task panicked: {}", e);
@@ -407,7 +432,6 @@ pub async fn run_batch_download_task(tasks: Vec<DownloadTask>, ctx: TaskContext)
     );
     Ok(())
 }
-
 
 /// Downloads a single file with progress reporting (Legacy).
 async fn download_file(
@@ -501,8 +525,11 @@ async fn download_file(
                         0
                     };
 
-                    let mut progress = DownloadProgress::progress(task.id.clone(), downloaded, total, speed);
-                    progress.file_name = std::path::Path::new(&task.dest_path).file_name().map(|f| f.to_string_lossy().to_string());
+                    let mut progress =
+                        DownloadProgress::progress(task.id.clone(), downloaded, total, speed);
+                    progress.file_name = std::path::Path::new(&task.dest_path)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string());
                     let _ = app.emit("download-progress", &progress);
 
                     last_emit_time = std::time::Instant::now();
@@ -522,7 +549,7 @@ async fn download_file(
         let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(format!("Flush failed: {}", e));
     }
-    
+
     drop(file);
     if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
         let _ = tokio::fs::remove_file(&tmp_path).await;
@@ -533,7 +560,11 @@ async fn download_file(
 }
 
 /// Run batch download with multiple files concurrently (Legacy).
-pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle, cancel_flag: Arc<AtomicBool>) -> Result<(), String> {
+pub async fn run_batch_download(
+    tasks: Vec<DownloadTask>,
+    app: AppHandle,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<(), String> {
     if tasks.is_empty() {
         return Ok(());
     }
@@ -568,7 +599,9 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle, cancel
                     match download_file(task.clone(), &client, &app, cancel_flag.clone()).await {
                         Ok(()) => {
                             let mut progress = DownloadProgress::completed(task_id);
-                            progress.file_name = std::path::Path::new(&dest_path).file_name().map(|f| f.to_string_lossy().to_string());
+                            progress.file_name = std::path::Path::new(&dest_path)
+                                .file_name()
+                                .map(|f| f.to_string_lossy().to_string());
                             let _ = app.emit("download-progress", &progress);
                             return Ok(());
                         }
@@ -576,14 +609,25 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle, cancel
                             last_err = err;
                             attempts += 1;
                             if attempts < max_attempts {
-                                tracing::warn!("Download failed for {}, retrying {}/{}: {}", dest_path, attempts, max_attempts, last_err);
+                                tracing::warn!(
+                                    "Download failed for {}, retrying {}/{}: {}",
+                                    dest_path,
+                                    attempts,
+                                    max_attempts,
+                                    last_err
+                                );
                                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                             }
                         }
                     }
                 }
 
-                tracing::error!("Download failed after {} attempts: {} - {}", max_attempts, dest_path, last_err);
+                tracing::error!(
+                    "Download failed after {} attempts: {} - {}",
+                    max_attempts,
+                    dest_path,
+                    last_err
+                );
                 let progress = DownloadProgress::failed(task_id, last_err.clone());
                 let _ = app.emit("download-progress", &progress);
                 Err(last_err)
@@ -594,11 +638,11 @@ pub async fn run_batch_download(tasks: Vec<DownloadTask>, app: AppHandle, cancel
     let mut error_count = 0;
     for handle in handles {
         match handle.await {
-            Ok(Ok(())) => {},
+            Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 error_count += 1;
                 tracing::error!("Download task failed: {}", e);
-            },
+            }
             Err(e) => {
                 error_count += 1;
                 tracing::error!("Download task panicked: {}", e);
@@ -631,7 +675,7 @@ mod tests {
     fn test_compute_sha1_sync() {
         // Create a temporary file
         let mut temp_file = NamedTempFile::new().unwrap();
-        
+
         // Write some known data
         let data = b"hello world";
         temp_file.write_all(data).unwrap();
@@ -640,7 +684,7 @@ mod tests {
         // sha1 of "hello world" is 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed
         let expected_hash = "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed";
         let actual_hash = compute_sha1_sync(temp_file.path()).unwrap();
-        
+
         assert_eq!(actual_hash, expected_hash);
     }
 }

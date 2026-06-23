@@ -2,7 +2,9 @@
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
+import DInput from '../components/ui/DInput.vue';
 import { invoke } from "@tauri-apps/api/core";
+import DSelect from '../components/ui/DSelect.vue';
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Server, Gamepad2, Search, Copy, Check, Loader2, Download, Users, Star, RefreshCw } from "@lucide/vue";
 import { getErrorMessage } from "../utils/error";
@@ -65,6 +67,28 @@ const servers = ref<ServerInfo[]>([]);
 const isLoading = ref(false);
 const error = ref<string | null>(null);
 const currentPage = ref(1);
+
+const filterMcVersionOptions = computed(() => [
+  { label: t('servers.allVersions'), value: '' },
+  ...filterOptions.value.versions.map(v => ({ label: v, value: v }))
+]);
+
+const filterServerTypeOptions = computed(() => [
+  { label: t('servers.filters.allTypes'), value: '' },
+  ...filterOptions.value.serverTypes.map(type => ({
+    label: type === 'vanilla' ? t('servers.types.vanilla') : type === 'modded' ? t('servers.types.modded') : type === 'custom' ? t('servers.types.custom') : type,
+    value: type
+  }))
+]);
+
+const filterAuthTypeOptions = computed(() => [
+  { label: t('servers.filters.allAuth'), value: '' },
+  ...filterOptions.value.authTypes.map(auth => ({
+    label: auth === 'microsoft' ? t('servers.auth.microsoft') : auth === 'offline' ? t('servers.auth.offline') : auth,
+    value: auth
+  }))
+]);
+
 const totalPages = ref(1);
 
 
@@ -452,8 +476,8 @@ async function installClient(server: ServerInfo) {
   }
   
   router.push({
-    path: '/modpack-install',
-    query: queryParams
+    path: '/downloads',
+    query: { tab: 'modpack', ...queryParams }
   });
 }
 
@@ -555,46 +579,33 @@ async function openPublishUrl() {
       <!-- Search -->
       <div class="relative flex-1 min-w-[200px]">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <input
+        <DInput
           v-model="searchQuery"
-          type="text"
           :placeholder="$t('servers.searchPlaceholder')"
-          class="w-full pl-10 pr-4 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
+          class="!pl-10 !pr-4"
         />
       </div>
       
       <!-- MC Version Filter (Dynamic from API) -->
-      <select
+      <DSelect
         v-model="filterMcVersion"
-        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white min-w-[120px]"
-      >
-        <option value="">{{ $t('servers.allVersions') }}</option>
-        <option v-for="version in filterOptions.versions" :key="version" :value="version">
-          {{ version }}
-        </option>
-      </select>
+        :options="filterMcVersionOptions"
+        class="min-w-[120px]"
+      />
 
       <!-- Server Type Filter (Dynamic from API) -->
-      <select
+      <DSelect
         v-model="filterServerType"
-        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white min-w-[120px]"
-      >
-        <option value="">{{ $t('servers.filters.allTypes') }}</option>
-        <option v-for="type in filterOptions.serverTypes" :key="type" :value="type">
-          {{ type === 'vanilla' ? $t('servers.types.vanilla') : type === 'modded' ? $t('servers.types.modded') : type === 'custom' ? $t('servers.types.custom') : type }}
-        </option>
-      </select>
+        :options="filterServerTypeOptions"
+        class="min-w-[120px]"
+      />
 
       <!-- Auth Type Filter (Dynamic from API) -->
-      <select
+      <DSelect
         v-model="filterAuthType"
-        class="px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white min-w-[140px]"
-      >
-        <option value="">{{ $t('servers.filters.allAuth') }}</option>
-        <option v-for="auth in filterOptions.authTypes" :key="auth" :value="auth">
-          {{ auth === 'microsoft' ? $t('servers.auth.microsoft') : auth === 'offline' ? $t('servers.auth.offline') : auth }}
-        </option>
-      </select>
+        :options="filterAuthTypeOptions"
+        class="min-w-[140px]"
+      />
 
       <!-- Show Only Favorites Filter -->
       <button 
@@ -780,10 +791,9 @@ async function openPublishUrl() {
           </div>
           <div class="p-4">
             <p class="text-sm text-neutral-600 dark:text-neutral-400 mb-4">{{ promptState.message }}</p>
-            <input 
+            <DInput 
               v-model="promptState.value" 
-              type="text" 
-              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-500 mb-2"
+              class="mb-2"
               @keyup.enter="confirmPrompt"
             />
             <div class="flex justify-end gap-2 mt-4">

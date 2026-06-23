@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useAttrs } from 'vue';
 
-const props = defineProps<{
+defineProps<{
   modelValue?: string | number;
 }>();
 

@@ -3,22 +3,145 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TaskType {
-    InstallVanilla { version_id: String, version_json_url: String, is_dependency: Option<bool> },
-    InstallForge { mc_version: String, loader_version: String, loader_type: String, custom_instance_name: String, is_dependency: Option<bool> },
-    InstallFabric { mc_version: String, fabric_version: String, custom_instance_name: String, is_dependency: Option<bool> },
-    InstallModpack { zip_path: String, instance_name: String, is_update: bool, project_id: Option<String> },
-    InstallOnlineModpack { url: String, instance_name: String, is_update: bool, project_id: Option<String> },
-    Generic { name: String },
+    InstallVanilla {
+        version_id: String,
+        version_json_url: String,
+        is_dependency: Option<bool>,
+    },
+    InstallForge {
+        mc_version: String,
+        loader_version: String,
+        loader_type: String,
+        custom_instance_name: String,
+        is_dependency: Option<bool>,
+    },
+    InstallFabric {
+        mc_version: String,
+        fabric_version: String,
+        custom_instance_name: String,
+        is_dependency: Option<bool>,
+    },
+    InstallModpack {
+        zip_path: String,
+        instance_name: String,
+        is_update: bool,
+        project_id: Option<String>,
+    },
+    InstallOnlineModpack {
+        url: String,
+        instance_name: String,
+        is_update: bool,
+        project_id: Option<String>,
+    },
+    InstallMod {
+        source: String,
+        project_id: String,
+        mod_name: String,
+        instance_id: Option<String>,
+        target_dir: Option<String>,
+        download_url: String,
+        file_id: String,
+        dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
+        keep_both: Option<bool>,
+    },
+    InstallResourcepack {
+        source: String,
+        project_id: String,
+        pack_name: String,
+        instance_id: Option<String>,
+        target_dir: Option<String>,
+        download_url: String,
+        file_id: String,
+    },
+    InstallShaderpack {
+        source: String,
+        project_id: String,
+        pack_name: String,
+        instance_id: Option<String>,
+        target_dir: Option<String>,
+        download_url: String,
+        file_id: String,
+    },
+    InstallWorld {
+        source: String,
+        project_id: String,
+        pack_name: String,
+        instance_id: Option<String>,
+        target_dir: Option<String>,
+        download_url: String,
+        file_id: String,
+    },
+    Generic {
+        name: String,
+    },
 }
 
 impl TaskType {
     pub fn name(&self) -> String {
         match self {
-            TaskType::InstallVanilla { version_id, .. } => format!("Downloading Vanilla {}", version_id),
-            TaskType::InstallForge { mc_version, loader_version, .. } => format!("Installing Forge {} for {}", loader_version, mc_version),
-            TaskType::InstallFabric { mc_version, fabric_version, .. } => format!("Installing Fabric {} for {}", fabric_version, mc_version),
-            TaskType::InstallModpack { instance_name, .. } => format!("Installing Modpack {}", instance_name),
-            TaskType::InstallOnlineModpack { instance_name, .. } => format!("Downloading Modpack {}", instance_name),
+            TaskType::InstallVanilla { version_id, .. } => {
+                format!("Downloading Vanilla {}", version_id)
+            }
+            TaskType::InstallForge {
+                mc_version,
+                loader_version,
+                ..
+            } => format!("Installing Forge {} for {}", loader_version, mc_version),
+            TaskType::InstallFabric {
+                mc_version,
+                fabric_version,
+                ..
+            } => format!("Installing Fabric {} for {}", fabric_version, mc_version),
+            TaskType::InstallModpack { instance_name, .. } => {
+                format!("Installing Modpack {}", instance_name)
+            }
+            TaskType::InstallOnlineModpack { instance_name, .. } => {
+                format!("Downloading Modpack {}", instance_name)
+            }
+            TaskType::InstallMod {
+                mod_name,
+                instance_id,
+                ..
+            } => {
+                if let Some(i) = instance_id {
+                    format!("Installing Mod {} to {}", mod_name, i)
+                } else {
+                    format!("Downloading Mod {}", mod_name)
+                }
+            }
+            TaskType::InstallResourcepack {
+                pack_name,
+                instance_id,
+                ..
+            } => {
+                if let Some(i) = instance_id {
+                    format!("Installing Resource Pack {} to {}", pack_name, i)
+                } else {
+                    format!("Downloading Resource Pack {}", pack_name)
+                }
+            }
+            TaskType::InstallShaderpack {
+                pack_name,
+                instance_id,
+                ..
+            } => {
+                if let Some(i) = instance_id {
+                    format!("Installing Shaderpack {} to {}", pack_name, i)
+                } else {
+                    format!("Downloading Shaderpack {}", pack_name)
+                }
+            }
+            TaskType::InstallWorld {
+                pack_name,
+                instance_id,
+                ..
+            } => {
+                if let Some(i) = instance_id {
+                    format!("Installing World {} to {}", pack_name, i)
+                } else {
+                    format!("Downloading World {}", pack_name)
+                }
+            }
             TaskType::Generic { name } => name.clone(),
         }
     }
@@ -26,10 +149,20 @@ impl TaskType {
     pub fn instance_id(&self) -> Option<String> {
         match self {
             TaskType::InstallVanilla { version_id, .. } => Some(version_id.clone()),
-            TaskType::InstallForge { custom_instance_name, .. } => Some(custom_instance_name.clone()),
-            TaskType::InstallFabric { custom_instance_name, .. } => Some(custom_instance_name.clone()),
+            TaskType::InstallForge {
+                custom_instance_name,
+                ..
+            } => Some(custom_instance_name.clone()),
+            TaskType::InstallFabric {
+                custom_instance_name,
+                ..
+            } => Some(custom_instance_name.clone()),
             TaskType::InstallModpack { instance_name, .. } => Some(instance_name.clone()),
             TaskType::InstallOnlineModpack { instance_name, .. } => Some(instance_name.clone()),
+            TaskType::InstallMod { instance_id, .. } => instance_id.clone(),
+            TaskType::InstallResourcepack { instance_id, .. } => instance_id.clone(),
+            TaskType::InstallShaderpack { instance_id, .. } => instance_id.clone(),
+            TaskType::InstallWorld { instance_id, .. } => instance_id.clone(),
             TaskType::Generic { .. } => None,
         }
     }
@@ -105,12 +238,21 @@ pub struct TaskState {
     pub error: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default)]
+    pub auto_clear: bool,
     pub context_data: Option<serde_json::Value>,
 }
 
 impl TaskState {
     pub fn new(id: String, task_type: TaskType) -> Self {
         let now = chrono::Utc::now().timestamp();
+        let auto_clear = matches!(
+            task_type,
+            TaskType::InstallMod { .. }
+                | TaskType::InstallResourcepack { .. }
+                | TaskType::InstallShaderpack { .. }
+                | TaskType::InstallWorld { .. }
+        );
         Self {
             id,
             task_type,
@@ -126,6 +268,7 @@ impl TaskState {
                 sub_tasks: Vec::new(),
             },
             error: None,
+            auto_clear,
             created_at: now,
             updated_at: now,
             context_data: None,
@@ -168,20 +311,50 @@ mod tests {
 
     #[test]
     fn test_task_type_conflicts() {
-        let vanilla_1 = TaskType::InstallVanilla { version_id: "1.20.1".to_string(), version_json_url: "".to_string(), is_dependency: None };
-        let vanilla_2 = TaskType::InstallVanilla { version_id: "1.20.1".to_string(), version_json_url: "".to_string(), is_dependency: None };
-        let vanilla_3 = TaskType::InstallVanilla { version_id: "1.19.4".to_string(), version_json_url: "".to_string(), is_dependency: None };
-        
-        let forge_1 = TaskType::InstallForge { mc_version: "1.20.1".to_string(), loader_version: "47.1.0".to_string(), loader_type: "forge".to_string(), custom_instance_name: "1.20.1".to_string(), is_dependency: None };
-        let forge_2 = TaskType::InstallForge { mc_version: "1.20.1".to_string(), loader_version: "47.1.0".to_string(), loader_type: "forge".to_string(), custom_instance_name: "forge-1.20.1".to_string(), is_dependency: None };
+        let vanilla_1 = TaskType::InstallVanilla {
+            version_id: "1.20.1".to_string(),
+            version_json_url: "".to_string(),
+            is_dependency: None,
+        };
+        let vanilla_2 = TaskType::InstallVanilla {
+            version_id: "1.20.1".to_string(),
+            version_json_url: "".to_string(),
+            is_dependency: None,
+        };
+        let vanilla_3 = TaskType::InstallVanilla {
+            version_id: "1.19.4".to_string(),
+            version_json_url: "".to_string(),
+            is_dependency: None,
+        };
 
-        let generic_1 = TaskType::Generic { name: "test".to_string() };
-        let generic_2 = TaskType::Generic { name: "test".to_string() };
-        let generic_3 = TaskType::Generic { name: "other".to_string() };
+        let forge_1 = TaskType::InstallForge {
+            mc_version: "1.20.1".to_string(),
+            loader_version: "47.1.0".to_string(),
+            loader_type: "forge".to_string(),
+            custom_instance_name: "1.20.1".to_string(),
+            is_dependency: None,
+        };
+        let forge_2 = TaskType::InstallForge {
+            mc_version: "1.20.1".to_string(),
+            loader_version: "47.1.0".to_string(),
+            loader_type: "forge".to_string(),
+            custom_instance_name: "forge-1.20.1".to_string(),
+            is_dependency: None,
+        };
+
+        let generic_1 = TaskType::Generic {
+            name: "test".to_string(),
+        };
+        let generic_2 = TaskType::Generic {
+            name: "test".to_string(),
+        };
+        let generic_3 = TaskType::Generic {
+            name: "other".to_string(),
+        };
 
         assert!(vanilla_1.conflicts_with(&vanilla_2));
         assert!(!vanilla_1.conflicts_with(&vanilla_3));
-        
+
         // They both target "1.20.1" instance folder
         assert!(vanilla_1.conflicts_with(&forge_1));
         assert!(!vanilla_1.conflicts_with(&forge_2));
@@ -194,14 +367,19 @@ mod tests {
     #[test]
     fn test_task_state_transitions() {
         use TaskStatus::*;
-        
-        let task = TaskState::new("test-id".to_string(), TaskType::Generic { name: "test".to_string() });
+
+        let task = TaskState::new(
+            "test-id".to_string(),
+            TaskType::Generic {
+                name: "test".to_string(),
+            },
+        );
         assert_eq!(task.status, Pending);
 
         // Pending -> Running, Cancelled (valid)
         assert!(task.can_transition_to(&Running));
         assert!(task.can_transition_to(&Cancelled));
-        
+
         // Pending -> Completed, Failed, Paused (invalid)
         assert!(!task.can_transition_to(&Completed));
         assert!(!task.can_transition_to(&Failed));

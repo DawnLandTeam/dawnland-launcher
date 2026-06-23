@@ -26,8 +26,13 @@ pub fn init() -> Result<(), String> {
     // outlive all other references to the non-blocking writer.
     std::mem::forget(_guard);
 
-    let default_level = if cfg!(debug_assertions) { "debug" } else { "info" };
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    let default_level = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "info"
+    };
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
 
     tracing_subscriber::registry()
         .with(env_filter)

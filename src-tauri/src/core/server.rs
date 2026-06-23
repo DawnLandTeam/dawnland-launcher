@@ -1,9 +1,7 @@
 #![allow(dead_code)]
 //! Server management commands that proxy requests to the Go web backend.
 
-use crate::models::{
-    FilterOptionsResponse, Server,
-};
+use crate::models::{FilterOptionsResponse, Server};
 use serde::{Deserialize, Serialize};
 use tokio::task;
 

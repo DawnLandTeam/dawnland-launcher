@@ -1,16 +1,16 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]
+use crate::error::DawnlandError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
-use crate::error::DawnlandError;
 pub mod authlib;
 pub mod microsoft;
 
 pub use authlib::{
-    authenticate_authlib_user, save_authlib_accounts, add_authlib_server, fetch_authlib_servers, get_authlib_meta,
-    remove_authlib_server,
+    add_authlib_server, authenticate_authlib_user, fetch_authlib_servers, get_authlib_meta,
+    remove_authlib_server, save_authlib_accounts,
 };
 pub use microsoft::{
     login_microsoft_oauth, poll_microsoft_token, refresh_microsoft_token, start_microsoft_login,
@@ -110,7 +110,9 @@ pub fn generate_offline_uuid(username: &str) -> String {
 /// Add a new offline account.
 pub async fn add_offline_account(username: &str) -> Result<Account, DawnlandError> {
     if username.trim().is_empty() {
-        return Err(DawnlandError::Unknown("Username cannot be empty".to_string()));
+        return Err(DawnlandError::Unknown(
+            "Username cannot be empty".to_string(),
+        ));
     }
 
     let mut accounts = load_accounts().await?;
@@ -120,7 +122,9 @@ pub async fn add_offline_account(username: &str) -> Result<Account, DawnlandErro
         .iter()
         .any(|a| a.username == username && a.account_type == AccountType::Offline)
     {
-        return Err(DawnlandError::Unknown("Offline account already exists".to_string()));
+        return Err(DawnlandError::Unknown(
+            "Offline account already exists".to_string(),
+        ));
     }
 
     let account = Account {
