@@ -584,7 +584,7 @@ pub fn get_recommended_java(mc_version: &str) -> u32 {
     let version_parts: Vec<&str> = mc_version.split('.').collect();
 
     // Determine if the version starts with "1." (classic format) or uses a new format (e.g. "26.1.2")
-    let is_classic = version_parts.get(0) == Some(&"1");
+    let is_classic = version_parts.first() == Some(&"1");
 
     let major: u32 = if is_classic {
         version_parts
@@ -592,8 +592,7 @@ pub fn get_recommended_java(mc_version: &str) -> u32 {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0)
     } else {
-        version_parts
-            .get(0)
+        version_parts.first()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0)
     };

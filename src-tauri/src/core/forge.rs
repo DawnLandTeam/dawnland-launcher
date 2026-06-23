@@ -447,14 +447,14 @@ fn extract_zip_entry_sync(
 
 /// Extract files from a ZIP (JAR) archive - async wrapper
 async fn extract_zip_entry(
-    zip_path: &PathBuf,
+    zip_path: &std::path::Path,
     entry_name: &str,
-    dest_path: &PathBuf,
+    dest_path: &std::path::Path,
 ) -> Result<(), String> {
     // Use spawn_blocking to run the synchronous ZIP operations
-    let zip_path = zip_path.clone();
+    let zip_path = zip_path.to_path_buf();
     let entry_name = entry_name.to_string();
-    let dest_path = dest_path.clone();
+    let dest_path = dest_path.to_path_buf();
 
     tokio::task::spawn_blocking(move || extract_zip_entry_sync(&zip_path, &entry_name, &dest_path))
         .await
@@ -712,15 +712,15 @@ impl ExecutableTask for InstallForgeTask {
         let effective_is_dep = is_dep_val || should_flatten;
 
         let base_version_dir = if effective_is_dep {
-            dawnland_cache.join(&mc_version)
+            dawnland_cache.join(mc_version)
         } else {
-            base_dir.join("versions").join(&mc_version)
+            base_dir.join("versions").join(mc_version)
         };
         let base_client_jar = base_version_dir.join(format!("{}.jar", mc_version));
         let base_version_json = base_version_dir.join(format!("{}.json", mc_version));
 
         ctx.manager
-            .wait_for_instance(&mc_version, &ctx.cancel_token)
+            .wait_for_instance(mc_version, &ctx.cancel_token)
             .await;
 
         if !base_client_jar.exists() || !base_version_json.exists() {
@@ -757,7 +757,7 @@ impl ExecutableTask for InstallForgeTask {
                 .and_then(|versions| {
                     versions
                         .iter()
-                        .find(|v| v["id"].as_str() == Some(&mc_version))
+                        .find(|v| v["id"].as_str() == Some(mc_version))
                 })
                 .and_then(|v| v["url"].as_str())
                 .ok_or_else(|| {
@@ -918,7 +918,7 @@ impl ExecutableTask for InstallForgeTask {
         // Extract files from JAR (which is a ZIP)
         extract_zip_entry(&installer_path, "install_profile.json", &profile_path)
             .await
-            .map_err(|e| TaskError::ExecutionError(e))?;
+            .map_err(TaskError::ExecutionError)?;
 
         // Read and parse the install profile
         let profile_content = fs::read_to_string(&profile_path).await.map_err(|e| {
@@ -1076,23 +1076,13 @@ impl ExecutableTask for InstallForgeTask {
 
         let ctx_install = ctx.with_sub_task("install_loader");
         // ========== Step 3.5: Run Forge Installer Processors ==========
-        if !is_dep {
-            ctx_install
-                .update_progress(
-                    0,
-                    100,
-                    "Running Forge processors (this may take a while)...",
-                )
-                .await;
-        } else {
-            ctx_install
-                .update_progress(
-                    0,
-                    100,
-                    "Running Forge processors (this may take a while)...",
-                )
-                .await;
-        }
+        ctx_install
+            .update_progress(
+                0,
+                100,
+                "Running Forge processors (this may take a while)...",
+            )
+            .await;
 
         if !install_profile.processors.is_empty() {
             tracing::info!("Running Forge installer processors...");
@@ -1114,7 +1104,7 @@ impl ExecutableTask for InstallForgeTask {
                 }
             }
 
-            let temp_vanilla_dir = base_dir.join("versions").join(&mc_version);
+            let temp_vanilla_dir = base_dir.join("versions").join(mc_version);
             let mut created_temp_vanilla = false;
             if effective_is_dep && !temp_vanilla_dir.exists() {
                 let _ =
@@ -1255,9 +1245,9 @@ impl ExecutableTask for InstallForgeTask {
                 .await
                 .unwrap_or_default();
             if !settings.enable_instance_inheritance {
-                crate::core::utils::flatten_instance_json_recursive(&mc_version, obj)
+                crate::core::utils::flatten_instance_json_recursive(mc_version, obj)
                     .await
-                    .map_err(|e| TaskError::ExecutionError(e))?;
+                    .map_err(TaskError::ExecutionError)?;
                 obj.insert("clientVersion".to_string(), serde_json::json!(mc_version));
 
                 // Any failures are logged but do not fail the overall task.
@@ -1403,9 +1393,11 @@ pub async fn install_forge_instance(
     };
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
-    let mut pre_config = crate::core::launcher::InstanceConfig::default();
-    pre_config.is_installing = true;
-    pre_config.hidden = is_dependency.unwrap_or(false);
+    let pre_config = crate::core::launcher::InstanceConfig {
+        is_installing: true,
+        hidden: is_dependency.unwrap_or(false),
+        ..Default::default()
+    };
     let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
 
     let task = InstallForgeTask {
@@ -1506,7 +1498,7 @@ mod tests {
             "name": "test:lib:3.0"
         }"#;
         let lib_no_rules: serde_json::Value = serde_json::from_str(json_no_rules).unwrap();
-        assert_eq!(should_download_library_json(&lib_no_rules), true);
+        assert!(should_download_library_json(&lib_no_rules));
     }
 
     #[test]

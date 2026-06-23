@@ -185,15 +185,15 @@ impl ExecutableTask for InstallFabricTask {
         let effective_is_dep = is_dep_val || should_flatten;
 
         let base_version_dir = if effective_is_dep {
-            dawnland_cache.join(&mc_version)
+            dawnland_cache.join(mc_version)
         } else {
-            base_dir.join("versions").join(&mc_version)
+            base_dir.join("versions").join(mc_version)
         };
         let base_client_jar = base_version_dir.join(format!("{}.jar", mc_version));
         let base_version_json = base_version_dir.join(format!("{}.json", mc_version));
 
         ctx.manager
-            .wait_for_instance(&mc_version, &ctx.cancel_token)
+            .wait_for_instance(mc_version, &ctx.cancel_token)
             .await;
 
         if !base_client_jar.exists() || !base_version_json.exists() {
@@ -237,7 +237,7 @@ impl ExecutableTask for InstallFabricTask {
                 .and_then(|versions| {
                     versions
                         .iter()
-                        .find(|v| v["id"].as_str() == Some(&mc_version))
+                        .find(|v| v["id"].as_str() == Some(mc_version))
                 })
                 .and_then(|v| v["url"].as_str())
                 .ok_or_else(|| {
@@ -334,9 +334,9 @@ impl ExecutableTask for InstallFabricTask {
                 .await
                 .unwrap_or_default();
             if !settings.enable_instance_inheritance {
-                crate::core::utils::flatten_instance_json_recursive(&mc_version, obj)
+                crate::core::utils::flatten_instance_json_recursive(mc_version, obj)
                     .await
-                    .map_err(|e| TaskError::ExecutionError(e))?;
+                    .map_err(TaskError::ExecutionError)?;
                 obj.insert("clientVersion".to_string(), serde_json::json!(mc_version));
 
                 // Any failures are logged but do not fail the overall task.
@@ -397,15 +397,9 @@ impl ExecutableTask for InstallFabricTask {
         // Step 3: Download Fabric libraries
         let ctx_libs = ctx.with_sub_task("download_loader_libs");
 
-        if !is_dep {
-            ctx_libs
-                .update_progress(0, 0, "Resolving Fabric libraries...")
-                .await;
-        } else {
-            ctx_libs
-                .update_progress(0, 0, "Resolving Fabric libraries...")
-                .await;
-        }
+        ctx_libs
+            .update_progress(0, 0, "Resolving Fabric libraries...")
+            .await;
 
         let libraries: &[serde_json::Value] =
             match profile.get("libraries").and_then(|l| l.as_array()) {
@@ -534,9 +528,11 @@ pub async fn install_fabric_instance(
     };
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
-    let mut pre_config = crate::core::launcher::InstanceConfig::default();
-    pre_config.is_installing = true;
-    pre_config.hidden = is_dependency.unwrap_or(false);
+    let pre_config = crate::core::launcher::InstanceConfig {
+        is_installing: true,
+        hidden: is_dependency.unwrap_or(false),
+        ..Default::default()
+    };
     let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
 
     let task = InstallFabricTask {
@@ -610,7 +606,7 @@ mod tests {
 
         let stable = &responses[0].loader;
         assert_eq!(stable.version, "0.15.7");
-        assert_eq!(stable.stable, true);
+        assert!(stable.stable);
         assert_eq!(stable.build, Some(1));
         assert_eq!(
             stable.maven.as_ref().unwrap(),
@@ -619,6 +615,6 @@ mod tests {
 
         let unstable = &responses[1].loader;
         assert_eq!(unstable.version, "0.15.8-beta.1");
-        assert_eq!(unstable.stable, false);
+        assert!(!unstable.stable);
     }
 }

@@ -760,9 +760,9 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     let state = uuid::Uuid::new_v4().simple().to_string();
     let code_verifier = format!(
         "{}{}{}",
-        uuid::Uuid::new_v4().simple().to_string(),
-        uuid::Uuid::new_v4().simple().to_string(),
-        uuid::Uuid::new_v4().simple().to_string()
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
     );
 
     // 2. Generate code challenge

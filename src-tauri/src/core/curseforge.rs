@@ -495,7 +495,7 @@ pub async fn get_cf_mod_files(
     sorted_files.retain(|f| {
         f.parent_project_file_id.unwrap_or(0) == 0 && !f.is_server_pack.unwrap_or(false)
     });
-    sorted_files.sort_by(|a, b| b.id.cmp(&a.id));
+    sorted_files.sort_by_key(|b| std::cmp::Reverse(b.id));
 
     let mut compatible_files = Vec::new();
 

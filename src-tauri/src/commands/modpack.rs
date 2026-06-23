@@ -193,7 +193,7 @@ impl ExecutableTask for InstallModpackTask {
                         // Get URLs from Proxy
                         let resolved_files = get_cf_files_batch(file_ids)
                             .await
-                            .map_err(|e| TaskError::ExecutionError(e))?;
+                            .map_err(TaskError::ExecutionError)?;
 
                         check_cancel!();
 
@@ -312,8 +312,8 @@ impl ExecutableTask for InstallModpackTask {
             }
         }
 
-        if is_update {
-            if modpack_files_path.exists() {
+        if is_update
+            && modpack_files_path.exists() {
                 if let Ok(content) = tokio::fs::read_to_string(&modpack_files_path).await {
                     if let Ok(old_files) = serde_json::from_str::<Vec<String>>(&content) {
                         for old_file in old_files {
@@ -339,7 +339,6 @@ impl ExecutableTask for InstallModpackTask {
                     }
                 }
             }
-        }
 
         // Save list of expected mod files for future updates
         let mut new_modpack_files = Vec::new();
@@ -418,7 +417,7 @@ impl ExecutableTask for InstallModpackTask {
                 &mut version_json_map,
             )
             .await
-            .map_err(|e| TaskError::ExecutionError(e))?;
+            .map_err(TaskError::ExecutionError)?;
             version_json_map.insert("clientVersion".to_string(), serde_json::json!(mc_version));
             // Copy the vanilla jar to isolated sandbox
             let dawnland_cache = crate::core::mojang::get_dawnland_cache();
@@ -712,7 +711,7 @@ async fn ensure_dependencies(
 
             let versions = crate::core::mojang::get_vanilla_versions()
                 .await
-                .map_err(|e| TaskError::ExecutionError(e))?;
+                .map_err(TaskError::ExecutionError)?;
             let version_info = versions
                 .into_iter()
                 .find(|v| v.id == mc_version)
@@ -795,7 +794,7 @@ async fn ensure_dependencies(
             let forge_task = InstallForgeTask {
                 options: InstallForgeOptions {
                     mc_version: mc_version.to_string(),
-                    loader_version: loader_version,
+                    loader_version,
                     loader_type: "forge".to_string(),
                     custom_instance_name: custom_instance_name.clone(),
                     is_dependency: Some(true),
@@ -809,7 +808,7 @@ async fn ensure_dependencies(
             let forge_task = InstallForgeTask {
                 options: InstallForgeOptions {
                     mc_version: mc_version.to_string(),
-                    loader_version: loader_version,
+                    loader_version,
                     loader_type: "neoforge".to_string(),
                     custom_instance_name: custom_instance_name.clone(),
                     is_dependency: Some(true),
@@ -880,8 +879,10 @@ pub async fn install_modpack(
     let instance_dir = base_dir.join("versions").join(&instance_name);
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
-    let mut pre_config = crate::core::launcher::InstanceConfig::default();
-    pre_config.is_installing = true;
+    let pre_config = crate::core::launcher::InstanceConfig {
+        is_installing: true,
+        ..Default::default()
+    };
     let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
 
     let task = InstallModpackTask {
@@ -924,8 +925,10 @@ pub async fn download_and_install_online_modpack(
     let instance_dir = base_dir.join("versions").join(&instance_name);
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
-    let mut pre_config = crate::core::launcher::InstanceConfig::default();
-    pre_config.is_installing = true;
+    let pre_config = crate::core::launcher::InstanceConfig {
+        is_installing: true,
+        ..Default::default()
+    };
     let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
 
     let task = InstallOnlineModpackTask {
