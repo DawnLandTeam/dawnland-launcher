@@ -14,6 +14,10 @@ jobs:
     permissions:
       contents: write
     environment: release
+    env:
+      RELEASE_FILES: |
+        src-tauri/target/release/DLML.exe
+        src-tauri/target/release/bundle/appimage/*.AppImage
     strategy:
       fail-fast: false
       matrix:
@@ -40,7 +44,7 @@ jobs:
           script: |
             const fs = require('fs');
             // Extract version exactly from refs/tags/v1.0.0
-            const version = context.ref.replace('refs/tags/v', '');
+            const version = context.refName.replace(/^v/, '');
             console.log(`Setting version to ${version}`);
             
             // Export VERSION to GITHUB_ENV for the final exe upload step
@@ -131,7 +135,7 @@ jobs:
         with:
           script: |
             try {
-              const version = context.ref.replace('refs/tags/', '');
+              const version = context.refName;
               await github.rest.repos.getReleaseByTag({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -156,9 +160,7 @@ jobs:
           draft: true
           prerelease: false
           body: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
-          files: |
-            src-tauri/target/release/DLML.exe
-            src-tauri/target/release/bundle/appimage/*.AppImage
+          files: ${{ env.RELEASE_FILES }}
 
       - name: Upload Artifacts to Existing GitHub Release
         if: startsWith(github.ref, 'refs/tags/v') && steps.check_release.outputs.exists == 'true'
@@ -166,9 +168,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: |
-            src-tauri/target/release/DLML.exe
-            src-tauri/target/release/bundle/appimage/*.AppImage
+          files: ${{ env.RELEASE_FILES }}
 
 
       - name: Upload Release Artifacts to Cloudflare R2
