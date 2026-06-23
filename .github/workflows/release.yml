@@ -44,7 +44,7 @@ jobs:
           script: |
             const fs = require('fs');
             // Extract version exactly from refs/tags/v1.0.0
-            const version = context.refName.replace(/^v/, '');
+            const version = '${{ github.ref_name }}'.replace(/^v/, '');
             console.log(`Setting version to ${version}`);
             
             // Export VERSION to GITHUB_ENV for the final exe upload step
@@ -135,7 +135,7 @@ jobs:
         with:
           script: |
             try {
-              const version = context.refName;
+              const version = '${{ github.ref_name }}';
               await github.rest.repos.getReleaseByTag({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
