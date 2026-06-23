@@ -379,7 +379,7 @@ fn parse_version_json(
 fn extract_mc_version_from_id(id: &str) -> Option<String> {
     // Common patterns: "1.20.1", "1.20.1-Fabric", "Fabric-1.20.1-0.15.11"
     // Match version pattern like "1.20.1" or "1.20"
-    let parts: Vec<&str> = id.split(|c: char| c == '-' || c == '_').collect();
+    let parts: Vec<&str> = id.split(['-', '_']).collect();
 
     for part in parts {
         // Check if it looks like a version (starts with digit, contains dots)
@@ -387,7 +387,7 @@ fn extract_mc_version_from_id(id: &str) -> Option<String> {
         if part.starts_with("1.") && part.contains('.') {
             // Basic validation: should have at least major.minor
             let dots = part.matches('.').count();
-            if dots >= 1 && dots <= 3 {
+            if (1..=3).contains(&dots) {
                 return Some(part.to_string());
             }
         }
@@ -566,7 +566,7 @@ pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>,
         .await
         .map_err(|e| format!("Failed to read mods directory: {}", e))?;
 
-    let parser = crate::core::mod_parser::ModParser::new(&base_dir);
+    let parser = crate::core::mod_parser::ModParser::new(base_dir);
     let mut cache_entries = parser.load_all_cache();
 
     while let Some(entry) = entries
@@ -845,7 +845,7 @@ async fn download_mod_file_stream(
 fn extract_filename_from_url(url: &str, project_id: &str) -> String {
     let url_filename = url
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or_default()
         .split('?')
         .next()
@@ -913,17 +913,18 @@ async fn save_installed_mods_json(
 }
 
 /// Install a mod to a specific instance (download + save)
-#[tauri::command]
 pub async fn install_mod_to_instance(
     app: tauri::AppHandle,
-    version_id: String,
-    mod_source: String, // "modrinth" or "curseforge"
-    project_id: String,
-    file_id: String,
-    download_url: String,
-    dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
-    keep_both: Option<bool>,
+    options: InstallModOptions,
 ) -> Result<String, String> {
+    let version_id = options.instance_id.unwrap_or_default();
+    let mod_source = options.source;
+    let project_id = options.project_id;
+    let file_id = options.file_id;
+    let download_url = options.download_url;
+    let dependencies = options.dependencies;
+    let keep_both = options.keep_both;
+
     tracing::info!(
         "Installing mod {} from {} to instance {}",
         project_id,
@@ -1004,7 +1005,7 @@ pub async fn install_mod_to_instance(
                     if let Some(vid) = dep.version_id {
                         tracing::info!("Fetching Modrinth dependency version: {}", vid);
                         if let Ok(res) = client
-                            .get(&format!("https://api.modrinth.com/v2/version/{}", vid))
+                            .get(format!("https://api.modrinth.com/v2/version/{}", vid))
                             .send()
                             .await
                         {
@@ -1470,7 +1471,7 @@ impl crate::core::task::ExecutableTask for InstallModTask {
         if !target_path.exists() {
             download_mod_file_task(&main_ctx, &client, &options.download_url, &target_path)
                 .await
-                .map_err(|e| crate::core::task::TaskError::ExecutionError(e))?;
+                .map_err(crate::core::task::TaskError::ExecutionError)?;
         } else {
             main_ctx
                 .update_progress(100, 100, "File already exists")
@@ -1511,7 +1512,7 @@ impl crate::core::task::ExecutableTask for InstallModTask {
             if options.source == "modrinth" {
                 if let Some(vid) = dep.version_id {
                     if let Ok(res) = client
-                        .get(&format!("https://api.modrinth.com/v2/version/{}", vid))
+                        .get(format!("https://api.modrinth.com/v2/version/{}", vid))
                         .send()
                         .await
                     {
@@ -1544,7 +1545,7 @@ impl crate::core::task::ExecutableTask for InstallModTask {
                                             )
                                             .await
                                             .map_err(
-                                                |e| crate::core::task::TaskError::ExecutionError(e),
+                                                crate::core::task::TaskError::ExecutionError,
                                             )?;
                                         } else {
                                             dep_ctx.update_progress(100, 100, "File exists").await;
@@ -1605,7 +1606,7 @@ impl crate::core::task::ExecutableTask for InstallModTask {
                         }
                     } else {
                         if let Ok(res) = client
-                            .get(&format!(
+                            .get(format!(
                                 "https://api.modrinth.com/v2/project/{}/version",
                                 pid
                             ))
@@ -1624,7 +1625,7 @@ impl crate::core::task::ExecutableTask for InstallModTask {
                                             ) {
                                                 let dep_path = target_dir_path.join(fname);
                                                 if !dep_path.exists() {
-                                                    download_mod_file_task(&dep_ctx, &client, url, &dep_path).await.map_err(|e| crate::core::task::TaskError::ExecutionError(e))?;
+                                                    download_mod_file_task(&dep_ctx, &client, url, &dep_path).await.map_err(crate::core::task::TaskError::ExecutionError)?;
                                                 } else {
                                                     dep_ctx
                                                         .update_progress(100, 100, "File exists")
@@ -1667,7 +1668,7 @@ impl crate::core::task::ExecutableTask for InstallModTask {
                             if !dep_path.exists() {
                                 download_mod_file_task(&dep_ctx, &client, url, &dep_path)
                                     .await
-                                    .map_err(|e| crate::core::task::TaskError::ExecutionError(e))?;
+                                    .map_err(crate::core::task::TaskError::ExecutionError)?;
                             } else {
                                 dep_ctx.update_progress(100, 100, "File exists").await;
                             }
@@ -1695,7 +1696,7 @@ impl crate::core::task::ExecutableTask for InstallModTask {
                                     f.parent_project_file_id.unwrap_or(0) == 0
                                         && !f.is_server_pack.unwrap_or(false)
                                 });
-                                sorted_files.sort_by(|a, b| b.id.cmp(&a.id));
+                                sorted_files.sort_by_key(|b| std::cmp::Reverse(b.id));
                                 if let Some(primary) = sorted_files.first() {
                                     let fname = &primary.file_name;
                                     let url = primary.download_url.clone().unwrap_or_else(|| {
@@ -1775,7 +1776,7 @@ impl crate::core::task::ExecutableTask for InstallResourcepackTask {
         if !target_path.exists() {
             download_mod_file_task(&ctx, &client, &options.download_url, &target_path)
                 .await
-                .map_err(|e| crate::core::task::TaskError::ExecutionError(e))?;
+                .map_err(crate::core::task::TaskError::ExecutionError)?;
         } else {
             ctx.update_progress(100, 100, "File already exists").await;
         }
@@ -1834,7 +1835,7 @@ impl crate::core::task::ExecutableTask for InstallShaderpackTask {
         if !target_path.exists() {
             download_mod_file_task(&ctx, &client, &options.download_url, &target_path)
                 .await
-                .map_err(|e| crate::core::task::TaskError::ExecutionError(e))?;
+                .map_err(crate::core::task::TaskError::ExecutionError)?;
         } else {
             ctx.update_progress(100, 100, "File already exists").await;
         }
@@ -1926,7 +1927,7 @@ impl crate::core::task::ExecutableTask for InstallWorldTask {
             &temp_zip_path,
         )
         .await
-        .map_err(|e| crate::core::task::TaskError::ExecutionError(e))?;
+        .map_err(crate::core::task::TaskError::ExecutionError)?;
 
         let extract_ctx = ctx.with_sub_task("extract");
         extract_ctx
@@ -1965,7 +1966,7 @@ impl crate::core::task::ExecutableTask for InstallWorldTask {
         })
         .await
         .map_err(|e| crate::core::task::TaskError::ExecutionError(e.to_string()))?
-        .map_err(|e| crate::core::task::TaskError::ExecutionError(e))?;
+        .map_err(crate::core::task::TaskError::ExecutionError)?;
 
         tokio::fs::remove_dir_all(temp_dir).await.ok();
 

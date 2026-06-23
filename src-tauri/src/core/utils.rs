@@ -36,11 +36,11 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     }
 
     let a_parts: Vec<u32> = a
-        .split(|c: char| c == '.' || c == '-' || c == '_')
+        .split(['.', '-', '_'])
         .filter_map(|s| s.parse().ok())
         .collect();
     let b_parts: Vec<u32> = b
-        .split(|c: char| c == '.' || c == '-' || c == '_')
+        .split(['.', '-', '_'])
         .filter_map(|s| s.parse().ok())
         .collect();
 

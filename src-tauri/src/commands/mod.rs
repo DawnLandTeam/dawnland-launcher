@@ -41,7 +41,7 @@ pub fn get_system_memory() -> Result<SystemMemoryInfo, AppError> {
     sys.refresh_all();
     let total_bytes = sys.total_memory();
     let total_mb = (total_bytes / (1024 * 1024)) as u32;
-    let recommended_max_mb = (total_mb / 3).max(1024).min(16384);
+    let recommended_max_mb = (total_mb / 3).clamp(1024, 16384);
 
     tracing::info!(
         "System memory: {} MB, recommended max: {} MB",
@@ -94,11 +94,36 @@ pub async fn remove_account(id: String) -> Result<(), AppError> {
     auth::remove_account(&id).await.map_err(AppError::from)
 }
 
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn install_mod_to_instance(
+    app: tauri::AppHandle,
+    version_id: String,
+    mod_source: String,
+    project_id: String,
+    file_id: String,
+    download_url: String,
+    dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
+    keep_both: Option<bool>,
+) -> Result<String, String> {
+    crate::core::manager::install_mod_to_instance(app, crate::core::manager::InstallModOptions {
+        source: mod_source,
+        project_id,
+        mod_name: "".to_string(),
+        instance_id: Some(version_id),
+        target_dir: None,
+        download_url,
+        file_id,
+        dependencies,
+        keep_both,
+    }).await
+}
+
 /// Start Microsoft Device Code Flow login.
 #[tauri::command]
 pub async fn start_microsoft_login() -> Result<LoginInitResponse, AppError> {
     tracing::info!("Starting Microsoft login flow");
-    auth::start_microsoft_login().await.map_err(AppError::from)
+    auth::start_microsoft_login().await
 }
 
 /// Poll for Microsoft login completion.
@@ -106,25 +131,20 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, AppError> {
 pub async fn poll_microsoft_token(device_code: String) -> Result<Account, AppError> {
     tracing::info!("Polling Microsoft token with device code");
     auth::poll_microsoft_token(&device_code)
-        .await
-        .map_err(AppError::from)
-}
+        .await}
 
 /// Refresh Microsoft token for an existing account.
 #[tauri::command]
 pub async fn refresh_microsoft_token(account_id: String) -> Result<Account, AppError> {
     tracing::info!("Refreshing Microsoft token for account: {}", account_id);
     auth::refresh_microsoft_token(&account_id)
-        .await
-        .map_err(AppError::from)
-}
+        .await}
 
 /// Start seamless Microsoft OAuth 2.0 PKCE login flow.
 #[tauri::command]
 pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     tracing::info!("Invoking seamless Microsoft OAuth login");
-    auth::login_microsoft_oauth().await.map_err(AppError::from)
-}
+    auth::login_microsoft_oauth().await}
 
 // ============ Custom Updater Commands ============
 

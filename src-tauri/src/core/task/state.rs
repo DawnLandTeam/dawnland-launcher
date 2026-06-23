@@ -277,17 +277,17 @@ impl TaskState {
 
     pub fn can_transition_to(&self, new_status: &TaskStatus) -> bool {
         use TaskStatus::*;
-        match (&self.status, new_status) {
-            (Pending, Running) => true,
-            (Pending, Cancelled) => true,
-            (Running, Paused) => true,
-            (Running, Completed) => true,
-            (Running, Failed) => true,
-            (Running, Cancelled) => true,
-            (Paused, Running) => true,
-            (Paused, Cancelled) => true,
-            _ => false,
-        }
+        matches!(
+            (&self.status, new_status),
+            (Pending, Running)
+                | (Pending, Cancelled)
+                | (Running, Paused)
+                | (Running, Completed)
+                | (Running, Failed)
+                | (Running, Cancelled)
+                | (Paused, Running)
+                | (Paused, Cancelled)
+        )
     }
 }
 

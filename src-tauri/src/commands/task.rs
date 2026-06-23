@@ -292,14 +292,14 @@ pub async fn retry_task(
 
 #[tauri::command]
 pub async fn task_create(
-    taskType: String,
+    task_type: String,
     payload: serde_json::Value,
     task_manager: State<'_, TaskManager>,
     app: tauri::AppHandle,
 ) -> Result<String, AppError> {
     use crate::core::task::TaskType;
 
-    let task_id = match taskType.as_str() {
+    let task_id = match task_type.as_str() {
         "install-mod" => {
             let options: crate::core::manager::InstallModOptions = serde_json::from_value(payload)
                 .map_err(|e| DawnlandError::Unknown(format!("Invalid payload: {}", e)))?;
@@ -387,8 +387,8 @@ pub async fn task_create(
         }
         _ => {
             return Err(
-                DawnlandError::Unknown(format!("Unsupported task type: {}", taskType)).into(),
-            )
+                DawnlandError::Unknown(format!("Unsupported task type: {}", task_type)).into(),
+            );
         }
     };
 

@@ -129,7 +129,7 @@ pub async fn extract_zip<P: AsRef<Path>>(zip_path: P, extract_dir: P) -> Result<
             } else {
                 if let Some(p) = outpath.parent() {
                     if !p.exists() {
-                        std::fs::create_dir_all(&p).map_err(|e| {
+                        std::fs::create_dir_all(p).map_err(|e| {
                             DawnlandError::Unknown(format!(
                                 "Failed to create parent directory: {}",
                                 e
@@ -171,7 +171,7 @@ async fn parse_cf_format_manifest(
 }
 
 /// Parses the modpack manifest from an extracted directory.
-pub async fn parse_modpack_manifest(extract_dir: &PathBuf) -> Result<ModpackType, DawnlandError> {
+pub async fn parse_modpack_manifest(extract_dir: &std::path::Path) -> Result<ModpackType, DawnlandError> {
     let cf_manifest_path = extract_dir.join("manifest.json");
     if cf_manifest_path.exists() {
         return parse_cf_format_manifest(&cf_manifest_path, "CF").await;
@@ -197,8 +197,8 @@ pub async fn parse_modpack_manifest(extract_dir: &PathBuf) -> Result<ModpackType
 
 /// Copies the overrides folder from the extracted modpack to the instance root.
 pub async fn copy_overrides(
-    extract_dir: &PathBuf,
-    instance_dir: &PathBuf,
+    extract_dir: &std::path::Path,
+    instance_dir: &std::path::Path,
     overrides_folder: &str,
 ) -> Result<(), DawnlandError> {
     let overrides_path = extract_dir.join(overrides_folder);
@@ -216,8 +216,8 @@ pub async fn copy_overrides(
         instance_dir
     );
 
-    let overrides_path_clone = overrides_path.clone();
-    let instance_dir_clone = instance_dir.clone();
+    let overrides_path_clone = overrides_path.to_path_buf();
+    let instance_dir_clone = instance_dir.to_path_buf();
     tokio::task::spawn_blocking(move || {
         for entry in WalkDir::new(&overrides_path_clone)
             .into_iter()

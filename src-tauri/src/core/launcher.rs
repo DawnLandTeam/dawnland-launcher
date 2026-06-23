@@ -111,7 +111,7 @@ fn get_recommended_max_memory() -> u32 {
     let recommended = system_memory / 3;
 
     // Clamp to reasonable bounds
-    recommended.max(1024).min(8192)
+    recommended.clamp(1024, 8192)
 }
 
 /// Normalize OS name from Rust to JSON format
@@ -224,7 +224,7 @@ pub struct InstanceConfig {
 }
 
 impl InstanceConfig {
-    pub async fn ensure_installing(instance_dir: &std::path::PathBuf, is_dependency: bool) {
+    pub async fn ensure_installing(instance_dir: &std::path::Path, is_dependency: bool) {
         let config_path = instance_dir.join("dlml.json");
         let mut config: Self = if config_path.exists() {
             tokio::fs::read_to_string(&config_path)
@@ -470,7 +470,7 @@ fn rule_applies_to_platform(rule: &Rule, os: &str, arch: &str) -> bool {
         let os_match = rule_os
             .name
             .as_ref()
-            .map_or(true, |name| match name.as_str() {
+            .is_none_or(|name| match name.as_str() {
                 "windows" => os == "windows",
                 "osx" => os == "macos",
                 "linux" => os == "linux",
@@ -478,7 +478,7 @@ fn rule_applies_to_platform(rule: &Rule, os: &str, arch: &str) -> bool {
                 _ => false,
             });
 
-        let arch_match = rule_os.arch.as_ref().map_or(true, |arch_rule| {
+        let arch_match = rule_os.arch.as_ref().is_none_or(|arch_rule| {
             // arch can be "x86", "x64", "arm64", etc.
             if arch_rule.contains("64") || arch_rule == "x64" {
                 arch == "x86_64" || arch == "aarch64"
@@ -1208,9 +1208,9 @@ fn parse_argument_value(value: &serde_json::Value, args: &mut Vec<String>) -> Re
                 }
             }
         }
-        serde_json::Value::Object(obj) => {
+        serde_json::Value::Object(obj)
             // Object with rules
-            if obj.contains_key("rules") {
+            if obj.contains_key("rules") => {
                 if !apply_rules(obj)? {
                     return Ok(());
                 }
@@ -1218,7 +1218,6 @@ fn parse_argument_value(value: &serde_json::Value, args: &mut Vec<String>) -> Re
                     parse_argument_value(value, args)?;
                 }
             }
-        }
         _ => {}
     }
     Ok(())
@@ -1434,7 +1433,7 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
 /// Verify instance integrity (check modpack tasks) and auto-repair if necessary
 async fn verify_instance_integrity(
     app: &AppHandle,
-    instance_dir: &std::path::PathBuf,
+    instance_dir: &std::path::Path,
 ) -> Result<(), AppError> {
     let modpack_tasks_path = instance_dir.join("modpack_tasks.json");
     if !modpack_tasks_path.exists() {

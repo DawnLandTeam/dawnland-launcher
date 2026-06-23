@@ -618,7 +618,7 @@ impl ExecutableTask for InstallVanillaTask {
                         default_os_key
                     };
 
-                    if let Some(ref classifier) = classifiers.get(classifier_name) {
+                    if let Some(classifier) = classifiers.get(classifier_name) {
                         let path = classifier
                             .path
                             .as_ref()
@@ -733,7 +733,7 @@ impl ExecutableTask for InstallVanillaTask {
             .map_err(|e| TaskError::ExecutionError(format!("Failed to parse asset index: {e}")))?;
 
         if let Some(objects) = &asset_index.objects {
-            for (_, obj) in objects {
+            for obj in objects.values() {
                 let hash = obj.hash.as_ref().unwrap_or(&"".to_string()).clone();
                 if hash.is_empty() {
                     continue;
@@ -787,9 +787,9 @@ impl ExecutableTask for InstallVanillaTask {
             }
         );
 
-        r1.map_err(|e| TaskError::ExecutionError(e))?;
-        r2.map_err(|e| TaskError::ExecutionError(e))?;
-        r3.map_err(|e| TaskError::ExecutionError(e))?;
+        r1.map_err(TaskError::ExecutionError)?;
+        r2.map_err(TaskError::ExecutionError)?;
+        r3.map_err(TaskError::ExecutionError)?;
 
         if ctx.is_cancelled() {
             let version_dir = if is_dependency.unwrap_or(false) {
@@ -854,9 +854,11 @@ pub async fn install_vanilla_version(
     };
     let _ = std::fs::create_dir_all(&version_dir);
     let config_path = version_dir.join("dlml.json");
-    let mut pre_config = crate::core::launcher::InstanceConfig::default();
-    pre_config.is_installing = true;
-    pre_config.hidden = is_dependency.unwrap_or(false);
+    let pre_config = crate::core::launcher::InstanceConfig {
+        is_installing: true,
+        hidden: is_dependency.unwrap_or(false),
+        ..Default::default()
+    };
     let _ = std::fs::write(
         &config_path,
         serde_json::to_string_pretty(&pre_config).unwrap(),

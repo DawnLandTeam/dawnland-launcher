@@ -5,16 +5,13 @@ use std::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub enum DownloadSource {
     Official,
+    #[default]
     Bmclapi,
 }
 
-impl Default for DownloadSource {
-    fn default() -> Self {
-        Self::Bmclapi
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,7 +96,8 @@ pub fn replace_download_url(url: &str, source: &DownloadSource) -> String {
     match source {
         DownloadSource::Official => url.to_string(),
         DownloadSource::Bmclapi => {
-            let replaced = url
+            
+            url
                 .replace(
                     "https://launchermeta.mojang.com",
                     "https://bmclapi2.bangbang93.com",
@@ -139,8 +137,7 @@ pub fn replace_download_url(url: &str, source: &DownloadSource) -> String {
                 .replace(
                     "https://maven.neoforged.net",
                     "https://bmclapi2.bangbang93.com/maven",
-                );
-            replaced
+                )
         }
     }
 }

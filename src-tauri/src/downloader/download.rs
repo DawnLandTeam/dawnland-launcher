@@ -400,7 +400,7 @@ pub async fn run_batch_download_task(
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 if e == "Cancelled" {
-                    let _ = monitor_handle.abort();
+                    monitor_handle.abort();
                     return Err("Cancelled".to_string());
                 }
                 error_count += 1;
@@ -414,7 +414,7 @@ pub async fn run_batch_download_task(
     }
 
     if error_count > 0 {
-        let _ = monitor_handle.abort();
+        monitor_handle.abort();
         tracing::warn!("Batch download finished with {} errors", error_count);
         return Err(format!("{} downloads failed", error_count));
     } else {
@@ -452,18 +452,14 @@ async fn download_file(
     if dest_path.exists() {
         if let Some(expected_hash) = &task.hash {
             let dest_path_clone = dest_path.clone();
-            match tokio::task::spawn_blocking(move || compute_sha1_sync(&dest_path_clone))
+            if let Ok(actual_hash) = tokio::task::spawn_blocking(move || compute_sha1_sync(&dest_path_clone))
                 .await
-                .map_err(|e| e.to_string())?
-            {
-                Ok(actual_hash) => {
-                    if actual_hash.eq_ignore_ascii_case(expected_hash) {
-                        return Ok(());
-                    } else {
-                        let _ = tokio::fs::remove_file(&dest_path).await;
-                    }
+                .map_err(|e| e.to_string())? {
+                if actual_hash.eq_ignore_ascii_case(expected_hash) {
+                    return Ok(());
+                } else {
+                    let _ = tokio::fs::remove_file(&dest_path).await;
                 }
-                Err(_) => {}
             }
         } else if let Some(expected_size) = task.expected_size {
             if let Ok(metadata) = tokio::fs::metadata(&dest_path).await {

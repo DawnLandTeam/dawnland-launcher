@@ -198,11 +198,10 @@ impl ModParser {
                         meta.has_icon = true;
                     } else if let Ok(mut icon_file) = archive.by_name(icon_path) {
                         let mut buffer = Vec::new();
-                        if icon_file.read_to_end(&mut buffer).is_ok() {
-                            if fs::write(dest_path, &buffer).is_ok() {
+                        if icon_file.read_to_end(&mut buffer).is_ok()
+                            && fs::write(dest_path, &buffer).is_ok() {
                                 meta.has_icon = true;
                             }
-                        }
                     }
                 }
             }
@@ -230,7 +229,7 @@ impl ModParser {
                 if let Some(mods) = toml_val
                     .get("mods")
                     .and_then(|m| m.as_array())
-                    .and_then(|arr| arr.get(0))
+                    .and_then(|arr| arr.first())
                 {
                     meta.mod_id = mods
                         .get("modId")
@@ -254,11 +253,10 @@ impl ModParser {
                             meta.has_icon = true;
                         } else if let Ok(mut icon_file) = archive.by_name(logo_path) {
                             let mut buffer = Vec::new();
-                            if icon_file.read_to_end(&mut buffer).is_ok() {
-                                if fs::write(dest_path, &buffer).is_ok() {
+                            if icon_file.read_to_end(&mut buffer).is_ok()
+                                && fs::write(dest_path, &buffer).is_ok() {
                                     meta.has_icon = true;
                                 }
-                            }
                         }
                     }
                 }
