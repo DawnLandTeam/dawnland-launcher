@@ -169,24 +169,89 @@ impl TaskType {
         }
     }
 
+    pub fn is_core_installation(&self) -> bool {
+        matches!(
+            self,
+            TaskType::InstallVanilla { .. }
+                | TaskType::InstallForge { .. }
+                | TaskType::InstallFabric { .. }
+                | TaskType::InstallModpack { .. }
+                | TaskType::InstallOnlineModpack { .. }
+        )
+    }
+
+    /// Returns the identity of asset-install-like tasks as a `(kind, project_id, instance_id)` tuple.
+    /// Non-asset tasks return `None`.
+    pub fn asset_identity(&self) -> Option<(&'static str, &String, &Option<String>)> {
+        match self {
+            TaskType::InstallMod { project_id, instance_id, .. } => Some(("mod", project_id, instance_id)),
+            TaskType::InstallResourcepack { project_id, instance_id, .. } => Some(("resourcepack", project_id, instance_id)),
+            TaskType::InstallShaderpack { project_id, instance_id, .. } => Some(("shaderpack", project_id, instance_id)),
+            TaskType::InstallWorld { project_id, instance_id, .. } => Some(("world", project_id, instance_id)),
+            _ => None,
+        }
+    }
+
+    /// Determines the instance-level locking requirement for this task.
+    pub fn mutex_type(&self) -> TaskMutex {
+        match self {
+            // Core tasks that mutate the base instance structure require an exclusive lock.
+            TaskType::InstallVanilla { .. }
+            | TaskType::InstallForge { .. }
+            | TaskType::InstallFabric { .. }
+            | TaskType::InstallModpack { .. }
+            | TaskType::InstallOnlineModpack { .. } => TaskMutex::Exclusive,
+
+            // Asset downloads safely drop files into specific subdirectories (mods, resourcepacks, etc.).
+            // They only require a shared lock, meaning they can run concurrently with other shared tasks
+            // on the same instance, provided they aren't downloading the exact same asset.
+            TaskType::InstallMod { .. }
+            | TaskType::InstallResourcepack { .. }
+            | TaskType::InstallShaderpack { .. }
+            | TaskType::InstallWorld { .. } => TaskMutex::Shared,
+
+            // Generic tasks do not target instances in a standardized way.
+            TaskType::Generic { .. } => TaskMutex::None,
+        }
+    }
+
     /// Determines if this task conflicts with another task, preventing them from running concurrently.
     /// This acts as the "duplicate detection method" for various task implementations.
     pub fn conflicts_with(&self, other: &TaskType) -> bool {
-        // Default rule: If both tasks target the same instance_id, they conflict.
+        // Handle instance-level concurrency based on TaskMutex.
         if let (Some(id1), Some(id2)) = (self.instance_id(), other.instance_id()) {
             if id1 == id2 {
-                return true;
+                match (self.mutex_type(), other.mutex_type()) {
+                    // If either task requires exclusive access to the instance, they conflict.
+                    (TaskMutex::Exclusive, _) | (_, TaskMutex::Exclusive) => return true,
+                    
+                    // If both are shared, they only conflict if they are mutating the exact same asset.
+                    (TaskMutex::Shared, TaskMutex::Shared) => {
+                        if let (Some(asset1), Some(asset2)) = (self.asset_identity(), other.asset_identity()) {
+                            if asset1 == asset2 {
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 
-        // Custom conflict rules for specific task types can be added here.
-        // For example, Generic tasks conflict if they have the exact same name.
+        // Generic tasks conflict if they have the exact same name.
         match (self, other) {
             (TaskType::Generic { name: n1 }, TaskType::Generic { name: n2 }) => n1 == n2,
             _ => false,
         }
     }
 }
+
+pub enum TaskMutex {
+    Exclusive,
+    Shared,
+    None,
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskStatus {
