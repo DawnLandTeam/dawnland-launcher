@@ -36,7 +36,7 @@ pub enum TaskType {
     InstallMod {
         source: String,
         project_id: String,
-        mod_name: String,
+        mod_name: Option<String>,
         instance_id: Option<String>,
         target_dir: Option<String>,
         download_url: String,
@@ -99,14 +99,16 @@ impl TaskType {
                 format!("Downloading Modpack {}", instance_name)
             }
             TaskType::InstallMod {
+                project_id,
                 mod_name,
                 instance_id,
                 ..
             } => {
+                let name = mod_name.as_deref().unwrap_or(project_id);
                 if let Some(i) = instance_id {
-                    format!("Installing Mod {} to {}", mod_name, i)
+                    format!("Installing Mod {} to {}", name, i)
                 } else {
-                    format!("Downloading Mod {}", mod_name)
+                    format!("Downloading Mod {}", name)
                 }
             }
             TaskType::InstallResourcepack {

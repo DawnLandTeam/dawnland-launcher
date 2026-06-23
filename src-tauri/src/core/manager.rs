@@ -917,7 +917,9 @@ pub async fn install_mod_to_instance(
     app: tauri::AppHandle,
     options: InstallModOptions,
 ) -> Result<String, String> {
-    let version_id = options.instance_id.unwrap_or_default();
+    let version_id = options
+        .instance_id
+        .ok_or_else(|| "instance_id is required".to_string())?;
     let mod_source = options.source;
     let project_id = options.project_id;
     let file_id = options.file_id;
@@ -1361,7 +1363,7 @@ pub struct InstallModTask {
 pub struct InstallModOptions {
     pub source: String,
     pub project_id: String,
-    pub mod_name: String,
+    pub mod_name: Option<String>,
     pub instance_id: Option<String>,
     pub target_dir: Option<String>,
     pub download_url: String,
@@ -1381,7 +1383,7 @@ impl crate::core::task::ExecutableTask for InstallModTask {
         // Prepare subtasks
         let mut sub_tasks = vec![crate::core::task::state::SubTaskState {
             key: "main".to_string(),
-            name: format!("{} (Main)", options.mod_name),
+            name: format!("{} (Main)", options.mod_name.clone().unwrap_or_else(|| options.project_id.clone())),
             status: crate::core::task::state::SubTaskStatus::Pending,
             current: 0,
             total: 100,

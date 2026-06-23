@@ -109,7 +109,7 @@ pub async fn install_mod_to_instance(
     crate::core::manager::install_mod_to_instance(app, crate::core::manager::InstallModOptions {
         source: mod_source,
         project_id,
-        mod_name: "".to_string(),
+        mod_name: None,
         instance_id: Some(version_id),
         target_dir: None,
         download_url,
@@ -131,20 +131,25 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, AppError> {
 pub async fn poll_microsoft_token(device_code: String) -> Result<Account, AppError> {
     tracing::info!("Polling Microsoft token with device code");
     auth::poll_microsoft_token(&device_code)
-        .await}
+        .await
+        .map_err(AppError::from)
+}
 
 /// Refresh Microsoft token for an existing account.
 #[tauri::command]
 pub async fn refresh_microsoft_token(account_id: String) -> Result<Account, AppError> {
     tracing::info!("Refreshing Microsoft token for account: {}", account_id);
     auth::refresh_microsoft_token(&account_id)
-        .await}
+        .await
+        .map_err(AppError::from)
+}
 
 /// Start seamless Microsoft OAuth 2.0 PKCE login flow.
 #[tauri::command]
 pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     tracing::info!("Invoking seamless Microsoft OAuth login");
-    auth::login_microsoft_oauth().await}
+    auth::login_microsoft_oauth().await.map_err(AppError::from)
+}
 
 // ============ Custom Updater Commands ============
 
