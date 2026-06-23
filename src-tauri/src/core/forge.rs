@@ -1498,7 +1498,7 @@ mod tests {
             "name": "test:lib:3.0"
         }"#;
         let lib_no_rules: serde_json::Value = serde_json::from_str(json_no_rules).unwrap();
-        assert_eq!(should_download_library_json(&lib_no_rules), true);
+        assert!(should_download_library_json(&lib_no_rules));
     }
 
     #[test]

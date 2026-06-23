@@ -606,7 +606,7 @@ mod tests {
 
         let stable = &responses[0].loader;
         assert_eq!(stable.version, "0.15.7");
-        assert_eq!(stable.stable, true);
+        assert!(stable.stable);
         assert_eq!(stable.build, Some(1));
         assert_eq!(
             stable.maven.as_ref().unwrap(),
@@ -615,6 +615,6 @@ mod tests {
 
         let unstable = &responses[1].loader;
         assert_eq!(unstable.version, "0.15.8-beta.1");
-        assert_eq!(unstable.stable, false);
+        assert!(!unstable.stable);
     }
 }
