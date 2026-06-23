@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
-import DSidebarTabs from '../components/ui/DSidebarTabs.vue';
+import DSidebarTabs, { type SidebarTab } from '../components/ui/DSidebarTabs.vue';
 import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info } from "@lucide/vue";
 import { useI18n } from 'vue-i18n';
 import DSelect from '../components/ui/DSelect.vue';
@@ -46,16 +46,17 @@ onActivated(async () => {
   await loadAvailableJavas();
 });
 
-const activeTab = ref<'general' | 'java' | 'authlib' | 'about'>('general');
-
 const tabs = [
   { id: 'general', name: 'settings.tabs.general', icon: Settings },
   { id: 'java', name: 'settings.tabs.java', icon: Coffee },
   { id: 'authlib', name: 'settings.authlib.tab', icon: Shield },
   { id: 'about', name: 'settings.tabs.about', icon: Info },
-];
+] as const;
 
-const translatedTabs = computed(() => tabs.map(tab => ({
+type TabId = typeof tabs[number]['id'];
+const activeTab = ref<TabId>('general');
+
+const translatedTabs = computed<SidebarTab[]>(() => tabs.map(tab => ({
   ...tab,
   name: t(tab.name),
   hasDot: tab.id === 'about' && hasUpdateAvailable.value
