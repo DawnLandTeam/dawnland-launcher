@@ -1,6 +1,6 @@
 use crate::auth::{self, Account, LoginInitResponse};
-use crate::error::{AppError, DawnlandError};
 use crate::downloader::{run_batch_download, DownloadTask};
+use crate::error::{AppError, DawnlandError};
 use std::env::consts;
 use sysinfo::System;
 use tauri::AppHandle;
@@ -82,7 +82,9 @@ pub async fn get_accounts() -> Result<Vec<Account>, AppError> {
 #[tauri::command]
 pub async fn add_offline_account(username: String) -> Result<Account, AppError> {
     tracing::info!("Adding offline account: {}", username);
-    auth::add_offline_account(&username).await.map_err(AppError::from)
+    auth::add_offline_account(&username)
+        .await
+        .map_err(AppError::from)
 }
 
 /// Remove an account by ID.
@@ -103,14 +105,18 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, AppError> {
 #[tauri::command]
 pub async fn poll_microsoft_token(device_code: String) -> Result<Account, AppError> {
     tracing::info!("Polling Microsoft token with device code");
-    auth::poll_microsoft_token(&device_code).await.map_err(AppError::from)
+    auth::poll_microsoft_token(&device_code)
+        .await
+        .map_err(AppError::from)
 }
 
 /// Refresh Microsoft token for an existing account.
 #[tauri::command]
 pub async fn refresh_microsoft_token(account_id: String) -> Result<Account, AppError> {
     tracing::info!("Refreshing Microsoft token for account: {}", account_id);
-    auth::refresh_microsoft_token(&account_id).await.map_err(AppError::from)
+    auth::refresh_microsoft_token(&account_id)
+        .await
+        .map_err(AppError::from)
 }
 
 /// Start seamless Microsoft OAuth 2.0 PKCE login flow.
@@ -121,8 +127,6 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
 }
 
 // ============ Custom Updater Commands ============
-
-
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,44 +149,72 @@ pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), AppE
     } else if cfg!(target_os = "linux") {
         "amd64.AppImage"
     } else {
-        return Err(DawnlandError::Unknown("Unsupported OS for native auto-update".to_string()).into());
+        return Err(
+            DawnlandError::Unknown("Unsupported OS for native auto-update".to_string()).into(),
+        );
     };
-    
+
     let url = format!("https://dl.88880222.xyz/releases/v{}/{}", version, filename);
     tracing::info!("Starting native update from {}", url);
-    
-    use tauri::Emitter;
-    use std::io::Write;
 
-    let mut response = reqwest::get(&url).await.map_err(|e| format!("Failed to connect: {}", e))?;
-    
+    use std::io::Write;
+    use tauri::Emitter;
+
+    let mut response = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Failed to connect: {}", e))?;
+
     if !response.status().is_success() {
-        return Err(DawnlandError::Unknown(format!("Server returned error: {}", response.status())).into());
+        return Err(DawnlandError::Unknown(format!(
+            "Server returned error: {}",
+            response.status()
+        ))
+        .into());
     }
-    
+
     let content_length = response.content_length();
-    
-    app.emit("portable-update-progress", UpdateProgress {
-        event: "Started".to_string(),
-        data: Some(ProgressData { content_length, chunk_length: None }),
-    }).map_err(|e| e.to_string())?;
-    
+
+    app.emit(
+        "portable-update-progress",
+        UpdateProgress {
+            event: "Started".to_string(),
+            data: Some(ProgressData {
+                content_length,
+                chunk_length: None,
+            }),
+        },
+    )
+    .map_err(|e| e.to_string())?;
+
     let mut temp_file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
-    
+
     use futures_util::StreamExt;
-    while let Some(chunk) = response.chunk().await.map_err(|e| format!("Download error: {}", e))? {
-        temp_file.write_all(&chunk).map_err(|e| format!("Write error: {}", e))?;
-        app.emit("portable-update-progress", UpdateProgress {
-            event: "Progress".to_string(),
-            data: Some(ProgressData { content_length: None, chunk_length: Some(chunk.len()) }),
-        }).map_err(|e| e.to_string())?;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Download error: {}", e))?
+    {
+        temp_file
+            .write_all(&chunk)
+            .map_err(|e| format!("Write error: {}", e))?;
+        app.emit(
+            "portable-update-progress",
+            UpdateProgress {
+                event: "Progress".to_string(),
+                data: Some(ProgressData {
+                    content_length: None,
+                    chunk_length: Some(chunk.len()),
+                }),
+            },
+        )
+        .map_err(|e| e.to_string())?;
     }
-    
+
     temp_file.flush().map_err(|e| e.to_string())?;
-    
+
     let temp_path = temp_file.into_temp_path();
     tracing::info!("Performing self-replace with downloaded file");
-    
+
     // Set execution permissions on Linux
     #[cfg(target_family = "unix")]
     {
@@ -192,15 +224,24 @@ pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), AppE
             let _ = std::fs::set_permissions(&temp_path, perms);
         }
     }
-    
-    self_replace::self_replace(&temp_path).map_err(|e| format!("Self-replace failed. Make sure the file is not locked: {}", e))?;
+
+    self_replace::self_replace(&temp_path).map_err(|e| {
+        format!(
+            "Self-replace failed. Make sure the file is not locked: {}",
+            e
+        )
+    })?;
     let _ = temp_path.keep(); // Keep the file since self_replace moved it
-    
-    app.emit("portable-update-progress", UpdateProgress {
-        event: "Finished".to_string(),
-        data: None,
-    }).map_err(|e| e.to_string())?;
-    
+
+    app.emit(
+        "portable-update-progress",
+        UpdateProgress {
+            event: "Finished".to_string(),
+            data: None,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+
     tracing::info!("Native update completed successfully");
     Ok(())
 }
@@ -217,7 +258,11 @@ pub async fn app_track_event(
         .filter(|k| !k.trim().is_empty());
 
     if aptabase_key.is_none() {
-        tracing::debug!("Aptabase disabled. Dropping event: {} (Props: {:?})", name, props);
+        tracing::debug!(
+            "Aptabase disabled. Dropping event: {} (Props: {:?})",
+            name,
+            props
+        );
         return Ok(());
     }
     use tauri_plugin_aptabase::EventTracker;

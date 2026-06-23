@@ -1,8 +1,8 @@
 #![allow(dead_code)]
+use crate::error::DawnlandError;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use crate::error::DawnlandError;
 
 // ============================================================================
 // CurseForge Modpack Structs
@@ -104,37 +104,45 @@ pub async fn extract_zip<P: AsRef<Path>>(zip_path: P, extract_dir: P) -> Result<
     let extract_dir_buf = extract_dir.as_ref().to_path_buf();
 
     tokio::task::spawn_blocking(move || {
-        let zip_file =
-            std::fs::File::open(&zip_path_buf).map_err(|e| DawnlandError::Unknown(format!("Failed to open zip: {}", e)))?;
-        let mut archive =
-            zip::ZipArchive::new(zip_file).map_err(|e| DawnlandError::Unknown(format!("Failed to read zip archive: {}", e)))?;
+        let zip_file = std::fs::File::open(&zip_path_buf)
+            .map_err(|e| DawnlandError::Unknown(format!("Failed to open zip: {}", e)))?;
+        let mut archive = zip::ZipArchive::new(zip_file)
+            .map_err(|e| DawnlandError::Unknown(format!("Failed to read zip archive: {}", e)))?;
 
-        std::fs::create_dir_all(&extract_dir_buf)
-            .map_err(|e| DawnlandError::Unknown(format!("Failed to create extract directory: {}", e)))?;
+        std::fs::create_dir_all(&extract_dir_buf).map_err(|e| {
+            DawnlandError::Unknown(format!("Failed to create extract directory: {}", e))
+        })?;
 
         for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| DawnlandError::Unknown(format!("Failed to access file in zip: {}", e)))?;
+            let mut file = archive.by_index(i).map_err(|e| {
+                DawnlandError::Unknown(format!("Failed to access file in zip: {}", e))
+            })?;
             let outpath = match file.enclosed_name() {
                 Some(path) => extract_dir_buf.join(path),
                 None => continue,
             };
 
             if file.name().ends_with('/') {
-                std::fs::create_dir_all(&outpath)
-                    .map_err(|e| DawnlandError::Unknown(format!("Failed to create directory from zip: {}", e)))?;
+                std::fs::create_dir_all(&outpath).map_err(|e| {
+                    DawnlandError::Unknown(format!("Failed to create directory from zip: {}", e))
+                })?;
             } else {
                 if let Some(p) = outpath.parent() {
                     if !p.exists() {
-                        std::fs::create_dir_all(&p)
-                            .map_err(|e| DawnlandError::Unknown(format!("Failed to create parent directory: {}", e)))?;
+                        std::fs::create_dir_all(&p).map_err(|e| {
+                            DawnlandError::Unknown(format!(
+                                "Failed to create parent directory: {}",
+                                e
+                            ))
+                        })?;
                     }
                 }
-                let mut outfile = std::fs::File::create(&outpath)
-                    .map_err(|e| DawnlandError::Unknown(format!("Failed to create output file: {}", e)))?;
-                std::io::copy(&mut file, &mut outfile)
-                    .map_err(|e| DawnlandError::Unknown(format!("Failed to extract file: {}", e)))?;
+                let mut outfile = std::fs::File::create(&outpath).map_err(|e| {
+                    DawnlandError::Unknown(format!("Failed to create output file: {}", e))
+                })?;
+                std::io::copy(&mut file, &mut outfile).map_err(|e| {
+                    DawnlandError::Unknown(format!("Failed to extract file: {}", e))
+                })?;
             }
         }
         Ok::<(), DawnlandError>(())
@@ -146,11 +154,19 @@ pub async fn extract_zip<P: AsRef<Path>>(zip_path: P, extract_dir: P) -> Result<
 }
 
 /// Helper function to parse CurseForge-like manifests
-async fn parse_cf_format_manifest(path: &PathBuf, format_name: &str) -> Result<ModpackType, DawnlandError> {
-    tracing::info!("Found {}", path.file_name().and_then(|n| n.to_str()).unwrap_or(format_name));
+async fn parse_cf_format_manifest(
+    path: &PathBuf,
+    format_name: &str,
+) -> Result<ModpackType, DawnlandError> {
+    tracing::info!(
+        "Found {}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(format_name)
+    );
     let content = tokio::fs::read_to_string(path).await?;
-    let manifest: CfManifest =
-        serde_json::from_str(&content).map_err(|e| DawnlandError::Unknown(format!("Invalid {} manifest: {}", format_name, e)))?;
+    let manifest: CfManifest = serde_json::from_str(&content)
+        .map_err(|e| DawnlandError::Unknown(format!("Invalid {} manifest: {}", format_name, e)))?;
     Ok(ModpackType::CurseForge(manifest))
 }
 
@@ -171,8 +187,8 @@ pub async fn parse_modpack_manifest(extract_dir: &PathBuf) -> Result<ModpackType
     if mr_manifest_path.exists() {
         tracing::info!("Found Modrinth modrinth.index.json");
         let content = tokio::fs::read_to_string(&mr_manifest_path).await?;
-        let manifest: ModrinthManifest =
-            serde_json::from_str(&content).map_err(|e| DawnlandError::Unknown(format!("Invalid Modrinth index: {}", e)))?;
+        let manifest: ModrinthManifest = serde_json::from_str(&content)
+            .map_err(|e| DawnlandError::Unknown(format!("Invalid Modrinth index: {}", e)))?;
         return Ok(ModpackType::Modrinth(manifest));
     }
 
@@ -217,8 +233,12 @@ pub async fn copy_overrides(
                     let _ = std::fs::create_dir_all(parent);
                 }
 
-                std::fs::copy(path, &dest_path)
-                    .map_err(|e| DawnlandError::Unknown(format!("Failed to copy override file {:?}: {}", path, e)))?;
+                std::fs::copy(path, &dest_path).map_err(|e| {
+                    DawnlandError::Unknown(format!(
+                        "Failed to copy override file {:?}: {}",
+                        path, e
+                    ))
+                })?;
             }
         }
         Ok::<(), DawnlandError>(())

@@ -35,9 +35,9 @@ const popups = computed(() => notificationStore.notifications.value.filter(n => 
         </div>
 
         <!-- Content -->
-        <div class="flex-1 min-w-0">
-          <h4 class="text-sm font-semibold truncate">{{ toast.title }}</h4>
-          <p v-if="toast.description" class="text-xs opacity-80 mt-1 line-clamp-2">
+        <div class="flex-1 min-w-0 break-words">
+          <h4 class="text-sm font-semibold">{{ toast.title }}</h4>
+          <p v-if="toast.description" class="text-xs opacity-80 mt-1">
             {{ toast.description }}
           </p>
         </div>

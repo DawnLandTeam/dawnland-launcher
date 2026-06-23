@@ -151,7 +151,9 @@ pub async fn get_authlib_meta(url: String) -> Result<YggdrasilRootResponse, AppE
     let res = client.get(&url).send().await?;
 
     if !res.status().is_success() {
-        return Err(DawnlandError::Unknown(format!("Server returned status {}", res.status())).into());
+        return Err(
+            DawnlandError::Unknown(format!("Server returned status {}", res.status())).into(),
+        );
     }
 
     let meta_res: YggdrasilRootResponse = res.json().await?;
@@ -188,12 +190,14 @@ pub async fn authenticate_authlib_user(
     if !res.status().is_success() {
         let err_body = res.text().await.unwrap_or_default();
         if let Ok(ygg_err) = serde_json::from_str::<YggdrasilError>(&err_body) {
-            return Err(DawnlandError::Unknown(
-                ygg_err.error_message.unwrap_or_else(|| {
-                    ygg_err.error.unwrap_or_else(|| "Unknown authentication error".to_string())
-                }),
-            )
-            .into());
+            return Err(
+                DawnlandError::Unknown(ygg_err.error_message.unwrap_or_else(|| {
+                    ygg_err
+                        .error
+                        .unwrap_or_else(|| "Unknown authentication error".to_string())
+                }))
+                .into(),
+            );
         }
         return Err(DawnlandError::Unknown("Authentication failed".to_string()).into());
     }
@@ -208,7 +212,9 @@ pub async fn authenticate_authlib_user(
     }
 
     if profiles.is_empty() {
-        return Err(DawnlandError::Unknown("No profile available for this account".to_string()).into());
+        return Err(
+            DawnlandError::Unknown("No profile available for this account".to_string()).into(),
+        );
     }
 
     let authlib_server_name = get_authlib_meta(url)
@@ -296,8 +302,8 @@ pub async fn save_authlib_accounts(
 mod tests {
     use super::*;
     use mockito::Server;
-    use tokio::sync::Mutex;
     use std::sync::LazyLock;
+    use tokio::sync::Mutex;
 
     static TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -308,17 +314,19 @@ mod tests {
         config_path.push(".dawnland");
         config_path.push("authlib_servers.json");
         let _ = tokio::fs::remove_file(config_path).await;
-        
+
         let _ = crate::auth::save_accounts(&[]).await;
     }
 
     #[tokio::test]
     async fn test_get_authlib_meta() {
         let mut server = Server::new_async().await;
-        let mock = server.mock("GET", "/")
+        let mock = server
+            .mock("GET", "/")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{
+            .with_body(
+                r#"{
                 "meta": {
                     "serverName": "Test Authlib Server",
                     "links": {
@@ -326,14 +334,19 @@ mod tests {
                         "register": "https://test.com/register"
                     }
                 }
-            }"#)
-            .create_async().await;
+            }"#,
+            )
+            .create_async()
+            .await;
 
         let result = get_authlib_meta(server.url()).await;
         assert!(result.is_ok());
         let meta = result.unwrap();
-        assert_eq!(meta.meta.unwrap().server_name.unwrap(), "Test Authlib Server");
-        
+        assert_eq!(
+            meta.meta.unwrap().server_name.unwrap(),
+            "Test Authlib Server"
+        );
+
         mock.assert_async().await;
     }
 
@@ -343,11 +356,13 @@ mod tests {
         clear_authlib_files().await;
 
         let mut server = Server::new_async().await;
-        let mock = server.mock("GET", "/")
+        let mock = server
+            .mock("GET", "/")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"meta": {"serverName": "Mock Server"}}"#)
-            .create_async().await;
+            .create_async()
+            .await;
 
         let url = server.url();
 
@@ -374,19 +389,23 @@ mod tests {
         clear_authlib_files().await;
 
         let mut server = Server::new_async().await;
-        
+
         // Mock root meta
-        let mock_meta = server.mock("GET", "/")
+        let mock_meta = server
+            .mock("GET", "/")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"meta": {"serverName": "My Authlib"}}"#)
-            .create_async().await;
+            .create_async()
+            .await;
 
         // Mock authenticate
-        let mock_auth = server.mock("POST", "/authserver/authenticate")
+        let mock_auth = server
+            .mock("POST", "/authserver/authenticate")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{
+            .with_body(
+                r#"{
                 "accessToken": "mock_access_token",
                 "clientToken": "mock_client_token",
                 "availableProfiles": [
@@ -399,10 +418,13 @@ mod tests {
                         "name": "AuthlibPlayer2"
                     }
                 ]
-            }"#)
-            .create_async().await;
+            }"#,
+            )
+            .create_async()
+            .await;
 
-        let result = authenticate_authlib_user(server.url(), "user".to_string(), "pass".to_string()).await;
+        let result =
+            authenticate_authlib_user(server.url(), "user".to_string(), "pass".to_string()).await;
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let auth_res = result.unwrap();
 
@@ -416,7 +438,8 @@ mod tests {
             auth_res.access_token,
             auth_res.client_token,
             auth_res.authlib_server_name,
-        ).await;
+        )
+        .await;
 
         assert!(save_result.is_ok());
         let added_accounts = save_result.unwrap();

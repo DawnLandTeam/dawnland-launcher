@@ -1,8 +1,6 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use super::modrinth::{OnlineModpackVersion, UnifiedModFile, UnifiedModProject};
-
-
+use super::modrinth::{OnlineModpackVersion, UnifiedCategory, UnifiedModFile, UnifiedModProject};
 
 pub static CURSE_API_KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
@@ -22,6 +20,12 @@ pub fn get_curseforge_api_key() -> Option<String> {
 const CF_GAME_ID_MINECRAFT: i32 = 432;
 /// Class ID for Mods on CurseForge
 const CF_CLASS_ID_MODS: i32 = 6;
+/// Class ID for Resource Packs on CurseForge
+const CF_CLASS_ID_RESOURCE_PACKS: i32 = 12;
+/// Class ID for Worlds on CurseForge
+const CF_CLASS_ID_WORLDS: i32 = 17;
+/// Class ID for Shaderpacks on CurseForge
+const CF_CLASS_ID_SHADERS: i32 = 6552;
 
 /// CurseForge mod loader type mapping
 /// Reference: https://docs.curseforge.com/#mod-loaders
@@ -47,7 +51,7 @@ impl CfModLoader {
     }
 }
 
-fn get_fallback_download_url(file_id: i64, file_name: &str) -> String {
+pub fn get_fallback_download_url(file_id: i64, file_name: &str) -> String {
     let part1 = file_id / 1000;
     let part2 = file_id % 1000;
     let encoded_name = urlencoding::encode(file_name);
@@ -75,6 +79,18 @@ pub struct CfModProject {
     pub download_count: f64,
     pub authors: Vec<CfAuthor>,
     pub latest_files: Option<Vec<CfFile>>,
+    pub latest_files_indexes: Option<Vec<CfFileIndex>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CfFileIndex {
+    pub game_version: String,
+    pub file_id: i64,
+    pub filename: String,
+    pub release_type: i32,
+    pub game_version_type_id: Option<i32>,
+    pub mod_loader: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,7 +147,7 @@ pub struct CfFilesResponse {
 // ============================================================================
 
 /// Build the full URL to the CurseForge Core API.
-fn build_cf_url(path: &str, query: Option<&str>) -> String {
+pub fn build_cf_url(path: &str, query: Option<&str>) -> String {
     let base = "https://api.curseforge.com/v1";
     match query {
         Some(q) => format!("{}{}?{}", base, path, q),
@@ -140,8 +156,14 @@ fn build_cf_url(path: &str, query: Option<&str>) -> String {
 }
 
 /// Helper to create a request builder with the API key.
-fn cf_request(client: &reqwest::Client, method: reqwest::Method, url: &str) -> Result<reqwest::RequestBuilder, String> {
-    let mut req = client.request(method, url).header("Accept", "application/json");
+pub fn cf_request(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+) -> Result<reqwest::RequestBuilder, String> {
+    let mut req = client
+        .request(method, url)
+        .header("Accept", "application/json");
     if let Some(key) = CURSE_API_KEY.get() {
         req = req.header("x-api-key", key);
         Ok(req)
@@ -155,27 +177,173 @@ fn cf_request(client: &reqwest::Client, method: reqwest::Method, url: &str) -> R
 #[tauri::command]
 pub async fn search_curseforge(
     query: String,
-    mc_version: String,
-    loader: String,
+    mc_versions: Vec<String>,
+    loaders: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    search_curseforge_internal(
+        query,
+        mc_versions,
+        loaders,
+        categories,
+        offset,
+        limit,
+        CF_CLASS_ID_MODS,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn search_curseforge_resourcepacks(
+    query: String,
+    mc_versions: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    search_curseforge_internal(
+        query,
+        mc_versions,
+        vec![],
+        categories,
+        offset,
+        limit,
+        CF_CLASS_ID_RESOURCE_PACKS,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn search_curseforge_shaderpacks(
+    query: String,
+    mc_versions: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    search_curseforge_internal(
+        query,
+        mc_versions,
+        vec![],
+        categories,
+        offset,
+        limit,
+        CF_CLASS_ID_SHADERS,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn search_curseforge_worlds(
+    query: String,
+    mc_versions: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    search_curseforge_internal(
+        query,
+        mc_versions,
+        vec![],
+        categories,
+        offset,
+        limit,
+        CF_CLASS_ID_WORLDS,
+    )
+    .await
+}
+
+async fn search_curseforge_internal(
+    query: String,
+    mc_versions: Vec<String>,
+    loaders: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+    class_id: i32,
 ) -> Result<Vec<UnifiedModProject>, String> {
     tracing::info!(
-        "Searching CurseForge via proxy: query={}, mc_version={}, loader={}",
+        "Searching CurseForge via proxy: query={}, mc_versions={:?}, loaders={:?}",
         query,
-        mc_version,
-        loader
+        mc_versions,
+        loaders
     );
 
-    let mod_loader_type = CfModLoader::from_str(&loader) as i32;
+    let idx = offset.unwrap_or(0);
+    let ps = limit.unwrap_or(20);
 
-    // Build query string for the proxy
-    let query_string = format!(
-        "gameId={}&classId={}&searchFilter={}&gameVersion={}&modLoaderType={}&sortField=6&sortOrder=desc",
-        CF_GAME_ID_MINECRAFT,
-        CF_CLASS_ID_MODS,
-        urlencoding::encode(&query),
-        mc_version,
-        mod_loader_type
-    );
+    let sort_field = if query.trim().is_empty() { 6 } else { 1 }; // 6=TotalDownloads, 1=Featured or Relevance
+
+    let mut query_params = vec![
+        format!("gameId={}", CF_GAME_ID_MINECRAFT),
+        format!("classId={}", class_id),
+        format!("searchFilter={}", urlencoding::encode(&query)),
+        format!("index={}", idx),
+        format!("pageSize={}", ps),
+        format!("sortField={}", sort_field),
+        "sortOrder=desc".to_string(),
+    ];
+
+    if !mc_versions.is_empty() {
+        let v_arr = mc_versions
+            .iter()
+            .map(|v| format!("\"{}\"", v))
+            .collect::<Vec<_>>()
+            .join(",");
+        query_params.push(format!(
+            "gameVersions={}",
+            urlencoding::encode(&format!("[{}]", v_arr))
+        ));
+    }
+
+    let mut has_loaders = false;
+    if !loaders.is_empty() {
+        let l_arr = loaders
+            .iter()
+            .filter_map(|l| {
+                let loader_type = CfModLoader::from_str(l) as i32;
+                if loader_type != 0 {
+                    Some(loader_type.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        if !l_arr.is_empty() {
+            query_params.push(format!(
+                "modLoaderTypes={}",
+                urlencoding::encode(&format!("[{}]", l_arr))
+            ));
+            has_loaders = true;
+        }
+    }
+
+    // CF API strict requirement: If gameVersions is passed, modLoaderTypes must be passed for mods (classId=6).
+    // If no specific loader is selected, pass "Any" loader which is 0.
+    // For resource packs (classId=12), passing modLoaderTypes causes the search to fail/return empty.
+    if !mc_versions.is_empty() && !has_loaders && class_id == CF_CLASS_ID_MODS {
+        query_params.push(format!("modLoaderTypes={}", urlencoding::encode("[0]")));
+    }
+
+    if !categories.is_empty() {
+        let c_arr = categories
+            .iter()
+            .filter_map(|c| c.parse::<i32>().ok())
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        if !c_arr.is_empty() {
+            query_params.push(format!(
+                "categoryIds={}",
+                urlencoding::encode(&format!("[{}]", c_arr))
+            ));
+        }
+    }
+
+    let query_string = query_params.join("&");
 
     let cf_url = build_cf_url("/mods/search", Some(&query_string));
     tracing::info!("CF API URL: {}", cf_url);
@@ -209,12 +377,40 @@ pub async fn search_curseforge(
         .into_iter()
         .map(|m| {
             let mc_versions = m
-                .latest_files
+                .latest_files_indexes
                 .as_ref()
-                .and_then(|f| f.first())
-                .and_then(|f| f.game_versions.as_ref())
-                .cloned()
-                .unwrap_or_default();
+                .map(|indexes| {
+                    let mut versions: Vec<String> =
+                        indexes.iter().map(|idx| idx.game_version.clone()).collect();
+                    versions.sort();
+                    versions.dedup();
+                    // exclude loaders
+                    let excluded = vec![
+                        "forge",
+                        "fabric",
+                        "quilt",
+                        "neoforge",
+                        "liteloader",
+                        "rift",
+                        "vanilla",
+                        "client",
+                        "server",
+                    ];
+                    versions.retain(|v| {
+                        let lower = v.to_lowercase();
+                        !lower.starts_with("java") && !excluded.iter().any(|ex| lower.contains(ex))
+                    });
+                    versions.sort_by(|a, b| b.cmp(a)); // Sort descending
+                    versions
+                })
+                .unwrap_or_else(|| {
+                    m.latest_files
+                        .as_ref()
+                        .and_then(|f| f.first())
+                        .and_then(|f| f.game_versions.as_ref())
+                        .cloned()
+                        .unwrap_or_default()
+                });
 
             let loaders = m
                 .latest_files
@@ -253,34 +449,29 @@ pub async fn search_curseforge(
 pub async fn get_cf_mod_files(
     project_id: String,
     mc_version: String,
-    loader: String,
+    loaders: Vec<String>,
 ) -> Result<Vec<UnifiedModFile>, String> {
     tracing::info!(
-        "Getting CF mod files via proxy: project_id={}, mc_version={}, loader={}",
+        "Getting CF mod files via proxy: project_id={}, mc_version={}, loaders={:?}",
         project_id,
         mc_version,
-        loader
+        loaders
     );
 
-    let target_loader = loader.to_lowercase();
-    let cf_loader_type = match target_loader.as_str() {
-        "fabric" => 4,
-        "forge" => 1,
-        "neoforge" => 6,
-        _ => 0,
-    };
-
     // Build query string
-    let query_string = if cf_loader_type != 0 {
-        format!(
-            "gameVersion={}&modLoaderType={}",
-            mc_version, cf_loader_type
-        )
-    } else {
-        format!("gameVersion={}", mc_version)
-    };
+    let mut query_params = vec![];
+    if !mc_version.is_empty() && mc_version != "Other" {
+        query_params.push(format!("gameVersion={}", urlencoding::encode(&mc_version)));
+    }
+    // We omit modLoaderType so CF returns all loaders for this mc_version!
+    let query_string = query_params.join("&");
 
-    let cf_url = build_cf_url(&format!("/mods/{}/files", project_id), Some(&query_string));
+    let query_opt = if query_string.is_empty() {
+        None
+    } else {
+        Some(query_string.as_str())
+    };
+    let cf_url = build_cf_url(&format!("/mods/{}/files", project_id), query_opt);
     tracing::info!("CF API URL: {}", cf_url);
 
     let client = crate::core::utils::get_http_client().clone();
@@ -309,6 +500,19 @@ pub async fn get_cf_mod_files(
     let mut compatible_files = Vec::new();
 
     for file in sorted_files {
+        // Filter by loaders locally
+        let file_loaders = file.game_versions.clone().unwrap_or_default();
+        let has_loader = loaders.is_empty()
+            || file_loaders.iter().any(|fl| {
+                loaders
+                    .iter()
+                    .any(|target_loader| fl.to_lowercase() == target_loader.to_lowercase())
+            });
+
+        if !has_loader {
+            continue;
+        }
+
         let download_url = file
             .download_url
             .unwrap_or_else(|| get_fallback_download_url(file.id, &file.file_name));
@@ -326,15 +530,21 @@ pub async fn get_cf_mod_files(
             }
         }
 
-        let deps = file.dependencies.as_ref().map(|d_list| {
-            d_list.iter().map(|d| {
-                super::modrinth::UnifiedDependency {
-                    project_id: d.mod_id.to_string(),
-                    version_id: None,
-                    required: d.relation_type == 3,
-                }
-            }).collect()
-        }).unwrap_or_default();
+        let deps = file
+            .dependencies
+            .as_ref()
+            .map(|d_list| {
+                d_list
+                    .iter()
+                    .map(|d| super::modrinth::UnifiedDependency {
+                        project_id: d.mod_id.to_string(),
+                        version_id: None,
+                        required: d.relation_type == 3,
+                        name: None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         compatible_files.push(UnifiedModFile {
             id: file.id.to_string(),
@@ -346,15 +556,16 @@ pub async fn get_cf_mod_files(
             file_size: file.file_length,
             hash,
             dependencies: deps,
+            mc_versions: file.game_versions.clone().unwrap_or_default(),
         });
     }
 
     if compatible_files.is_empty() {
         tracing::error!(
-            "No compatible file found for project_id={}, target_version={}, target_loader={}",
+            "No compatible file found for project_id={}, target_version={}, target_loaders={:?}",
             project_id,
             mc_version,
-            target_loader
+            loaders
         );
         return Err("No compatible file found".to_string());
     }
@@ -424,15 +635,21 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
             }
         }
 
-        let deps = file.dependencies.as_ref().map(|d_list| {
-            d_list.iter().map(|d| {
-                super::modrinth::UnifiedDependency {
-                    project_id: d.mod_id.to_string(),
-                    version_id: None,
-                    required: d.relation_type == 3,
-                }
-            }).collect()
-        }).unwrap_or_default();
+        let deps = file
+            .dependencies
+            .as_ref()
+            .map(|d_list| {
+                d_list
+                    .iter()
+                    .map(|d| super::modrinth::UnifiedDependency {
+                        project_id: d.mod_id.to_string(),
+                        version_id: None,
+                        required: d.relation_type == 3,
+                        name: None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         compatible_files.push(UnifiedModFile {
             id: file.id.to_string(),
@@ -444,6 +661,7 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
             file_size: file.file_length,
             hash,
             dependencies: deps,
+            mc_versions: file.game_versions.clone().unwrap_or_default(),
         });
     }
 
@@ -715,8 +933,17 @@ mod tests {
         assert_eq!(project.name, "Just Enough Items (JEI)");
         assert_eq!(project.authors[0].name, "mezz");
         assert_eq!(project.latest_files.as_ref().unwrap().len(), 1);
-        assert_eq!(project.latest_files.as_ref().unwrap()[0].file_name, "jei-1.20.1.jar");
-        assert_eq!(project.latest_files.as_ref().unwrap()[0].game_versions.as_ref().unwrap()[0], "1.20.1");
+        assert_eq!(
+            project.latest_files.as_ref().unwrap()[0].file_name,
+            "jei-1.20.1.jar"
+        );
+        assert_eq!(
+            project.latest_files.as_ref().unwrap()[0]
+                .game_versions
+                .as_ref()
+                .unwrap()[0],
+            "1.20.1"
+        );
     }
 
     #[test]
@@ -744,7 +971,10 @@ mod tests {
         assert_eq!(response.data.len(), 1);
         let file = &response.data[0];
         assert_eq!(file.id, 123456);
-        assert_eq!(file.download_url.as_ref().unwrap(), "https://edge.forgecdn.net/files/123/456/jei-1.20.1.jar");
+        assert_eq!(
+            file.download_url.as_ref().unwrap(),
+            "https://edge.forgecdn.net/files/123/456/jei-1.20.1.jar"
+        );
         assert_eq!(file.hashes.as_ref().unwrap()[0].algo, 1);
         assert_eq!(file.hashes.as_ref().unwrap()[0].value, "1234567890abcdef");
     }
@@ -756,4 +986,219 @@ mod tests {
         assert_eq!(CfModLoader::from_str("neoforge"), CfModLoader::NeoForge);
         assert_eq!(CfModLoader::from_str("unknown"), CfModLoader::Any);
     }
+}
+
+#[derive(Deserialize)]
+struct CfCategory {
+    id: i32,
+    name: String,
+    #[serde(rename = "iconUrl")]
+    icon_url: String,
+}
+
+#[derive(Deserialize)]
+struct CfCategoriesResponse {
+    data: Vec<CfCategory>,
+}
+
+#[tauri::command]
+pub async fn get_curseforge_categories() -> Result<Vec<UnifiedCategory>, String> {
+    let cf_url = build_cf_url(
+        &format!(
+            "/categories?gameId={}&classId={}",
+            CF_GAME_ID_MINECRAFT, CF_CLASS_ID_MODS
+        ),
+        None,
+    );
+    let client = crate::core::utils::get_http_client().clone();
+    let res = cf_request(&client, reqwest::Method::GET, &cf_url)?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("CF API Error: {}", res.status()));
+    }
+
+    let json: CfCategoriesResponse = res.json().await.map_err(|e| e.to_string())?;
+    let cats = json
+        .data
+        .into_iter()
+        .map(|c| UnifiedCategory {
+            id: c.id.to_string(),
+            name: c.name,
+            icon: c.icon_url,
+        })
+        .collect();
+
+    Ok(cats)
+}
+
+#[tauri::command]
+pub async fn get_curseforge_resourcepack_categories() -> Result<Vec<UnifiedCategory>, String> {
+    let cf_url = build_cf_url(
+        &format!(
+            "/categories?gameId={}&classId={}",
+            CF_GAME_ID_MINECRAFT, CF_CLASS_ID_RESOURCE_PACKS
+        ),
+        None,
+    );
+    let client = crate::core::utils::get_http_client().clone();
+    let res = cf_request(&client, reqwest::Method::GET, &cf_url)?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("CF API Error: {}", res.status()));
+    }
+
+    let json: CfCategoriesResponse = res.json().await.map_err(|e| e.to_string())?;
+    let cats = json
+        .data
+        .into_iter()
+        .map(|c| UnifiedCategory {
+            id: c.id.to_string(),
+            name: c.name,
+            icon: c.icon_url,
+        })
+        .collect();
+
+    Ok(cats)
+}
+
+#[tauri::command]
+pub async fn get_curseforge_shaderpack_categories() -> Result<Vec<UnifiedCategory>, String> {
+    let cf_url = build_cf_url(
+        &format!(
+            "/categories?gameId={}&classId={}",
+            CF_GAME_ID_MINECRAFT, CF_CLASS_ID_SHADERS
+        ),
+        None,
+    );
+    let client = crate::core::utils::get_http_client().clone();
+    let res = cf_request(&client, reqwest::Method::GET, &cf_url)?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("CF API Error: {}", res.status()));
+    }
+
+    let json: CfCategoriesResponse = res.json().await.map_err(|e| e.to_string())?;
+    let cats = json
+        .data
+        .into_iter()
+        .map(|c| UnifiedCategory {
+            id: c.id.to_string(),
+            name: c.name,
+            icon: c.icon_url,
+        })
+        .collect();
+
+    Ok(cats)
+}
+
+#[tauri::command]
+pub async fn get_curseforge_world_categories() -> Result<Vec<UnifiedCategory>, String> {
+    let cf_url = build_cf_url(
+        &format!(
+            "/categories?gameId={}&classId={}",
+            CF_GAME_ID_MINECRAFT, CF_CLASS_ID_WORLDS
+        ),
+        None,
+    );
+    let client = crate::core::utils::get_http_client().clone();
+    let res = cf_request(&client, reqwest::Method::GET, &cf_url)?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("CF API Error: {}", res.status()));
+    }
+
+    let json: CfCategoriesResponse = res.json().await.map_err(|e| e.to_string())?;
+    let cats = json
+        .data
+        .into_iter()
+        .map(|c| UnifiedCategory {
+            id: c.id.to_string(),
+            name: c.name,
+            icon: c.icon_url,
+        })
+        .collect();
+
+    Ok(cats)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CFGameVersionData {
+    pub id: i32,
+    #[serde(rename = "gameVersionId")]
+    pub game_version_id: i32,
+    #[serde(rename = "versionString")]
+    pub version_string: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CFGameVersionResponse {
+    pub data: Vec<CFGameVersionData>,
+}
+
+#[tauri::command]
+pub async fn get_curseforge_game_versions() -> Result<Vec<String>, String> {
+    let cf_url = build_cf_url("/minecraft/version", None);
+    let client = crate::core::utils::get_http_client().clone();
+    let req = cf_request(&client, reqwest::Method::GET, &cf_url)?;
+
+    let res: CFGameVersionResponse = req
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| format!("JSON parse error: {}", e))?;
+
+    // Filter out snapshots and betas
+    let mut releases: Vec<String> = res
+        .data
+        .into_iter()
+        .filter(|v| {
+            let lower = v.version_string.to_lowercase();
+            !lower.contains("snapshot")
+                && !lower.contains("beta")
+                && !lower.contains("alpha")
+                && !lower.contains("rc")
+                && !lower.contains("pre")
+        })
+        .map(|v| v.version_string)
+        .collect();
+
+    // Sort descending (e.g. 1.20.1 > 1.20 > 1.19.4)
+    releases.sort_by(|a, b| {
+        let a_parts: Vec<u32> = a.split('.').filter_map(|s| s.parse().ok()).collect();
+        let b_parts: Vec<u32> = b.split('.').filter_map(|s| s.parse().ok()).collect();
+        b_parts.cmp(&a_parts)
+    });
+
+    // Remove duplicates
+    releases.dedup();
+
+    Ok(releases)
+}
+
+#[tauri::command]
+pub async fn get_curseforge_loaders() -> Result<Vec<String>, String> {
+    // CurseForge API doesn't have an endpoint for generic loader types (it returns thousands of specific loaders instead)
+    // They are standardized by the ModLoaderType enum.
+    Ok(vec![
+        "Forge".to_string(),
+        "Fabric".to_string(),
+        "Quilt".to_string(),
+        "NeoForge".to_string(),
+        "LiteLoader".to_string(),
+        "Cauldron".to_string(),
+    ])
 }

@@ -7,8 +7,8 @@ use tauri::AppHandle;
 use tokio::fs;
 
 // Re-export downloader types (from parent module)
-use crate::downloader::{run_batch_download_task, DownloadTask};
 use crate::core::task::{ExecutableTask, TaskContext, TaskError, TaskManager, TaskType};
+use crate::downloader::{run_batch_download_task, DownloadTask};
 
 // ============ Global State ============
 
@@ -42,12 +42,15 @@ pub fn get_dawnland_cache() -> PathBuf {
 }
 
 // Legacy INSTALL_STATE has been removed in favor of TaskManager.
-// CANCEL_FLAG is temporarily retained for compatibility with specific legacy call sites 
+// CANCEL_FLAG is temporarily retained for compatibility with specific legacy call sites
 // (e.g., older download tasks) that have not yet been fully migrated to TaskContext cancellation tokens.
 
-static CANCEL_FLAG: std::sync::OnceLock<std::sync::Arc<std::sync::atomic::AtomicBool>> = std::sync::OnceLock::new();
+static CANCEL_FLAG: std::sync::OnceLock<std::sync::Arc<std::sync::atomic::AtomicBool>> =
+    std::sync::OnceLock::new();
 pub fn get_cancel_flag() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
-    CANCEL_FLAG.get_or_init(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))).clone()
+    CANCEL_FLAG
+        .get_or_init(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
+        .clone()
 }
 
 // ============ Mojang API Types ============
@@ -484,9 +487,11 @@ impl ExecutableTask for InstallVanillaTask {
 
         if !is_dep {
             ctx.set_total_steps(1).await;
-            ctx.update_progress(0, 0, &format!("Resolving version: {}", version_id)).await;
+            ctx.update_progress(0, 0, &format!("Resolving version: {}", version_id))
+                .await;
         } else {
-            ctx.update_progress(0, 0, &format!("Resolving version: {}", version_id)).await;
+            ctx.update_progress(0, 0, &format!("Resolving version: {}", version_id))
+                .await;
         }
 
         let base_dir = get_minecraft_base();
@@ -497,25 +502,37 @@ impl ExecutableTask for InstallVanillaTask {
         };
 
         let _ = tokio::fs::create_dir_all(&version_dir).await;
-        crate::core::launcher::InstanceConfig::ensure_installing(&version_dir, is_dependency.unwrap_or(false)).await;
+        crate::core::launcher::InstanceConfig::ensure_installing(
+            &version_dir,
+            is_dependency.unwrap_or(false),
+        )
+        .await;
 
         let client = crate::core::utils::get_http_client().clone();
 
         // Step A: Download and save version JSON.
         tracing::info!("Downloading version JSON from: {}", version_json_url);
         let ctx_json = ctx.with_sub_task("download_vanilla_json");
-        ctx_json.update_progress(0, 100, "Downloading version JSON").await;
+        ctx_json
+            .update_progress(0, 100, "Downloading version JSON")
+            .await;
 
         let version_json_content = client
             .get(&version_json_url)
             .send()
             .await
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to download version JSON: {}", e)))?
+            .map_err(|e| {
+                TaskError::ExecutionError(format!("Failed to download version JSON: {}", e))
+            })?
             .error_for_status()
-            .map_err(|e| TaskError::ExecutionError(format!("HTTP error downloading version JSON: {}", e)))?
+            .map_err(|e| {
+                TaskError::ExecutionError(format!("HTTP error downloading version JSON: {}", e))
+            })?
             .text()
             .await
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to read version JSON: {}", e)))?;
+            .map_err(|e| {
+                TaskError::ExecutionError(format!("Failed to read version JSON: {}", e))
+            })?;
 
         // Save version JSON.
         let version_json_path = version_dir.join(format!("{}.json", version_id));
@@ -528,11 +545,15 @@ impl ExecutableTask for InstallVanillaTask {
             .map_err(|e| TaskError::ExecutionError(format!("Failed to parse version JSON: {e}")))?;
 
         if ctx.is_cancelled() {
-            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+            return Err(TaskError::ExecutionError(
+                "Installation cancelled by user".to_string(),
+            ));
         }
 
         // Step B: Build libraries download queue.
-        ctx_json.update_progress(100, 100, "Version JSON downloaded").await;
+        ctx_json
+            .update_progress(100, 100, "Version JSON downloaded")
+            .await;
         ctx.update_progress(0, 0, "Resolving libraries").await;
         let mut lib_tasks: Vec<DownloadTask> = Vec::new();
 
@@ -556,7 +577,10 @@ impl ExecutableTask for InstallVanillaTask {
                     let dest = base_dir.join(&path);
 
                     let url = artifact.url.as_ref().cloned().unwrap_or_default();
-                    let url = crate::core::settings::replace_download_url(&url, &settings.download_source);
+                    let url = crate::core::settings::replace_download_url(
+                        &url,
+                        &settings.download_source,
+                    );
                     let hash = artifact.sha1.as_ref().cloned();
 
                     if !url.is_empty() {
@@ -577,7 +601,7 @@ impl ExecutableTask for InstallVanillaTask {
                         "linux" => "natives-linux",
                         _ => continue,
                     };
-                    
+
                     let os_name_for_json = match std::env::consts::OS {
                         "windows" => "windows",
                         "macos" => "osx",
@@ -586,7 +610,10 @@ impl ExecutableTask for InstallVanillaTask {
                     };
 
                     let classifier_name = if let Some(ref natives) = lib.natives {
-                        natives.get(os_name_for_json).map(|s| s.as_str()).unwrap_or(default_os_key)
+                        natives
+                            .get(os_name_for_json)
+                            .map(|s| s.as_str())
+                            .unwrap_or(default_os_key)
                     } else {
                         default_os_key
                     };
@@ -600,7 +627,10 @@ impl ExecutableTask for InstallVanillaTask {
                         let dest = base_dir.join(&path);
 
                         let url = classifier.url.as_ref().cloned().unwrap_or_default();
-                        let url = crate::core::settings::replace_download_url(&url, &settings.download_source);
+                        let url = crate::core::settings::replace_download_url(
+                            &url,
+                            &settings.download_source,
+                        );
                         let hash = classifier.sha1.as_ref().cloned();
 
                         if !url.is_empty() {
@@ -622,7 +652,9 @@ impl ExecutableTask for InstallVanillaTask {
         let downloads = match &version_meta.downloads {
             Some(d) => d,
             None => {
-                return Err(TaskError::ExecutionError("Version JSON missing downloads section".to_string()));
+                return Err(TaskError::ExecutionError(
+                    "Version JSON missing downloads section".to_string(),
+                ));
             }
         };
 
@@ -643,7 +675,9 @@ impl ExecutableTask for InstallVanillaTask {
         }
 
         if ctx.is_cancelled() {
-            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+            return Err(TaskError::ExecutionError(
+                "Installation cancelled by user".to_string(),
+            ));
         }
 
         // Step D: Download and parse asset index.
@@ -652,16 +686,20 @@ impl ExecutableTask for InstallVanillaTask {
         let asset_index = match &version_meta.asset_index {
             Some(ai) => ai,
             None => {
-                return Err(TaskError::ExecutionError("Version JSON missing assetIndex".to_string()));
+                return Err(TaskError::ExecutionError(
+                    "Version JSON missing assetIndex".to_string(),
+                ));
             }
         };
 
         let asset_index_url = match &asset_index.url {
             Some(url) if !url.is_empty() => {
                 crate::core::settings::replace_download_url(url, &settings.download_source)
-            },
+            }
             _ => {
-                return Err(TaskError::ExecutionError("Version JSON missing asset index URL".to_string()));
+                return Err(TaskError::ExecutionError(
+                    "Version JSON missing asset index URL".to_string(),
+                ));
             }
         };
 
@@ -671,15 +709,19 @@ impl ExecutableTask for InstallVanillaTask {
             .await
             .map_err(|e| TaskError::ExecutionError(format!("Failed to fetch asset index: {e}")))?
             .error_for_status()
-            .map_err(|e| TaskError::ExecutionError(format!("HTTP error fetching asset index: {e}")))?
+            .map_err(|e| {
+                TaskError::ExecutionError(format!("HTTP error fetching asset index: {e}"))
+            })?
             .text()
             .await
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to read asset index response: {e}")))?;
+            .map_err(|e| {
+                TaskError::ExecutionError(format!("Failed to read asset index response: {e}"))
+            })?;
 
         let asset_index_dir = base_dir.join("assets").join("indexes");
-        fs::create_dir_all(&asset_index_dir)
-            .await
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to create asset index directory: {e}")))?;
+        fs::create_dir_all(&asset_index_dir).await.map_err(|e| {
+            TaskError::ExecutionError(format!("Failed to create asset index directory: {e}"))
+        })?;
 
         let asset_index_id = asset_index.id.clone();
         let asset_index_path = asset_index_dir.join(format!("{}.json", asset_index_id));
@@ -702,7 +744,8 @@ impl ExecutableTask for InstallVanillaTask {
                     "https://resources.download.minecraft.net/{}/{}",
                     hash_prefix, hash
                 );
-                let url = crate::core::settings::replace_download_url(&url, &settings.download_source);
+                let url =
+                    crate::core::settings::replace_download_url(&url, &settings.download_source);
                 let dest_path = format!("assets/objects/{}/{}", hash_prefix, hash);
                 let dest = base_dir.join(&dest_path);
 
@@ -719,7 +762,7 @@ impl ExecutableTask for InstallVanillaTask {
         let ctx_libs = ctx.with_sub_task("download_vanilla_libs");
         let ctx_assets = ctx.with_sub_task("download_vanilla_assets");
         let ctx_client = ctx.with_sub_task("download_vanilla_client");
-        
+
         let (r1, r2, r3) = tokio::join!(
             async {
                 if !lib_tasks.is_empty() {
@@ -743,7 +786,7 @@ impl ExecutableTask for InstallVanillaTask {
                 }
             }
         );
-        
+
         r1.map_err(|e| TaskError::ExecutionError(e))?;
         r2.map_err(|e| TaskError::ExecutionError(e))?;
         r3.map_err(|e| TaskError::ExecutionError(e))?;
@@ -755,7 +798,9 @@ impl ExecutableTask for InstallVanillaTask {
                 base_dir.join("versions").join(version_id)
             };
             let _ = tokio::fs::remove_dir_all(&version_dir).await;
-            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+            return Err(TaskError::ExecutionError(
+                "Installation cancelled by user".to_string(),
+            ));
         }
 
         ctx.update_progress(100, 100, "Complete").await;
@@ -777,9 +822,10 @@ impl ExecutableTask for InstallVanillaTask {
 
         config.hidden = is_dependency.unwrap_or(false);
         config.is_installing = false;
-        
-        let config_json = serde_json::to_string_pretty(&config)
-            .map_err(|e| TaskError::ExecutionError(format!("Failed to serialize dlml.json: {e}")))?;
+
+        let config_json = serde_json::to_string_pretty(&config).map_err(|e| {
+            TaskError::ExecutionError(format!("Failed to serialize dlml.json: {e}"))
+        })?;
         let _ = tokio::fs::write(&config_path, config_json).await;
 
         Ok(())
@@ -811,7 +857,10 @@ pub async fn install_vanilla_version(
     let mut pre_config = crate::core::launcher::InstanceConfig::default();
     pre_config.is_installing = true;
     pre_config.hidden = is_dependency.unwrap_or(false);
-    let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&pre_config).unwrap());
+    let _ = std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&pre_config).unwrap(),
+    );
 
     let task = InstallVanillaTask {
         options: VanillaInstallOptions {
@@ -822,17 +871,19 @@ pub async fn install_vanilla_version(
     };
 
     let task_id = task_manager
-        .spawn_task(TaskType::InstallVanilla { 
-            version_id: version_id.clone(),
-            version_json_url: version_json_url.clone(),
-            is_dependency,
-        }, task)
+        .spawn_task(
+            TaskType::InstallVanilla {
+                version_id: version_id.clone(),
+                version_json_url: version_json_url.clone(),
+                is_dependency,
+            },
+            task,
+        )
         .await
         .map_err(|e| e.to_string())?;
 
     Ok(task_id)
 }
-
 
 /// Get list of installed versions.
 #[tauri::command]
@@ -887,15 +938,24 @@ mod tests {
     fn test_maven_name_to_path() {
         // Standard fabric loader format
         let path = maven_name_to_path("net.fabricmc:fabric-loader:0.14.22").unwrap();
-        assert_eq!(path, "net/fabricmc/fabric-loader/0.14.22/fabric-loader-0.14.22.jar");
+        assert_eq!(
+            path,
+            "net/fabricmc/fabric-loader/0.14.22/fabric-loader-0.14.22.jar"
+        );
 
         // Forge universal special case
         let path = maven_name_to_path("net.minecraftforge:forge:1.16.5-36.2.39").unwrap();
-        assert_eq!(path, "net/minecraftforge/forge/1.16.5-36.2.39/forge-1.16.5-36.2.39-universal.jar");
+        assert_eq!(
+            path,
+            "net/minecraftforge/forge/1.16.5-36.2.39/forge-1.16.5-36.2.39-universal.jar"
+        );
 
         // With classifier
         let path = maven_name_to_path("optifine:OptiFine:1.16.5_HD_U_G8:installer").unwrap();
-        assert_eq!(path, "optifine/OptiFine/1.16.5_HD_U_G8/OptiFine-1.16.5_HD_U_G8-installer.jar");
+        assert_eq!(
+            path,
+            "optifine/OptiFine/1.16.5_HD_U_G8/OptiFine-1.16.5_HD_U_G8-installer.jar"
+        );
 
         // Invalid format
         assert!(maven_name_to_path("invalid-format").is_none());
@@ -994,7 +1054,10 @@ mod tests {
         let meta: VersionMeta = serde_json::from_str(json).unwrap();
         assert_eq!(meta.id, "1.20.4");
         assert_eq!(meta.main_class.unwrap(), "net.minecraft.client.main.Main");
-        assert_eq!(meta.minecraft_arguments.unwrap(), "--username ${auth_player_name}");
+        assert_eq!(
+            meta.minecraft_arguments.unwrap(),
+            "--username ${auth_player_name}"
+        );
         assert_eq!(meta.java_version.unwrap().major_version, 17);
     }
 }

@@ -1,4 +1,4 @@
-use super::state::{TaskState, TaskError};
+use super::state::{TaskError, TaskState};
 use std::path::PathBuf;
 use tokio_rusqlite::Connection;
 
@@ -9,8 +9,10 @@ pub struct TaskDatabase {
 
 impl TaskDatabase {
     pub async fn new(db_path: PathBuf) -> Result<Self, TaskError> {
-        let conn = Connection::open(db_path).await.map_err(|e| TaskError::Database(e.to_string()))?;
-        
+        let conn = Connection::open(db_path)
+            .await
+            .map_err(|e| TaskError::Database(e.to_string()))?;
+
         // Initialize tables
         conn.call(|conn| -> ::rusqlite::Result<()> {
             conn.execute(
@@ -30,14 +32,24 @@ impl TaskDatabase {
                 [],
             )?;
             Ok(())
-        }).await.map_err(|e| TaskError::Database(e.to_string()))?;
+        })
+        .await
+        .map_err(|e| TaskError::Database(e.to_string()))?;
         // Migration: add columns if they don't exist
-        let _ = conn.call(|conn| -> ::rusqlite::Result<()> {
-            let _ = conn.execute("ALTER TABLE tasks ADD COLUMN context_data TEXT", []);
-            let _ = conn.execute("ALTER TABLE tasks ADD COLUMN progress_step INTEGER NOT NULL DEFAULT 1", []);
-            let _ = conn.execute("ALTER TABLE tasks ADD COLUMN progress_total_steps INTEGER NOT NULL DEFAULT 1", []);
-            Ok(())
-        }).await;
+        let _ = conn
+            .call(|conn| -> ::rusqlite::Result<()> {
+                let _ = conn.execute("ALTER TABLE tasks ADD COLUMN context_data TEXT", []);
+                let _ = conn.execute(
+                    "ALTER TABLE tasks ADD COLUMN progress_step INTEGER NOT NULL DEFAULT 1",
+                    [],
+                );
+                let _ = conn.execute(
+                    "ALTER TABLE tasks ADD COLUMN progress_total_steps INTEGER NOT NULL DEFAULT 1",
+                    [],
+                );
+                Ok(())
+            })
+            .await;
         // Cleanup interrupted tasks (tasks that were running when the app was closed)
         conn.call(|conn| -> ::rusqlite::Result<()> {
             conn.execute(
@@ -51,7 +63,9 @@ impl TaskDatabase {
                 ),
             )?;
             Ok(())
-        }).await.map_err(|e| TaskError::Database(e.to_string()))?;
+        })
+        .await
+        .map_err(|e| TaskError::Database(e.to_string()))?;
 
         Ok(Self { conn })
     }
@@ -107,6 +121,7 @@ impl TaskDatabase {
 
                 let task_type = serde_json::from_str(&task_type_str).unwrap_or(super::state::TaskType::Generic { name: "Unknown".into() });
                 let status = serde_json::from_str(&status_str).unwrap_or(super::state::TaskStatus::Failed);
+                let auto_clear = matches!(task_type, super::state::TaskType::InstallMod { .. } | super::state::TaskType::InstallResourcepack { .. });
 
                 Ok(TaskState {
                     id,
@@ -126,6 +141,7 @@ impl TaskDatabase {
                     created_at,
                     updated_at,
                     context_data,
+                    auto_clear,
                 })
             })?;
             
@@ -154,14 +170,12 @@ impl TaskDatabase {
     }
 
     pub async fn delete_task(&self, id: String) -> Result<(), TaskError> {
-        self.conn.call(move |conn| -> ::rusqlite::Result<()> {
-            conn.execute(
-                "DELETE FROM tasks WHERE id = ?1",
-                (id,),
-            )?;
-            Ok(())
-        })
-        .await
-        .map_err(|e| TaskError::Database(e.to_string()))
+        self.conn
+            .call(move |conn| -> ::rusqlite::Result<()> {
+                conn.execute("DELETE FROM tasks WHERE id = ?1", (id,))?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| TaskError::Database(e.to_string()))
     }
 }

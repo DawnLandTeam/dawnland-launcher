@@ -1,7 +1,7 @@
-use hmac::{Hmac, Mac, KeyInit};
+use hmac::{Hmac, KeyInit, Mac};
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -17,7 +17,11 @@ pub struct ApiSignature {
 }
 
 #[tauri::command]
-pub fn generate_api_signature(method: String, path: String, body: String) -> Result<ApiSignature, String> {
+pub fn generate_api_signature(
+    method: String,
+    path: String,
+    body: String,
+) -> Result<ApiSignature, String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -29,7 +33,7 @@ pub fn generate_api_signature(method: String, path: String, body: String) -> Res
 
     let mut mac = HmacSha256::new_from_slice(API_SECRET.as_bytes())
         .map_err(|e| format!("HMAC error: {}", e))?;
-    
+
     mac.update(payload.as_bytes());
     let result = mac.finalize();
     let signature = hex::encode(result.into_bytes());
@@ -40,7 +44,11 @@ pub fn generate_api_signature(method: String, path: String, body: String) -> Res
     })
 }
 
-pub fn sign_request(method: &str, path: &str, body: &str) -> Result<reqwest::header::HeaderMap, String> {
+pub fn sign_request(
+    method: &str,
+    path: &str,
+    body: &str,
+) -> Result<reqwest::header::HeaderMap, String> {
     let sig = generate_api_signature(method.to_string(), path.to_string(), body.to_string())?;
     let mut headers = reqwest::header::HeaderMap::new();
     if let Ok(ts) = reqwest::header::HeaderValue::from_str(&sig.timestamp) {
@@ -52,9 +60,14 @@ pub fn sign_request(method: &str, path: &str, body: &str) -> Result<reqwest::hea
     Ok(headers)
 }
 
-pub fn secure_request(client: &reqwest::Client, method: reqwest::Method, url: &str, body: &str) -> reqwest::RequestBuilder {
+pub fn secure_request(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+    body: &str,
+) -> reqwest::RequestBuilder {
     let mut req = client.request(method.clone(), url);
-    
+
     let path = if let Ok(u) = reqwest::Url::parse(url) {
         let mut p = u.path().to_string();
         if let Some(q) = u.query() {

@@ -20,7 +20,7 @@ pub async fn compute_sha1(path: impl AsRef<Path>) -> Result<String, FsError> {
     let mut file = fs::File::open(path).await?;
     let mut hasher = Sha1::new();
     let mut buffer = [0; 8192];
-    
+
     loop {
         let n = file.read(&mut buffer).await?;
         if n == 0 {
@@ -28,7 +28,7 @@ pub async fn compute_sha1(path: impl AsRef<Path>) -> Result<String, FsError> {
         }
         hasher.update(&buffer[..n]);
     }
-    
+
     Ok(hex::encode(hasher.finalize()))
 }
 
@@ -37,7 +37,7 @@ pub async fn compute_sha256(path: impl AsRef<Path>) -> Result<String, FsError> {
     let mut file = fs::File::open(path).await?;
     let mut hasher = <Sha256 as Sha2Digest>::new();
     let mut buffer = [0; 8192];
-    
+
     loop {
         let n = file.read(&mut buffer).await?;
         if n == 0 {
@@ -45,13 +45,17 @@ pub async fn compute_sha256(path: impl AsRef<Path>) -> Result<String, FsError> {
         }
         hasher.update(&buffer[..n]);
     }
-    
+
     Ok(hex::encode(hasher.finalize()))
 }
 
 /// Atomically move a file from a temporary location to the final destination.
 /// Creates parent directories if they don't exist.
-pub async fn atomic_move(temp_path: impl AsRef<Path>, final_path: impl AsRef<Path>, overwrite: bool) -> Result<(), FsError> {
+pub async fn atomic_move(
+    temp_path: impl AsRef<Path>,
+    final_path: impl AsRef<Path>,
+    overwrite: bool,
+) -> Result<(), FsError> {
     let temp_path = temp_path.as_ref();
     let final_path = final_path.as_ref();
 
@@ -88,11 +92,11 @@ pub async fn is_file_valid_sha1(path: impl AsRef<Path>, expected_hash: &str) -> 
     if !path.exists() || path.metadata().map(|m| m.len() == 0).unwrap_or(true) {
         return false;
     }
-    
+
     if expected_hash.is_empty() {
         return true;
     }
-    
+
     match compute_sha1(path).await {
         Ok(hash) => hash.eq_ignore_ascii_case(expected_hash),
         Err(_) => false,
@@ -109,7 +113,7 @@ mod tests {
     async fn test_compute_sha1() {
         let mut temp_file = NamedTempFile::new().unwrap();
         write!(temp_file, "hello world").unwrap();
-        
+
         // sha1("hello world") = 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed
         let hash = compute_sha1(temp_file.path()).await.unwrap();
         assert_eq!(hash, "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed");
@@ -119,10 +123,13 @@ mod tests {
     async fn test_compute_sha256() {
         let mut temp_file = NamedTempFile::new().unwrap();
         write!(temp_file, "hello world").unwrap();
-        
+
         // sha256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
         let hash = compute_sha256(temp_file.path()).await.unwrap();
-        assert_eq!(hash, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+        assert_eq!(
+            hash,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
     }
 
     #[tokio::test]
@@ -170,7 +177,7 @@ mod tests {
         // Should fail because overwrite is false
         let result = atomic_move(&source_path, &dest_path, false).await;
         assert!(matches!(result, Err(FsError::TargetExists)));
-        
+
         let content = fs::read_to_string(&dest_path).await.unwrap();
         assert_eq!(content, "old content");
     }

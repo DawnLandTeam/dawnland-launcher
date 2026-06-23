@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
+import DSelect from "../components/ui/DSelect.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw, Share2, Check } from "@lucide/vue";
-import InstallInstanceModal from "../components/InstallInstanceModal.vue";
-import InstanceModsModal from "../components/InstanceModsModal.vue";
 import { getErrorMessage } from "../utils/error";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
+import LocalModsModal from "../components/LocalModsModal.vue";
 
 // Types
 interface InstanceItem {
@@ -51,11 +52,9 @@ import { toast } from '../composables/useToast';
 
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 
 // State
-const showInstallModal = ref(false);
-const prefillVersion = ref("");
-const prefillLoader = ref("");
 const installedInstances = ref<InstanceItem[]>([]);
 const copiedShareInstanceId = ref<string | null>(null);
 
@@ -87,9 +86,9 @@ const deletingInstanceId = ref("");
 const deletingInstanceName = ref("");
 const isDeletingInstance = ref(false);
 
-// Mods modal state
-const showModsModal = ref(false);
-const modsInstance = ref<InstanceItem | null>(null);
+// Local mods modal state
+const showLocalModsModal = ref(false);
+const selectedInstanceId = ref("");
 
 const openDropdownId = ref<string | null>(null);
 
@@ -123,19 +122,8 @@ watch(
   () => route.query,
   (query) => {
     if (query.install_version && typeof query.install_version === "string") {
-      prefillVersion.value = query.install_version;
-      if (query.install_loader && typeof query.install_loader === "string") {
-        prefillLoader.value = query.install_loader.toLowerCase();
-      } else {
-        prefillLoader.value = "vanilla";
-      }
-      showInstallModal.value = true;
-      
-      // Clean up the URL so a refresh doesn't trigger it again
-      const newQuery = { ...query };
-      delete newQuery.install_version;
-      delete newQuery.install_loader;
-      router.replace({ query: newQuery });
+      const newQuery = { ...query, tab: 'instance' };
+      router.replace({ path: '/downloads', query: newQuery });
     }
   },
   { immediate: true },
@@ -155,6 +143,20 @@ const handleTaskStatusChanged = (e: Event) => {
     loadInstances();
   }
 };
+
+const windowBehaviorOptions = computed(() => [
+  { label: t('instances.settingsDialog.keepVisible'), value: 'keep' },
+  { label: t('instances.settingsDialog.hideLauncher'), value: 'hide' },
+  { label: t('instances.settingsDialog.minimizeTaskbar'), value: 'minimize' }
+]);
+
+const javaPathOptions = computed(() => [
+  { label: t('instances.settingsDialog.defaultAuto'), value: '' },
+  ...installedJavas.value.map(java => ({
+    label: `Java ${java.majorVersion} (${java.vendor}) [${java.isOpenJ9 ? 'OpenJ9' : (java.isGraalvm ? 'GraalVM' : 'HotSpot')}] - ${java.versionString}`,
+    value: java.path
+  }))
+]);
 
 onMounted(async () => {
   window.addEventListener('task-added', handleTaskAdded);
@@ -246,8 +248,8 @@ async function openSettings(instance: InstanceItem) {
 }
 
 function openMods(instance: InstanceItem) {
-  modsInstance.value = instance;
-  showModsModal.value = true;
+  selectedInstanceId.value = instance.id;
+  showLocalModsModal.value = true;
 }
 
 // Remove browseJavaPath since we are using select now
@@ -294,8 +296,9 @@ async function openInstanceFolder(instanceId: string) {
 
 function updateModpack(instance: InstanceItem) {
   router.push({
-    path: '/modpack-install',
-    query: { 
+    path: '/downloads',
+    query: {
+      tab: 'modpack',
       update_id: instance.name,
       source: instance.modpackType?.toLowerCase() || '',
       current_version: instance.modpackVersion || '',
@@ -388,14 +391,14 @@ function normalizedModpackVersion(version: string): string {
       </div>
       <div class="flex items-center gap-3">
         <button
-          @click="showInstallModal = true"
+          @click="router.push('/downloads?tab=instance')"
           class="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           <Plus class="h-4 w-4" />
           {{ $t('instances.installInstance') }}
         </button>
         <button
-          @click="router.push('/modpack-install')"
+          @click="router.push('/downloads?tab=modpack')"
           class="flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
         >
           <Package class="h-4 w-4" />
@@ -419,14 +422,14 @@ function normalizedModpackVersion(version: string): string {
         </div>
         <div class="flex items-center gap-2">
           <button
-            @click="router.push('/modpack-install')"
+            @click="router.push('/downloads?tab=modpack')"
             class="flex items-center gap-2 rounded-md bg-secondary px-3 py-1.5 text-sm font-medium text-secondary-foreground hover:bg-secondary/90 transition-colors"
           >
             <Package class="h-4 w-4" />
             {{ $t('instances.installModpack') }}
           </button>
           <button
-            @click="showInstallModal = true"
+            @click="router.push('/downloads?tab=instance')"
             class="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
           >
             <Plus class="h-4 w-4" />
@@ -541,19 +544,7 @@ function normalizedModpackVersion(version: string): string {
       </div>
     </div>
 
-    <!-- Install Instance Modal -->
-    <InstallInstanceModal
-      v-model:open="showInstallModal"
-      :initial-version="prefillVersion"
-      :initial-loader="prefillLoader"
-      @installed-success="refreshInstancesList"
-    />
-
-    <!-- Instance Mods Modal -->
-    <InstanceModsModal
-      v-model:open="showModsModal"
-      :instance="modsInstance"
-    />
+    
 
     <!-- Instance Settings Modal -->
     <DialogContent :open="showSettingsModal" @update:open="showSettingsModal = $event" class="max-w-md">
@@ -570,15 +561,11 @@ function normalizedModpackVersion(version: string): string {
           <!-- Java Path -->
           <div class="space-y-2">
             <label class="text-sm font-medium">{{ $t('instances.settingsDialog.javaVersion') }}</label>
-            <select
+            <DSelect
               v-model="settingsConfig.javaPath"
-              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
-            >
-              <option value="">{{ $t('instances.settingsDialog.defaultAuto') }}</option>
-              <option v-for="java in installedJavas" :key="java.path" :value="java.path">
-                Java {{ java.majorVersion }} ({{ java.vendor }}) [{{ java.isOpenJ9 ? 'OpenJ9' : (java.isGraalvm ? 'GraalVM' : 'HotSpot') }}] - {{ java.versionString }}
-              </option>
-            </select>
+              :options="javaPathOptions"
+              class="w-full"
+            />
             <p class="text-xs text-muted-foreground">
               {{ $t('instances.settingsDialog.javaWarning') }}
             </p>
@@ -624,14 +611,11 @@ function normalizedModpackVersion(version: string): string {
           <!-- Window Behavior -->
           <div class="space-y-2 mt-4">
             <label class="text-sm font-medium">{{ $t('instances.settingsDialog.windowBehavior') }}</label>
-            <select
+            <DSelect
               v-model="settingsConfig.windowBehavior"
-              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm text-neutral-900 dark:text-white"
-            >
-              <option value="keep">{{ $t('instances.settingsDialog.keepVisible') }}</option>
-              <option value="hide">{{ $t('instances.settingsDialog.hideLauncher') }}</option>
-              <option value="minimize">{{ $t('instances.settingsDialog.minimizeTaskbar') }}</option>
-            </select>
+              :options="windowBehaviorOptions"
+              class="w-full"
+            />
             <p class="text-xs text-muted-foreground">
               {{ $t('instances.settingsDialog.windowBehaviorDesc') }}
             </p>
@@ -703,5 +687,8 @@ function normalizedModpackVersion(version: string): string {
         </button>
       </div>
     </AlertDialog>
+
+    <!-- Local Mods Modal -->
+    <LocalModsModal v-model="showLocalModsModal" :instance-id="selectedInstanceId" />
   </div>
 </template>

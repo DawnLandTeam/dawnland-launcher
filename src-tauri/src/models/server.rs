@@ -30,9 +30,6 @@ pub struct Server {
     pub contact_owner: Option<String>,
 }
 
-
-
-
 /// Response from filter options API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

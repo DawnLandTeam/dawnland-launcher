@@ -14,7 +14,7 @@ export interface SelectOption {
 
 const props = defineProps<{
   options: SelectOption[];
-  modelValue?: string | number;
+  modelValue?: string | number | null;
   placeholder?: string;
   disabled?: boolean;
 }>();
@@ -81,18 +81,18 @@ const selectedIcon = computed(() => {
 </script>
 
 <template>
-  <div class="relative w-full" ref="targetRef">
+  <div class="relative" ref="targetRef">
     <button
       type="button"
       @click="toggleOpen"
       :disabled="disabled"
       class="flex h-10 w-full items-center justify-between rounded-md border border-neutral-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-neutral-900 dark:text-zinc-100 placeholder:text-neutral-500 dark:placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
     >
-      <div class="flex items-center gap-2 truncate">
+      <div class="flex items-center gap-2 flex-1 min-w-0" :title="selectedLabel">
         <component v-if="selectedIcon" :is="selectedIcon" class="h-4 w-4 shrink-0 opacity-70" />
-        <span class="truncate">{{ selectedLabel }}</span>
+        <span class="truncate block w-full text-left">{{ selectedLabel }}</span>
       </div>
-      <ChevronDown class="h-4 w-4 opacity-50 shrink-0" />
+      <ChevronDown class="h-4 w-4 opacity-50 shrink-0 ml-2" />
     </button>
 
     <transition
@@ -105,8 +105,9 @@ const selectedIcon = computed(() => {
     >
       <div
         v-if="isOpen"
-        class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-neutral-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm"
+        class="absolute z-50 mt-1 max-h-60 min-w-full w-max left-1/2 -translate-x-1/2 overflow-hidden flex flex-col rounded-md border border-neutral-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm max-w-[90vw] sm:max-w-md"
       >
+        <div class="overflow-y-auto flex-1 w-full">
         <div v-for="(group, idx) in groupedOptions" :key="idx">
           <div v-if="group.name" class="px-2 py-1.5 text-xs font-semibold text-neutral-500 dark:text-zinc-400">
             {{ group.name }}
@@ -125,10 +126,10 @@ const selectedIcon = computed(() => {
             ]"
           >
             <component v-if="option.icon" :is="option.icon" class="h-4 w-4 shrink-0 opacity-70" />
-            <span class="truncate">{{ option.label }}</span>
+            <span class="truncate" :title="option.label">{{ option.label }}</span>
           </div>
         </div>
-        
+        </div>
         <slot name="append"></slot>
       </div>
     </transition>

@@ -9,7 +9,9 @@ import { DialogContent, DialogTitle } from "../components/ui/dialog";
 import { useRouter, useRoute } from "vue-router";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import QrcodeVue from 'qrcode.vue';
-import { trackEvent, sanitizeTrackingUrl, getErrorType } from "../utils/analytics";
+import { getErrorType, trackEvent, sanitizeTrackingUrl } from "../utils/analytics";
+import DInput from "../components/ui/DInput.vue";
+import DSelect from "../components/ui/DSelect.vue";
 import { getErrorMessage } from "../utils/error";
 
 interface Account {
@@ -77,6 +79,10 @@ const microsoftLoginData = ref<LoginInitResponse | null>(null);
 const loginError = ref<string | null>(null);
 const deviceCode = ref("");
 const showDeviceCodeFlow = ref(false);
+const authlibServerOptions = computed(() => authlibServers.value.map(server => ({
+  label: server.name,
+  value: server.url
+})));
 
 const authlibProfiles = ref<YggdrasilProfile[] | null>(null);
 const selectedAuthlibProfiles = ref<string[]>([]);
@@ -559,11 +565,9 @@ watch(
           <!-- Offline Account Form -->
           <div v-if="selectedAccountType === 'offline'" class="mt-4 space-y-3">
             <label class="text-sm font-medium">{{ $t('accounts.username') }}</label>
-            <input
+            <DInput
               v-model="newUsername"
-              type="text"
               :placeholder="$t('accounts.enterUsername')"
-              class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
               @keyup.enter="addOfflineAccount"
             />
             <button
@@ -595,7 +599,7 @@ watch(
                 class="w-full text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors"
                 @click="showDeviceCodeFlow = true"
               >
-                使用扫码登录 (备用方案)
+                {{ $t('accounts.useDeviceCode') }}
               </button>
             </div>
 
@@ -612,20 +616,20 @@ watch(
                 @click="startMicrosoftLogin"
               >
                 <MonitorCheck :size="16" />
-                获取扫码登录凭证
+                {{ $t('accounts.fetchingDeviceCode') }}
               </button>
               <button
                 class="w-full text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors"
                 @click="showDeviceCodeFlow = false"
               >
-                返回一键登录
+                {{ $t('accounts.backToOneClick') }}
               </button>
             </div>
 
             <!-- Logging in with Device Code - show QR code -->
             <div v-else-if="microsoftLoginData" class="flex flex-col items-center space-y-4 py-2">
               <p class="text-sm text-center text-neutral-600 dark:text-zinc-400">
-                请使用手机扫描下方二维码，或访问 <a :href="microsoftLoginData.verificationUri + '?otc=' + microsoftLoginData.userCode" target="_blank" class="text-indigo-600 hover:underline">验证链接</a>
+                {{ $t('accounts.scanQrCode') }}<a :href="microsoftLoginData.verificationUri + '?otc=' + microsoftLoginData.userCode" target="_blank" class="text-indigo-600 hover:underline">{{ $t('accounts.verificationLink') }}</a>
               </p>
               
               <div class="bg-white p-2 rounded-xl">
@@ -633,7 +637,7 @@ watch(
               </div>
 
               <div class="flex flex-col items-center">
-                <span class="text-xs text-neutral-500 mb-1">并在页面中输入以下代码：</span>
+                <span class="text-xs text-neutral-500 mb-1">{{ $t('accounts.enterCode') }}</span>
                 <div class="flex items-center gap-2">
                   <span class="text-2xl font-mono font-bold tracking-wider text-indigo-600 dark:text-indigo-400">
                     {{ microsoftLoginData.userCode }}
@@ -650,7 +654,7 @@ watch(
 
               <div class="flex items-center justify-center gap-2 py-2 text-sm text-emerald-600 dark:text-emerald-400">
                 <Loader2 :size="16" class="animate-spin" />
-                等待授权完成...
+                {{ $t('accounts.waitingForAuth') }}...
               </div>
 
               <button
@@ -691,32 +695,26 @@ watch(
               
               <div class="space-y-1">
                 <label class="text-sm font-medium">{{ $t('accounts.authlibServer', '认证服务器') }}</label>
-                <select
+                <DSelect
                   v-model="authlibUrl"
-                  class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/50 dark:border-zinc-700 dark:bg-zinc-800"
-                  @change="fetchAuthlibMeta"
-                >
-                  <option v-for="server in authlibServers" :key="server.url" :value="server.url">
-                    {{ server.name }}
-                  </option>
-                </select>
+                  :options="authlibServerOptions"
+                  @update:model-value="fetchAuthlibMeta"
+                  class="w-full"
+                />
               </div>
               <!-- Login Form -->
               <div v-if="!authlibProfiles" class="space-y-3">
                 <div class="space-y-1">
                   <label class="text-sm font-medium">Email / Username</label>
-                  <input
+                  <DInput
                     v-model="authlibUsername"
-                    type="text"
-                    class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
                   />
                 </div>
                 <div class="space-y-1">
                   <label class="text-sm font-medium">Password</label>
-                  <input
+                  <DInput
                     v-model="authlibPassword"
                     type="password"
-                    class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 dark:border-zinc-700 dark:bg-zinc-800"
                     @keyup.enter="addAuthlibAccount"
                   />
                 </div>
