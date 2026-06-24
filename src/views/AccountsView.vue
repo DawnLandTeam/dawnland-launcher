@@ -14,24 +14,7 @@ import DInput from "../components/ui/DInput.vue";
 import DSelect from "../components/ui/DSelect.vue";
 import { getErrorMessage } from "../utils/error";
 
-interface Account {
-  id: string;
-  username: string;
-  accountType: "offline" | "microsoft" | "authlib";
-  accessToken?: string;
-  refreshToken?: string;
-  authlibServerName?: string;
-  textures?: string;
-  authlibUrl?: string;
-  authlibEmail?: string;
-}
-
-interface LoginInitResponse {
-  userCode: string;
-  deviceCode: string;
-  verificationUri: string;
-  message: string;
-}
+import { Account, LoginInitResponse } from "../types";
 
 interface YggdrasilMetaLinks {
   homepage?: string;

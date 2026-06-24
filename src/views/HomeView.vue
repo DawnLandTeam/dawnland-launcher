@@ -40,15 +40,6 @@ interface InstanceItem {
   isInstalling?: boolean;
 }
 
-interface Account {
-  id: string;
-  username: string;
-  accountType: string; // 'microsoft', 'offline', or 'authlib'
-  authlibUrl?: string;
-  authlibServerName?: string;
-  authlibEmail?: string;
-}
-
 interface GameLog {
   type: string;
   line: string;
@@ -62,12 +53,7 @@ interface InstanceState {
   isOpenJ9?: boolean;
 }
 
-interface AuthlibAuthResult {
-  accessToken: string;
-  clientToken: string;
-  availableProfiles: any[];
-  authlibServerName?: string;
-}
+import { Account, AuthlibAuthResult } from "../types";
 
 // Router for navigation to settings
 const router = useRouter();
@@ -559,7 +545,8 @@ async function submitAuthlibReauth() {
       password: authlibReauthPassword.value
     });
     
-    const matchingProfile = authResult.availableProfiles.find(p => p.name.toLowerCase() === selectedAccount.value?.username.toLowerCase());
+    const profiles = authResult.availableProfiles ?? [];
+    const matchingProfile = profiles.find(p => p.name.toLowerCase() === selectedAccount.value?.username.toLowerCase());
     if (!matchingProfile) {
       throw new Error("Profile not found in response");
     }
@@ -574,9 +561,16 @@ async function submitAuthlibReauth() {
     });
 
     await loadAccounts();
-    // Update the selected account to the newly saved one (which has the correct UUID)
+    // Update the selected account to the newly saved one safely
     if (savedAccounts && savedAccounts.length > 0) {
-      selectedAccountId.value = savedAccounts[0].id;
+      const match = savedAccounts.find(a => 
+        a.accountType === 'authlib' && 
+        a.username === selectedAccount.value?.username &&
+        a.authlibUrl === selectedAccount.value?.authlibUrl
+      );
+      if (match) {
+        selectedAccountId.value = match.id;
+      }
     }
     
     showAuthlibReauth.value = false;

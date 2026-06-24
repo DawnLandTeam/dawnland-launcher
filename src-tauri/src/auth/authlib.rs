@@ -320,13 +320,13 @@ pub async fn ensure_authlib_token_valid(account_id: &str) -> Result<Account, App
             account.client_token = Some(refreshed.client_token.clone());
 
             // Save updated account
-            if let Ok(mut all_accounts) = get_accounts().await {
-                if let Some(a) = all_accounts.iter_mut().find(|a| a.id == account_id) {
-                    a.access_token = account.access_token.clone();
-                    a.client_token = account.client_token.clone();
-                }
-                let _ = save_accounts(&all_accounts).await;
+            let mut all_accounts = get_accounts().await?;
+            if let Some(a) = all_accounts.iter_mut().find(|a| a.id == account_id) {
+                a.access_token = account.access_token.clone();
+                a.client_token = account.client_token.clone();
             }
+            save_accounts(&all_accounts).await?;
+            
             Ok(account)
         },
         Err(e) => {
