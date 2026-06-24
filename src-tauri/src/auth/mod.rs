@@ -10,7 +10,7 @@ pub mod microsoft;
 
 pub use authlib::{
     add_authlib_server, authenticate_authlib_user, fetch_authlib_servers, get_authlib_meta,
-    remove_authlib_server, save_authlib_accounts,
+    remove_authlib_server, save_authlib_accounts, ensure_authlib_token_valid,
 };
 pub use microsoft::{
     login_microsoft_oauth, poll_microsoft_token, refresh_microsoft_token, start_microsoft_login,
@@ -54,6 +54,9 @@ pub struct Account {
     /// Optional Yggdrasil Client Token for Authlib accounts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_token: Option<String>,
+    /// Optional original login email for Authlib accounts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authlib_email: Option<String>,
 }
 
 /// Get the accounts file path.
@@ -137,6 +140,7 @@ pub async fn add_offline_account(username: &str) -> Result<Account, DawnlandErro
         authlib_url: None,
         authlib_server_name: None,
         client_token: None,
+        authlib_email: None,
     };
 
     accounts.push(account.clone());

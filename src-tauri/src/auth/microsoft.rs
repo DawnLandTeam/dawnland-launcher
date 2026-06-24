@@ -598,6 +598,7 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, AppError
         authlib_url: None,
         authlib_server_name: None,
         client_token: None,
+        authlib_email: None,
     };
 
     // Load existing accounts and add new one.
@@ -915,6 +916,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
         authlib_url: None,
         authlib_server_name: None,
         client_token: None,
+        authlib_email: None,
     };
 
     let mut accounts = get_accounts().await?;

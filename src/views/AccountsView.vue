@@ -21,6 +21,9 @@ interface Account {
   accessToken?: string;
   refreshToken?: string;
   authlibServerName?: string;
+  textures?: string;
+  authlibUrl?: string;
+  authlibEmail?: string;
 }
 
 interface LoginInitResponse {
@@ -222,7 +225,8 @@ async function saveAuthlibAccounts(): Promise<void> {
       selectedProfiles: profilesToSave,
       accessToken: tempAuthData.value.accessToken,
       clientToken: tempAuthData.value.clientToken,
-      authlibServerName: tempAuthData.value.authlibServerName
+      authlibServerName: tempAuthData.value.authlibServerName,
+      authlibEmail: authlibUsername.value.trim()
     });
     
     authlibUsername.value = "";

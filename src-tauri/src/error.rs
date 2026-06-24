@@ -18,6 +18,8 @@ pub enum DawnlandError {
     NoCompatibleJava { required_version: u32 },
     #[error("Update file is corrupted (MD5 mismatch). Update aborted.")]
     Md5Mismatch,
+    #[error("AUTHLIB_REAUTH_REQUIRED")]
+    AuthlibReauthRequired,
     #[error("{0}")]
     Unknown(String),
 }
@@ -49,6 +51,7 @@ impl From<DawnlandError> for AppError {
             DawnlandError::InstanceNotFound(_) => "INSTANCE_NOT_FOUND",
             DawnlandError::NoCompatibleJava { .. } => "NO_COMPATIBLE_JAVA",
             DawnlandError::Md5Mismatch => "MD5_MISMATCH",
+            DawnlandError::AuthlibReauthRequired => "AUTHLIB_REAUTH_REQUIRED",
             DawnlandError::Unknown(_) => "UNKNOWN_ERROR",
         };
 

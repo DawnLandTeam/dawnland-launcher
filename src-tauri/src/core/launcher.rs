@@ -1019,11 +1019,14 @@ pub fn parse_jvm_arguments(
                 "${assets_index_name}",
                 version_meta.assets.as_deref().unwrap_or("1.0"),
             )
-            .replace("${auth_uuid}", &config.account.id)
+            .replace("${auth_uuid}", &config.account.id.replace("-", ""))
             .replace(
                 "${auth_access_token}",
                 config.account.access_token.as_deref().unwrap_or("0"),
             )
+            .replace("${user_properties}", "{}")
+            .replace("${clientid}", "")
+            .replace("${auth_xuid}", "")
             .replace(
                 "${user_type}",
                 if config.account.account_type == crate::auth::AccountType::Microsoft {
@@ -1112,11 +1115,14 @@ pub fn parse_game_arguments(
                 "${assets_index_name}",
                 version_meta.assets.as_deref().unwrap_or("1.0"),
             )
-            .replace("${auth_uuid}", &config.account.id)
+            .replace("${auth_uuid}", &config.account.id.replace("-", ""))
             .replace(
                 "${auth_access_token}",
                 config.account.access_token.as_deref().unwrap_or("0"),
             )
+            .replace("${user_properties}", "{}")
+            .replace("${clientid}", "")
+            .replace("${auth_xuid}", "")
             .replace(
                 "${user_type}",
                 if config.account.account_type == crate::auth::AccountType::Microsoft {
@@ -1699,6 +1705,21 @@ pub async fn launch_instance(
                 if e.code == "REAUTH_REQUIRED" {
                     return Err(DawnlandError::Unknown("Your Microsoft login session has expired. Please log out and log in again.".to_string()).into());
                 }
+            }
+        }
+    }
+
+    // Auto-refresh Authlib token before launch
+    if account.account_type == crate::auth::AccountType::Authlib {
+        tracing::info!("Verifying Authlib token before launch...");
+        match crate::auth::ensure_authlib_token_valid(&account.id).await {
+            Ok(updated_account) => {
+                account = updated_account;
+                tracing::info!("Authlib token verified/refreshed successfully");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to verify/refresh Authlib token: {}", e.message);
+                return Err(DawnlandError::AuthlibReauthRequired.into());
             }
         }
     }
