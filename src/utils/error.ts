@@ -4,7 +4,7 @@ export function getErrorMessage(err: unknown): string {
   if (!err) return "Unknown error";
 
   let msg = "";
-  if (typeof err === "object" && err !== null) {
+  if (typeof err === "object") {
     const anyErr = err as { code?: string; message?: unknown; data?: unknown };
     if (anyErr.code === "MD5_MISMATCH") {
       return (i18n.global.t as any)('errors.md5Mismatch');
