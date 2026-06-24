@@ -20,17 +20,24 @@ export function getErrorType(err: unknown): string {
 }
 
 export type AnalyticsEvents = {
-  "app_started": undefined;
-  "settings_viewed": undefined;
-  "account_added": { type: "offline" | "authlib" | "microsoft", api?: string, flow?: string };
-  "login_failed": { type: "authlib" | "microsoft", error_type: string, flow?: string, api?: string, [key: string]: any };
-  "authlib_added": { type: "deeplink_authlib" | "deeplink_authlib_drop" | "manual_authlib", api?: string };
-  "modpack_install_started": { type: "online" | "local" | "deeplink_online", isUpdate?: boolean, source?: string };
-  "modpack_install_completed": { instanceName: string };
-  "game_launch_started": { instanceId: string, auto?: boolean };
-  "game_launched": { instanceId: string, auto?: boolean };
-  "java_download_completed": { majorVersion: number, version: string };
-  "error_occurred": { context: string, error_type: string, [key: string]: any };
+  "App Started": undefined;
+  "Settings Viewed": undefined;
+  "Accounts Viewed": undefined;
+  "Instances Viewed": undefined;
+  "Servers Viewed": undefined;
+  "Downloads Viewed": undefined;
+  "Account Added": { type: "offline" | "authlib" | "microsoft", api?: string, flow?: string };
+  "Login Failed": { type: "authlib" | "microsoft", error_type: string, flow?: string, api?: string, [key: string]: any };
+  "Authlib Added": { type: "deeplink_authlib" | "deeplink_authlib_drop" | "manual_authlib", api?: string };
+  "Modpack Install Completed": { name: string, projectId?: string };
+  "Instance Install Completed": { version: string, loader?: string };
+  "Mod Install Completed": { name: string, projectId?: string, versionId?: string };
+  "Resourcepack Install Completed": { name: string, projectId?: string, versionId?: string };
+  "Shaderpack Install Completed": { name: string, projectId?: string, versionId?: string };
+  "World Install Completed": { name: string, projectId?: string, versionId?: string };
+  "Game Launched": { accountType: string, auto?: boolean, instanceName?: string };
+  "Java Download Completed": { majorVersion: number, version: string };
+  "Error Occurred": { context: string, error_type: string, [key: string]: any };
 };
 
 export function trackEvent<K extends keyof AnalyticsEvents>(

@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import LocalModsModal from "../components/LocalModsModal.vue";
+import { trackEvent } from "../utils/analytics";
 
 // Types
 interface InstanceItem {
@@ -154,6 +155,7 @@ const javaPathOptions = computed(() => [
 ]);
 
 onMounted(async () => {
+  trackEvent("Instances Viewed");
   window.addEventListener('task-added', handleTaskAdded);
   await loadInstances();
   await loadJavas();

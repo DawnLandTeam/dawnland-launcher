@@ -138,7 +138,7 @@ async fn download_file_task(
     }
 
     // Make the HTTP request with timeout.
-    let response = match req.send().await {
+    let mut response = match req.send().await {
         Ok(resp) => resp,
         Err(e) => {
             return Err(format!("Request failed: {}", e));
@@ -147,7 +147,30 @@ async fn download_file_task(
 
     // Check HTTP status.
     if !response.status().is_success() {
-        return Err(format!("HTTP error: {}", response.status()));
+        // If using BMCLAPI and it fails (e.g. 502 Bad Gateway), try to fallback to official source
+        if task.url.contains("bmclapi2.bangbang93.com") {
+            tracing::warn!("BMCLAPI returned {}. Attempting fallback to official source...", response.status());
+            
+            let fallbacks = get_bmclapi_fallbacks(&task.url);
+
+            let mut fallback_success = false;
+            for fallback_url in fallbacks {
+                tracing::info!("Trying fallback URL: {}", fallback_url);
+                if let Ok(fallback_resp) = client.get(&fallback_url).send().await {
+                    if fallback_resp.status().is_success() {
+                        response = fallback_resp;
+                        fallback_success = true;
+                        break;
+                    }
+                }
+            }
+
+            if !fallback_success {
+                return Err(format!("HTTP error: {} (Fallbacks also failed)", response.status()));
+            }
+        } else {
+            return Err(format!("HTTP error: {}", response.status()));
+        }
     }
 
     // Get content length.
@@ -472,13 +495,35 @@ async fn download_file(
         }
     }
 
-    let response = match client.get(&task.url).send().await {
+    let mut response = match client.get(&task.url).send().await {
         Ok(resp) => resp,
         Err(e) => return Err(format!("Request failed: {}", e)),
     };
 
     if !response.status().is_success() {
-        return Err(format!("HTTP error: {}", response.status()));
+        if task.url.contains("bmclapi2.bangbang93.com") {
+            tracing::warn!("BMCLAPI returned {}. Attempting fallback to official source...", response.status());
+            
+            let fallbacks = get_bmclapi_fallbacks(&task.url);
+
+            let mut fallback_success = false;
+            for fallback_url in fallbacks {
+                tracing::info!("Trying fallback URL: {}", fallback_url);
+                if let Ok(fallback_resp) = client.get(&fallback_url).send().await {
+                    if fallback_resp.status().is_success() {
+                        response = fallback_resp;
+                        fallback_success = true;
+                        break;
+                    }
+                }
+            }
+
+            if !fallback_success {
+                return Err(format!("HTTP error: {} (Fallbacks also failed)", response.status()));
+            }
+        } else {
+            return Err(format!("HTTP error: {}", response.status()));
+        }
     }
 
     let total = response.content_length().unwrap_or(0);
@@ -661,6 +706,45 @@ pub async fn run_batch_download(
     Ok(())
 }
 
+/// Generates a list of fallback URLs for a given BMCLAPI URL.
+fn get_bmclapi_fallbacks(url: &str) -> Vec<String> {
+    let mut fallbacks = vec![];
+    if url.contains("/assets/") {
+        fallbacks.push(url.replace("https://bmclapi2.bangbang93.com/assets", "https://resources.download.minecraft.net"));
+    } else if url.contains("/fabric-meta/") {
+        fallbacks.push(url.replace("https://bmclapi2.bangbang93.com/fabric-meta", "https://meta.fabricmc.net"));
+    } else if url.contains("/maven/") {
+        if url.contains("/maven/net/minecraftforge/") || url.contains("/maven/de/oceanlabs/") {
+            fallbacks.push(url.replace("https://bmclapi2.bangbang93.com/maven", "https://maven.minecraftforge.net"));
+        } else if url.contains("/maven/net/fabricmc/") {
+            fallbacks.push(url.replace("https://bmclapi2.bangbang93.com/maven", "https://maven.fabricmc.net"));
+        } else if url.contains("/maven/net/neoforged/") {
+            fallbacks.push(url.replace("https://bmclapi2.bangbang93.com/maven", "https://maven.neoforged.net/releases"));
+        } else {
+            // Default to mojang libraries
+            fallbacks.push(url.replace("https://bmclapi2.bangbang93.com/maven", "https://libraries.minecraft.net"));
+        }
+        
+        // Add all other common maven repos as a safety net (e.g. for org.ow2.asm)
+        let other_mavens = [
+            "https://libraries.minecraft.net",
+            "https://maven.fabricmc.net",
+            "https://maven.minecraftforge.net",
+            "https://maven.neoforged.net/releases"
+        ];
+        for repo in other_mavens.iter() {
+            let fallback_url = url.replace("https://bmclapi2.bangbang93.com/maven", repo);
+            if !fallbacks.contains(&fallback_url) {
+                fallbacks.push(fallback_url);
+            }
+        }
+    } else {
+        fallbacks.push(url.replace("https://bmclapi2.bangbang93.com", "https://piston-meta.mojang.com"));
+        fallbacks.push(url.replace("https://bmclapi2.bangbang93.com", "https://launchermeta.mojang.com"));
+    }
+    fallbacks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,3 +768,5 @@ mod tests {
         assert_eq!(actual_hash, expected_hash);
     }
 }
+
+

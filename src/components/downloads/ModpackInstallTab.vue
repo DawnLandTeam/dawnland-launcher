@@ -395,7 +395,7 @@ const installModpack = async () => {
   statusMessage.value = "Starting installation...";
 
   try {
-    trackEvent("modpack_install_started", { type: onlineUrl.value ? "online" : "local", isUpdate: isUpdate.value });
+    // Event tracking removed: trackEvent("modpack_install_started", { type: onlineUrl.value ? "online" : "local", isUpdate: isUpdate.value });
     if (onlineUrl.value) {
       console.log("Invoking download_and_install_online_modpack...");
       currentTaskId.value = await invoke<string>("download_and_install_online_modpack", {
@@ -427,10 +427,19 @@ const installModpack = async () => {
     }
     
     console.log("Installation task submitted successfully.");
-    trackEvent("modpack_install_completed", { instanceName: instanceName.value });
+    let finalName = selectedModpack.value ? selectedModpack.value.title || selectedModpack.value.name : "Unknown Modpack";
+    if (!selectedModpack.value && zipPath.value) {
+      try {
+        finalName = await invoke<string>("get_modpack_name", { zipPath: zipPath.value });
+      } catch (e) {
+        console.warn("Could not read manifest name, falling back to filename", e);
+        finalName = zipPath.value.split(/[/\\]/).pop() || "Unknown Modpack";
+      }
+    }
+    trackEvent("Modpack Install Completed", { name: finalName, projectId: selectedModpack.value?.project_id || route.query.project_id || null });
   } catch (error) {
     console.error("Installation failed:", error);
-    trackEvent("error_occurred", { context: "modpack_install", error_type: getErrorType(error) });
+    trackEvent("Error Occurred", { context: "modpack_install", error_type: getErrorType(error) });
     statusMessage.value = `Installation failed: ${getErrorMessage(error)}`;
     isInstalling.value = false;
     currentTaskId.value = null;

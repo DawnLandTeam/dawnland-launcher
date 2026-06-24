@@ -9,6 +9,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Server, Gamepad2, Search, Copy, Check, Loader2, Download, Users, Star, RefreshCw } from "@lucide/vue";
 import { getErrorMessage } from "../utils/error";
 import { EXTERNAL_URLS } from "../utils/constants";
+import { trackEvent } from "../utils/analytics";
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -260,6 +261,7 @@ function handleScroll(event: Event) {
 
 // Initial load
 onMounted(() => {
+  trackEvent("Servers Viewed");
   loadFavorites();
   fetchServers();
   fetchFilterOptions();

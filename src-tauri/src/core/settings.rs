@@ -22,6 +22,8 @@ pub struct LauncherSettings {
     pub download_source: DownloadSource,
     #[serde(default = "default_max_concurrent_downloads")]
     pub max_concurrent_downloads: u32,
+    #[serde(default)]
+    pub enable_telemetry: Option<bool>,
 }
 
 fn default_max_concurrent_downloads() -> u32 {
@@ -34,6 +36,7 @@ impl Default for LauncherSettings {
             enable_instance_inheritance: false,
             download_source: DownloadSource::default(),
             max_concurrent_downloads: 32,
+            enable_telemetry: None,
         }
     }
 }
@@ -75,10 +78,6 @@ pub async fn load_launcher_settings() -> Result<LauncherSettings, String> {
 
 #[tauri::command]
 pub async fn save_launcher_settings(settings: LauncherSettings) -> Result<(), String> {
-    if let Ok(mut cache) = SETTINGS_CACHE.write() {
-        *cache = Some(settings.clone());
-    }
-
     let config_path = get_launcher_settings_path();
     let content = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize launcher settings: {}", e))?;
@@ -89,7 +88,13 @@ pub async fn save_launcher_settings(settings: LauncherSettings) -> Result<(), St
 
     tokio::fs::write(&config_path, content)
         .await
-        .map_err(|e| format!("Failed to write launcher settings: {}", e))
+        .map_err(|e| format!("Failed to write launcher settings: {}", e))?;
+
+    if let Ok(mut cache) = SETTINGS_CACHE.write() {
+        *cache = Some(settings);
+    }
+    
+    Ok(())
 }
 
 pub fn replace_download_url(url: &str, source: &DownloadSource) -> String {
