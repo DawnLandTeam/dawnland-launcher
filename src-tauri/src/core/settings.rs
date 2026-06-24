@@ -24,6 +24,8 @@ pub struct LauncherSettings {
     pub max_concurrent_downloads: u32,
     #[serde(default)]
     pub enable_telemetry: Option<bool>,
+    #[serde(default)]
+    pub global_max_memory: Option<u32>,
 }
 
 fn default_max_concurrent_downloads() -> u32 {
@@ -37,6 +39,7 @@ impl Default for LauncherSettings {
             download_source: DownloadSource::default(),
             max_concurrent_downloads: 32,
             enable_telemetry: None,
+            global_max_memory: None,
         }
     }
 }

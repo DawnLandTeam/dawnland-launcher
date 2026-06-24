@@ -127,6 +127,9 @@ async function loadLauncherSettings() {
     downloadSource.value = settings.downloadSource === 'bmclapi' ? 'bmclapi' : 'official';
     maxConcurrentDownloads.value = settings.maxConcurrentDownloads || 32;
     enableTelemetry.value = settings.enableTelemetry === true;
+    if (settings.globalMaxMemory) {
+      defaultMaxMemory.value = settings.globalMaxMemory;
+    }
   } catch (e) {
     console.error('Failed to load launcher settings:', e);
   }
@@ -139,7 +142,8 @@ async function saveLauncherSettings() {
         enableInstanceInheritance: enableInstanceInheritance.value,
         downloadSource: downloadSource.value,
         maxConcurrentDownloads: maxConcurrentDownloads.value,
-        enableTelemetry: enableTelemetry.value
+        enableTelemetry: enableTelemetry.value,
+        globalMaxMemory: defaultMaxMemory.value
       }
     });
   } catch (e) {
@@ -607,6 +611,7 @@ function changeLanguage(lang: string) {
             :max="systemMemory.totalMb"
             step="512"
             class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-800 accent-blue-500"
+            @change="saveLauncherSettings"
           />
           <div class="flex justify-between text-xs text-muted-foreground">
             <span>512 MB</span>
