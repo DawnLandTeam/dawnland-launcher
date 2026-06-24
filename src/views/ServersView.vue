@@ -46,13 +46,13 @@ interface FilterOptions {
   authTypes: string[];
 }
 
-// interface ServerListResponse {
-//   data: ServerInfo[];
-//   total: number;
-//   page: number;
-//   pageSize: number;
-//   totalPages: number;
-// }
+interface ServerListResponse {
+  data: ServerInfo[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
 
 interface ServerStatus {
   onlinePlayers: number;
@@ -117,9 +117,13 @@ async function applyFilters() {
   await fetchServers();
 }
 
-// Watch for filter changes
+// Watch for filter changes with debounce for search
+let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 watch(searchQuery, () => {
-  applyFilters();
+  if (searchTimeout) clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    applyFilters();
+  }, 500);
 });
 watch(filterMcVersion, () => {
   applyFilters();
@@ -177,10 +181,22 @@ async function fetchServers() {
   isLoading.value = true;
   error.value = null;
   try {
-    const response = await invoke<ServerInfo[]>("get_recommended_servers");
-    servers.value = response;
-    currentPage.value = 1;
-    totalPages.value = 1;
+    const response = await invoke<ServerListResponse>("get_servers", {
+      page: currentPage.value,
+      pageSize: 30,
+      search: searchQuery.value,
+      version: filterMcVersion.value,
+      serverType: filterServerType.value,
+      authType: filterAuthType.value
+    });
+    
+    if (currentPage.value === 1) {
+      servers.value = response.data;
+    } else {
+      servers.value = [...servers.value, ...response.data];
+    }
+    
+    totalPages.value = response.totalPages;
     
     // Check deep link after loading
     if (route.query.view_id && typeof route.query.view_id === 'string') {
@@ -202,7 +218,9 @@ async function fetchServers() {
 
 // Load more servers (infinite scroll)
 async function loadMoreServers() {
-  // Infinite scroll is disabled for the recommended ecosystem lobby.
+  if (isLoading.value || currentPage.value >= totalPages.value) return;
+  currentPage.value++;
+  await fetchServers();
 }
 
 const installedInstances = ref<any[]>([]);
@@ -331,26 +349,13 @@ const toggleFavorite = (serverId: number, event: Event) => {
 
 // Client-side filtering and sorting for the recommended ecosystem lobby
 const filteredServers = computed(() => {
-  let list = servers.value.filter(server => {
-    // Search match
-    const searchMatch = !searchQuery.value || 
-      server.name.toLowerCase().includes(searchQuery.value.toLowerCase()) || 
-      server.ip.toLowerCase().includes(searchQuery.value.toLowerCase());
-      
-    // Version match
-    const versionMatch = !filterMcVersion.value || server.version === filterMcVersion.value;
-    
-    // Type match
-    const typeMatch = !filterServerType.value || server.serverType === filterServerType.value;
-    
-    // Auth match
-    const authMatch = !filterAuthType.value || server.authType === filterAuthType.value;
-    
-    // Favorite match
-    const favoriteMatch = !showOnlyFavorites.value || favoriteServerIds.value.includes(server.id);
-    
-    return searchMatch && versionMatch && typeMatch && authMatch && favoriteMatch;
-  });
+  let list = [...servers.value];
+  
+  // Backend already handles search, version, type, and auth
+  // We only apply the favorite filter locally if active
+  if (showOnlyFavorites.value) {
+    list = list.filter(server => favoriteServerIds.value.includes(server.id));
+  }
   
   // Sort to bring favorites to top
   list.sort((a, b) => {
@@ -379,14 +384,18 @@ async function fetchServerStatus(server: ServerInfo) {
 
 const isRefreshing = ref(false);
 
-async function refreshAllServerStatuses() {
-  if (isRefreshing.value) return;
+async function refreshServers() {
+  if (isRefreshing.value || isLoading.value) return;
   isRefreshing.value = true;
   
   try {
-    // Re-fetch status for all currently filtered servers
-    const promises = filteredServers.value.map(server => fetchServerStatus(server));
-    await Promise.all(promises);
+    // Clear status cache to show loading
+    serverStatuses.value = {};
+    serverStatusesLoading.value = {};
+    
+    // Reset page and refetch data from backend
+    currentPage.value = 1;
+    await fetchServers();
   } finally {
     isRefreshing.value = false;
   }
@@ -555,11 +564,11 @@ async function openPublishUrl() {
           {{ $t('servers.publish') }}
         </button>
         <button
-          @click="refreshAllServerStatuses"
+          @click="refreshServers"
           :disabled="isRefreshing"
           class="flex items-center justify-center h-8 w-8 rounded-md border border-neutral-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-zinc-700 transition-colors"
-          :title="$t('servers.refreshStatuses', 'Refresh Statuses')"
-          :aria-label="$t('servers.refreshStatuses', 'Refresh Statuses')"
+          :title="$t('servers.refreshList', 'Refresh Server List')"
+          :aria-label="$t('servers.refreshList', 'Refresh Server List')"
         >
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': isRefreshing }" />
         </button>
