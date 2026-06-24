@@ -23,14 +23,13 @@ async function handleAction(agree: boolean) {
     const settings = await invoke<any>("load_launcher_settings");
     settings.enableTelemetry = agree;
     await invoke("save_launcher_settings", { settings });
-    
-    // Close modal
-    emit("update:open", false);
-    emit("resolved");
   } catch (err) {
     console.error("Failed to save privacy settings:", err);
     toast.error("Failed to save settings", String(err));
   } finally {
+    // Close modal regardless of success or failure
+    emit("update:open", false);
+    emit("resolved");
     isSaving.value = false;
   }
 }

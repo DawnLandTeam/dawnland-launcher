@@ -78,10 +78,6 @@ pub async fn load_launcher_settings() -> Result<LauncherSettings, String> {
 
 #[tauri::command]
 pub async fn save_launcher_settings(settings: LauncherSettings) -> Result<(), String> {
-    if let Ok(mut cache) = SETTINGS_CACHE.write() {
-        *cache = Some(settings.clone());
-    }
-
     let config_path = get_launcher_settings_path();
     let content = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize launcher settings: {}", e))?;
@@ -92,7 +88,13 @@ pub async fn save_launcher_settings(settings: LauncherSettings) -> Result<(), St
 
     tokio::fs::write(&config_path, content)
         .await
-        .map_err(|e| format!("Failed to write launcher settings: {}", e))
+        .map_err(|e| format!("Failed to write launcher settings: {}", e))?;
+
+    if let Ok(mut cache) = SETTINGS_CACHE.write() {
+        *cache = Some(settings);
+    }
+    
+    Ok(())
 }
 
 pub fn replace_download_url(url: &str, source: &DownloadSource) -> String {
