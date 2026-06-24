@@ -40,13 +40,6 @@ interface InstanceItem {
   isInstalling?: boolean;
 }
 
-interface Account {
-  id: string;
-  username: string;
-  accountType: string; // 'microsoft', 'offline', or 'authlib'
-  authlibUrl?: string;
-}
-
 interface GameLog {
   type: string;
   line: string;
@@ -59,6 +52,8 @@ interface InstanceState {
   missingCount?: number;
   isOpenJ9?: boolean;
 }
+
+import { Account, AuthlibAuthResult } from "../types";
 
 // Router for navigation to settings
 const router = useRouter();
@@ -152,6 +147,12 @@ const isRunning = computed(() => {
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
+
+const showAuthlibReauth = ref(false);
+const authlibReauthUsername = ref("");
+const authlibReauthPassword = ref("");
+const isReauthingAuthlib = ref(false);
+const authlibReauthError = ref<string | null>(null);
 const handleTaskAdded = () => {
   loadInstances();
 };
@@ -164,10 +165,10 @@ onMounted(async () => {
   await loadInstances();
   await loadAccounts();
 
-  // Fetch announcement
+// Fetch announcement
   try {
     const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-    const res = await fetchApi(`${backendUrl}/api/launcher/announcement`);
+  const res = await fetchApi(`${backendUrl}/api/launcher/announcement`);
     if (res.ok) {
       const data = await res.json();
       if (data.announcements && data.announcements.length > 0) {
@@ -504,6 +505,12 @@ async function handleLaunchError(e: any) {
     const versionMatch = errorObj.message?.match(/\d+/);
     const version = versionMatch ? versionMatch[0] : '17';
     alert(t('home.noCompatibleJava', { version }));
+  } else if (errorObj && errorObj.code === "AUTHLIB_REAUTH_REQUIRED") {
+    // Authlib re-auth logic
+    authlibReauthUsername.value = selectedAccount.value?.authlibEmail || "";
+    authlibReauthPassword.value = "";
+    authlibReauthError.value = null;
+    showAuthlibReauth.value = true;
   } else {
     const errorStr = getErrorMessage(e);
     if (errorStr.includes("login session has expired") || errorStr.includes("REAUTH_REQUIRED")) {
@@ -524,6 +531,55 @@ async function handleLaunchError(e: any) {
     } else {
       alert(t('home.launchFailed', { error: errorStr }));
     }
+  }
+}
+
+async function submitAuthlibReauth() {
+  if (!selectedAccount.value || selectedAccount.value.accountType !== 'authlib' || !authlibReauthPassword.value || !authlibReauthUsername.value) return;
+  isReauthingAuthlib.value = true;
+  authlibReauthError.value = null;
+  try {
+    const authResult = await invoke<AuthlibAuthResult>("authenticate_authlib_user", {
+      url: selectedAccount.value.authlibUrl || "",
+      username: authlibReauthUsername.value,
+      password: authlibReauthPassword.value
+    });
+    
+    const profiles = authResult.availableProfiles ?? [];
+    const matchingProfile = profiles.find(p => p.name.toLowerCase() === selectedAccount.value?.username.toLowerCase());
+    if (!matchingProfile) {
+      throw new Error("Profile not found in response");
+    }
+
+    const savedAccounts = await invoke<Account[]>("save_authlib_accounts", {
+      url: selectedAccount.value.authlibUrl || "",
+      selectedProfiles: [matchingProfile],
+      accessToken: authResult.accessToken,
+      clientToken: authResult.clientToken,
+      authlibServerName: authResult.authlibServerName,
+      authlibEmail: authlibReauthUsername.value.trim()
+    });
+
+    await loadAccounts();
+    // Update the selected account to the newly saved one safely
+    if (savedAccounts && savedAccounts.length > 0) {
+      const match = savedAccounts.find(a => 
+        a.accountType === 'authlib' && 
+        a.username === selectedAccount.value?.username &&
+        a.authlibUrl === selectedAccount.value?.authlibUrl
+      );
+      if (match) {
+        selectedAccountId.value = match.id;
+      }
+    }
+    
+    showAuthlibReauth.value = false;
+    authlibReauthPassword.value = "";
+    handlePrimaryAction(); // Auto-launch
+  } catch (err) {
+    authlibReauthError.value = getErrorMessage(err);
+  } finally {
+    isReauthingAuthlib.value = false;
   }
 }
 
@@ -791,6 +847,55 @@ function loaderBadgeClass(loaderType: string): string {
               </div>
               <div class="h-2 w-full bg-secondary rounded-full overflow-hidden animate-pulse">
                 <div class="h-full bg-amber-500 w-full" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- Authlib Reauth Modal -->
+    <Teleport to="body">
+      <Transition name="dialog">
+        <div v-if="showAuthlibReauth" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showAuthlibReauth = false" />
+          <div class="relative z-10 w-full max-w-sm bg-white dark:bg-zinc-900 border rounded-2xl shadow-2xl p-6">
+            <h3 class="text-xl font-bold mb-4">外置登录会话已过期</h3>
+            <p class="text-sm text-muted-foreground mb-4">
+              账号 <strong>{{ selectedAccount?.username }}</strong> 的会话已过期，请输入您的账号（邮箱）和密码以重新登录并继续启动：
+            </p>
+            
+            <div class="space-y-4">
+              <input 
+                type="text" 
+                v-model="authlibReauthUsername" 
+                placeholder="请输入邮箱或账号"
+                class="w-full flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <input 
+                type="password" 
+                v-model="authlibReauthPassword" 
+                placeholder="请输入密码"
+                class="w-full flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                @keyup.enter="submitAuthlibReauth"
+              />
+              <p v-if="authlibReauthError" class="text-xs text-red-500 font-medium">{{ authlibReauthError }}</p>
+              
+              <div class="flex justify-end gap-2 pt-2">
+                <button 
+                  class="h-9 px-4 py-2 inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground"
+                  @click="showAuthlibReauth = false"
+                >
+                  取消
+                </button>
+                <button 
+                  class="h-9 px-4 py-2 inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90"
+                  :disabled="isReauthingAuthlib || !authlibReauthPassword || !authlibReauthUsername"
+                  @click="submitAuthlibReauth"
+                >
+                  <Loader2 v-if="isReauthingAuthlib" class="h-4 w-4 mr-2 animate-spin" />
+                  重新登录并启动
+                </button>
               </div>
             </div>
           </div>

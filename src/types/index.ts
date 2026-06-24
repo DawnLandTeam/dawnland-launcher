@@ -5,3 +5,4 @@ export interface AppError {
 
 export * from './task';
 export * from './server';
+export * from './account';

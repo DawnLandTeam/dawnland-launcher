@@ -20,6 +20,23 @@ struct AuthenticateRequest {
     client_token: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ValidateRequest {
+    access_token: String,
+    client_token: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RefreshRequest {
+    access_token: String,
+    client_token: String,
+    request_user: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_profile: Option<YggdrasilProfile>,
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct YggdrasilProfile {
@@ -29,11 +46,11 @@ pub struct YggdrasilProfile {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct AuthenticateResponse {
-    access_token: String,
-    client_token: String,
-    available_profiles: Option<Vec<YggdrasilProfile>>,
-    selected_profile: Option<YggdrasilProfile>,
+pub struct AuthenticateResponse {
+    pub access_token: String,
+    pub client_token: String,
+    pub available_profiles: Option<Vec<YggdrasilProfile>>,
+    pub selected_profile: Option<YggdrasilProfile>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -230,6 +247,100 @@ pub async fn authenticate_authlib_user(
     })
 }
 
+pub async fn validate_authlib_token(url: &str, access_token: &str, client_token: &str) -> Result<bool, AppError> {
+    let client = Client::new();
+    let auth_url = format!("{}/authserver/validate", url.trim_end_matches('/'));
+
+    let req_body = ValidateRequest {
+        access_token: access_token.to_string(),
+        client_token: client_token.to_string(),
+    };
+
+    let res = client.post(&auth_url).json(&req_body).send().await?;
+    Ok(res.status().is_success())
+}
+
+pub async fn refresh_authlib_token(url: &str, access_token: &str, client_token: &str, selected_profile: Option<YggdrasilProfile>) -> Result<AuthenticateResponse, AppError> {
+    let client = Client::new();
+    let auth_url = format!("{}/authserver/refresh", url.trim_end_matches('/'));
+
+    let req_body = RefreshRequest {
+        access_token: access_token.to_string(),
+        client_token: client_token.to_string(),
+        request_user: true,
+        selected_profile,
+    };
+
+    let res = client.post(&auth_url).json(&req_body).send().await?;
+
+    if !res.status().is_success() {
+        let err_body = res.text().await.unwrap_or_default();
+        if let Ok(ygg_err) = serde_json::from_str::<YggdrasilError>(&err_body) {
+            return Err(DawnlandError::Unknown(
+                ygg_err.error_message.unwrap_or_else(|| {
+                    ygg_err.error.unwrap_or_else(|| "Unknown refresh error".to_string())
+                }),
+            ).into());
+        }
+        return Err(DawnlandError::Unknown("Refresh failed".to_string()).into());
+    }
+
+    let auth_res: AuthenticateResponse = res.json().await?;
+    Ok(auth_res)
+}
+
+
+pub async fn ensure_authlib_token_valid(account_id: &str) -> Result<Account, AppError> {
+    let accounts = get_accounts().await?;
+    let mut account = accounts.into_iter().find(|a| a.id == account_id).ok_or_else(|| DawnlandError::Unknown("Account not found".to_string()))?;
+
+    if account.account_type != AccountType::Authlib {
+        return Ok(account);
+    }
+
+    let authlib_url = account.authlib_url.as_ref().ok_or_else(|| DawnlandError::Unknown("Missing authlib URL".to_string()))?.clone();
+    let access_token = account.access_token.as_deref().unwrap_or("");
+    let client_token = account.client_token.as_deref().unwrap_or("");
+
+    if access_token.is_empty() || client_token.is_empty() {
+        return Err(DawnlandError::AuthlibReauthRequired.into());
+    }
+
+    let profile_to_bind = YggdrasilProfile {
+        id: account.id.replace("-", ""),
+        name: account.username.clone(),
+    };
+
+    tracing::info!("Refreshing Authlib token to ensure it is bound to profile {}...", profile_to_bind.name);
+    let refreshed_result = refresh_authlib_token(&authlib_url, access_token, client_token, Some(profile_to_bind)).await;
+    
+    match refreshed_result {
+        Ok(refreshed) => {
+            account.access_token = Some(refreshed.access_token.clone());
+            account.client_token = Some(refreshed.client_token.clone());
+
+            // Save updated account
+            let mut all_accounts = get_accounts().await?;
+            if let Some(a) = all_accounts.iter_mut().find(|a| a.id == account_id) {
+                a.access_token = account.access_token.clone();
+                a.client_token = account.client_token.clone();
+            }
+            save_accounts(&all_accounts).await?;
+            
+            Ok(account)
+        },
+        Err(e) => {
+            if e.code == "NETWORK_ERROR" {
+                tracing::warn!("Offline mode detected. Proceeding with existing Authlib token.");
+                return Ok(account);
+            }
+
+            tracing::warn!("Failed to refresh Authlib token: {:?}. Forcing reauth.", e);
+            Err(DawnlandError::AuthlibReauthRequired.into())
+        }
+    }
+}
+
 fn normalize_uuid(uuid_str: &str) -> String {
     if uuid_str.len() == 32 {
         format!(
@@ -252,6 +363,7 @@ pub async fn save_authlib_accounts(
     access_token: String,
     client_token: String,
     authlib_server_name: Option<String>,
+    authlib_email: Option<String>,
 ) -> Result<Vec<Account>, AppError> {
     if selected_profiles.is_empty() {
         return Err(DawnlandError::Unknown("No profiles selected".to_string()).into());
@@ -287,6 +399,7 @@ pub async fn save_authlib_accounts(
             authlib_url: Some(url.clone()),
             authlib_server_name: authlib_server_name.clone(),
             client_token: Some(client_token.clone()),
+            authlib_email: authlib_email.clone(),
         };
 
         accounts.push(account.clone());
@@ -438,6 +551,7 @@ mod tests {
             auth_res.access_token,
             auth_res.client_token,
             auth_res.authlib_server_name,
+            None,
         )
         .await;
 
