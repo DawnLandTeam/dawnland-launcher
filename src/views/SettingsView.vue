@@ -159,10 +159,11 @@ async function checkForUpdates() {
     if (res.status === 200) {
       const data = await res.json();
       if (data.version && data.version !== appVersion.value) {
-        const update = { version: data.version, body: data.notes || '' };
-        updateInfo.value = update;
+        const platformData = data.platforms?.[targetOS] || (data.platforms ? Object.values(data.platforms)[0] : null);
+        const update = { version: data.version, body: data.notes || '', md5: platformData?.md5, url: platformData?.url };
+        updateInfo.value = update as CustomUpdate;
         showUpdaterModal.value = true;
-        setUpdateAvailable(update);
+        setUpdateAvailable(update as CustomUpdate);
         return;
       }
     }

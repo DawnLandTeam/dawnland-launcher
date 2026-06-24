@@ -22,5 +22,9 @@ export function getErrorMessage(err: unknown): string {
     return (i18n.global.t as any)('errors.conflictingTask', { taskName });
   }
 
+  if (msg.includes("MD5 mismatch")) {
+    return (i18n.global.t as any)('errors.md5Mismatch');
+  }
+
   return msg || "Unknown error";
 }

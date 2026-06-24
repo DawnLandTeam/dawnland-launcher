@@ -3,6 +3,8 @@ import { ref, shallowRef } from 'vue';
 export interface CustomUpdate {
   version: string;
   body: string;
+  md5?: string;
+  url?: string;
 }
 
 // Global state for update

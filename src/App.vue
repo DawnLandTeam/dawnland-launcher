@@ -98,10 +98,11 @@ onMounted(async () => {
         const data = await res.json();
         if (data.version && data.version !== currentVersion) {
           console.log(`Update available: ${data.version}`);
-          const update = { version: data.version, body: data.notes || '' };
-          updateInfo.value = update;
+          const platformData = data.platforms?.[targetOS] || (data.platforms ? Object.values(data.platforms)[0] : null);
+          const update = { version: data.version, body: data.notes || '', md5: platformData?.md5, url: platformData?.url };
+          updateInfo.value = update as CustomUpdate;
           isUpdateModalOpen.value = true;
-          setUpdateAvailable(update);
+          setUpdateAvailable(update as CustomUpdate);
         }
       }
     } catch (error) {
