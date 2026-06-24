@@ -17,7 +17,9 @@ jobs:
     env:
       RELEASE_FILES: |
         src-tauri/target/release/DLML.exe
+        src-tauri/target/release/DLML.exe.md5
         src-tauri/target/release/bundle/appimage/*.AppImage
+        src-tauri/target/release/bundle/appimage/*.md5
     strategy:
       fail-fast: false
       matrix:
@@ -127,6 +129,35 @@ jobs:
           APTABASE_KEY: ${{ secrets.APTABASE_KEY }}
           APTABASE_URL: ${{ secrets.APTABASE_URL }}
         run: pnpm tauri build ${{ matrix.args }}
+
+      - name: Generate MD5 Checksums
+        run: |
+          node -e "
+          const crypto = require('crypto');
+          const fs = require('fs');
+          const path = require('path');
+          
+          function generateMd5(filePath) {
+            if (fs.existsSync(filePath)) {
+              const buffer = fs.readFileSync(filePath);
+              const md5Str = crypto.createHash('md5').update(buffer).digest('hex');
+              fs.writeFileSync(filePath + '.md5', md5Str);
+              console.log('Generated MD5 for ' + filePath + ': ' + md5Str);
+            }
+          }
+          
+          generateMd5('src-tauri/target/release/DLML.exe');
+          
+          const appImageDir = 'src-tauri/target/release/bundle/appimage';
+          if (fs.existsSync(appImageDir)) {
+            const files = fs.readdirSync(appImageDir);
+            for (const file of files) {
+              if (file.endsWith('.AppImage')) {
+                generateMd5(path.join(appImageDir, file));
+              }
+            }
+          }
+          "
 
       - name: Check if release exists
         id: check_release
