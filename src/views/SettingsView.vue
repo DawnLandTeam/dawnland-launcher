@@ -15,6 +15,7 @@ import { setUpdateAvailable, hasUpdateAvailable, type CustomUpdate, parseUpdateD
 import { trackEvent, getErrorType, sanitizeTrackingUrl } from "../utils/analytics";
 import { getErrorMessage } from "../utils/error";
 import { normalizeUpdateChannel, getUpdateChannelQuery } from "../utils/updateChannel";
+import { toast } from "../composables/useToast";
 
 const route = useRoute();
 const router = useRouter();
@@ -143,6 +144,7 @@ async function saveLauncherSettings() {
     });
   } catch (e) {
     console.error('Failed to save launcher settings:', e);
+    toast.error(t('settings.saveFailed', '保存设置失败'), getErrorMessage(e));
   }
 }
 

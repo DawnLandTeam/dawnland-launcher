@@ -24,6 +24,10 @@ export function getErrorMessage(err: unknown): string {
     const taskName = msg.replace("Database error: CONFLICTING_TASK:", "").trim();
     return (i18n.global.t as any)('errors.conflictingTask', { taskName });
   }
+  
+  if (msg.includes("Failed to write launcher settings") && msg.includes("os error 5")) {
+    return (i18n.global.t as any)('errors.settingsAccessDenied');
+  }
 
 
 

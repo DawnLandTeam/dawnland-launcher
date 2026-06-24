@@ -3,6 +3,10 @@ import { ref } from "vue";
 import { ShieldCheck, Check, X } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "../composables/useToast";
+import { getErrorMessage } from "../utils/error";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 defineProps<{
   open: boolean;
@@ -25,7 +29,7 @@ async function handleAction(agree: boolean) {
     await invoke("save_launcher_settings", { settings });
   } catch (err) {
     console.error("Failed to save privacy settings:", err);
-    toast.error("Failed to save settings", String(err));
+    toast.error(t('settings.saveFailed', "Failed to save settings"), getErrorMessage(err));
   } finally {
     // Close modal regardless of success or failure
     emit("update:open", false);

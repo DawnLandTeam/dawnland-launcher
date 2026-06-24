@@ -288,11 +288,13 @@
     "confirmAdd": "Confirm Add"
   },
   "errors": {
-    "conflictingTask": "A conflicting task is already running: {taskName}",
-    "md5Mismatch": "Update file is corrupted (MD5 mismatch). Update aborted."
+    "conflictingTask": "Conflicting task is running: {taskName}",
+    "md5Mismatch": "Update file is corrupted (MD5 mismatch). Update aborted.",
+    "settingsAccessDenied": "Failed to save settings: Access is denied (insufficient permissions or file in use)"
   },
   "settings": {
     "title": "Settings",
+    "saveFailed": "Failed to save settings",
     "desc": "Manage application settings",
     "tabs": {
       "general": "General",
