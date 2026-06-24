@@ -50,6 +50,8 @@ function formatBytes(bytes: number) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
+let unlistenFn: (() => void) | null = null;
+
 async function startUpdate() {
   if (!props.updateInfo || isDownloading.value) return;
   
@@ -61,8 +63,13 @@ async function startUpdate() {
     let downloaded = 0;
     let contentLength = 0;
     
+    if (unlistenFn) {
+      unlistenFn();
+      unlistenFn = null;
+    }
+    
     // Custom native launcher bypass
-    const unlisten = await listen<UpdateProgressPayload>("portable-update-progress", (event) => {
+    unlistenFn = await listen<UpdateProgressPayload>("portable-update-progress", (event) => {
       const payload = event.payload;
       switch (payload.event) {
         case 'Started':
@@ -83,7 +90,6 @@ async function startUpdate() {
     });
     
     await invoke("update_launcher", { version: props.updateInfo.version, md5: props.updateInfo.md5, url: props.updateInfo.url });
-    unlisten();
     
     // Update successful, restart the app
     await relaunch();
@@ -91,6 +97,11 @@ async function startUpdate() {
   } catch (err) {
     error.value = getErrorMessage(err);
     isDownloading.value = false;
+  } finally {
+    if (unlistenFn) {
+      unlistenFn();
+      unlistenFn = null;
+    }
   }
 }
 </script>
