@@ -16,6 +16,8 @@ pub enum DawnlandError {
     InstanceNotFound(String),
     #[error("No compatible Java {required_version} found")]
     NoCompatibleJava { required_version: u32 },
+    #[error("Update file is corrupted (MD5 mismatch). Update aborted.")]
+    Md5Mismatch,
     #[error("{0}")]
     Unknown(String),
 }
@@ -46,6 +48,7 @@ impl From<DawnlandError> for AppError {
             DawnlandError::JsonError(_) => "JSON_PARSE_ERROR",
             DawnlandError::InstanceNotFound(_) => "INSTANCE_NOT_FOUND",
             DawnlandError::NoCompatibleJava { .. } => "NO_COMPATIBLE_JAVA",
+            DawnlandError::Md5Mismatch => "MD5_MISMATCH",
             DawnlandError::Unknown(_) => "UNKNOWN_ERROR",
         };
 

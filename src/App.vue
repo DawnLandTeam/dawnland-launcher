@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
-import { setUpdateAvailable, type CustomUpdate } from "./composables/useUpdate";
+import { setUpdateAvailable, parseUpdateData, type CustomUpdate } from "./composables/useUpdate";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
@@ -96,13 +96,12 @@ onMounted(async () => {
       const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${currentVersion}${channel}`);
       if (res.status === 200) {
         const data = await res.json();
-        if (data.version && data.version !== currentVersion) {
-          console.log(`Update available: ${data.version}`);
-          const platformData = data.platforms?.[targetOS] || (data.platforms ? Object.values(data.platforms)[0] : null);
-          const update = { version: data.version, body: data.notes || '', md5: platformData?.md5, url: platformData?.url };
-          updateInfo.value = update as CustomUpdate;
+        const update = parseUpdateData(data, targetOS);
+        if (update && update.version !== currentVersion) {
+          console.log(`Update available: ${update.version}`);
+          updateInfo.value = update;
           isUpdateModalOpen.value = true;
-          setUpdateAvailable(update as CustomUpdate);
+          setUpdateAvailable(update);
         }
       }
     } catch (error) {

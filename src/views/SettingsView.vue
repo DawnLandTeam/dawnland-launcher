@@ -11,7 +11,7 @@ import DSelect from '../components/ui/DSelect.vue';
 import { useRoute, useRouter } from "vue-router";
 import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
-import { setUpdateAvailable, hasUpdateAvailable, type CustomUpdate } from "../composables/useUpdate";
+import { setUpdateAvailable, hasUpdateAvailable, type CustomUpdate, parseUpdateData } from "../composables/useUpdate";
 import { trackEvent, getErrorType, sanitizeTrackingUrl } from "../utils/analytics";
 import { getErrorMessage } from "../utils/error";
 import { normalizeUpdateChannel, getUpdateChannelQuery } from "../utils/updateChannel";
@@ -158,12 +158,11 @@ async function checkForUpdates() {
     const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${appVersion.value}${channel}`);
     if (res.status === 200) {
       const data = await res.json();
-      if (data.version && data.version !== appVersion.value) {
-        const platformData = data.platforms?.[targetOS] || (data.platforms ? Object.values(data.platforms)[0] : null);
-        const update = { version: data.version, body: data.notes || '', md5: platformData?.md5, url: platformData?.url };
-        updateInfo.value = update as CustomUpdate;
+      const update = parseUpdateData(data, targetOS);
+      if (update && update.version !== appVersion.value) {
+        updateInfo.value = update;
         showUpdaterModal.value = true;
-        setUpdateAvailable(update as CustomUpdate);
+        setUpdateAvailable(update);
         return;
       }
     }
