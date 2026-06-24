@@ -105,13 +105,13 @@ fn get_system_memory_mb() -> u32 {
 }
 
 /// Get recommended max memory based on system RAM.
-/// Returns 1/3 of system memory, capped between 1024MB and 8192MB.
+/// Returns 1/3 of system memory, capped between 1024MB and 16384MB.
 fn get_recommended_max_memory() -> u32 {
     let system_memory = get_system_memory_mb();
     let recommended = system_memory / 3;
 
     // Clamp to reasonable bounds
-    recommended.clamp(1024, 8192)
+    recommended.clamp(1024, 16384)
 }
 
 /// Normalize OS name from Rust to JSON format

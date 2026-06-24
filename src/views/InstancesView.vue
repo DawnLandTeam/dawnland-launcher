@@ -73,6 +73,9 @@ const settingsConfig = ref<InstanceConfig>({
 });
 const isSavingConfig = ref(false);
 
+const useGlobalMemory = ref(true);
+const globalMaxMemory = ref(4096);
+
 // System memory for slider
 const systemMemory = ref<SystemMemoryInfo>({
   totalMb: 8192,
@@ -190,6 +193,11 @@ async function refreshInstancesList() {
 async function loadSystemMemory() {
   try {
     systemMemory.value = await invoke<SystemMemoryInfo>("get_system_memory");
+    globalMaxMemory.value = systemMemory.value.recommendedMaxMb;
+    const settings = await invoke<any>("load_launcher_settings");
+    if (settings.globalMaxMemory) {
+      globalMaxMemory.value = settings.globalMaxMemory;
+    }
   } catch (e) {
     console.error("Failed to load system memory:", e);
   }
@@ -221,18 +229,20 @@ async function openSettings(instance: InstanceItem) {
     const config = await invoke<InstanceConfig>("get_instance_config", {
       versionId: instance.id,
     });
+    useGlobalMemory.value = !config.maxMemory;
     settingsConfig.value = {
       javaPath: config.javaPath || "",
-      maxMemory: config.maxMemory || 4096,
+      maxMemory: config.maxMemory || globalMaxMemory.value,
       jvmArgsExtra: config.jvmArgsExtra || [],
       windowBehavior: config.windowBehavior || "keep",
       showGameLog: config.showGameLog === true,
     };
   } catch (e) {
     console.error("Failed to load instance config:", e);
+    useGlobalMemory.value = true;
     settingsConfig.value = {
       javaPath: "",
-      maxMemory: 4096,
+      maxMemory: globalMaxMemory.value,
       jvmArgsExtra: [],
       windowBehavior: "keep",
       showGameLog: false,
@@ -255,7 +265,7 @@ async function saveSettings() {
   try {
     const config = {
       javaPath: settingsConfig.value.javaPath || null,
-      maxMemory: settingsConfig.value.maxMemory || null,
+      maxMemory: useGlobalMemory.value ? null : (settingsConfig.value.maxMemory || null),
       jvmArgsExtra: settingsConfig.value.jvmArgsExtra?.length
         ? settingsConfig.value.jvmArgsExtra
         : null,
@@ -570,23 +580,36 @@ function normalizedModpackVersion(version: string): string {
           <div class="space-y-2 mt-4">
             <div class="flex items-center justify-between">
               <label class="text-sm font-medium">{{ $t('instances.settingsDialog.maxMemory') }}</label>
-              <span class="text-sm font-mono text-primary"
-                >{{ settingsConfig.maxMemory }} MB</span
-              >
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" v-model="useGlobalMemory" class="sr-only peer">
+                <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                <span class="ml-2 text-sm font-medium text-gray-900 dark:text-gray-300">{{ $t('instances.settingsDialog.useGlobalMemory') }}</span>
+              </label>
             </div>
-            <input
-              v-model.number="settingsConfig.maxMemory"
-              type="range"
-              min="512"
-              :max="systemMemory.totalMb"
-              step="512"
-              class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-800 accent-blue-500"
-            />
-            <div class="flex justify-between text-xs text-muted-foreground">
-              <span>512 MB</span>
-              <span>{{ $t('instances.settingsDialog.systemMemory', { system: systemMemory.totalMb }) }}</span>
+            <div v-if="!useGlobalMemory">
+              <div class="flex items-center justify-end">
+                <span class="text-sm font-mono text-primary"
+                  >{{ settingsConfig.maxMemory }} MB</span
+                >
+              </div>
+              <input
+                v-model.number="settingsConfig.maxMemory"
+                type="range"
+                min="512"
+                :max="systemMemory.totalMb"
+                step="512"
+                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-800 accent-blue-500 mt-2"
+              />
+              <div class="flex justify-between text-xs text-muted-foreground">
+                <span>512 MB</span>
+                <span>{{ $t('instances.settingsDialog.systemMemory', { system: systemMemory.totalMb }) }}</span>
+              </div>
             </div>
-            <p class="text-xs text-muted-foreground">
+            <div v-else class="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg flex items-center justify-between">
+              <span>{{ $t('instances.settingsDialog.globalMemoryCurrently') }}</span>
+              <span class="font-mono text-primary">{{ globalMaxMemory }} MB</span>
+            </div>
+            <p class="text-xs text-muted-foreground mt-1">
               {{ $t('instances.settingsDialog.recommendedMemory', { recommended: systemMemory.recommendedMaxMb }) }}
             </p>
           </div>
