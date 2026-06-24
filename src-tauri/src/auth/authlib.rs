@@ -551,6 +551,7 @@ mod tests {
             auth_res.access_token,
             auth_res.client_token,
             auth_res.authlib_server_name,
+            None,
         )
         .await;
 
