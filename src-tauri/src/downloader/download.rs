@@ -706,30 +706,6 @@ pub async fn run_batch_download(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    #[test]
-    fn test_compute_sha1_sync() {
-        // Create a temporary file
-        let mut temp_file = NamedTempFile::new().unwrap();
-
-        // Write some known data
-        let data = b"hello world";
-        temp_file.write_all(data).unwrap();
-        temp_file.flush().unwrap();
-
-        // sha1 of "hello world" is 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed
-        let expected_hash = "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed";
-        let actual_hash = compute_sha1_sync(temp_file.path()).unwrap();
-
-        assert_eq!(actual_hash, expected_hash);
-    }
-}
-
 /// Generates a list of fallback URLs for a given BMCLAPI URL.
 fn get_bmclapi_fallbacks(url: &str) -> Vec<String> {
     let mut fallbacks = vec![];
@@ -768,3 +744,29 @@ fn get_bmclapi_fallbacks(url: &str) -> Vec<String> {
     }
     fallbacks
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_compute_sha1_sync() {
+        // Create a temporary file
+        let mut temp_file = NamedTempFile::new().unwrap();
+
+        // Write some known data
+        let data = b"hello world";
+        temp_file.write_all(data).unwrap();
+        temp_file.flush().unwrap();
+
+        // sha1 of "hello world" is 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed
+        let expected_hash = "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed";
+        let actual_hash = compute_sha1_sync(temp_file.path()).unwrap();
+
+        assert_eq!(actual_hash, expected_hash);
+    }
+}
+
+
