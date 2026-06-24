@@ -317,7 +317,9 @@
       "downloadSourceOfficial": "官方源 (Official)",
       "downloadSourceBmclapi": "BMCLAPI",
       "concurrentDownloadsTitle": "最大并发下载数",
-      "concurrentDownloadsDesc": "允许的最大同时下载任务数量"
+      "concurrentDownloadsDesc": "允许的最大同时下载任务数量",
+      "telemetryTitle": "遥测数据收集",
+      "telemetryDesc": "允许收集纯匿名的使用数据，帮助我们持续改善启动器体验"
     },
     "java": {
       "title": "Java 管理",
@@ -716,5 +718,11 @@
     "horror": "恐怖",
     "thermal_expansion": "热力膨胀",
     "thaumcraft": "神秘时代"
+  },
+  "privacy": {
+    "title": "隐私政策与遥测数据",
+    "content": "为了持续改善启动器体验，我们会收集纯匿名的遥测数据（如模块使用频率、操作系统类型、错误日志类型等）。\n\n这些数据仅用于产品统计和问题排查，绝不会包含任何能够识别您身份的个人隐私信息。您可以随时在「设置」中关闭此项数据收集。是否允许我们收集您的匿名使用数据？",
+    "agree": "同意并继续",
+    "decline": "拒绝并继续"
   }
 }

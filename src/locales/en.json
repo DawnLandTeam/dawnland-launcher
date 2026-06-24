@@ -317,7 +317,9 @@
       "downloadSourceOfficial": "Official",
       "downloadSourceBmclapi": "BMCLAPI",
       "concurrentDownloadsTitle": "Max Concurrent Downloads",
-      "concurrentDownloadsDesc": "Maximum number of simultaneous download tasks allowed"
+      "concurrentDownloadsDesc": "Maximum number of simultaneous download tasks allowed",
+      "telemetryTitle": "Telemetry Data Collection",
+      "telemetryDesc": "Allow collection of anonymous usage data to help us improve the launcher experience"
     },
     "java": {
       "title": "Java Management",
@@ -716,5 +718,11 @@
     "horror": "Horror",
     "thermal_expansion": "Thermal Expansion",
     "thaumcraft": "Thaumcraft"
+  },
+  "privacy": {
+    "title": "Privacy Policy & Telemetry",
+    "content": "To continuously improve the launcher experience, we collect anonymous telemetry data (such as module usage frequency, OS type, and error log types).\n\nThis data is used strictly for statistical and troubleshooting purposes and will never contain any personally identifiable information. You can disable this data collection at any time in the Settings. Do you allow us to collect your anonymous usage data?",
+    "agree": "Agree & Continue",
+    "decline": "Decline & Continue"
   }
 }

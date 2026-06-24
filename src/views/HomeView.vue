@@ -391,17 +391,17 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
     gameLogs.value = [];
     
     try {
-      trackEvent("game_launch_started", { instanceId: selectedInstanceId.value, auto: true });
+      // Event tracking removed: trackEvent("game_launch_started", { instanceId: selectedInstanceId.value, auto: true });
       await invoke("launch_instance", {
         versionId: selectedInstanceId.value,
         accountUuid: selectedAccountId.value,
         serverIp: (route.query.server_ip as string) || undefined,
         serverPort: parseInt(route.query.server_port as string) || undefined
       });
-      trackEvent("game_launched", { instanceId: selectedInstanceId.value, auto: true });
+      trackEvent("Game Launched", { accountType: selectedAccount.value?.accountType || "unknown", auto: true, instanceName: selectedInstanceId.value });
     } catch (e) {
       console.error("Failed to launch auto instance:", e);
-      trackEvent("error_occurred", { context: "auto_launch", error_type: getErrorType(e) });
+      trackEvent("Error Occurred", { context: "auto_launch", error_type: getErrorType(e) });
       launchingInstances.value.delete(selectedInstanceId.value);
       repairingInstances.value.delete(selectedInstanceId.value);
       isRepairing.value = false;
@@ -482,15 +482,15 @@ async function handlePrimaryAction() {
   }
 
   try {
-    trackEvent("game_launch_started", { instanceId: selectedInstanceId.value, auto: false });
+    // Event tracking removed: trackEvent("game_launch_started", { instanceId: selectedInstanceId.value, auto: false });
     await invoke("launch_instance", {
       versionId: selectedInstanceId.value,
       accountUuid: selectedAccountId.value,
     });
-    trackEvent("game_launched", { instanceId: selectedInstanceId.value, auto: false });
+    trackEvent("Game Launched", { accountType: selectedAccount.value?.accountType || "unknown", auto: false, instanceName: selectedInstanceId.value });
   } catch (e) {
     console.error("Failed to launch instance:", e);
-    trackEvent("error_occurred", { context: "manual_launch", error_type: getErrorType(e) });
+    trackEvent("Error Occurred", { context: "manual_launch", error_type: getErrorType(e) });
     launchingInstances.value.delete(selectedInstanceId.value);
     repairingInstances.value.delete(selectedInstanceId.value);
     isRepairing.value = false;

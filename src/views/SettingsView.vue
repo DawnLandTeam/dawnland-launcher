@@ -23,7 +23,7 @@ const router = useRouter();
 const appVersion = ref('0.0.0');
 
 onMounted(async () => {
-  trackEvent("settings_viewed");
+  trackEvent("Settings Viewed");
   try {
     appVersion.value = await getVersion();
   } catch (err) {
@@ -117,6 +117,7 @@ const updateChannel = ref(normalizeUpdateChannel(localStorage.getItem('updateCha
 const enableInstanceInheritance = ref(false);
 const downloadSource = ref<'official' | 'bmclapi'>('official');
 const maxConcurrentDownloads = ref(32);
+const enableTelemetry = ref(false);
 
 async function loadLauncherSettings() {
   try {
@@ -124,6 +125,7 @@ async function loadLauncherSettings() {
     enableInstanceInheritance.value = settings.enableInstanceInheritance;
     downloadSource.value = settings.downloadSource === 'bmclapi' ? 'bmclapi' : 'official';
     maxConcurrentDownloads.value = settings.maxConcurrentDownloads || 32;
+    enableTelemetry.value = settings.enableTelemetry === true;
   } catch (e) {
     console.error('Failed to load launcher settings:', e);
   }
@@ -135,7 +137,8 @@ async function saveLauncherSettings() {
       settings: {
         enableInstanceInheritance: enableInstanceInheritance.value,
         downloadSource: downloadSource.value,
-        maxConcurrentDownloads: maxConcurrentDownloads.value
+        maxConcurrentDownloads: maxConcurrentDownloads.value,
+        enableTelemetry: enableTelemetry.value
       }
     });
   } catch (e) {
@@ -226,11 +229,11 @@ async function addAuthlibServer(): Promise<void> {
     const server = await invoke<AuthlibServer>("add_authlib_server", { url: newAuthlibUrl.value.trim() });
     authlibServers.value = authlibServers.value.filter(s => s.url !== server.url);
     authlibServers.value.push(server);
-    trackEvent("authlib_added", { type: "manual_authlib", api: sanitizeTrackingUrl(newAuthlibUrl.value) });
+    trackEvent("Authlib Added", { type: "manual_authlib", api: sanitizeTrackingUrl(newAuthlibUrl.value) });
     newAuthlibUrl.value = "";
   } catch (err) {
     console.error("Failed to add authlib server:", err);
-    trackEvent("error_occurred", { 
+    trackEvent("Error Occurred", { 
       context: "manual_authlib", 
       error_type: getErrorType(err), 
       api: sanitizeTrackingUrl(newAuthlibUrl.value) 
@@ -417,11 +420,11 @@ async function downloadJava(majorVersion: number): Promise<void> {
 
     const javaInfo = await invoke<JavaInfo>("download_java", { majorVersion });
     installedJavas.value.unshift(javaInfo);
-    trackEvent("java_download_completed", { majorVersion, version: javaInfo.versionString });
+    trackEvent("Java Download Completed", { majorVersion, version: javaInfo.versionString });
     
   } catch (err) {
     console.error("Failed to download Java:", err);
-    trackEvent("error_occurred", { 
+    trackEvent("Error Occurred", { 
       context: "java_download", 
       error_type: getErrorType(err) 
     });
@@ -570,6 +573,21 @@ function changeLanguage(lang: string) {
             <span>128</span>
           </div>
         </div>
+      </div>
+
+      <!-- Telemetry Settings -->
+      <div class="relative z-5 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div>
+          <h2 class="text-lg font-semibold flex items-center gap-2">
+            <Shield :size="20" class="text-primary" />
+            {{ $t('settings.general.telemetryTitle', '遥测数据收集') }}
+          </h2>
+          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.telemetryDesc', '允许收集纯匿名的使用数据，帮助我们持续改善启动器体验') }}</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" v-model="enableTelemetry" @change="saveLauncherSettings" class="sr-only peer">
+          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+        </label>
       </div>
 
       <!-- Global Memory Settings -->

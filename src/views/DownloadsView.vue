@@ -10,7 +10,8 @@ import ResourcepackInstallTab from "../components/downloads/ResourcepackInstallT
 import ShaderpackInstallTab from "../components/downloads/ShaderpackInstallTab.vue";
 import WorldInstallTab from "../components/downloads/WorldInstallTab.vue";
 import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
+import { trackEvent } from "../utils/analytics";
 
 const route = useRoute();
 const router = useRouter();
@@ -48,6 +49,10 @@ function switchTab(tabId: string) {
   activeTab.value = tabId;
   router.replace({ query: { tab: tabId } });
 }
+
+onMounted(() => {
+  trackEvent("Downloads Viewed");
+});
 </script>
 
 <template>

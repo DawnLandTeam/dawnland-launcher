@@ -44,4 +44,4 @@ app.use(i18n);
 app.directive('safe-html', safeHtml);
 app.mount("#app");
 
-trackEvent("app_started").catch(console.error);
+trackEvent("App Started").catch(console.error);

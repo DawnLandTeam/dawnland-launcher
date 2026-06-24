@@ -4,6 +4,7 @@ import { onClickOutside } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import type { SelectOption } from "../ui/DSelect.vue";
 import { invoke } from "@tauri-apps/api/core";
+import { trackEvent, getErrorType } from "../../utils/analytics";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Download, Loader2, Check, Puzzle,  } from "@lucide/vue";
 import DInput from "../ui/DInput.vue";
@@ -645,9 +646,15 @@ async function installVersion(): Promise<void> {
 
     currentTaskId.value = taskId;
     
+    trackEvent("Instance Install Completed", { 
+      version: selectedVersion.value, 
+      loader: installModLoader.value ? selectedLoaderType.value : undefined 
+    });
+
     // We do not set isInstalling = false here anymore because the task runs in the background.
     // The user will see the task progress via TaskDetailView.
   } catch (err) {
+    trackEvent("Error Occurred", { context: "instance_install", error_type: getErrorType(err) });
     error.value = getErrorMessage(err);
     isInstalling.value = false;
   }

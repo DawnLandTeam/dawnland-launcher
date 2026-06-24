@@ -164,7 +164,7 @@ async function addOfflineAccount(): Promise<void> {
   try {
     await invoke("add_offline_account", { username: newUsername.value.trim() });
     newUsername.value = "";
-    trackEvent("account_added", { type: "offline" });
+    trackEvent("Account Added", { type: "offline" });
     await loadAccounts();
     closeAddAccountModal();
     // Notify other views to refresh accounts
@@ -197,7 +197,7 @@ async function addAuthlibAccount(): Promise<void> {
       .map(p => p.id);
     
   } catch (err) {
-    trackEvent("login_failed", { 
+    trackEvent("Login Failed", { 
       type: "authlib", 
       error_type: getErrorType(err), 
       api: sanitizeTrackingUrl(authlibUrl.value) 
@@ -231,12 +231,12 @@ async function saveAuthlibAccounts(): Promise<void> {
     tempAuthData.value = null;
     selectedAuthlibProfiles.value = [];
     
-    trackEvent("account_added", { type: "authlib", api: sanitizeTrackingUrl(authlibUrl.value) });
+    trackEvent("Account Added", { type: "authlib", api: sanitizeTrackingUrl(authlibUrl.value) });
     await loadAccounts();
     closeAddAccountModal();
     await emit("accounts-updated");
   } catch (err) {
-    trackEvent("login_failed", { 
+    trackEvent("Login Failed", { 
       type: "authlib", 
       error_type: getErrorType(err), 
       api: sanitizeTrackingUrl(authlibUrl.value),
@@ -317,13 +317,13 @@ async function startSeamlessMicrosoftLogin(): Promise<void> {
     const account = await invoke<Account>("login_microsoft_oauth");
     if (!accounts.value) accounts.value = [];
     accounts.value.push(account);
-    trackEvent("account_added", { type: "microsoft", flow: "seamless" });
+    trackEvent("Account Added", { type: "microsoft", flow: "seamless" });
     isLoggingInMicrosoft.value = false;
     closeAddAccountModal();
     // Notify other views to refresh accounts
     await emit("accounts-updated");
   } catch (err) {
-    trackEvent("login_failed", { type: "microsoft", flow: "seamless", error_type: getErrorType(err) });
+    trackEvent("Login Failed", { type: "microsoft", flow: "seamless", error_type: getErrorType(err) });
     loginError.value = getErrorMessage(err);
     isLoggingInMicrosoft.value = false;
   }
@@ -342,7 +342,7 @@ async function startMicrosoftLogin(): Promise<void> {
 
     pollMicrosoftToken(response.deviceCode);
   } catch (err) {
-    trackEvent("login_failed", { type: "microsoft", flow: "device_code_init", error_type: getErrorType(err) });
+    trackEvent("Login Failed", { type: "microsoft", flow: "device_code_init", error_type: getErrorType(err) });
     loginError.value = getErrorMessage(err);
     isLoggingInMicrosoft.value = false;
   }
@@ -354,7 +354,7 @@ async function pollMicrosoftToken(code: string): Promise<void> {
     const account = await invoke<Account>("poll_microsoft_token", { deviceCode: code });
     if (!accounts.value) accounts.value = [];
     accounts.value.push(account);
-    trackEvent("account_added", { type: "microsoft", flow: "device_code" });
+    trackEvent("Account Added", { type: "microsoft", flow: "device_code" });
     microsoftLoginData.value = null;
     isLoggingInMicrosoft.value = false;
     closeAddAccountModal();
@@ -365,7 +365,7 @@ async function pollMicrosoftToken(code: string): Promise<void> {
     if (errorMsg.includes("authorization_pending")) {
       setTimeout(() => pollMicrosoftToken(code), 5000);
     } else if (errorMsg.includes("expired_token") || errorMsg.includes("cancellation")) {
-      trackEvent("login_failed", { type: "microsoft", flow: "device_code", error_type: "DeviceCodeError", error_msg: errorMsg });
+      trackEvent("Login Failed", { type: "microsoft", flow: "device_code", error_type: "DeviceCodeError", error_msg: errorMsg });
       loginError.value = errorMsg;
       microsoftLoginData.value = null;
       isLoggingInMicrosoft.value = false;
@@ -393,8 +393,9 @@ function isAuthlibAccount(account: Account): boolean {
   return account.accountType === "authlib";
 }
 
-onMounted(() => {
-  loadAccounts();
+onMounted(async () => {
+  trackEvent("Accounts Viewed");
+  await loadAccounts();
   window.addEventListener('authlib-servers-updated', loadAuthlibServers);
 });
 
@@ -416,11 +417,11 @@ watch(
       if (!exists) {
         try {
           await invoke("add_authlib_server", { url });
-          trackEvent("authlib_added", { type: "manual_authlib", api: sanitizeTrackingUrl(url) });
+          trackEvent("Authlib Added", { type: "manual_authlib", api: sanitizeTrackingUrl(url) });
           await loadAuthlibServers();
         } catch (err) {
           console.error("Failed to auto-add authlib server:", err);
-          trackEvent("error_occurred", { 
+          trackEvent("Error Occurred", { 
             context: "manual_authlib", 
             error_type: getErrorType(err), 
             api: sanitizeTrackingUrl(url) 

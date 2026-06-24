@@ -3,6 +3,7 @@ import { ref, onMounted, computed, watch, h, onActivated, onUnmounted } from "vu
 import DMultiSelect from "../ui/DMultiSelect.vue";
 import DSelect from "../ui/DSelect.vue";
 import { invoke } from "@tauri-apps/api/core";
+import { trackEvent, getErrorType } from "../../utils/analytics";
 import DInput from "../ui/DInput.vue";
 import { Search, AlertCircle, Loader2 } from "@lucide/vue";
 import { getErrorMessage } from "../../utils/error";
@@ -492,7 +493,9 @@ async function startActualDownload(mod: UnifiedModProject, fileId: string, targe
         }
       });
     }
+    trackEvent("Shaderpack Install Completed", { name: mod.title, projectId: mod.project_id, versionId: latestFile.id });
   } catch (err) {
+    trackEvent("Error Occurred", { context: "shaderpack_install", error_type: getErrorType(err) });
     toast.error(getErrorMessage(err));
   } finally {
     isDownloading.value = false;

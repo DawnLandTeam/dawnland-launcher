@@ -290,6 +290,12 @@ pub async fn app_track_event(
     name: String,
     props: Option<serde_json::Value>,
 ) -> Result<(), AppError> {
+    let settings = crate::core::settings::get_launcher_settings_sync();
+    if settings.enable_telemetry != Some(true) {
+        tracing::debug!("Telemetry disabled or unconfirmed. Dropping event: {}", name);
+        return Ok(());
+    }
+
     let aptabase_key = option_env!("APTABASE_KEY")
         .map(String::from)
         .or_else(|| std::env::var("APTABASE_KEY").ok())

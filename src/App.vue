@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
+import PrivacyPolicyModal from "./components/PrivacyPolicyModal.vue";
 import { setUpdateAvailable, parseUpdateData, type CustomUpdate } from "./composables/useUpdate";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
@@ -23,6 +24,8 @@ import { fetchApi } from "./utils/api";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
+const showPrivacyModal = ref(false);
+const hasPendingUpdate = ref(false);
 const showDeepLinkModal = ref(false);
 const incomingLinkData = ref<DeepLinkData | null>(null);
 const { locale, t } = useI18n();
@@ -34,6 +37,16 @@ let unlistenDeepLink: (() => void) | null = null;
 onMounted(async () => {
   // Show window immediately to prevent blank startup if subsequent awaits fail
   getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
+
+  // Check Privacy Policy
+  try {
+    const settings = await invoke<any>("load_launcher_settings");
+    if (settings.enableTelemetry === null || settings.enableTelemetry === undefined) {
+      showPrivacyModal.value = true;
+    }
+  } catch (err) {
+    console.error("Failed to check privacy settings:", err);
+  }
 
   // Initialize task center
   await taskStore.init();
@@ -100,8 +113,12 @@ onMounted(async () => {
         if (update && update.version !== currentVersion) {
           console.log(`Update available: ${update.version}`);
           updateInfo.value = update;
-          isUpdateModalOpen.value = true;
-          setUpdateAvailable(update);
+          if (showPrivacyModal.value) {
+            hasPendingUpdate.value = true;
+          } else {
+            isUpdateModalOpen.value = true;
+            setUpdateAvailable(update);
+          }
         }
       }
     } catch (error) {
@@ -113,6 +130,13 @@ onMounted(async () => {
   document.addEventListener('dragover', handleDrag, true);
   document.addEventListener('drop', handleDrop, true);
 });
+
+function handlePrivacyResolved() {
+  if (hasPendingUpdate.value && updateInfo.value) {
+    isUpdateModalOpen.value = true;
+    setUpdateAvailable(updateInfo.value);
+  }
+}
 
 // Handle Deep Link Confirmation
 const handleDeepLinkConfirm = async (data: DeepLinkData) => {
@@ -130,7 +154,6 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
         const rawName = name || targetVersion.name || targetVersion.displayName || 'Shared Modpack';
         const finalName = rawName.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
         
-        trackEvent("modpack_install_started", { type: "deeplink_online", source });
         await invoke("download_and_install_online_modpack", {
           url: targetVersion.download_url,
           instanceName: finalName,
@@ -139,14 +162,15 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
           versionId: versionId,
           isUpdate: false
         });
+        trackEvent("Modpack Install Completed", { name: targetVersion.name || targetVersion.displayName || name || 'Shared Modpack', projectId });
         toast.success(t('deepLink.installStarted', '已开始安装整合包'), t('deepLink.installStartedDesc', '请在任务中心查看进度'));
       } else {
         toast.error(t('deepLink.installFailed', '安装失败'), t('deepLink.versionNotFound', '未找到对应的整合包版本'));
-        trackEvent("error_occurred", { context: "deeplink_modpack_install", error_type: "VersionNotFound" });
+        trackEvent("Error Occurred", { context: "deeplink_modpack_install", error_type: "VersionNotFound" });
       }
     } catch (e) {
       toast.error(t('deepLink.installFailed', '安装失败'), String(e));
-      trackEvent("error_occurred", { 
+      trackEvent("Error Occurred", { 
         context: "deeplink_modpack_install", 
         error_type: getErrorType(e) 
       });
@@ -156,11 +180,11 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
       .then(() => {
         window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
         alert(t('settings.authlib.addSuccess', { url: data.payload.url }));
-        trackEvent("authlib_added", { type: "deeplink_authlib", api: sanitizeTrackingUrl(data.payload.url) });
+        trackEvent("Authlib Added", { type: "deeplink_authlib", api: sanitizeTrackingUrl(data.payload.url) });
       })
       .catch(err => {
         alert(t('settings.authlib.addFailed', { error: String(err) }));
-        trackEvent("error_occurred", { 
+        trackEvent("Error Occurred", { 
           context: "deeplink_authlib", 
           error_type: getErrorType(err), 
           api: sanitizeTrackingUrl(data.payload.url) 
@@ -199,10 +223,10 @@ const handleDrop = async (e: DragEvent) => {
         await invoke("add_authlib_server", { url: url.trim() });
         window.dispatchEvent(new CustomEvent('authlib-servers-updated'));
         alert(t('settings.authlib.addSuccess', { url }));
-        trackEvent("authlib_added", { type: "deeplink_authlib_drop", api: sanitizeTrackingUrl(url) });
+        trackEvent("Authlib Added", { type: "deeplink_authlib_drop", api: sanitizeTrackingUrl(url) });
       } catch (err) {
         alert(t('settings.authlib.addFailed', { error: String(err) }));
-        trackEvent("error_occurred", { 
+        trackEvent("Error Occurred", { 
           context: "deeplink_authlib_drop", 
           error_type: getErrorType(err), 
           api: sanitizeTrackingUrl(url) 
@@ -224,6 +248,7 @@ onUnmounted(() => {
 
 <template>
   <MainLayout />
+  <PrivacyPolicyModal v-model:open="showPrivacyModal" @resolved="handlePrivacyResolved" />
   <UpdaterModal v-model:open="isUpdateModalOpen" :update-info="updateInfo" />
   <TaskCenter />
   <TaskDetailModal />
