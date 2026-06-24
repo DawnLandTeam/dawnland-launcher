@@ -4,7 +4,8 @@ test.describe('Servers View', () => {
   test('should render server list from backend API', async ({ page, mockTauri }) => {
     // Mock the backend API call for servers
     await mockTauri.setMockResponses({
-      'get_recommended_servers': [
+      'get_servers': {
+        data: [
         { 
           id: 1, 
           name: 'Dawnland Official', 
@@ -33,7 +34,9 @@ test.describe('Servers View', () => {
           email: '',
           isActive: true
         }
-      ],
+        ],
+        totalPages: 1
+      },
       'ping_server': {
         onlinePlayers: 42,
         maxPlayers: 100,

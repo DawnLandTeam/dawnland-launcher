@@ -27,8 +27,11 @@ export const test = base.extend<TauriFixtures>({
       'get_system_locale': 'en-US',
       'get_system_memory': { totalMb: 16384, recommendedMaxMb: 4096 },
       'get_settings': { java_path: '', memory_limit: 4096, language: 'en' },
+      'load_launcher_settings': { enableTelemetry: true, downloadSource: 'official' },
+      'fetch_available_javas': [8, 17, 21],
       'plugin:app|version': '0.0.1',
       'plugin:window|show': null,
+      'save_launcher_settings': null,
     };
 
     // Expose functions to the browser context
