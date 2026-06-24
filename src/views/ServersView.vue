@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, onActivated, onDeactivated, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import DInput from '../components/ui/DInput.vue';
@@ -114,6 +114,7 @@ const filterAuthType = ref<string>("");
 // Re-fetch servers when filters change
 async function applyFilters() {
   currentPage.value = 1;
+  servers.value = [];
   await fetchServers();
 }
 
@@ -124,6 +125,13 @@ watch(searchQuery, () => {
   searchTimeout = setTimeout(() => {
     applyFilters();
   }, 500);
+});
+
+onBeforeUnmount(() => {
+  if (searchTimeout) {
+    clearTimeout(searchTimeout);
+    searchTimeout = null;
+  }
 });
 watch(filterMcVersion, () => {
   applyFilters();
