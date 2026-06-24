@@ -288,7 +288,8 @@
     "confirmAdd": "确认添加"
   },
   "errors": {
-    "conflictingTask": "有冲突的任务正在运行: {taskName}"
+    "conflictingTask": "有冲突的任务正在运行: {taskName}",
+    "md5Mismatch": "更新文件已损坏 (MD5 校验失败)。更新已中止。"
   },
   "settings": {
     "title": "设置",

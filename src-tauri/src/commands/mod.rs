@@ -162,18 +162,22 @@ pub struct ProgressData {
 }
 
 #[tauri::command]
-pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), AppError> {
-    let filename = if cfg!(target_os = "windows") {
-        "DLML.exe"
-    } else if cfg!(target_os = "linux") {
-        "amd64.AppImage"
+pub async fn update_launcher(version: String, md5: Option<String>, url: Option<String>, app: AppHandle) -> Result<(), AppError> {
+    let url = if let Some(u) = url {
+        u
     } else {
-        return Err(
-            DawnlandError::Unknown("Unsupported OS for native auto-update".to_string()).into(),
-        );
+        let filename = if cfg!(target_os = "windows") {
+            "DLML.exe"
+        } else if cfg!(target_os = "linux") {
+            "amd64.AppImage"
+        } else {
+            return Err(
+                DawnlandError::Unknown("Unsupported OS for native auto-update".to_string()).into(),
+            );
+        };
+        format!("https://dl.88880222.xyz/releases/v{}/{}", version, filename)
     };
-
-    let url = format!("https://dl.88880222.xyz/releases/v{}/{}", version, filename);
+    
     tracing::info!("Starting native update from {}", url);
 
     use std::io::Write;
@@ -232,6 +236,21 @@ pub async fn update_launcher(version: String, app: AppHandle) -> Result<(), AppE
     temp_file.flush().map_err(|e| e.to_string())?;
 
     let temp_path = temp_file.into_temp_path();
+    
+    // Verify MD5 if provided
+    if let Some(expected_md5) = md5 {
+        tracing::info!("Verifying MD5 checksum...");
+        let file_bytes = std::fs::read(&temp_path).map_err(|e| format!("Failed to read temp file for MD5 verification: {}", e))?;
+        let computed_md5 = format!("{:x}", md5::compute(file_bytes));
+        let expected_md5_normalized = expected_md5.trim().to_lowercase();
+        
+        if computed_md5 != expected_md5_normalized {
+            tracing::error!("MD5 mismatch! Expected: {}, Computed: {}", expected_md5_normalized, computed_md5);
+            return Err(DawnlandError::Md5Mismatch.into());
+        }
+        tracing::info!("MD5 verification passed.");
+    }
+
     tracing::info!("Performing self-replace with downloaded file");
 
     // Set execution permissions on Linux

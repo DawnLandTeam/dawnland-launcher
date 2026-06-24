@@ -5,7 +5,10 @@ export function getErrorMessage(err: unknown): string {
 
   let msg = "";
   if (typeof err === "object") {
-    const anyErr = err as { message?: unknown; data?: unknown };
+    const anyErr = err as { code?: string; message?: unknown; data?: unknown };
+    if (anyErr.code === "MD5_MISMATCH") {
+      return (i18n.global.t as any)('errors.md5Mismatch');
+    }
     if (typeof anyErr.message === "string" && anyErr.message) {
       msg = anyErr.message;
     } else if (typeof anyErr.data === "string" && anyErr.data) {
@@ -21,6 +24,8 @@ export function getErrorMessage(err: unknown): string {
     const taskName = msg.replace("Database error: CONFLICTING_TASK:", "").trim();
     return (i18n.global.t as any)('errors.conflictingTask', { taskName });
   }
+
+
 
   return msg || "Unknown error";
 }

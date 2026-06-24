@@ -82,7 +82,7 @@ async function startUpdate() {
       }
     });
     
-    await invoke("update_launcher", { version: props.updateInfo.version });
+    await invoke("update_launcher", { version: props.updateInfo.version, md5: props.updateInfo.md5, url: props.updateInfo.url });
     unlisten();
     
     // Update successful, restart the app

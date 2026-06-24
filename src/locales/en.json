@@ -288,7 +288,8 @@
     "confirmAdd": "Confirm Add"
   },
   "errors": {
-    "conflictingTask": "A conflicting task is already running: {taskName}"
+    "conflictingTask": "A conflicting task is already running: {taskName}",
+    "md5Mismatch": "Update file is corrupted (MD5 mismatch). Update aborted."
   },
   "settings": {
     "title": "Settings",
