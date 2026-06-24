@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { ShieldCheck, Check, X } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "../composables/useToast";
 
 defineProps<{
   open: boolean;
@@ -28,6 +29,7 @@ async function handleAction(agree: boolean) {
     emit("resolved");
   } catch (err) {
     console.error("Failed to save privacy settings:", err);
+    toast.error("Failed to save settings", String(err));
   } finally {
     isSaving.value = false;
   }
