@@ -675,7 +675,7 @@ pub async fn delete_local_datapack(version_id: String, world_name: String, filen
 
 /// Get list of installed mods for a specific instance
 #[tauri::command]
-pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>, String> {
+pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) -> Result<Vec<LocalModItem>, String> {
     tracing::info!("Getting installed mods for instance: {}", version_id);
 
     let base_dir = get_minecraft_base();
@@ -728,19 +728,27 @@ pub async fn get_installed_mods(version_id: String) -> Result<Vec<LocalModItem>,
         let meta = if let Some(m) = cache_entries.get(&cache_key) {
             m.clone()
         } else {
-            let path_clone = path.clone();
-            let key_clone = cache_key.clone();
-            let base_dir_clone = base_dir.clone();
-            let m = tokio::task::spawn_blocking(move || {
-                let p = crate::core::mod_parser::ModParser::new(&base_dir_clone);
-                p.parse_mod(&path_clone, &key_clone)
-            })
-            .await
-            .unwrap_or_default();
+            if skip_parsing.unwrap_or(false) {
+                // Skip parsing and return default metadata.
+                // We intentionally do not insert this empty metadata into `cache_entries`
+                // or save it to disk. This ensures that a subsequent call without `skip_parsing`
+                // will correctly parse and cache the true metadata.
+                crate::core::mod_parser::ModMetadata::default()
+            } else {
+                let path_clone = path.clone();
+                let key_clone = cache_key.clone();
+                let base_dir_clone = base_dir.clone();
+                let m = tokio::task::spawn_blocking(move || {
+                    let p = crate::core::mod_parser::ModParser::new(&base_dir_clone);
+                    p.parse_mod(&path_clone, &key_clone)
+                })
+                .await
+                .unwrap_or_default();
 
-            cache_entries.insert(cache_key.clone(), m.clone());
-            parser.set_cache_entry(&cache_key, &m);
-            m
+                cache_entries.insert(cache_key.clone(), m.clone());
+                parser.set_cache_entry(&cache_key, &m);
+                m
+            }
         };
 
         let icon_url = if meta.has_icon {

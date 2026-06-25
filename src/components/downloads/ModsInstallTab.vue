@@ -587,16 +587,23 @@ async function startInstallToInstance() {
   const deps = includeDependencies.value ? pendingDependencies.value : [];
   
   try {
-    const installedMods = await invoke<LocalModItem[]>('get_installed_mods', { versionId: selectedInstanceId.value });
+    const installedMods = await invoke<LocalModItem[]>('get_installed_mods', { versionId: selectedInstanceId.value, skipParsing: true });
     const searchName = pendingMod.value.title.toLowerCase();
+    const targetFile = installFiles.value.find(f => f.id === selectedFileId.value);
+    const targetFilename = targetFile?.filename?.toLowerCase() || '';
+    
     const duplicates = installedMods.filter(m => {
-      return (m.name && searchName.includes(m.name.toLowerCase())) ||
-             (m.name && m.name.toLowerCase().includes(searchName)) ||
-             (m.mod_id && m.mod_id === pendingMod.value?.project_id);
+      const matchName = (m.name && searchName.includes(m.name.toLowerCase())) ||
+                        (m.name && m.name.toLowerCase().includes(searchName));
+      const matchId = (m.mod_id && m.mod_id === pendingMod.value?.project_id);
+      
+      // Fallback: compare against the actual filename of the file being installed
+      const matchFilename = (!m.name && !m.mod_id && m.filename && targetFilename && m.filename.toLowerCase() === targetFilename);
+      
+      return matchName || matchId || matchFilename;
     });
     
     if (duplicates.length > 0) {
-      const targetFile = installFiles.value.find(f => f.id === selectedFileId.value);
       hasExactFilenameConflict.value = duplicates.some(m => m.filename === targetFile?.filename);
       duplicateModsFound.value = duplicates;
       showDuplicateWarning.value = true;
