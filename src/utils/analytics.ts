@@ -35,6 +35,7 @@ export type AnalyticsEvents = {
   "Resourcepack Install Completed": { name: string, projectId?: string, versionId?: string };
   "Shaderpack Install Completed": { name: string, projectId?: string, versionId?: string };
   "World Install Completed": { name: string, projectId?: string, versionId?: string };
+  "Datapack Install Completed": { name: string, projectId?: string, versionId?: string };
   "Game Launched": { accountType: string, auto?: boolean, instanceName?: string };
   "Java Download Completed": { majorVersion: number, version: string };
   "Error Occurred": { context: string, error_type: string, [key: string]: any };

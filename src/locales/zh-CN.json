@@ -79,6 +79,14 @@
     "downloadMoreMods": "下载更多模组",
     "noLocalMods": "该实例还没有安装任何模组",
     "searchLocalMods": "搜索已安装的模组...",
+    "datapacks": "数据包",
+    "localDatapacksTitle": "本地数据包管理",
+    "selectWorldToManage": "选择要管理的存档",
+    "noLocalDatapacks": "当前存档暂无数据包",
+    "searchLocalDatapacks": "搜索已安装的数据包...",
+    "downloadMoreDatapacks": "下载更多数据包",
+    "deleteDatapackConfirm": "确定要删除该数据包吗？",
+    "deleteDatapackConfirmDesc": "此操作无法撤销，该数据包将被永久删除。",
     "deleteModConfirm": "确定要删除该模组吗？",
     "deleteModConfirmDesc": "此操作无法撤销，该模组文件将被永久删除。",
     "delete": "删除",
@@ -507,7 +515,9 @@
     "checkTaskCenter": "请前往任务中心查看进度",
     "installToInstance": "安装到选中实例",
     "downloadOnly": "仅下载",
-    "downloadToDir": "下载到本地目录"
+    "downloadToDir": "下载到本地目录",
+    "selectWorldSave": "选择目标世界存档",
+    "noWorldsFound": "当前实例下未找到任何世界存档，请先运行游戏创建一个世界！"
   },
   "instanceMods": {
     "title": "管理 Mod",
@@ -620,7 +630,8 @@
     "installMod": "安装模组 {name}",
     "installResourcepack": "下载资源包 {name}",
     "installShaderpack": "下载光影 {name}",
-    "installWorld": "下载世界 {name}"
+    "installWorld": "下载世界 {name}",
+    "installDatapack": "下载数据包 {name}"
   },
   "downloadsCenter": {
     "title": "下载中心",
@@ -630,7 +641,8 @@
       "mod": "模组",
       "resourcepack": "资源包",
       "shader": "光影",
-      "world": "世界"
+      "world": "世界",
+      "datapack": "数据包"
     },
     "groups": {
       "game": "游戏",

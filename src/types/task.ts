@@ -8,6 +8,7 @@ export type TaskType =
   | { InstallResourcepack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { InstallShaderpack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { InstallWorld: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
+  | { InstallDatapack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { Generic: { name: string } };
 
 export type TaskStatus = 
@@ -62,6 +63,7 @@ export function getTaskName(taskType: TaskType): string {
   if ('InstallResourcepack' in taskType) return t('task.installResourcepack', { name: taskType.InstallResourcepack.pack_name });
   if ('InstallShaderpack' in taskType) return t('task.installShaderpack', { name: taskType.InstallShaderpack.pack_name });
   if ('InstallWorld' in taskType) return t('task.installWorld', { name: taskType.InstallWorld.pack_name });
+  if ('InstallDatapack' in taskType) return t('task.installDatapack', { name: taskType.InstallDatapack.pack_name });
   if ('Generic' in taskType) return taskType.Generic.name;
   return t('task.unknown');
 }

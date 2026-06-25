@@ -1,0 +1,281 @@
+<template>
+  <DialogContent :open="modelValue" @update:open="$emit('update:modelValue', $event)" class="sm:max-w-[750px] h-[80vh] flex flex-col p-0 overflow-hidden">
+    <!-- Header -->
+    <div class="px-6 py-4 border-b flex-shrink-0 bg-background/50 backdrop-blur-sm">
+      <DialogTitle class="text-xl font-semibold flex items-center gap-2">
+        <Package class="w-5 h-5 text-primary" />
+        {{ $t('instances.localDatapacksTitle', 'Local Datapacks Management') }}
+      </DialogTitle>
+    </div>
+
+    <!-- Body -->
+    <div class="flex-1 overflow-y-auto overflow-x-hidden p-6 flex flex-col gap-4 minimal-scrollbar">
+      <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+        <!-- World Selector -->
+        <div class="w-full sm:w-64 flex-shrink-0">
+          <DSelect
+            v-model="selectedWorld"
+            :options="worldOptions"
+            :placeholder="$t('instances.selectWorldToManage', 'Select World')"
+            class="w-full"
+            :disabled="loadingWorlds"
+          />
+        </div>
+
+        <DInput
+          v-model="searchQuery"
+          :placeholder="$t('instances.searchLocalDatapacks', 'Search installed datapacks...')"
+          class="flex-1"
+          :disabled="!selectedWorld"
+        >
+          <template #prefix>
+            <Search class="w-4 h-4 text-muted-foreground" />
+          </template>
+        </DInput>
+        
+        <DButton variant="primary" @click="handleDownloadMore" :disabled="!selectedWorld">
+          <Download class="w-4 h-4 mr-2" />
+          {{ $t('instances.downloadMoreDatapacks', 'Download More Datapacks') }}
+        </DButton>
+      </div>
+
+      <div v-if="loadingWorlds || loadingDatapacks" class="flex justify-center items-center py-12 flex-1">
+        <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+      </div>
+      
+      <div v-else-if="!selectedWorld" class="flex flex-col items-center justify-center py-16 text-center text-muted-foreground flex-1">
+        <Globe2 class="w-16 h-16 mb-4 opacity-20" />
+        <p class="text-lg font-medium">{{ $t('instances.selectWorldToManage', 'Select a World to Manage') }}</p>
+      </div>
+
+      <div v-else-if="filteredDatapacks.length === 0" class="flex flex-col items-center justify-center py-16 text-center text-muted-foreground flex-1">
+        <Package class="w-16 h-16 mb-4 opacity-20" />
+        <p class="text-lg font-medium">{{ $t('instances.noLocalDatapacks', 'No datapacks found in this world') }}</p>
+      </div>
+      
+      <div v-else class="grid gap-3">
+        <div 
+          v-for="pack in filteredDatapacks" 
+          :key="pack.filename"
+          class="flex items-center gap-4 p-3 rounded-lg border bg-card text-card-foreground shadow-sm transition-all hover:shadow-md"
+        >
+          <div class="w-12 h-12 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0 border">
+            <FolderArchive v-if="pack.filename.endsWith('.zip')" class="w-6 h-6 text-muted-foreground" />
+            <Folder v-else class="w-6 h-6 text-muted-foreground" />
+          </div>
+          
+          <div class="flex-1 min-w-0">
+            <div class="font-medium text-sm truncate" :title="pack.filename">{{ pack.filename }}</div>
+            <div class="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+              <span>{{ pack.is_dir ? 'Folder' : formatSize(pack.size) }}</span>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <DButton 
+              variant="danger" 
+              size="sm" 
+              class="px-2"
+              @click="confirmDelete(pack)"
+            >
+              <Trash2 class="w-4 h-4" />
+            </DButton>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete Confirmation Alert Dialog -->
+    <AlertDialog :open="showDeleteConfirm" @update:open="showDeleteConfirm = $event">
+      <div class="fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" v-if="showDeleteConfirm"></div>
+      <div class="fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg" v-if="showDeleteConfirm">
+        <AlertDialogTitle>{{ $t('instances.deleteDatapackConfirm', 'Are you sure you want to delete this datapack?') }}</AlertDialogTitle>
+        <AlertDialogDescription>
+          {{ $t('instances.deleteDatapackConfirmDesc', 'This action cannot be undone. The datapack will be permanently deleted.') }}
+          <br/><br/>
+          <strong class="text-foreground">{{ packToDelete?.filename }}</strong>
+        </AlertDialogDescription>
+        <div class="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 mt-4">
+          <DButton variant="outline" @click="showDeleteConfirm = false">{{ $t('instances.cancel', 'Cancel') }}</DButton>
+          <DButton variant="danger" @click="executeDelete" :disabled="isDeleting">
+             <template v-if="isDeleting">
+               <div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2"></div>
+             </template>
+             {{ $t('instances.delete', 'Delete') }}
+          </DButton>
+        </div>
+      </div>
+    </AlertDialog>
+  </DialogContent>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
+import { invoke } from '@tauri-apps/api/core';
+import { Package, Search, Download, Trash2, Globe2, FolderArchive, Folder } from '@lucide/vue';
+import { DialogContent, DialogTitle } from './ui/dialog';
+import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from './ui/alert-dialog';
+import DInput from './ui/DInput.vue';
+import DButton from './ui/DButton.vue';
+import DSelect from './ui/DSelect.vue';
+import { toast } from '../composables/useToast';
+import { getErrorMessage } from '../utils/error';
+
+const props = defineProps<{
+  modelValue: boolean;
+  instanceId: string;
+}>();
+
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: boolean): void;
+}>();
+
+const router = useRouter();
+const { t } = useI18n();
+
+interface LocalDatapackItem {
+  filename: string;
+  is_dir: boolean;
+  size: number;
+}
+
+const loadingWorlds = ref(false);
+const worldOptions = ref<{label: string, value: string}[]>([]);
+const selectedWorld = ref<string>('');
+
+const datapacks = ref<LocalDatapackItem[]>([]);
+const loadingDatapacks = ref(false);
+const searchQuery = ref('');
+
+const showDeleteConfirm = ref(false);
+const packToDelete = ref<LocalDatapackItem | null>(null);
+const isDeleting = ref(false);
+
+const filteredDatapacks = computed(() => {
+  if (!searchQuery.value) return datapacks.value;
+  const q = searchQuery.value.toLowerCase();
+  return datapacks.value.filter(pack => 
+    pack.filename.toLowerCase().includes(q)
+  );
+});
+
+async function loadWorlds() {
+  if (!props.instanceId) return;
+  loadingWorlds.value = true;
+  try {
+    const saves = await invoke<string[]>('get_instance_saves', { instanceId: props.instanceId });
+    worldOptions.value = saves.map(save => ({ label: save, value: save }));
+    if (worldOptions.value.length > 0) {
+      selectedWorld.value = worldOptions.value[0].value;
+    } else {
+      selectedWorld.value = '';
+      datapacks.value = [];
+    }
+  } catch (e) {
+    console.error('Failed to load worlds:', e);
+    worldOptions.value = [];
+    selectedWorld.value = '';
+    toast.error(t('common.error', 'Error'), getErrorMessage(e));
+  } finally {
+    loadingWorlds.value = false;
+  }
+}
+
+async function loadDatapacks() {
+  if (!props.instanceId || !selectedWorld.value) {
+    datapacks.value = [];
+    return;
+  }
+  
+  loadingDatapacks.value = true;
+  try {
+    const result = await invoke<LocalDatapackItem[]>('get_installed_datapacks', { 
+      versionId: props.instanceId,
+      worldName: selectedWorld.value
+    });
+    datapacks.value = result;
+  } catch (error) {
+    console.error('Failed to load datapacks:', error);
+    toast.error(
+      t('common.error', 'Error'),
+      getErrorMessage(error)
+    );
+  } finally {
+    loadingDatapacks.value = false;
+  }
+}
+
+watch(() => props.modelValue, (isOpen) => {
+  if (isOpen) {
+    searchQuery.value = '';
+    loadWorlds();
+  }
+});
+
+watch(selectedWorld, () => {
+  if (props.modelValue) {
+    loadDatapacks();
+  }
+});
+
+function confirmDelete(pack: LocalDatapackItem) {
+  packToDelete.value = pack;
+  showDeleteConfirm.value = true;
+}
+
+async function executeDelete() {
+  if (!packToDelete.value || !selectedWorld.value) return;
+  
+  isDeleting.value = true;
+  try {
+    await invoke('delete_local_datapack', {
+      versionId: props.instanceId,
+      worldName: selectedWorld.value,
+      filename: packToDelete.value.filename,
+    });
+    
+    // Remove from list
+    datapacks.value = datapacks.value.filter(p => p.filename !== packToDelete.value!.filename);
+    showDeleteConfirm.value = false;
+  } catch (error) {
+    console.error('Failed to delete datapack:', error);
+    toast.error(
+      t('common.error', 'Error'),
+      getErrorMessage(error)
+    );
+  } finally {
+    isDeleting.value = false;
+  }
+}
+
+function handleDownloadMore() {
+  emit('update:modelValue', false);
+  router.push({ path: '/downloads', query: { tab: 'datapack', instanceId: props.instanceId, world: selectedWorld.value } });
+}
+
+function formatSize(bytes: number) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+</script>
+
+<style scoped>
+.minimal-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.minimal-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.minimal-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 150, 0.3);
+  border-radius: 4px;
+}
+:global(.dark) .minimal-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+</style>

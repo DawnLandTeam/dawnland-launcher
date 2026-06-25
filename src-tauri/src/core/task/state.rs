@@ -62,6 +62,16 @@ pub enum TaskType {
         download_url: String,
         file_id: String,
     },
+    InstallDatapack {
+        source: String,
+        project_id: String,
+        pack_name: String,
+        instance_id: Option<String>,
+        target_dir: Option<String>,
+        download_url: String,
+        file_id: String,
+    },
+
     InstallWorld {
         source: String,
         project_id: String,
@@ -144,6 +154,17 @@ impl TaskType {
                     format!("Downloading World {}", pack_name)
                 }
             }
+            TaskType::InstallDatapack {
+                pack_name,
+                instance_id,
+                ..
+            } => {
+                if let Some(i) = instance_id {
+                    format!("Installing Datapack {} to {}", pack_name, i)
+                } else {
+                    format!("Downloading Datapack {}", pack_name)
+                }
+            }
             TaskType::Generic { name } => name.clone(),
         }
     }
@@ -165,6 +186,7 @@ impl TaskType {
             TaskType::InstallResourcepack { instance_id, .. } => instance_id.clone(),
             TaskType::InstallShaderpack { instance_id, .. } => instance_id.clone(),
             TaskType::InstallWorld { instance_id, .. } => instance_id.clone(),
+            TaskType::InstallDatapack { instance_id, .. } => instance_id.clone(),
             TaskType::Generic { .. } => None,
         }
     }
@@ -208,7 +230,8 @@ impl TaskType {
             TaskType::InstallMod { .. }
             | TaskType::InstallResourcepack { .. }
             | TaskType::InstallShaderpack { .. }
-            | TaskType::InstallWorld { .. } => TaskMutex::Shared,
+            | TaskType::InstallWorld { .. }
+            | TaskType::InstallDatapack { .. } => TaskMutex::Shared,
 
             // Generic tasks do not target instances in a standardized way.
             TaskType::Generic { .. } => TaskMutex::None,

@@ -311,7 +311,11 @@ pub fn run() {
             core::manager::get_instance_details,
             core::manager::delete_instance,
             core::manager::open_instance_folder,
+            core::manager::get_instance_saves,
+            core::manager::get_instance_datapack_dir,
             // Local mod management commands
+            core::manager::get_installed_datapacks,
+            core::manager::delete_local_datapack,
             core::manager::get_installed_mods,
             core::manager::toggle_mod_status,
             core::manager::delete_local_mod,
@@ -341,6 +345,8 @@ pub fn run() {
             core::curseforge::search_curseforge_shaderpacks,
             core::curseforge::get_curseforge_world_categories,
             core::curseforge::search_curseforge_worlds,
+            core::curseforge::get_curseforge_datapack_categories,
+            core::curseforge::search_curseforge_datapacks,
             // Modrinth commands
             core::modrinth::search_modrinth,
             core::modrinth::search_modrinth_resourcepacks,
@@ -352,6 +358,8 @@ pub fn run() {
             core::modrinth::get_modrinth_resourcepack_categories,
             core::modrinth::get_modrinth_shaderpack_categories,
             core::modrinth::search_modrinth_shaderpacks,
+            core::modrinth::get_modrinth_datapack_categories,
+            core::modrinth::search_modrinth_datapacks,
             core::curseforge::get_cf_mod_details,
             core::modrinth::get_modrinth_mod_versions,
             // Server commands (proxies to Go web backend)
