@@ -38,12 +38,6 @@ pub fn compute_sha1_sync(path: &std::path::Path) -> Result<String, String> {
     Ok(format!("{:x}", result))
 }
 
-/// Downloads a single file with progress reporting.
-/// Returns Ok on success, Err with message on failure.
-/// If file already exists and matches expected SHA-1 hash, skips download.
-
-/// Core download logic shared by legacy and modern APIs.
-
 fn emit_progress_throttled(
     app: &AppHandle,
     task_id: &str,
@@ -66,6 +60,10 @@ fn emit_progress_throttled(
     }
 }
 
+/// Downloads a single file with progress reporting.
+/// Returns Ok on success, Err with message on failure.
+/// If file already exists and matches expected SHA-1 hash, skips download.
+/// Core download logic shared by legacy and modern APIs.
 async fn download_file_core<C, G>(
     task: DownloadTask,
     client: reqwest::Client,
@@ -92,18 +90,15 @@ where
     if dest_path.exists() {
         if let Some(expected_hash) = &task.hash {
             let dest_path_clone = dest_path.clone();
-            match tokio::task::spawn_blocking(move || compute_sha1_sync(&dest_path_clone))
+            if let Ok(actual_hash) = tokio::task::spawn_blocking(move || compute_sha1_sync(&dest_path_clone))
                 .await
                 .map_err(|e| e.to_string())?
             {
-                Ok(actual_hash) => {
-                    if actual_hash.eq_ignore_ascii_case(expected_hash) {
-                        return Ok(());
-                    } else {
-                        let _ = tokio::fs::remove_file(&dest_path).await;
-                    }
+                if actual_hash.eq_ignore_ascii_case(expected_hash) {
+                    return Ok(());
+                } else {
+                    let _ = tokio::fs::remove_file(&dest_path).await;
                 }
-                Err(_) => {}
             }
         } else if let Some(expected_size) = task.expected_size {
             if let Ok(metadata) = tokio::fs::metadata(&dest_path).await {
