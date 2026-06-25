@@ -14,7 +14,8 @@ struct Agent {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthenticateRequest {
-    agent: Agent,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<Agent>,
     username: String,
     password: String,
     client_token: String,
@@ -193,10 +194,7 @@ pub async fn authenticate_authlib_user(
     };
 
     let req_body = AuthenticateRequest {
-        agent: Agent {
-            name: "Minecraft".to_string(),
-            version: 1,
-        },
+        agent: None,
         username: username.clone(),
         password,
         client_token: client_token.clone(),
@@ -307,14 +305,26 @@ pub async fn ensure_authlib_token_valid(account_id: &str) -> Result<Account, App
     }
 
     let profile_to_bind = YggdrasilProfile {
-        id: account.id.replace("-", ""),
+        id: account.id.replace("-", "").to_lowercase(),
         name: account.username.clone(),
     };
 
     tracing::info!("Refreshing Authlib token to ensure it is bound to profile {}...", profile_to_bind.name);
-    let refreshed_result = refresh_authlib_token(&authlib_url, access_token, client_token, Some(profile_to_bind)).await;
+    let refreshed_result = refresh_authlib_token(&authlib_url, access_token, client_token, Some(profile_to_bind.clone())).await;
     
-    match refreshed_result {
+    let final_result = match refreshed_result {
+        Ok(res) => Ok(res),
+        Err(e) => {
+            if e.message.contains("不一致") || e.message.contains("not match") {
+                tracing::warn!("Authlib server rejected selectedProfile (possibly buggy server). Retrying without selectedProfile...");
+                refresh_authlib_token(&authlib_url, access_token, client_token, None).await
+            } else {
+                Err(e)
+            }
+        }
+    };
+
+    match final_result {
         Ok(refreshed) => {
             account.access_token = Some(refreshed.access_token.clone());
             account.client_token = Some(refreshed.client_token.clone());
