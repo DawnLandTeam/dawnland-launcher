@@ -9,6 +9,7 @@ import ModsInstallTab from "../components/downloads/ModsInstallTab.vue";
 import ResourcepackInstallTab from "../components/downloads/ResourcepackInstallTab.vue";
 import ShaderpackInstallTab from "../components/downloads/ShaderpackInstallTab.vue";
 import WorldInstallTab from "../components/downloads/WorldInstallTab.vue";
+import DatapackInstallTab from "../components/downloads/DatapackInstallTab.vue";
 import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
 import { computed, onMounted } from "vue";
 import { trackEvent } from "../utils/analytics";
@@ -24,6 +25,7 @@ const tabs = [
   { id: 'resourcepack', name: 'downloadsCenter.tabs.resourcepack', icon: FileJson, group: 'downloadsCenter.groups.resources' },
   { id: 'shader', name: 'downloadsCenter.tabs.shader', icon: Sparkles, group: 'downloadsCenter.groups.resources' },
   { id: 'world', name: 'downloadsCenter.tabs.world', icon: Globe, group: 'downloadsCenter.groups.resources' },
+  { id: 'datapack', name: 'downloadsCenter.tabs.datapack', icon: Package, group: 'downloadsCenter.groups.resources' },
 ];
 
 const translatedTabs = computed(() => tabs.map(tab => ({
@@ -74,9 +76,10 @@ onMounted(() => {
         <ResourcepackInstallTab v-else-if="activeTab === 'resourcepack'" />
         <ShaderpackInstallTab v-else-if="activeTab === 'shader'" />
         <WorldInstallTab v-else-if="activeTab === 'world'" />
+        <DatapackInstallTab v-else-if="activeTab === 'datapack'" />
       </keep-alive>
       
-      <div v-if="!['instance', 'modpack', 'mod', 'resourcepack', 'shader', 'world'].includes(activeTab)" class="flex-1 flex flex-col items-center justify-center text-neutral-400">
+      <div v-if="!['instance', 'modpack', 'mod', 'resourcepack', 'shader', 'world', 'datapack'].includes(activeTab)" class="flex-1 flex flex-col items-center justify-center text-neutral-400">
         <component :is="tabs.find(t => t.id === activeTab)?.icon" class="w-12 h-12 mb-4 opacity-30" />
         <p class="text-lg font-medium text-neutral-500 dark:text-neutral-400">{{ t(tabs.find(t => t.id === activeTab)?.name || '') }} 下载模块</p>
         <p class="text-sm mt-2">施工中...</p>

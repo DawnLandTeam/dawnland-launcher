@@ -282,6 +282,31 @@ pub async fn retry_task(
                 .await
                 .map_err(|e| e.to_string())?
         }
+        TaskType::InstallDatapack {
+            source,
+            project_id,
+            pack_name,
+            instance_id,
+            target_dir,
+            download_url,
+            file_id,
+        } => {
+            let executable = crate::core::manager::InstallDatapackTask {
+                options: crate::core::manager::InstallDatapackOptions {
+                    source,
+                    project_id,
+                    pack_name,
+                    instance_id,
+                    target_dir,
+                    download_url,
+                    file_id,
+                },
+            };
+            task_manager
+                .spawn_task_with_id(task_id.clone(), task.task_type, executable)
+                .await
+                .map_err(|e| e.to_string())?
+        }
         TaskType::Generic { .. } => {
             return Err(DawnlandError::Unknown("Cannot retry generic task".to_string()).into())
         }
@@ -338,6 +363,27 @@ pub async fn task_create(
             };
 
             let executable = crate::core::manager::InstallResourcepackTask { options };
+            task_manager
+                .spawn_task(task_type_enum, executable)
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        "install-datapack" => {
+            let options: crate::core::manager::InstallDatapackOptions =
+                serde_json::from_value(payload)
+                    .map_err(|e| DawnlandError::Unknown(format!("Invalid payload: {}", e)))?;
+
+            let task_type_enum = TaskType::InstallDatapack {
+                source: options.source.clone(),
+                project_id: options.project_id.clone(),
+                pack_name: options.pack_name.clone(),
+                instance_id: options.instance_id.clone(),
+                target_dir: options.target_dir.clone(),
+                download_url: options.download_url.clone(),
+                file_id: options.file_id.clone(),
+            };
+
+            let executable = crate::core::manager::InstallDatapackTask { options };
             task_manager
                 .spawn_task(task_type_enum, executable)
                 .await

@@ -79,6 +79,14 @@
     "downloadMoreMods": "Download More Mods",
     "noLocalMods": "No mods installed for this instance",
     "searchLocalMods": "Search installed mods...",
+    "datapacks": "Datapacks",
+    "localDatapacksTitle": "Local Datapacks Management",
+    "selectWorldToManage": "Select a World to Manage",
+    "noLocalDatapacks": "No datapacks found in this world",
+    "searchLocalDatapacks": "Search installed datapacks...",
+    "downloadMoreDatapacks": "Download More Datapacks",
+    "deleteDatapackConfirm": "Are you sure you want to delete this datapack?",
+    "deleteDatapackConfirmDesc": "This action cannot be undone. The datapack will be permanently deleted.",
     "deleteModConfirm": "Are you sure you want to delete this mod?",
     "deleteModConfirmDesc": "This action cannot be undone. The mod file will be permanently deleted.",
     "delete": "Delete",
@@ -507,7 +515,9 @@
     "checkTaskCenter": "Please check Task Center for progress",
     "installToInstance": "Install to Instance",
     "downloadOnly": "Download Only",
-    "downloadToDir": "Download to Directory"
+    "downloadToDir": "Download to Directory",
+    "selectWorldSave": "Select Target World Save",
+    "noWorldsFound": "No world saves found in this instance. Please launch the game and create a world first!"
   },
   "instanceMods": {
     "title": "Manage Mods",
@@ -620,7 +630,8 @@
     "installMod": "Installing Mod {name}",
     "installResourcepack": "Installing Resource Pack {name}",
     "installShaderpack": "Installing Shaderpack {name}",
-    "installWorld": "Installing World {name}"
+    "installWorld": "Installing World {name}",
+    "installDatapack": "Installing Data Pack {name}"
   },
   "downloadsCenter": {
     "title": "Download Center",
@@ -630,7 +641,8 @@
       "mod": "Mods",
       "resourcepack": "Resource Packs",
       "shader": "Shaders",
-      "world": "World"
+      "world": "World",
+      "datapack": "Data Packs"
     },
     "groups": {
       "game": "Game",

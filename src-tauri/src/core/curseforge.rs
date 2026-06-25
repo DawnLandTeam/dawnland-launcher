@@ -26,6 +26,8 @@ const CF_CLASS_ID_RESOURCE_PACKS: i32 = 12;
 const CF_CLASS_ID_WORLDS: i32 = 17;
 /// Class ID for Shaderpacks on CurseForge
 const CF_CLASS_ID_SHADERS: i32 = 6552;
+/// Class ID for Data Packs on CurseForge
+const CF_CLASS_ID_DATAPACKS: i32 = 6945;
 
 /// CurseForge mod loader type mapping
 /// Reference: https://docs.curseforge.com/#mod-loaders
@@ -251,6 +253,26 @@ pub async fn search_curseforge_worlds(
         offset,
         limit,
         CF_CLASS_ID_WORLDS,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn search_curseforge_datapacks(
+    query: String,
+    mc_versions: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    search_curseforge_internal(
+        query,
+        mc_versions,
+        vec![],
+        categories,
+        offset,
+        limit,
+        CF_CLASS_ID_DATAPACKS,
     )
     .await
 }
@@ -1106,6 +1128,39 @@ pub async fn get_curseforge_world_categories() -> Result<Vec<UnifiedCategory>, S
         &format!(
             "/categories?gameId={}&classId={}",
             CF_GAME_ID_MINECRAFT, CF_CLASS_ID_WORLDS
+        ),
+        None,
+    );
+    let client = crate::core::utils::get_http_client().clone();
+    let res = cf_request(&client, reqwest::Method::GET, &cf_url)?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("CF API Error: {}", res.status()));
+    }
+
+    let json: CfCategoriesResponse = res.json().await.map_err(|e| e.to_string())?;
+    let cats = json
+        .data
+        .into_iter()
+        .map(|c| UnifiedCategory {
+            id: c.id.to_string(),
+            name: c.name,
+            icon: c.icon_url,
+        })
+        .collect();
+
+    Ok(cats)
+}
+
+#[tauri::command]
+pub async fn get_curseforge_datapack_categories() -> Result<Vec<UnifiedCategory>, String> {
+    let cf_url = build_cf_url(
+        &format!(
+            "/categories?gameId={}&classId={}",
+            CF_GAME_ID_MINECRAFT, CF_CLASS_ID_DATAPACKS
         ),
         None,
     );

@@ -221,6 +221,26 @@ pub async fn search_modrinth_shaderpacks(
     .await
 }
 
+#[tauri::command]
+pub async fn search_modrinth_datapacks(
+    query: String,
+    mc_versions: Vec<String>,
+    categories: Vec<String>,
+    offset: Option<i32>,
+    limit: Option<i32>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    search_modrinth_internal(
+        query,
+        mc_versions,
+        vec![],
+        categories,
+        offset,
+        limit,
+        "datapack",
+    )
+    .await
+}
+
 async fn search_modrinth_internal(
     query: String,
     mc_versions: Vec<String>,
@@ -760,6 +780,11 @@ pub async fn get_modrinth_resourcepack_categories() -> Result<Vec<UnifiedCategor
 #[tauri::command]
 pub async fn get_modrinth_shaderpack_categories() -> Result<Vec<UnifiedCategory>, String> {
     get_modrinth_categories_internal("shader").await
+}
+
+#[tauri::command]
+pub async fn get_modrinth_datapack_categories() -> Result<Vec<UnifiedCategory>, String> {
+    get_modrinth_categories_internal("datapack").await
 }
 
 async fn get_modrinth_categories_internal(

@@ -35,6 +35,61 @@ pub struct InstanceItem {
     pub is_installing: bool,
 }
 
+#[tauri::command]
+pub async fn get_instance_saves(instance_id: String) -> Result<Vec<String>, String> {
+    let base_dir = get_minecraft_base();
+    let instance_dir = base_dir.join("versions").join(&instance_id);
+    let saves_dir = instance_dir.join("saves");
+
+    if !tokio::fs::try_exists(&saves_dir).await.unwrap_or(false) {
+        return Ok(Vec::new());
+    }
+
+    let mut saves = Vec::new();
+    let mut entries = tokio::fs::read_dir(&saves_dir)
+        .await
+        .map_err(|e| format!("Failed to read saves directory: {}", e))?;
+
+    loop {
+        match entries.next_entry().await {
+            Ok(Some(entry)) => {
+                let path = entry.path();
+                let is_dir = tokio::fs::metadata(&path).await.map(|m| m.is_dir()).unwrap_or(false);
+                if is_dir {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        saves.push(name.to_string());
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                return Err(format!("Failed to read entry in saves directory: {}", e));
+            }
+        }
+    }
+
+    Ok(saves)
+}
+
+#[tauri::command]
+pub async fn get_instance_datapack_dir(instance_id: String, world_name: String) -> Result<String, String> {
+    let base_dir = get_minecraft_base();
+    let datapack_dir = base_dir
+        .join("versions")
+        .join(&instance_id)
+        .join("saves")
+        .join(&world_name)
+        .join("datapacks");
+
+    if !tokio::fs::try_exists(&datapack_dir).await.unwrap_or(false) {
+        tokio::fs::create_dir_all(&datapack_dir)
+            .await
+            .map_err(|e| format!("Failed to create datapack directory: {}", e))?;
+    }
+
+    Ok(datapack_dir.to_string_lossy().to_string())
+}
+
 /// Scan all locally installed instances from the versions directory.
 #[tauri::command]
 pub async fn scan_installed_instances(
@@ -545,6 +600,77 @@ pub struct LocalModItem {
     pub name: Option<String>,
     pub version: Option<String>,
     pub icon_url: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LocalDatapackItem {
+    pub filename: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+#[tauri::command]
+pub async fn get_installed_datapacks(version_id: String, world_name: String) -> Result<Vec<LocalDatapackItem>, String> {
+    let base_dir = get_minecraft_base();
+    let datapacks_dir = base_dir.join("versions").join(&version_id).join("saves").join(&world_name).join("datapacks");
+
+    if !tokio::fs::try_exists(&datapacks_dir).await.unwrap_or(false) {
+        return Ok(Vec::new());
+    }
+
+    let mut datapacks = Vec::new();
+    let mut entries = tokio::fs::read_dir(&datapacks_dir)
+        .await
+        .map_err(|e| format!("Failed to read datapacks directory: {}", e))?;
+
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| format!("Failed to read directory entry: {}", e))?
+    {
+        let path = entry.path();
+        let filename = entry.file_name().to_string_lossy().to_string();
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let is_dir = metadata.is_dir();
+        
+        // Basic filtering
+        if !is_dir && !filename.ends_with(".zip") {
+            continue;
+        }
+
+        datapacks.push(LocalDatapackItem {
+            filename,
+            is_dir,
+            size: metadata.len(),
+        });
+    }
+
+    Ok(datapacks)
+}
+
+#[tauri::command]
+pub async fn delete_local_datapack(version_id: String, world_name: String, filename: String) -> Result<(), String> {
+    if filename.contains('/') || filename.contains('\\') || filename == ".." || filename == "." {
+        return Err("Invalid filename".to_string());
+    }
+
+    let base_dir = get_minecraft_base();
+    let datapacks_dir = base_dir.join("versions").join(&version_id).join("saves").join(&world_name).join("datapacks");
+    let target = datapacks_dir.join(&filename);
+
+    if tokio::fs::try_exists(&target).await.unwrap_or(false) {
+        let metadata = tokio::fs::metadata(&target).await.map_err(|e| e.to_string())?;
+        if metadata.is_dir() {
+            tokio::fs::remove_dir_all(&target).await.map_err(|e| e.to_string())?;
+        } else {
+            tokio::fs::remove_file(&target).await.map_err(|e| e.to_string())?;
+        }
+    }
+    
+    Ok(())
 }
 
 /// Get list of installed mods for a specific instance
@@ -1723,6 +1849,64 @@ impl crate::core::task::ExecutableTask for InstallModTask {
                 }
             }
         }
+
+        Ok(())
+    }
+}
+
+pub struct InstallDatapackTask {
+    pub options: InstallDatapackOptions,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct InstallDatapackOptions {
+    pub source: String,
+    pub project_id: String,
+    pub pack_name: String,
+    pub instance_id: Option<String>,
+    pub target_dir: Option<String>,
+    pub download_url: String,
+    pub file_id: String,
+}
+
+#[async_trait::async_trait]
+impl crate::core::task::ExecutableTask for InstallDatapackTask {
+    async fn execute(
+        &self,
+        ctx: crate::core::task::TaskContext,
+    ) -> Result<(), crate::core::task::TaskError> {
+        let options = &self.options;
+        let client = reqwest::Client::new();
+
+        let target_dir_path = if let Some(td) = &options.target_dir {
+            let p = std::path::PathBuf::from(td);
+            if !tokio::fs::try_exists(&p).await.unwrap_or(false) {
+                tokio::fs::create_dir_all(&p).await.ok();
+            }
+            p
+        } else {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "No target directory specified for datapack install".to_string(),
+            ));
+        };
+
+        let filename = extract_filename_from_url(&options.download_url, &options.project_id);
+        let target_path = target_dir_path.join(&filename);
+
+        ctx.init_sub_tasks(vec![crate::core::task::state::SubTaskState {
+            key: "download".to_string(),
+            name: "Downloading Datapack".to_string(),
+            status: crate::core::task::state::SubTaskStatus::Pending,
+            current: 0,
+            total: 100,
+            weight: 100,
+        }])
+        .await;
+
+        let sub_ctx = ctx.with_sub_task("download");
+        download_mod_file_task(&sub_ctx, &client, &options.download_url, &target_path)
+            .await
+            .map_err(crate::core::task::TaskError::ExecutionError)?;
 
         Ok(())
     }

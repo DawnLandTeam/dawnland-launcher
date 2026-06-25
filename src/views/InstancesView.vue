@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 import LocalModsModal from "../components/LocalModsModal.vue";
+import LocalDatapacksModal from "../components/LocalDatapacksModal.vue";
 import { trackEvent } from "../utils/analytics";
 
 // Types
@@ -93,6 +94,10 @@ const isDeletingInstance = ref(false);
 
 // Local mods modal state
 const showLocalModsModal = ref(false);
+
+// Local datapacks modal state
+const showLocalDatapacksModal = ref(false);
+
 const selectedInstanceId = ref("");
 
 const openDropdownId = ref<string | null>(null);
@@ -255,6 +260,11 @@ async function openSettings(instance: InstanceItem) {
 function openMods(instance: InstanceItem) {
   selectedInstanceId.value = instance.id;
   showLocalModsModal.value = true;
+}
+
+function openDatapacks(instance: InstanceItem) {
+  selectedInstanceId.value = instance.id;
+  showLocalDatapacksModal.value = true;
 }
 
 // Remove browseJavaPath since we are using select now
@@ -537,6 +547,12 @@ function normalizedModpackVersion(version: string): string {
                 {{ $t('instances.mods') }}
               </DropdownMenuItem>
               <DropdownMenuItem
+                @click="openDatapacks(instance)"
+              >
+                <Package class="h-4 w-4" />
+                {{ $t('instances.datapacks', 'Datapacks') }}
+              </DropdownMenuItem>
+              <DropdownMenuItem
                 destructive
                 @click="confirmDeleteInstance(instance)"
               >
@@ -708,5 +724,8 @@ function normalizedModpackVersion(version: string): string {
 
     <!-- Local Mods Modal -->
     <LocalModsModal v-model="showLocalModsModal" :instance-id="selectedInstanceId" />
+
+    <!-- Local Datapacks Modal -->
+    <LocalDatapacksModal v-model="showLocalDatapacksModal" :instance-id="selectedInstanceId" />
   </div>
 </template>
