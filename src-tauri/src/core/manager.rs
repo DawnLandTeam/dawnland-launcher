@@ -41,7 +41,7 @@ pub async fn get_instance_saves(instance_id: String) -> Result<Vec<String>, Stri
     let instance_dir = base_dir.join("versions").join(&instance_id);
     let saves_dir = instance_dir.join("saves");
 
-    if !saves_dir.exists() {
+    if !tokio::fs::try_exists(&saves_dir).await.unwrap_or(false) {
         return Ok(Vec::new());
     }
 
@@ -50,11 +50,20 @@ pub async fn get_instance_saves(instance_id: String) -> Result<Vec<String>, Stri
         .await
         .map_err(|e| format!("Failed to read saves directory: {}", e))?;
 
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                saves.push(name.to_string());
+    loop {
+        match entries.next_entry().await {
+            Ok(Some(entry)) => {
+                let path = entry.path();
+                let is_dir = tokio::fs::metadata(&path).await.map(|m| m.is_dir()).unwrap_or(false);
+                if is_dir {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        saves.push(name.to_string());
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                return Err(format!("Failed to read entry in saves directory: {}", e));
             }
         }
     }
@@ -72,7 +81,7 @@ pub async fn get_instance_datapack_dir(instance_id: String, world_name: String) 
         .join(&world_name)
         .join("datapacks");
 
-    if !datapack_dir.exists() {
+    if !tokio::fs::try_exists(&datapack_dir).await.unwrap_or(false) {
         tokio::fs::create_dir_all(&datapack_dir)
             .await
             .map_err(|e| format!("Failed to create datapack directory: {}", e))?;
@@ -605,7 +614,7 @@ pub async fn get_installed_datapacks(version_id: String, world_name: String) -> 
     let base_dir = get_minecraft_base();
     let datapacks_dir = base_dir.join("versions").join(&version_id).join("saves").join(&world_name).join("datapacks");
 
-    if !datapacks_dir.exists() {
+    if !tokio::fs::try_exists(&datapacks_dir).await.unwrap_or(false) {
         return Ok(Vec::new());
     }
 
@@ -644,11 +653,15 @@ pub async fn get_installed_datapacks(version_id: String, world_name: String) -> 
 
 #[tauri::command]
 pub async fn delete_local_datapack(version_id: String, world_name: String, filename: String) -> Result<(), String> {
+    if filename.contains('/') || filename.contains('\\') || filename == ".." || filename == "." {
+        return Err("Invalid filename".to_string());
+    }
+
     let base_dir = get_minecraft_base();
     let datapacks_dir = base_dir.join("versions").join(&version_id).join("saves").join(&world_name).join("datapacks");
     let target = datapacks_dir.join(&filename);
 
-    if target.exists() {
+    if tokio::fs::try_exists(&target).await.unwrap_or(false) {
         let metadata = tokio::fs::metadata(&target).await.map_err(|e| e.to_string())?;
         if metadata.is_dir() {
             tokio::fs::remove_dir_all(&target).await.map_err(|e| e.to_string())?;
@@ -1867,27 +1880,13 @@ impl crate::core::task::ExecutableTask for InstallDatapackTask {
 
         let target_dir_path = if let Some(td) = &options.target_dir {
             let p = std::path::PathBuf::from(td);
-            if !p.exists() {
+            if !tokio::fs::try_exists(&p).await.unwrap_or(false) {
                 tokio::fs::create_dir_all(&p).await.ok();
             }
             p
-        } else if let Some(vid) = &options.instance_id {
-            // Default to first world's datapack dir if no explicit target_dir, though we expect frontend to pass target_dir
-            let base_dir = crate::core::mojang::get_minecraft_base();
-            let saves_dir = base_dir.join("versions").join(vid).join("saves");
-            let mut dp_dir = saves_dir.clone();
-            if let Ok(mut entries) = tokio::fs::read_dir(&saves_dir).await {
-                if let Ok(Some(entry)) = entries.next_entry().await {
-                    dp_dir = entry.path().join("datapacks");
-                }
-            }
-            if !dp_dir.exists() {
-                tokio::fs::create_dir_all(&dp_dir).await.ok();
-            }
-            dp_dir
         } else {
             return Err(crate::core::task::TaskError::ExecutionError(
-                "No target directory or instance specified".to_string(),
+                "No target directory specified for datapack install".to_string(),
             ));
         };
 
@@ -1907,7 +1906,7 @@ impl crate::core::task::ExecutableTask for InstallDatapackTask {
         let sub_ctx = ctx.with_sub_task("download");
         download_mod_file_task(&sub_ctx, &client, &options.download_url, &target_path)
             .await
-            .map_err(|e| crate::core::task::TaskError::ExecutionError(e))?;
+            .map_err(crate::core::task::TaskError::ExecutionError)?;
 
         Ok(())
     }
