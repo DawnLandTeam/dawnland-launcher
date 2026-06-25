@@ -573,7 +573,6 @@ impl ExecutableTask for InstallOnlineModpackTask {
         }
 
         let total_size = response.content_length().unwrap_or(0);
-        let accept_ranges = response.headers().get(reqwest::header::ACCEPT_RANGES).is_some() || url.contains("forgecdn.net") || url.contains("modrinth.com");
         drop(response); // we just wanted the headers
 
         let mut skip_download = false;

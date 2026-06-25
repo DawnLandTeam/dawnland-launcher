@@ -43,6 +43,29 @@ pub fn compute_sha1_sync(path: &std::path::Path) -> Result<String, String> {
 /// If file already exists and matches expected SHA-1 hash, skips download.
 
 /// Core download logic shared by legacy and modern APIs.
+
+fn emit_progress_throttled(
+    app: &AppHandle,
+    task_id: &str,
+    file_name: &str,
+    current_total: u64,
+    total_size: u64,
+    last_emit_time: &mut std::time::Instant,
+    last_downloaded: &mut u64,
+) {
+    let elapsed = last_emit_time.elapsed().as_millis() as u64;
+    let since_last = current_total.saturating_sub(*last_downloaded);
+
+    if elapsed >= PROGRESS_THROTTLE_MS || since_last >= 512 * 1024 {
+        let speed = if elapsed > 0 { since_last.saturating_div(elapsed.max(1)) * 1000 } else { 0 };
+        let mut progress = DownloadProgress::progress(task_id.to_string(), current_total, total_size, speed);
+        progress.file_name = Some(file_name.to_string());
+        let _ = app.emit("download-progress", &progress);
+        *last_emit_time = std::time::Instant::now();
+        *last_downloaded = current_total;
+    }
+}
+
 async fn download_file_core<C, G>(
     task: DownloadTask,
     client: reqwest::Client,
@@ -51,7 +74,7 @@ async fn download_file_core<C, G>(
     add_global_downloaded: G,
 ) -> Result<(), String>
 where
-    C: Fn() -> bool + Send + Sync + 'static,
+    C: Fn() -> bool + Send + Sync + 'static + Clone,
     G: Fn(u64) + Send + Sync + 'static + Clone,
 {
     tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
@@ -109,7 +132,11 @@ where
     }
 
     // Step 1: Initial request to get headers
-    let response = match req.try_clone().unwrap().send().await {
+    let req_clone = match req.try_clone() {
+        Some(r) => r,
+        None => return Err("Request body cannot be cloned".to_string()),
+    };
+    let response = match req_clone.send().await {
         Ok(resp) => resp,
         Err(e) => return Err(format!("Request failed: {}", e)),
     };
@@ -225,7 +252,6 @@ where
         // Ensure not too many simultaneous connections globally by limiting inside chunk logic.
         // Actually, we can use an inner semaphore to avoid overwhelming the network with 32 connections per file.
         let inner_sem = Arc::new(Semaphore::new(4));
-        let is_cancelled = Arc::new(is_cancelled); 
 
         // Pre-check parts and calculate already downloaded
         let mut initial_dl = 0;
@@ -330,19 +356,18 @@ where
 
                     // Throttle emit
                     let mut emit_time = last_emit_time_global.lock().await;
-                    let elapsed = emit_time.elapsed().as_millis() as u64;
                     let current_total = global_dl.load(Ordering::Relaxed);
-                    let last_dl = last_downloaded_global.load(Ordering::Relaxed);
-                    let since_last = current_total.saturating_sub(last_dl);
-
-                    if elapsed >= PROGRESS_THROTTLE_MS || since_last >= 512 * 1024 {
-                        let speed = if elapsed > 0 { since_last.saturating_div(elapsed.max(1)) * 1000 } else { 0 };
-                        let mut progress = DownloadProgress::progress(task_id.clone(), current_total, total_size, speed);
-                        progress.file_name = Some(file_name_clone.clone());
-                        let _ = app.emit("download-progress", &progress);
-                        *emit_time = std::time::Instant::now();
-                        last_downloaded_global.store(current_total, Ordering::Relaxed);
-                    }
+                    let mut last_dl = last_downloaded_global.load(Ordering::Relaxed);
+                    emit_progress_throttled(
+                        &app,
+                        &task_id,
+                        &file_name_clone,
+                        current_total,
+                        total_size,
+                        &mut emit_time,
+                        &mut last_dl,
+                    );
+                    last_downloaded_global.store(last_dl, Ordering::Relaxed);
                 }
                 file.flush().await.map_err(|e| e.to_string())?;
                 Ok(())
@@ -362,6 +387,21 @@ where
         }
         final_file.flush().await.map_err(|e| e.to_string())?;
         drop(final_file);
+
+        if total_size > 0 {
+            let metadata = tokio::fs::metadata(&tmp_path)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if metadata.len() != total_size {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                return Err(format!(
+                    "downloaded size mismatch: expected {}, got {}",
+                    total_size,
+                    metadata.len()
+                ));
+            }
+        }
 
         for part in parts {
             let _ = tokio::fs::remove_file(&part).await;
@@ -394,6 +434,7 @@ where
     while let Some(chunk_result) = stream.next().await {
         if is_cancelled() {
             drop(file);
+            let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err("Cancelled".to_string());
         }
 
@@ -403,26 +444,39 @@ where
                 downloaded += chunk.len() as u64;
                 add_global_downloaded(chunk.len() as u64);
 
-                let elapsed = last_emit_time.elapsed().as_millis() as u64;
-                let since_last = downloaded.saturating_sub(last_downloaded);
-
-                if elapsed >= PROGRESS_THROTTLE_MS || since_last >= 512 * 1024 {
-                    let speed = if elapsed > 0 { since_last.saturating_div(elapsed.max(1)) * 1000 } else { 0 };
-                    let mut progress = DownloadProgress::progress(task.id.clone(), downloaded, total_size, speed);
-                    progress.file_name = Some(file_name.to_string());
-                    let _ = app_handle.emit("download-progress", &progress);
-                    last_emit_time = std::time::Instant::now();
-                    last_downloaded = downloaded;
-                }
+                emit_progress_throttled(
+                    &app_handle,
+                    &task.id,
+                    &file_name,
+                    downloaded,
+                    total_size,
+                    &mut last_emit_time,
+                    &mut last_downloaded,
+                );
             }
             Err(e) => {
                 drop(file);
+                let _ = tokio::fs::remove_file(&tmp_path).await;
                 return Err(format!("Stream error: {}", e));
             }
         }
     }
     file.flush().await.map_err(|e| e.to_string())?;
     drop(file);
+    if total_size > 0 {
+        let metadata = tokio::fs::metadata(&tmp_path)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if metadata.len() != total_size {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(format!(
+                "downloaded size mismatch: expected {}, got {}",
+                total_size,
+                metadata.len()
+            ));
+        }
+    }
     if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
         let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(format!("Failed to finalize file: {}", e));
