@@ -1019,7 +1019,7 @@ pub fn parse_jvm_arguments(
                 "${assets_index_name}",
                 version_meta.assets.as_deref().unwrap_or("1.0"),
             )
-            .replace("${auth_uuid}", &config.account.id.replace("-", ""))
+            .replace("${auth_uuid}", &config.account.id.replace("-", "").to_lowercase())
             .replace(
                 "${auth_access_token}",
                 config.account.access_token.as_deref().unwrap_or("0"),
@@ -1115,7 +1115,7 @@ pub fn parse_game_arguments(
                 "${assets_index_name}",
                 version_meta.assets.as_deref().unwrap_or("1.0"),
             )
-            .replace("${auth_uuid}", &config.account.id.replace("-", ""))
+            .replace("${auth_uuid}", &config.account.id.replace("-", "").to_lowercase())
             .replace(
                 "${auth_access_token}",
                 config.account.access_token.as_deref().unwrap_or("0"),
