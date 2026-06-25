@@ -5,12 +5,11 @@ use sha1::{Digest, Sha1};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use tokio::time::Duration;
 
-/// Minimum time between progress emissions (milliseconds).
 const PROGRESS_THROTTLE_MS: u64 = 500;
 
 /// Compute SHA-1 hash of a file
@@ -42,15 +41,21 @@ pub fn compute_sha1_sync(path: &std::path::Path) -> Result<String, String> {
 /// Downloads a single file with progress reporting.
 /// Returns Ok on success, Err with message on failure.
 /// If file already exists and matches expected SHA-1 hash, skips download.
-async fn download_file_task(
+
+/// Core download logic shared by legacy and modern APIs.
+async fn download_file_core<C, G>(
     task: DownloadTask,
-    client: &reqwest::Client,
-    ctx: &TaskContext,
-    global_downloaded: &Arc<AtomicU64>,
-) -> Result<(), String> {
+    client: reqwest::Client,
+    app_handle: AppHandle,
+    is_cancelled: C,
+    add_global_downloaded: G,
+) -> Result<(), String>
+where
+    C: Fn() -> bool + Send + Sync + 'static,
+    G: Fn(u64) + Send + Sync + 'static + Clone,
+{
     tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
 
-    // Create parent directories if needed (always try, ignore if exists).
     let dest_path = task.dest_path_buf();
     if let Some(parent) = dest_path.parent() {
         if let Err(e) = tokio::fs::create_dir_all(parent).await {
@@ -60,10 +65,9 @@ async fn download_file_task(
         }
     }
 
-    // If file exists, check hash OR size
+    // Hash or size check for existing file
     if dest_path.exists() {
         if let Some(expected_hash) = &task.hash {
-            tracing::debug!("Checking existing file hash: {}", dest_path.display());
             let dest_path_clone = dest_path.clone();
             match tokio::task::spawn_blocking(move || compute_sha1_sync(&dest_path_clone))
                 .await
@@ -71,56 +75,25 @@ async fn download_file_task(
             {
                 Ok(actual_hash) => {
                     if actual_hash.eq_ignore_ascii_case(expected_hash) {
-                        tracing::debug!(
-                            "File exists and hash matches, skipping: {}",
-                            dest_path.display()
-                        );
                         return Ok(());
                     } else {
-                        tracing::debug!(
-                            "Hash mismatch. Expected {}, got {}. Re-downloading...",
-                            expected_hash,
-                            actual_hash
-                        );
                         let _ = tokio::fs::remove_file(&dest_path).await;
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to compute hash for existing file, re-downloading: {}",
-                        e
-                    );
-                }
+                Err(_) => {}
             }
         } else if let Some(expected_size) = task.expected_size {
-            // No hash, but we have expected size
             if let Ok(metadata) = tokio::fs::metadata(&dest_path).await {
                 if metadata.len() == expected_size {
-                    tracing::debug!(
-                        "File exists and size matches ({} bytes), skipping: {}",
-                        expected_size,
-                        dest_path.display()
-                    );
                     return Ok(());
                 } else {
-                    tracing::debug!(
-                        "Size mismatch. Expected {}, got {}. Re-downloading...",
-                        expected_size,
-                        metadata.len()
-                    );
                     let _ = tokio::fs::remove_file(&dest_path).await;
                 }
             }
-        } else {
-            // No hash and no size available - for safety, download anyway since we can't verify
-            tracing::debug!(
-                "File exists but no hash or size available, re-downloading: {}",
-                dest_path.display()
-            );
         }
     }
 
-    if ctx.is_cancelled() {
+    if is_cancelled() {
         return Err("Cancelled".to_string());
     }
 
@@ -130,142 +103,361 @@ async fn download_file_task(
             if host == "forgecdn.net" || host.ends_with(".forgecdn.net") {
                 if let Some(key) = crate::core::curseforge::CURSE_API_KEY.get() {
                     req = req.header("x-api-key", key);
-                } else {
-                    tracing::warn!("Downloading from forgecdn.net but CURSE_API_KEY is not set!");
                 }
             }
         }
     }
 
-    // Make the HTTP request with timeout.
-    let mut response = match req.send().await {
+    // Step 1: Initial request to get headers
+    let response = match req.try_clone().unwrap().send().await {
         Ok(resp) => resp,
-        Err(e) => {
-            return Err(format!("Request failed: {}", e));
-        }
+        Err(e) => return Err(format!("Request failed: {}", e)),
     };
 
-    // Check HTTP status.
-    if !response.status().is_success() {
-        // If using BMCLAPI and it fails (e.g. 502 Bad Gateway), try to fallback to official source
+    let mut response = if !response.status().is_success() {
         if task.url.contains("bmclapi2.bangbang93.com") {
-            tracing::warn!("BMCLAPI returned {}. Attempting fallback to official source...", response.status());
-            
             let fallbacks = get_bmclapi_fallbacks(&task.url);
-
             let mut fallback_success = false;
+            let mut fallback_resp = response;
             for fallback_url in fallbacks {
-                tracing::info!("Trying fallback URL: {}", fallback_url);
-                if let Ok(fallback_resp) = client.get(&fallback_url).send().await {
-                    if fallback_resp.status().is_success() {
-                        response = fallback_resp;
+                if let Ok(resp) = client.get(&fallback_url).send().await {
+                    if resp.status().is_success() {
+                        fallback_resp = resp;
                         fallback_success = true;
                         break;
                     }
                 }
             }
-
             if !fallback_success {
-                return Err(format!("HTTP error: {} (Fallbacks also failed)", response.status()));
+                return Err(format!("HTTP error: {} (Fallbacks failed)", fallback_resp.status()));
             }
+            fallback_resp
         } else {
             return Err(format!("HTTP error: {}", response.status()));
         }
-    }
+    } else {
+        response
+    };
 
-    // Get content length.
-    let total = response.content_length().unwrap_or(0);
+    let total_size = response.content_length().unwrap_or(0);
+    let accept_ranges = response.headers().get(reqwest::header::ACCEPT_RANGES).map(|v| v.to_str().unwrap_or("")) == Some("bytes")
+        || task.url.contains("forgecdn.net")
+        || task.url.contains("modrinth.com")
+        || task.url.contains("github.com")
+        || task.url.contains("githubusercontent.com")
+        || task.url.contains("bangbang93.com")
+        || task.url.contains("mojang.com")
+        || task.url.contains("minecraft.net");
 
-    // Create a temporary path for the download to avoid leaving broken files
+    let chunk_count = if accept_ranges && total_size > 0 {
+        let mb = total_size / (1024 * 1024);
+        if mb <= 50 { 1 }
+        else if mb <= 100 { 4 }
+        else if mb <= 500 { 8 }
+        else if mb <= 1024 { 16 }
+        else { 32 }
+    } else {
+        1
+    };
+
     let file_name = dest_path.file_name().unwrap_or_default().to_string_lossy();
     let tmp_path = dest_path.with_file_name(format!("{}.tmp", file_name));
 
-    // Create the destination file at tmp path.
-    let mut file = match File::create(&tmp_path).await {
-        Ok(f) => f,
-        Err(e) => {
-            return Err(format!("Failed to create file: {}", e));
+    // Support small file resume
+    let mut initial_downloaded = 0;
+    if chunk_count == 1 {
+        if let Ok(meta) = tokio::fs::metadata(&tmp_path).await {
+            initial_downloaded = meta.len();
+            if initial_downloaded > 0 && accept_ranges && initial_downloaded < total_size {
+                // We drop the initial response and create a new range request
+                let url = response.url().clone();
+                drop(response);
+                let mut range_req = client.get(url.clone()).header("Range", format!("bytes={}-", initial_downloaded));
+                if let Some(host) = url.host_str() {
+                    if host == "forgecdn.net" || host.ends_with(".forgecdn.net") {
+                        if let Some(key) = crate::core::curseforge::CURSE_API_KEY.get() {
+                            range_req = range_req.header("x-api-key", key);
+                        }
+                    }
+                }
+                let range_resp = match range_req.send().await {
+                    Ok(r) => r,
+                    Err(e) => return Err(format!("Range request failed: {}", e)),
+                };
+                if range_resp.status().is_success() {
+                    response = range_resp;
+                } else {
+                    initial_downloaded = 0;
+                    let mut fallback_req = client.get(url.clone());
+                    if let Some(host) = url.host_str() {
+                        if host == "forgecdn.net" || host.ends_with(".forgecdn.net") {
+                            if let Some(key) = crate::core::curseforge::CURSE_API_KEY.get() {
+                                fallback_req = fallback_req.header("x-api-key", key);
+                            }
+                        }
+                    }
+                    response = fallback_req.send().await.map_err(|e| e.to_string())?;
+                }
+            } else if initial_downloaded >= total_size {
+                initial_downloaded = 0;
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+            }
         }
-    };
+    }
 
-    // Stream the response body.
+    if chunk_count > 1 {
+        let final_url = response.url().to_string();
+        drop(response); // Cancel the sequential download body stream
+        let chunk_size = total_size / chunk_count;
+        let mut parts = vec![];
+        let mut ranges = vec![];
+
+        for i in 0..chunk_count {
+            let start = i * chunk_size;
+            let end = if i == chunk_count - 1 { total_size - 1 } else { (i + 1) * chunk_size - 1 };
+            parts.push(dest_path.with_file_name(format!("{}.tmp.part{}", file_name, i)));
+            ranges.push((start, end));
+        }
+
+        let task_downloaded = Arc::new(AtomicU64::new(0));
+        let mut spawn_handles = vec![];
+
+        // Ensure not too many simultaneous connections globally by limiting inside chunk logic.
+        // Actually, we can use an inner semaphore to avoid overwhelming the network with 32 connections per file.
+        let inner_sem = Arc::new(Semaphore::new(4));
+        let is_cancelled = Arc::new(is_cancelled); 
+
+        // Pre-check parts and calculate already downloaded
+        let mut initial_dl = 0;
+        for i in 0..chunk_count as usize {
+            if let Ok(meta) = tokio::fs::metadata(&parts[i]).await {
+                let size = meta.len();
+                let expected = ranges[i].1 - ranges[i].0 + 1;
+                if size == expected {
+                    initial_dl += expected;
+                } else if size < expected {
+                    initial_dl += size;
+                }
+            }
+        }
+        task_downloaded.store(initial_dl, Ordering::Relaxed);
+
+        let last_emit_time_global = Arc::new(tokio::sync::Mutex::new(std::time::Instant::now()));
+        let last_downloaded_global = Arc::new(AtomicU64::new(initial_dl));
+        
+        let client_clone = client.clone();
+        let target_url = final_url;
+
+        for i in 0..chunk_count as usize {
+            let part_path = parts[i].clone();
+            let (start, end) = ranges[i];
+            let client = client_clone.clone();
+            let url = target_url.clone();
+            let app = app_handle.clone();
+            let task_id = task.id.clone();
+            let file_name_clone = file_name.to_string();
+            let global_dl = task_downloaded.clone();
+            let add_global_dl = add_global_downloaded.clone();
+            let last_emit_time_global = last_emit_time_global.clone();
+            let last_downloaded_global = last_downloaded_global.clone();
+            let inner_sem = inner_sem.clone();
+
+            let is_cancelled_clone = is_cancelled.clone();
+
+            let h = tokio::spawn(async move {
+                let _permit = inner_sem.acquire().await.unwrap();
+                if is_cancelled_clone() { return Err("Cancelled".to_string()); }
+
+                let expected_size = end - start + 1;
+                let mut current_start = start;
+                let mut append = false;
+
+                if let Ok(meta) = tokio::fs::metadata(&part_path).await {
+                    let size = meta.len();
+                    if size == expected_size {
+                        return Ok(()); // Already done
+                    } else if size < expected_size {
+                        current_start = start + size;
+                        append = true;
+                    } else {
+                        let _ = tokio::fs::remove_file(&part_path).await;
+                    }
+                }
+
+                let mut req = client.get(&url).header("Range", format!("bytes={}-{}", current_start, end));
+                if let Ok(parsed_url) = reqwest::Url::parse(&url) {
+                    if let Some(host) = parsed_url.host_str() {
+                        if host == "forgecdn.net" || host.ends_with(".forgecdn.net") {
+                            if let Some(key) = crate::core::curseforge::CURSE_API_KEY.get() {
+                                req = req.header("x-api-key", key);
+                            }
+                        }
+                    }
+                }
+                let mut resp = req.send().await.map_err(|e| e.to_string())?;
+                
+                // Safety check: if server ignores Range and returns 200 OK with the full file,
+                // we should abort to prevent downloading the whole file N times.
+                if resp.status() == reqwest::StatusCode::OK && expected_size < total_size {
+                    return Err("Server ignored Range header and returned full file".to_string());
+                }
+                
+                if !resp.status().is_success() {
+                    return Err(format!("Chunk error: {}", resp.status()));
+                }
+
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .append(append)
+                    .truncate(!append)
+                    .open(&part_path)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                let mut stream = resp.bytes_stream();
+                while let Some(chunk_result) = stream.next().await {
+                    if is_cancelled_clone() {
+                        drop(file);
+                        return Err("Cancelled".to_string());
+                    }
+                    let chunk = chunk_result.map_err(|e| e.to_string())?;
+                    file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+                    
+                    let chunk_len = chunk.len() as u64;
+                    global_dl.fetch_add(chunk_len, Ordering::Relaxed);
+                    add_global_dl(chunk_len);
+
+                    // Throttle emit
+                    let mut emit_time = last_emit_time_global.lock().await;
+                    let elapsed = emit_time.elapsed().as_millis() as u64;
+                    let current_total = global_dl.load(Ordering::Relaxed);
+                    let last_dl = last_downloaded_global.load(Ordering::Relaxed);
+                    let since_last = current_total.saturating_sub(last_dl);
+
+                    if elapsed >= PROGRESS_THROTTLE_MS || since_last >= 512 * 1024 {
+                        let speed = if elapsed > 0 { since_last.saturating_div(elapsed.max(1)) * 1000 } else { 0 };
+                        let mut progress = DownloadProgress::progress(task_id.clone(), current_total, total_size, speed);
+                        progress.file_name = Some(file_name_clone.clone());
+                        let _ = app.emit("download-progress", &progress);
+                        *emit_time = std::time::Instant::now();
+                        last_downloaded_global.store(current_total, Ordering::Relaxed);
+                    }
+                }
+                file.flush().await.map_err(|e| e.to_string())?;
+                Ok(())
+            });
+            spawn_handles.push(h);
+        }
+
+        for h in spawn_handles {
+            h.await.map_err(|e| e.to_string())??;
+        }
+
+        // Merge parts
+        let mut final_file = File::create(&tmp_path).await.map_err(|e| e.to_string())?;
+        for part in &parts {
+            let mut part_file = File::open(part).await.map_err(|e| e.to_string())?;
+            tokio::io::copy(&mut part_file, &mut final_file).await.map_err(|e| e.to_string())?;
+        }
+        final_file.flush().await.map_err(|e| e.to_string())?;
+        drop(final_file);
+
+        for part in parts {
+            let _ = tokio::fs::remove_file(&part).await;
+        }
+
+        if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(format!("Failed to finalize file: {}", e));
+        }
+
+        tracing::debug!("Chunked download completed: {}", task.dest_path);
+        return Ok(());
+    }
+
+    // Sequential fallback
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(initial_downloaded > 0)
+        .truncate(initial_downloaded == 0)
+        .open(&tmp_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
     let mut stream = response.bytes_stream();
-    let mut downloaded: u64 = 0;
+    let mut downloaded: u64 = initial_downloaded;
     let mut last_emit_time = std::time::Instant::now();
-    let mut last_downloaded: u64 = 0;
+    let mut last_downloaded: u64 = initial_downloaded;
 
     while let Some(chunk_result) = stream.next().await {
-        if ctx.is_cancelled() {
-            // Cancel requested: abort download and clean up temp file
+        if is_cancelled() {
             drop(file);
-            let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err("Cancelled".to_string());
         }
 
         match chunk_result {
             Ok(chunk) => {
-                if let Err(e) = file.write_all(&chunk).await {
-                    drop(file);
-                    let _ = tokio::fs::remove_file(&tmp_path).await;
-                    return Err(format!("Write failed: {}", e));
-                }
-
+                file.write_all(&chunk).await.map_err(|e| e.to_string())?;
                 downloaded += chunk.len() as u64;
+                add_global_downloaded(chunk.len() as u64);
 
-                // Update global downloaded counter
-                global_downloaded.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-
-                // Throttle: only emit every PROGRESS_THROTTLE_MS or every 512KB.
                 let elapsed = last_emit_time.elapsed().as_millis() as u64;
-                let since_last_emit = downloaded.saturating_sub(last_downloaded);
+                let since_last = downloaded.saturating_sub(last_downloaded);
 
-                if elapsed >= PROGRESS_THROTTLE_MS || since_last_emit >= 512 * 1024 {
-                    let speed = if elapsed > 0 {
-                        let bytes_per_ms = since_last_emit.saturating_div(elapsed.max(1));
-                        bytes_per_ms * 1000
-                    } else {
-                        0
-                    };
-
-                    // Emit progress (don't fail on emit error).
-                    let mut progress =
-                        DownloadProgress::progress(task.id.clone(), downloaded, total, speed);
-                    progress.file_name = std::path::Path::new(&task.dest_path)
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string());
-                    let _ = ctx.app_handle.emit("download-progress", &progress);
-
+                if elapsed >= PROGRESS_THROTTLE_MS || since_last >= 512 * 1024 {
+                    let speed = if elapsed > 0 { since_last.saturating_div(elapsed.max(1)) * 1000 } else { 0 };
+                    let mut progress = DownloadProgress::progress(task.id.clone(), downloaded, total_size, speed);
+                    progress.file_name = Some(file_name.to_string());
+                    let _ = app_handle.emit("download-progress", &progress);
                     last_emit_time = std::time::Instant::now();
                     last_downloaded = downloaded;
                 }
             }
             Err(e) => {
                 drop(file);
-                let _ = tokio::fs::remove_file(&tmp_path).await;
                 return Err(format!("Stream error: {}", e));
             }
         }
     }
-
-    // Ensure all data is flushed to disk.
-    if let Err(e) = file.flush().await {
-        drop(file);
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(format!("Flush failed: {}", e));
-    }
-
-    // Rename temporary file to original destination path
-    drop(file); // Ensure file is closed before renaming
+    file.flush().await.map_err(|e| e.to_string())?;
+    drop(file);
     if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
         let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(format!("Failed to finalize file: {}", e));
     }
-
     tracing::debug!("Download completed: {}", task.dest_path);
     Ok(())
 }
 
-/// Run batch download with multiple files concurrently.
+pub async fn download_file_task(
+    task: DownloadTask,
+    client: reqwest::Client,
+    ctx: &TaskContext,
+    global_downloaded: &Arc<AtomicU64>,
+) -> Result<(), String> {
+    let cancel_token = ctx.cancel_token.clone();
+    let is_cancelled = move || cancel_token.is_cancelled();
+    let global_dl = global_downloaded.clone();
+    let add_global = move |bytes: u64| {
+        global_dl.fetch_add(bytes, Ordering::Relaxed);
+    };
+    download_file_core(task, client.clone(), ctx.app_handle.clone(), is_cancelled, add_global).await
+}
+
+async fn download_file(
+    task: DownloadTask,
+    client: reqwest::Client,
+    app: &AppHandle,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let cancel_flag_clone = cancel_flag.clone();
+    let is_cancelled = move || cancel_flag_clone.load(Ordering::Relaxed);
+    let add_global = |_| {};
+    download_file_core(task, client.clone(), app.clone(), is_cancelled, add_global).await
+}
+
 pub async fn run_batch_download_task(
     tasks: Vec<DownloadTask>,
     ctx: TaskContext,
@@ -356,7 +548,7 @@ pub async fn run_batch_download_task(
                     }
 
                     // Execute download and handle errors gracefully.
-                    match download_file_task(task.clone(), &client, &ctx, &global_downloaded_clone)
+                    match download_file_task(task.clone(), client.clone(), &ctx, &global_downloaded_clone)
                         .await
                     {
                         Ok(()) => {
@@ -457,150 +649,6 @@ pub async fn run_batch_download_task(
 }
 
 /// Downloads a single file with progress reporting (Legacy).
-async fn download_file(
-    task: DownloadTask,
-    client: &reqwest::Client,
-    app: &AppHandle,
-    cancel_flag: Arc<AtomicBool>,
-) -> Result<(), String> {
-    tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
-
-    let dest_path = task.dest_path_buf();
-    if let Some(parent) = dest_path.parent() {
-        if let Err(e) = tokio::fs::create_dir_all(parent).await {
-            return Err(format!("Failed to create directory: {}", e));
-        }
-    }
-
-    if dest_path.exists() {
-        if let Some(expected_hash) = &task.hash {
-            let dest_path_clone = dest_path.clone();
-            if let Ok(actual_hash) = tokio::task::spawn_blocking(move || compute_sha1_sync(&dest_path_clone))
-                .await
-                .map_err(|e| e.to_string())? {
-                if actual_hash.eq_ignore_ascii_case(expected_hash) {
-                    return Ok(());
-                } else {
-                    let _ = tokio::fs::remove_file(&dest_path).await;
-                }
-            }
-        } else if let Some(expected_size) = task.expected_size {
-            if let Ok(metadata) = tokio::fs::metadata(&dest_path).await {
-                if metadata.len() == expected_size {
-                    return Ok(());
-                } else {
-                    let _ = tokio::fs::remove_file(&dest_path).await;
-                }
-            }
-        }
-    }
-
-    let mut response = match client.get(&task.url).send().await {
-        Ok(resp) => resp,
-        Err(e) => return Err(format!("Request failed: {}", e)),
-    };
-
-    if !response.status().is_success() {
-        if task.url.contains("bmclapi2.bangbang93.com") {
-            tracing::warn!("BMCLAPI returned {}. Attempting fallback to official source...", response.status());
-            
-            let fallbacks = get_bmclapi_fallbacks(&task.url);
-
-            let mut fallback_success = false;
-            for fallback_url in fallbacks {
-                tracing::info!("Trying fallback URL: {}", fallback_url);
-                if let Ok(fallback_resp) = client.get(&fallback_url).send().await {
-                    if fallback_resp.status().is_success() {
-                        response = fallback_resp;
-                        fallback_success = true;
-                        break;
-                    }
-                }
-            }
-
-            if !fallback_success {
-                return Err(format!("HTTP error: {} (Fallbacks also failed)", response.status()));
-            }
-        } else {
-            return Err(format!("HTTP error: {}", response.status()));
-        }
-    }
-
-    let total = response.content_length().unwrap_or(0);
-    let file_name = dest_path.file_name().unwrap_or_default().to_string_lossy();
-    let tmp_path = dest_path.with_file_name(format!("{}.tmp", file_name));
-
-    let mut file = match File::create(&tmp_path).await {
-        Ok(f) => f,
-        Err(e) => return Err(format!("Failed to create file: {}", e)),
-    };
-
-    let mut stream = response.bytes_stream();
-    let mut downloaded: u64 = 0;
-    let mut last_emit_time = std::time::Instant::now();
-    let mut last_downloaded: u64 = 0;
-
-    while let Some(chunk_result) = stream.next().await {
-        if cancel_flag.load(Ordering::Relaxed) {
-            drop(file);
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err("Cancelled".to_string());
-        }
-
-        match chunk_result {
-            Ok(chunk) => {
-                if let Err(e) = file.write_all(&chunk).await {
-                    drop(file);
-                    let _ = tokio::fs::remove_file(&tmp_path).await;
-                    return Err(format!("Write failed: {}", e));
-                }
-
-                downloaded += chunk.len() as u64;
-                let elapsed = last_emit_time.elapsed().as_millis() as u64;
-                let since_last_emit = downloaded.saturating_sub(last_downloaded);
-
-                if elapsed >= PROGRESS_THROTTLE_MS || since_last_emit >= 512 * 1024 {
-                    let speed = if elapsed > 0 {
-                        (since_last_emit.saturating_div(elapsed.max(1))) * 1000
-                    } else {
-                        0
-                    };
-
-                    let mut progress =
-                        DownloadProgress::progress(task.id.clone(), downloaded, total, speed);
-                    progress.file_name = std::path::Path::new(&task.dest_path)
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string());
-                    let _ = app.emit("download-progress", &progress);
-
-                    last_emit_time = std::time::Instant::now();
-                    last_downloaded = downloaded;
-                }
-            }
-            Err(e) => {
-                drop(file);
-                let _ = tokio::fs::remove_file(&tmp_path).await;
-                return Err(format!("Stream error: {}", e));
-            }
-        }
-    }
-
-    if let Err(e) = file.flush().await {
-        drop(file);
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(format!("Flush failed: {}", e));
-    }
-
-    drop(file);
-    if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
-        let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(format!("Failed to finalize file: {}", e));
-    }
-
-    Ok(())
-}
-
-/// Run batch download with multiple files concurrently (Legacy).
 pub async fn run_batch_download(
     tasks: Vec<DownloadTask>,
     app: AppHandle,
@@ -637,7 +685,7 @@ pub async fn run_batch_download(
                         return Err("Cancelled".to_string());
                     }
 
-                    match download_file(task.clone(), &client, &app, cancel_flag.clone()).await {
+                    match download_file(task.clone(), client.clone(), &app, cancel_flag.clone()).await {
                         Ok(()) => {
                             let mut progress = DownloadProgress::completed(task_id);
                             progress.file_name = std::path::Path::new(&dest_path)

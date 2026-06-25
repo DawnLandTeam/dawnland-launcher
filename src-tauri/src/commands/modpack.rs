@@ -559,15 +559,11 @@ impl ExecutableTask for InstallOnlineModpackTask {
             .update_progress(0, 100, "Downloading modpack archive...")
             .await;
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .build()
-            .unwrap_or_default();
-
-        let mut response =
-            client.get(url).send().await.map_err(|e| {
-                TaskError::ExecutionError(format!("Failed to start download: {}", e))
-            })?;
+        // Get initial headers to know total_size for skip and progress bar
+        let client = crate::core::utils::get_http_client().clone();
+        let response = client.get(url).send().await.map_err(|e| {
+            TaskError::ExecutionError(format!("Failed to start download: {}", e))
+        })?;
 
         if !response.status().is_success() {
             return Err(TaskError::ExecutionError(format!(
@@ -577,84 +573,66 @@ impl ExecutableTask for InstallOnlineModpackTask {
         }
 
         let total_size = response.content_length().unwrap_or(0);
-        let mut downloaded: u64 = 0;
+        let accept_ranges = response.headers().get(reqwest::header::ACCEPT_RANGES).is_some() || url.contains("forgecdn.net") || url.contains("modrinth.com");
+        drop(response); // we just wanted the headers
 
-        let skip_download = if total_size > 0 && temp_zip_path.exists() {
+        let mut skip_download = false;
+        if total_size > 0 && temp_zip_path.exists() {
             if let Ok(metadata) = tokio::fs::metadata(&temp_zip_path).await {
                 if metadata.len() == total_size {
                     tracing::info!(
                         "Found existing online modpack zip for task {}, skipping download",
                         ctx.id
                     );
-                    true
-                } else {
-                    false
+                    skip_download = true;
                 }
-            } else {
-                false
             }
-        } else {
-            false
-        };
+        }
 
         if !skip_download {
-            let mut file = tokio::fs::File::create(&temp_zip_path).await.map_err(|e| {
-                TaskError::ExecutionError(format!("Failed to create temp file: {}", e))
-            })?;
+            let mut task = crate::downloader::DownloadTask::new(
+                url.clone(),
+                temp_zip_path.to_string_lossy().to_string(),
+                None,
+                None,
+            );
+            task.expected_size = if total_size > 0 { Some(total_size) } else { None };
 
-            let mut speed_calc_time = tokio::time::Instant::now();
-            let mut last_downloaded: u64 = 0;
-            let mut current_speed: f64 = 0.0;
-            let mut last_emit_time = tokio::time::Instant::now();
-
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|e| TaskError::ExecutionError(e.to_string()))?
-            {
-                if ctx.is_cancelled() {
-                    drop(file);
-                    let _ = tokio::fs::remove_file(&temp_zip_path).await;
-                    let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-                    return Err(TaskError::ExecutionError(
-                        "Installation cancelled by user".to_string(),
-                    ));
+            let global_downloaded = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let monitor_ctx = ctx_zip.clone();
+            let monitor_dl = global_downloaded.clone();
+            
+            let monitor = tokio::spawn(async move {
+                let mut last_dl = 0;
+                let mut last_time = tokio::time::Instant::now();
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    if monitor_ctx.is_cancelled() { break; }
+                    let dl = monitor_dl.load(std::sync::atomic::Ordering::Relaxed);
+                    
+                    let elapsed_sec = last_time.elapsed().as_secs_f64();
+                    let speed = if elapsed_sec > 0.0 { ((dl.saturating_sub(last_dl)) as f64 / elapsed_sec) as u64 } else { 0 };
+                    
+                    let mb = dl as f64 / 1024.0 / 1024.0;
+                    let t_mb = total_size as f64 / 1024.0 / 1024.0;
+                    monitor_ctx.update_progress(dl, total_size, &format!("Downloading archive... {:.1} MB / {:.1} MB", mb, t_mb)).await;
+                    monitor_ctx.update_download_metrics(speed, 1).await;
+                    
+                    last_dl = dl;
+                    last_time = tokio::time::Instant::now();
+                    
+                    if dl >= total_size && total_size > 0 { break; }
                 }
+            });
 
-                file.write_all(&chunk)
-                    .await
-                    .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-                downloaded += chunk.len() as u64;
-
-                if total_size > 0 && last_emit_time.elapsed().as_millis() > 200 {
-                    let elapsed_sec = speed_calc_time.elapsed().as_secs_f64();
-                    if elapsed_sec > 0.5 {
-                        current_speed = (downloaded - last_downloaded) as f64 / elapsed_sec;
-                        last_downloaded = downloaded;
-                        speed_calc_time = tokio::time::Instant::now();
-                    }
-
-                    let progress = (downloaded as f64 / total_size as f64) * 100.0;
-                    let downloaded_mb = downloaded as f64 / 1024.0 / 1024.0;
-                    let total_mb = total_size as f64 / 1024.0 / 1024.0;
-
-                    ctx_zip
-                        .update_progress(
-                            downloaded,
-                            total_size,
-                            &format!(
-                                "Downloading archive... {:.1} MB / {:.1} MB",
-                                downloaded_mb, total_mb
-                            ),
-                        )
-                        .await;
-                    ctx_zip
-                        .update_download_metrics(current_speed as u64, 1)
-                        .await;
-                    last_emit_time = tokio::time::Instant::now();
-                }
+            if let Err(e) = crate::downloader::download::download_file_task(task, client, &ctx_zip, &global_downloaded).await {
+                monitor.abort();
+                let _ = tokio::fs::remove_file(&temp_zip_path).await;
+                let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+                return Err(TaskError::ExecutionError(e));
             }
-        } // End of skip_download check
+            monitor.abort();
+        }
 
         ctx_zip
             .update_progress(100, 100, "Download complete. Starting installation...")
