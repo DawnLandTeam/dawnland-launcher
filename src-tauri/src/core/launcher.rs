@@ -242,11 +242,9 @@ impl InstanceConfig {
         if is_dependency {
             config.hidden = true;
         }
-        let _ = tokio::fs::write(
-            &config_path,
-            serde_json::to_string_pretty(&config).unwrap_or_default(),
-        )
-        .await;
+        if let Ok(json) = serde_json::to_string_pretty(&config) {
+            let _ = tokio::fs::write(&config_path, json).await;
+        }
     }
 }
 

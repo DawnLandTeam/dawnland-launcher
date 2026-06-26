@@ -458,11 +458,13 @@ impl ExecutableTask for InstallModpackTask {
 
         let version_json = serde_json::Value::Object(version_json_map);
 
-        std::fs::write(
-            instance_dir.join(format!("{}.json", instance_name)),
-            serde_json::to_string_pretty(&version_json).unwrap(),
-        )
-        .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+        if let Ok(json_str) = serde_json::to_string_pretty(&version_json) {
+            std::fs::write(
+                instance_dir.join(format!("{}.json", instance_name)),
+                json_str,
+            )
+            .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+        }
 
         // 5. Apply Overrides
         let ctx_overrides = ctx.with_sub_task("apply_overrides");
@@ -494,11 +496,9 @@ impl ExecutableTask for InstallModpackTask {
                 {
                     config.is_installing = false;
                     config.is_updating = false;
-                    let _ = tokio::fs::write(
-                        &config_path,
-                        serde_json::to_string_pretty(&config).unwrap(),
-                    )
-                    .await;
+                    if let Ok(json_str) = serde_json::to_string_pretty(&config) {
+                        let _ = tokio::fs::write(&config_path, json_str).await;
+                    }
                 }
             }
         }

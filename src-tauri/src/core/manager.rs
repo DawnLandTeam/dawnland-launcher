@@ -177,7 +177,9 @@ pub async fn scan_installed_instances(
                                 if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
                                     config.is_installing = false;
                                     config.is_updating = false;
-                                    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap_or_default()).await;
+                                    if let Ok(json) = serde_json::to_string_pretty(&config) {
+                                        let _ = tokio::fs::write(&config_path, json).await;
+                                    }
                                     is_installing = false;
                                     is_updating = false;
                                 }
