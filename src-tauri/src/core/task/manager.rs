@@ -338,18 +338,27 @@ impl TaskManager {
                         let base_dir = crate::core::mojang::get_minecraft_base();
                         let instance_dir = base_dir.join("versions").join(&instance_id);
                         let config_path = instance_dir.join("dlml.json");
-                        if config_path.exists() {
-                            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                        if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                            if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
                                 if let Ok(config) = serde_json::from_str::<
                                     crate::core::launcher::InstanceConfig,
                                 >(&content)
                                 {
-                                    if config.is_installing {
+                                    // For first time installation, always clean up failed/cancelled instances
+                                    if config.is_installing && !config.is_updating {
                                         tracing::info!(
                                             "Cleaning up failed/cancelled instance: {}",
                                             instance_id
                                         );
-                                        let _ = std::fs::remove_dir_all(&instance_dir);
+                                        let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+                                    } else if config.is_updating {
+                                        tracing::warn!("Instance {} is marked as updating. Skipping auto-cleanup.", instance_id);
+                                        let mut rescued_config = config.clone();
+                                        rescued_config.is_installing = false;
+                                        rescued_config.is_updating = false;
+                                        if let Ok(json) = serde_json::to_string_pretty(&rescued_config) {
+                                            let _ = tokio::fs::write(&config_path, json).await;
+                                        }
                                     }
                                 }
                             }
@@ -381,18 +390,27 @@ impl TaskManager {
                     let instance_dir = base_dir.join("versions").join(&instance_id);
                     // Only delete if it's currently marked as installing to avoid deleting valid updates
                     let config_path = instance_dir.join("dlml.json");
-                    if config_path.exists() {
-                        if let Ok(content) = std::fs::read_to_string(&config_path) {
+                    if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
                             if let Ok(config) = serde_json::from_str::<
                                 crate::core::launcher::InstanceConfig,
                             >(&content)
                             {
-                                if config.is_installing {
+                                // For first time installation, always eagerly clean up
+                                if config.is_installing && !config.is_updating {
                                     tracing::info!(
                                         "Eagerly cleaning up cancelled instance: {}",
                                         instance_id
                                     );
-                                    let _ = std::fs::remove_dir_all(&instance_dir);
+                                    let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+                                } else if config.is_updating {
+                                    tracing::warn!("Instance {} is marked as updating. Skipping eager auto-cleanup.", instance_id);
+                                    let mut rescued_config = config.clone();
+                                    rescued_config.is_installing = false;
+                                    rescued_config.is_updating = false;
+                                    if let Ok(json) = serde_json::to_string_pretty(&rescued_config) {
+                                        let _ = tokio::fs::write(&config_path, json).await;
+                                    }
                                 }
                             }
                         }

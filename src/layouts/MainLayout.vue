@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import CustomTitleBar from "../components/CustomTitleBar.vue";
 import Sidebar from "../components/Sidebar.vue";
+import { useRoute } from "vue-router";
+
+const route = useRoute();
 </script>
 
 <template>
@@ -18,8 +21,8 @@ import Sidebar from "../components/Sidebar.vue";
         <Sidebar />
         <main class="flex-1 overflow-y-auto">
           <router-view v-slot="{ Component }">
-            <keep-alive>
-              <component :is="Component" />
+            <keep-alive exclude="InstanceManagementView">
+              <component :is="Component" :key="route.path" />
             </keep-alive>
           </router-view>
         </main>

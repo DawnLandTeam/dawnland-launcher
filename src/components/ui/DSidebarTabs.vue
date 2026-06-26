@@ -9,6 +9,7 @@ export interface SidebarTab {
   disabled?: boolean;
   group?: string;
   hasDot?: boolean;
+  action?: () => void;
 }
 
 const props = defineProps<{
@@ -23,6 +24,10 @@ const emit = defineEmits<{
 
 const selectTab = (tab: SidebarTab) => {
   if (tab.disabled) return;
+  if (tab.action) {
+    tab.action();
+    return;
+  }
   emit('update:modelValue', tab.id);
 };
 
@@ -55,7 +60,7 @@ const groupedTabs = computed(() => {
 </script>
 
 <template>
-  <div class="w-48 shrink-0 flex flex-col gap-1 p-4 rounded-xl border border-neutral-200/50 dark:border-zinc-800/50 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
+  <div class="w-56 shrink-0 flex flex-col gap-1 p-4 min-h-full rounded-xl border border-neutral-200/50 dark:border-zinc-800/50 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
     <div v-if="title" class="mb-4">
       <h2 class="text-lg font-bold px-3">{{ title }}</h2>
     </div>

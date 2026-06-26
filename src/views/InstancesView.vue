@@ -1,17 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, onActivated, onUnmounted } from "vue";
+import { ref, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import DSelect from "../components/ui/DSelect.vue";
 import { invoke } from "@tauri-apps/api/core";
-import { Gamepad2, Plus, Package, Settings, Save, MoreHorizontal, Trash2, Folder, Puzzle, RefreshCw, Share2, Check } from "@lucide/vue";
+import { Gamepad2, Plus, Package, Trash2, Share2, Check } from "@lucide/vue";
 import { getErrorMessage } from "../utils/error";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
-import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
-import { DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
+import { useInstances } from "../composables/useInstances";
+
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
-import LocalModsModal from "../components/LocalModsModal.vue";
-import LocalDatapacksModal from "../components/LocalDatapacksModal.vue";
 import { trackEvent } from "../utils/analytics";
 
 // Types
@@ -24,81 +21,27 @@ interface InstanceItem {
   modpackType?: string;
   modpackProjectId?: string;
   isInstalling?: boolean;
-}
-
-interface InstanceConfig {
-  javaPath?: string;
-  maxMemory?: number;
-  jvmArgsExtra?: string[];
-  windowBehavior?: string;
-  showGameLog?: boolean;
-}
-
-interface SystemMemoryInfo {
-  totalMb: number;
-  recommendedMaxMb: number;
-}
-
-interface JavaInfo {
-  path: string;
-  majorVersion: number;
-  versionString: string;
-  vendor: string;
-  is64Bit: boolean;
-  isOpenJ9: boolean;
-  isGraalvm: boolean;
+  isUpdating?: boolean;
 }
 
 // Router — deep-link support
-import { launchingInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';
+
 import { toast } from '../composables/useToast';
 
 const route = useRoute();
 const router = useRouter();
-const { t } = useI18n();
+useI18n();
 
 // State
-const installedInstances = ref<InstanceItem[]>([]);
+const { instances: installedInstances, fetchInstances: loadInstances } = useInstances();
 const copiedShareInstanceId = ref<string | null>(null);
-
-// Settings modal state
-const showSettingsModal = ref(false);
-const settingsInstanceId = ref("");
-const settingsInstanceName = ref("");
-const settingsConfig = ref<InstanceConfig>({
-  javaPath: "",
-  maxMemory: 4096,
-  jvmArgsExtra: [],
-  windowBehavior: "keep",
-  showGameLog: false,
-});
-const isSavingConfig = ref(false);
-
-const useGlobalMemory = ref(true);
-const globalMaxMemory = ref(4096);
-
-// System memory for slider
-const systemMemory = ref<SystemMemoryInfo>({
-  totalMb: 8192,
-  recommendedMaxMb: 4096,
-});
-
-// Installed Javas
-const installedJavas = ref<JavaInfo[]>([]);
 
 // Delete confirmation state
 const showDeleteDialog = ref(false);
 const deletingInstanceId = ref("");
 const deletingInstanceName = ref("");
 const isDeletingInstance = ref(false);
-
-// Local mods modal state
-const showLocalModsModal = ref(false);
-
-// Local datapacks modal state
-const showLocalDatapacksModal = ref(false);
-
-const selectedInstanceId = ref("");
+const hasDataToDelete = ref(false);
 
 const openDropdownId = ref<string | null>(null);
 
@@ -106,13 +49,12 @@ const openDropdownId = ref<string | null>(null);
 // Deep-link: route.query.manage → auto-open settings for a specific instance
 // ---------------------------------------------------------------------------
 const openSettingsForInstance = async (instanceId: string) => {
-  // Find the instance in the list so we can display its name
   const instance = installedInstances.value.find((i) => i.id === instanceId);
   if (!instance) {
     console.warn(`Instance "${instanceId}" not found — cannot open settings`);
     return;
   }
-  await openSettings(instance);
+  router.push('/instances/' + instance.id);
 };
 
 watch(
@@ -148,31 +90,14 @@ const handleTaskAdded = () => {
 
 useTaskStatusReload(loadInstances);
 
-const windowBehaviorOptions = computed(() => [
-  { label: t('instances.settingsDialog.keepVisible'), value: 'keep' },
-  { label: t('instances.settingsDialog.hideLauncher'), value: 'hide' },
-  { label: t('instances.settingsDialog.minimizeTaskbar'), value: 'minimize' }
-]);
-
-const javaPathOptions = computed(() => [
-  { label: t('instances.settingsDialog.defaultAuto'), value: '' },
-  ...installedJavas.value.map(java => ({
-    label: `Java ${java.majorVersion} (${java.vendor}) [${java.isOpenJ9 ? 'OpenJ9' : (java.isGraalvm ? 'GraalVM' : 'HotSpot')}] - ${java.versionString}`,
-    value: java.path
-  }))
-]);
-
 onMounted(async () => {
   trackEvent("Instances Viewed");
   window.addEventListener('task-added', handleTaskAdded);
   await loadInstances();
-  await loadJavas();
 });
 
 onActivated(async () => {
   await loadInstances();
-  await loadSystemMemory();
-  await loadJavas();
 });
 
 onUnmounted(() => {
@@ -181,147 +106,25 @@ onUnmounted(() => {
 
 // ---------------------------------------------------------------------------
 // Data loading
+// Data loading
 // ---------------------------------------------------------------------------
-async function loadInstances() {
-  try {
-    const instances = await invoke<InstanceItem[]>("scan_installed_instances");
-    installedInstances.value = instances;
-  } catch (e) {
-    console.error("Failed to load instances:", e);
-  }
-}
+// `loadInstances` is now provided by useInstances composable
 
 async function refreshInstancesList() {
-  await loadInstances();
-}
-
-async function loadSystemMemory() {
-  try {
-    systemMemory.value = await invoke<SystemMemoryInfo>("get_system_memory");
-    globalMaxMemory.value = systemMemory.value.recommendedMaxMb;
-    const settings = await invoke<any>("load_launcher_settings");
-    if (settings.globalMaxMemory) {
-      globalMaxMemory.value = settings.globalMaxMemory;
-    }
-  } catch (e) {
-    console.error("Failed to load system memory:", e);
-  }
-}
-
-async function loadJavas() {
-  try {
-    installedJavas.value = await invoke<JavaInfo[]>("scan_local_javas");
-  } catch (e) {
-    console.error("Failed to load installed Javas:", e);
-  }
+  await loadInstances(true);
 }
 
 // ---------------------------------------------------------------------------
 // Settings modal
 // ---------------------------------------------------------------------------
 
-const isSettingsInstanceRunning = computed(() => {
-  return launchingInstances.value.has(settingsInstanceId.value) ||
-         runningInstances.value.has(settingsInstanceId.value) ||
-         repairingInstances.value.has(settingsInstanceId.value);
-});
-
-async function openSettings(instance: InstanceItem) {
-  settingsInstanceId.value = instance.id;
-  settingsInstanceName.value = instance.name;
-
-  try {
-    const config = await invoke<InstanceConfig>("get_instance_config", {
-      versionId: instance.id,
-    });
-    useGlobalMemory.value = !config.maxMemory;
-    settingsConfig.value = {
-      javaPath: config.javaPath || "",
-      maxMemory: config.maxMemory || globalMaxMemory.value,
-      jvmArgsExtra: config.jvmArgsExtra || [],
-      windowBehavior: config.windowBehavior || "keep",
-      showGameLog: config.showGameLog === true,
-    };
-  } catch (e) {
-    console.error("Failed to load instance config:", e);
-    useGlobalMemory.value = true;
-    settingsConfig.value = {
-      javaPath: "",
-      maxMemory: globalMaxMemory.value,
-      jvmArgsExtra: [],
-      windowBehavior: "keep",
-      showGameLog: false,
-    };
-  }
-
-  showSettingsModal.value = true;
-}
-
-function openMods(instance: InstanceItem) {
-  selectedInstanceId.value = instance.id;
-  showLocalModsModal.value = true;
-}
-
-function openDatapacks(instance: InstanceItem) {
-  selectedInstanceId.value = instance.id;
-  showLocalDatapacksModal.value = true;
-}
-
-// Remove browseJavaPath since we are using select now
-
-async function saveSettings() {
-  isSavingConfig.value = true;
-
-  try {
-    const config = {
-      javaPath: settingsConfig.value.javaPath || null,
-      maxMemory: useGlobalMemory.value ? null : (settingsConfig.value.maxMemory || null),
-      jvmArgsExtra: settingsConfig.value.jvmArgsExtra?.length
-        ? settingsConfig.value.jvmArgsExtra
-        : null,
-      windowBehavior: settingsConfig.value.windowBehavior || "keep",
-      showGameLog: settingsConfig.value.showGameLog,
-    };
-
-    await invoke("save_instance_config", {
-      versionId: settingsInstanceId.value,
-      config,
-    });
-
-    showSettingsModal.value = false;
-  } catch (e) {
-    console.error("Failed to save instance config:", e);
-    alert(`Failed to save: ${getErrorMessage(e)}`);
-  } finally {
-    isSavingConfig.value = false;
-  }
+function openSettings(instance: InstanceItem) {
+  router.push('/instances/' + instance.id);
 }
 
 // ---------------------------------------------------------------------------
 // Instance management actions
 // ---------------------------------------------------------------------------
-async function openInstanceFolder(instanceId: string) {
-  try {
-    await invoke("open_instance_folder", { versionId: instanceId });
-  } catch (e) {
-    console.error("Failed to open instance folder:", e);
-    alert(`Failed to open folder: ${getErrorMessage(e)}`);
-  }
-}
-
-function updateModpack(instance: InstanceItem) {
-  router.push({
-    path: '/downloads',
-    query: {
-      tab: 'modpack',
-      update_id: instance.name,
-      source: instance.modpackType?.toLowerCase() || '',
-      current_version: instance.modpackVersion || '',
-      project_id: instance.modpackProjectId || ''
-    }
-  });
-}
-
 async function shareModpack(instance: InstanceItem) {
   if (!instance.modpackProjectId || !instance.modpackVersion || !instance.modpackType) return;
   const rawLink = `dlml://modpack/install?id=${encodeURIComponent(instance.modpackProjectId)}&source=${encodeURIComponent(instance.modpackType.toLowerCase())}&version_id=${encodeURIComponent(instance.modpackVersion)}&name=${encodeURIComponent(instance.name)}`;
@@ -340,9 +143,14 @@ async function shareModpack(instance: InstanceItem) {
     toast.error('无法复制链接到剪贴板，请检查浏览器权限。');
   }
 }
-function confirmDeleteInstance(instance: InstanceItem) {
+async function confirmDeleteInstance(instance: InstanceItem) {
   deletingInstanceId.value = instance.id;
   deletingInstanceName.value = instance.name;
+  try {
+    hasDataToDelete.value = await invoke("check_instance_data", { versionId: instance.id });
+  } catch (e) {
+    hasDataToDelete.value = false;
+  }
   showDeleteDialog.value = true;
 }
 
@@ -454,18 +262,21 @@ function normalizedModpackVersion(version: string): string {
       </div>
 
       <!-- Instance Grid -->
-      <div class="grid grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
         <div
           v-for="instance in installedInstances"
           :key="instance.id"
-          class="group rounded-lg border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-all shadow-sm relative hover:z-50 focus-within:z-50"
+          @click="openSettings(instance)"
+          class="group flex flex-col h-32 rounded-lg border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-all shadow-sm relative hover:z-50 focus-within:z-50 cursor-pointer"
           :class="openDropdownId === instance.id ? 'z-50' : ''"
         >
-          <!-- Installing Overlay -->
-          <div v-if="instance.isInstalling" class="absolute inset-0 z-10 bg-white/50 dark:bg-black/50 backdrop-blur-[1px] flex items-center justify-center rounded-lg">
+          <!-- Installing/Updating Overlay -->
+          <div v-if="instance.isInstalling || instance.isUpdating" class="absolute inset-0 z-10 bg-white/50 dark:bg-black/50 backdrop-blur-[1px] flex items-center justify-center rounded-lg">
             <div class="bg-background/90 px-3 py-1.5 rounded-full flex items-center gap-2 shadow-sm border border-border">
               <Loader2 class="h-4 w-4 animate-spin text-primary" />
-              <span class="text-xs font-medium">{{ $t('instances.installing', 'Installing...') }}</span>
+              <span class="text-xs font-medium">
+                {{ instance.isUpdating ? $t('instances.updating', '更新中...') : $t('instances.installing', '正在安装...') }}
+              </span>
             </div>
           </div>
 
@@ -473,222 +284,59 @@ function normalizedModpackVersion(version: string): string {
           <div class="flex items-start justify-between">
             <div class="min-w-0 flex items-center gap-3 flex-1">
               <Package class="h-5 w-5 shrink-0 text-muted-foreground" />
-              <div class="min-w-0 flex-1">
-                <h3 class="font-semibold truncate" :title="instance.name">{{ instance.name }}</h3>
-                <div class="flex items-center gap-2 mt-1 flex-wrap">
-                  <span class="text-xs text-muted-foreground font-mono">
-                    {{ instance.mcVersion }}
-                  </span>
-                  <span
-                    class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none"
-                    :class="loaderBadgeClass(instance.loaderType)"
-                  >
-                    {{ instance.loaderType }}
-                  </span>
-                  <span
-                    v-if="instance.modpackType"
-                    class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
-                  >
-                    {{ instance.modpackType }}
-                  </span>
-                  <span
-                    v-if="instance.modpackVersion"
-                    class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
-                  >
-                    {{ normalizedModpackVersion(instance.modpackVersion) }}
-                  </span>
+              <div class="min-w-0 flex-1 overflow-hidden">
+                <h3 class="font-semibold line-clamp-2 break-words" :title="instance.name">{{ instance.name }}</h3>
+                <div class="flex items-center gap-2 mt-2 flex-wrap overflow-hidden max-h-[40px]">
+                    <span class="text-xs text-muted-foreground font-mono shrink-0">
+                      {{ instance.mcVersion }}
+                    </span>
+                    <span
+                      class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none shrink-0"
+                      :class="loaderBadgeClass(instance.loaderType)"
+                    >
+                      {{ instance.loaderType }}
+                    </span>
+                    <span
+                      v-if="instance.modpackType"
+                      class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 shrink-0"
+                    >
+                      {{ instance.modpackType }}
+                    </span>
+                    <span
+                      v-if="instance.modpackVersion"
+                      class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 shrink-0"
+                    >
+                      {{ normalizedModpackVersion(instance.modpackVersion) }}
+                    </span>
+                  </div>
                 </div>
-              </div>
             </div>
-          </div>
-
-          <!-- Management actions -->
-          <div class="mt-3 flex justify-end relative z-20">
-            <DropdownMenu align="end" @update:open="(val: boolean) => openDropdownId = val ? instance.id : null">
-              <template #trigger>
-                <button
-                  class="flex items-center justify-center rounded-md border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  :disabled="instance.isInstalling"
-                  title="More options"
-                >
-                  <MoreHorizontal class="h-4 w-4" />
-                </button>
-              </template>
-              <DropdownMenuItem @click="openSettings(instance)">
-                <Settings class="h-4 w-4" />
-                {{ $t('instances.settings') }}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                @click="openInstanceFolder(instance.id)"
-              >
-                <Folder class="h-4 w-4" />
-                {{ $t('instances.openFolder') }}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                v-if="instance.modpackType"
-                @click="updateModpack(instance)"
-              >
-                <RefreshCw class="h-4 w-4" />
-                {{ $t('instances.updateModpack', 'Update Modpack') }}
-              </DropdownMenuItem>
-              <DropdownMenuItem
+            <div class="flex items-center gap-1 shrink-0 ml-2 relative z-20">
+              <button 
                 v-if="instance.modpackType && instance.modpackProjectId && instance.modpackVersion"
-                @click="shareModpack(instance)"
+                @click.stop="shareModpack(instance)"
+                class="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="instance.isInstalling || instance.isUpdating"
+                :title="$t('instances.shareModpack', 'Share Modpack')"
               >
                 <Check v-if="copiedShareInstanceId === instance.id" class="h-4 w-4 text-green-500" />
                 <Share2 v-else class="h-4 w-4" />
-                {{ copiedShareInstanceId === instance.id ? $t('instances.shareCopied', '已复制') : $t('instances.shareModpack', 'Share Modpack') }}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                v-if="instance.loaderType && instance.loaderType.toLowerCase() !== 'none' && instance.loaderType.toLowerCase() !== 'vanilla'"
-                @click="openMods(instance)"
-              >
-                <Puzzle class="h-4 w-4" />
-                {{ $t('instances.mods') }}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                @click="openDatapacks(instance)"
-              >
-                <Package class="h-4 w-4" />
-                {{ $t('instances.datapacks', 'Datapacks') }}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                destructive
-                @click="confirmDeleteInstance(instance)"
+              </button>
+              <button
+                @click.stop="confirmDeleteInstance(instance)"
+                class="p-1.5 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="instance.isInstalling || instance.isUpdating"
+                :title="$t('instances.delete')"
               >
                 <Trash2 class="h-4 w-4" />
-                {{ $t('instances.delete') }}
-              </DropdownMenuItem>
-            </DropdownMenu>
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
     
-
-    <!-- Instance Settings Modal -->
-    <DialogContent :open="showSettingsModal" @update:open="showSettingsModal = $event" class="max-w-md">
-        <DialogTitle>{{ $t('instances.settingsDialog.title') }}</DialogTitle>
-        <DialogDescription>
-          {{ settingsInstanceName }}
-        </DialogDescription>
-
-        <div v-if="isSettingsInstanceRunning" class="p-3 bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 rounded-md text-sm flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-          {{ $t('instances.cannotEditRunning', '游戏正在运行中，无法修改配置') }}
-        </div>
-
-          <!-- Java Path -->
-          <div class="space-y-2">
-            <label class="text-sm font-medium">{{ $t('instances.settingsDialog.javaVersion') }}</label>
-            <DSelect
-              v-model="settingsConfig.javaPath"
-              :options="javaPathOptions"
-              class="w-full"
-            />
-            <p class="text-xs text-muted-foreground">
-              {{ $t('instances.settingsDialog.javaWarning') }}
-            </p>
-          </div>
-
-          <!-- Max Memory -->
-          <div class="space-y-2 mt-4">
-            <div class="flex items-center justify-between">
-              <label class="text-sm font-medium">{{ $t('instances.settingsDialog.maxMemory') }}</label>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" v-model="useGlobalMemory" class="sr-only peer">
-                <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
-                <span class="ml-2 text-sm font-medium text-gray-900 dark:text-gray-300">{{ $t('instances.settingsDialog.useGlobalMemory') }}</span>
-              </label>
-            </div>
-            <div v-if="!useGlobalMemory">
-              <div class="flex items-center justify-end">
-                <span class="text-sm font-mono text-primary"
-                  >{{ settingsConfig.maxMemory }} MB</span
-                >
-              </div>
-              <input
-                v-model.number="settingsConfig.maxMemory"
-                type="range"
-                min="512"
-                :max="systemMemory.totalMb"
-                step="512"
-                class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-800 accent-blue-500 mt-2"
-              />
-              <div class="flex justify-between text-xs text-muted-foreground">
-                <span>512 MB</span>
-                <span>{{ $t('instances.settingsDialog.systemMemory', { system: systemMemory.totalMb }) }}</span>
-              </div>
-            </div>
-            <div v-else class="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg flex items-center justify-between">
-              <span>{{ $t('instances.settingsDialog.globalMemoryCurrently') }}</span>
-              <span class="font-mono text-primary">{{ globalMaxMemory }} MB</span>
-            </div>
-            <p class="text-xs text-muted-foreground mt-1">
-              {{ $t('instances.settingsDialog.recommendedMemory', { recommended: systemMemory.recommendedMaxMb }) }}
-            </p>
-          </div>
-
-          <!-- Extra JVM Args -->
-          <div class="space-y-2 mt-4">
-            <label class="text-sm font-medium"
-              >{{ $t('instances.settingsDialog.jvmArgs') }}</label
-            >
-            <textarea
-              v-model="settingsConfig.jvmArgsExtra"
-              placeholder="-XX:+UseG1GC&#10;-XX:+ParallelGCThreads=4"
-              class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm font-mono text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 h-20 resize-none"
-            />
-          </div>
-
-          <!-- Window Behavior -->
-          <div class="space-y-2 mt-4">
-            <label class="text-sm font-medium">{{ $t('instances.settingsDialog.windowBehavior') }}</label>
-            <DSelect
-              v-model="settingsConfig.windowBehavior"
-              :options="windowBehaviorOptions"
-              class="w-full"
-            />
-            <p class="text-xs text-muted-foreground">
-              {{ $t('instances.settingsDialog.windowBehaviorDesc') }}
-            </p>
-          </div>
-
-          <!-- Show Game Log -->
-          <div class="flex items-center gap-3 mt-4 p-4 border rounded-lg">
-            <input
-              type="checkbox"
-              id="showGameLog"
-              v-model="settingsConfig.showGameLog"
-              class="w-5 h-5 rounded border-gray-300 text-primary focus:ring-primary"
-            />
-            <label for="showGameLog" class="flex-1">
-              <span class="font-medium">{{ $t('instances.settingsDialog.showGameLog') }}</span>
-              <p class="text-sm text-muted-foreground">
-                {{ $t('instances.settingsDialog.showGameLogDesc') }}
-              </p>
-            </label>
-          </div>
-
-          <!-- Save Button -->
-          <div class="flex justify-end gap-2 mt-6">
-            <button
-              @click="showSettingsModal = false"
-              class="px-3 py-1.5 text-sm font-medium border rounded-md hover:bg-muted transition-colors"
-            >
-              {{ $t('common.cancel', 'Cancel') }}
-            </button>
-            <button
-              @click="saveSettings"
-              :disabled="isSavingConfig || isSettingsInstanceRunning"
-              class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
-            >
-              <Save class="h-4 w-4" />
-              {{ $t('common.save', 'Save') }}
-            </button>
-          </div>
-      </DialogContent>
 
     <!-- Delete Confirmation Dialog -->
     <AlertDialog
@@ -701,6 +349,9 @@ function normalizedModpackVersion(version: string): string {
         <strong class="text-neutral-900 dark:text-white">{{ deletingInstanceName }}</strong
         >{{ $t('instances.settingsDialog.deleteDescSuffix') }}
         <span class="block mt-2 text-red-600 dark:text-red-500 font-medium">{{ $t('instances.settingsDialog.deleteUndone') }}</span>
+        <span v-if="hasDataToDelete" class="block mt-4 p-3 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-bold rounded border border-red-200 dark:border-red-800">
+          ⚠️ {{ $t('instances.settingsDialog.deleteWarning') }}
+        </span>
       </AlertDialogDescription>
       <div class="flex justify-end gap-3 mt-6">
         <button
@@ -721,11 +372,5 @@ function normalizedModpackVersion(version: string): string {
         </button>
       </div>
     </AlertDialog>
-
-    <!-- Local Mods Modal -->
-    <LocalModsModal v-model="showLocalModsModal" :instance-id="selectedInstanceId" />
-
-    <!-- Local Datapacks Modal -->
-    <LocalDatapacksModal v-model="showLocalDatapacksModal" :instance-id="selectedInstanceId" />
   </div>
 </template>

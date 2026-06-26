@@ -103,14 +103,18 @@ impl ExecutableTask for InstallModpackTask {
         let instance_dir = base_dir.join("versions").join(instance_name);
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
-        crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+        if !is_update {
+            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+        }
 
         macro_rules! check_cancel {
             () => {
                 if ctx.is_cancelled() {
                     tracing::warn!("Modpack installation cancelled, cleaning up...");
                     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-                    let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+                    if !is_update {
+                        let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+                    }
                     return Err(TaskError::ExecutionError(
                         "Installation cancelled by user".to_string(),
                     ));
@@ -489,6 +493,7 @@ impl ExecutableTask for InstallModpackTask {
                     serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
                 {
                     config.is_installing = false;
+                    config.is_updating = false;
                     let _ = tokio::fs::write(
                         &config_path,
                         serde_json::to_string_pretty(&config).unwrap(),
@@ -531,7 +536,9 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let instance_dir = base_dir.join("versions").join(instance_name);
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
-        crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+        if !is_update {
+            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+        }
 
         let temp_dir = base_dir
             .parent()
@@ -627,7 +634,9 @@ impl ExecutableTask for InstallOnlineModpackTask {
             if let Err(e) = crate::downloader::download::download_file_task(task, client, &ctx_zip, &global_downloaded).await {
                 monitor.abort();
                 let _ = tokio::fs::remove_file(&temp_zip_path).await;
-                let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+                if !is_update {
+                    let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+                }
                 return Err(TaskError::ExecutionError(e));
             }
             monitor.abort();
@@ -703,6 +712,7 @@ async fn ensure_dependencies(
                 options: VanillaInstallOptions {
                     version_id: mc_version.to_string(),
                     version_json_url: version_info.url.clone(),
+                    custom_instance_name: None,
                     is_dependency: Some(true),
                 },
             };
@@ -856,11 +866,20 @@ pub async fn install_modpack(
     let instance_dir = base_dir.join("versions").join(&instance_name);
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
-    let pre_config = crate::core::launcher::InstanceConfig {
-        is_installing: true,
-        ..Default::default()
-    };
-    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
+    if !is_update {
+        let pre_config = crate::core::launcher::InstanceConfig {
+            is_installing: true,
+            ..Default::default()
+        };
+        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
+    } else {
+        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+            if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                config.is_updating = true;
+                let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&config)?).await;
+            }
+        }
+    }
 
     let task = InstallModpackTask {
         options: InstallModpackOptions {
@@ -902,11 +921,20 @@ pub async fn download_and_install_online_modpack(
     let instance_dir = base_dir.join("versions").join(&instance_name);
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
-    let pre_config = crate::core::launcher::InstanceConfig {
-        is_installing: true,
-        ..Default::default()
-    };
-    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
+    if !is_update {
+        let pre_config = crate::core::launcher::InstanceConfig {
+            is_installing: true,
+            ..Default::default()
+        };
+        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
+    } else {
+        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+            if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                config.is_updating = true;
+                let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&config)?).await;
+            }
+        }
+    }
 
     let task = InstallOnlineModpackTask {
         options: InstallOnlineModpackOptions {

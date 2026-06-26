@@ -421,6 +421,7 @@ pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
 pub struct VanillaInstallOptions {
     pub version_id: String,
     pub version_json_url: String,
+    pub custom_instance_name: Option<String>,
     pub is_dependency: Option<bool>,
 }
 
@@ -494,11 +495,13 @@ impl ExecutableTask for InstallVanillaTask {
                 .await;
         }
 
+        let instance_id = self.options.custom_instance_name.clone().unwrap_or(version_id.clone());
+
         let base_dir = get_minecraft_base();
         let version_dir = if is_dependency.unwrap_or(false) {
             get_dawnland_cache().join(version_id)
         } else {
-            base_dir.join("versions").join(version_id)
+            base_dir.join("versions").join(&instance_id)
         };
 
         let _ = tokio::fs::create_dir_all(&version_dir).await;
@@ -534,13 +537,23 @@ impl ExecutableTask for InstallVanillaTask {
                 TaskError::ExecutionError(format!("Failed to read version JSON: {}", e))
             })?;
 
+        // Parse version metadata.
+        let mut json_val: serde_json::Value = serde_json::from_str(&version_json_content)
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to parse version JSON: {e}")))?;
+
+        if let Some(obj) = json_val.as_object_mut() {
+            obj.insert("id".to_string(), serde_json::json!(instance_id));
+        }
+
+        let patched_content = serde_json::to_string_pretty(&json_val)
+            .map_err(|e| TaskError::ExecutionError(format!("Failed to serialize modified version JSON: {e}")))?;
+
         // Save version JSON.
-        let version_json_path = version_dir.join(format!("{}.json", version_id));
-        fs::write(&version_json_path, &version_json_content)
+        let version_json_path = version_dir.join(format!("{}.json", instance_id));
+        fs::write(&version_json_path, &patched_content)
             .await
             .map_err(|e| TaskError::ExecutionError(format!("Failed to write version JSON: {e}")))?;
 
-        // Parse version metadata.
         let version_meta: VersionMeta = serde_json::from_str(&version_json_content)
             .map_err(|e| TaskError::ExecutionError(format!("Failed to parse version JSON: {e}")))?;
 
@@ -664,7 +677,7 @@ impl ExecutableTask for InstallVanillaTask {
             let hash = client_download.sha1.as_ref().cloned();
 
             if !url.is_empty() {
-                let dest = version_dir.join(format!("{}.jar", version_id));
+                let dest = version_dir.join(format!("{}.jar", instance_id));
                 client_tasks.push(DownloadTask::new(
                     url,
                     dest.to_string_lossy().to_string(),
@@ -795,7 +808,7 @@ impl ExecutableTask for InstallVanillaTask {
             let version_dir = if is_dependency.unwrap_or(false) {
                 get_dawnland_cache().join(version_id)
             } else {
-                base_dir.join("versions").join(version_id)
+                base_dir.join("versions").join(&instance_id)
             };
             let _ = tokio::fs::remove_dir_all(&version_dir).await;
             return Err(TaskError::ExecutionError(
@@ -808,7 +821,7 @@ impl ExecutableTask for InstallVanillaTask {
         let version_dir = if is_dependency.unwrap_or(false) {
             get_dawnland_cache().join(version_id)
         } else {
-            base_dir.join("versions").join(version_id)
+            base_dir.join("versions").join(&instance_id)
         };
         let config_path = version_dir.join("dlml.json");
         let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
@@ -837,6 +850,7 @@ impl ExecutableTask for InstallVanillaTask {
 pub async fn install_vanilla_version(
     version_id: String,
     version_json_url: String,
+    custom_instance_name: Option<String>,
     is_dependency: Option<bool>,
     app: AppHandle,
 ) -> Result<String, String> {
@@ -845,12 +859,14 @@ pub async fn install_vanilla_version(
 
     tracing::info!("Starting installation of version: {}", version_id);
 
+    let instance_id = custom_instance_name.clone().filter(|s| !s.trim().is_empty()).unwrap_or(version_id.clone());
+
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
     let version_dir = if is_dependency.unwrap_or(false) {
         crate::core::mojang::get_dawnland_cache().join(&version_id)
     } else {
-        base_dir.join("versions").join(&version_id)
+        base_dir.join("versions").join(&instance_id)
     };
     let _ = std::fs::create_dir_all(&version_dir);
     let config_path = version_dir.join("dlml.json");
@@ -868,6 +884,7 @@ pub async fn install_vanilla_version(
         options: VanillaInstallOptions {
             version_id: version_id.clone(),
             version_json_url: version_json_url.clone(),
+            custom_instance_name: custom_instance_name.clone(),
             is_dependency,
         },
     };
@@ -877,6 +894,7 @@ pub async fn install_vanilla_version(
             TaskType::InstallVanilla {
                 version_id: version_id.clone(),
                 version_json_url: version_json_url.clone(),
+                custom_instance_name,
                 is_dependency,
             },
             task,

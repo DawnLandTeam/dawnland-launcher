@@ -215,6 +215,9 @@ pub struct InstanceConfig {
     /// Whether this instance is currently being installed
     #[serde(default)]
     pub is_installing: bool,
+    /// Whether this instance is currently being updated
+    #[serde(default)]
+    pub is_updating: bool,
     /// Map of installed mod keys to filenames
     #[serde(default)]
     pub installed_mods: std::collections::HashMap<String, String>,
@@ -1419,6 +1422,7 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
             crate::core::mojang::install_vanilla_version(
                 version_id.to_string(),
                 version.url.clone(),
+                None,
                 Some(true),
                 app.clone(),
             )

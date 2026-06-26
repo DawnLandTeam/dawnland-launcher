@@ -19,18 +19,14 @@ test.describe('Instances View', () => {
     await expect(page.getByText('vanilla', { exact: true })).toBeVisible();
     await expect(page.getByText('forge', { exact: true })).toBeVisible();
 
-    // Context Menu / Options
-    // Find the first "More options" button
-    const moreOptionsBtns = page.locator('button[title="More options"]');
-    await expect(moreOptionsBtns.first()).toBeVisible();
-    
-    await moreOptionsBtns.first().click();
+    // Open settings by clicking the instance card
+    const instanceCard = page.locator('.group.flex.flex-col').first();
+    await expect(instanceCard).toBeVisible();
+    await instanceCard.click();
 
-    // Should see Settings, Open Folder, Delete
-    // Note: Depends on locale, we use regex or generic locators
-    // Just finding the Settings/Folder icons usually works, or the specific text
+    // Should see Settings in the management view
+    await expect(page).toHaveURL(/.*instances\/inst.*/);
     await expect(page.locator('.lucide-settings').last()).toBeVisible();
-    await expect(page.locator('.lucide-folder').last()).toBeVisible();
   });
 
   test('should open install modal', async ({ page, mockTauri }) => {

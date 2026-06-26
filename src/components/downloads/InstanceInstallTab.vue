@@ -641,6 +641,7 @@ async function installVersion(): Promise<void> {
       taskId = await invoke<string>("install_vanilla_version", {
         versionId: selectedVersion.value,
         versionJsonUrl: version.url,
+        customInstanceName: customInstanceName.value.trim() !== "" ? customInstanceName.value : null,
       });
     }
 
