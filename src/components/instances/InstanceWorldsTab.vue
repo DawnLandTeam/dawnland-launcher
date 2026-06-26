@@ -44,7 +44,8 @@
           <div class="flex-1 min-w-0">
             <div class="font-medium text-sm truncate" :title="asset.filename">{{ asset.filename }}</div>
             <div class="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-              <span>{{ asset.isDir ? 'Folder' : formatSize(asset.size) }}</span>
+              <span v-if="asset.isDir" :title="$t('instances.folderSizeSkipped')" class="cursor-help underline decoration-dotted decoration-muted-foreground underline-offset-2">{{ $t('instances.folder') }}</span>
+              <span v-else>{{ formatSize(asset.size) }}</span>
             </div>
           </div>
           

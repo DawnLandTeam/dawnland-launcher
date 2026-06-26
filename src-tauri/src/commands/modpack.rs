@@ -864,6 +864,10 @@ pub async fn install_modpack(
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
+
+    if !is_update && instance_dir.exists() {
+        return Err(crate::error::DawnlandError::Unknown(format!("Instance with name '{}' already exists", instance_name)).into());
+    }
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
     if !is_update {

@@ -526,7 +526,11 @@ pub async fn install_fabric_instance(
     let instance_dir = if is_dependency.unwrap_or(false) {
         crate::core::mojang::get_dawnland_cache().join(&custom_instance_name)
     } else {
-        base_dir.join("versions").join(&custom_instance_name)
+        let dir = base_dir.join("versions").join(&custom_instance_name);
+        if dir.exists() {
+            return Err(crate::error::DawnlandError::Unknown(format!("Instance with name '{}' already exists", custom_instance_name)).into());
+        }
+        dir
     };
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");

@@ -53,6 +53,8 @@
     "settings": "实例设置",
     "mods": "模组",
     "resourcepacks": "资源包",
+    "folder": "文件夹",
+    "folderSizeSkipped": "为保证性能，已跳过文件夹大小计算。",
     "customModGroup": "模组",
     "customShaders": "光影",
     "customResourcepacks": "资源包",
@@ -324,7 +326,8 @@
   "errors": {
     "conflictingTask": "有冲突的任务正在运行: {taskName}",
     "md5Mismatch": "更新文件已损坏 (MD5 校验失败)。更新已中止。",
-    "settingsAccessDenied": "保存设置失败：访问被拒绝 (权限不足或文件被占用)"
+    "settingsAccessDenied": "无法保存设置：访问被拒绝（权限不足或文件被占用）",
+    "instanceExists": "名称为 '{instanceName}' 的实例已存在"
   },
   "settings": {
     "title": "设置",

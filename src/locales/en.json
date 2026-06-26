@@ -53,6 +53,8 @@
     "settings": "Settings",
     "mods": "Mods",
     "resourcepacks": "Resource Packs",
+    "folder": "Folder",
+    "folderSizeSkipped": "Directory size calculation is skipped for performance.",
     "customModGroup": "Mod Groups",
     "customShaders": "Shaders",
     "customResourcepacks": "Resource Packs",
@@ -324,7 +326,8 @@
   "errors": {
     "conflictingTask": "Conflicting task is running: {taskName}",
     "md5Mismatch": "Update file is corrupted (MD5 mismatch). Update aborted.",
-    "settingsAccessDenied": "Failed to save settings: Access is denied (insufficient permissions or file in use)"
+    "settingsAccessDenied": "Failed to save settings: Access is denied (insufficient permissions or file in use)",
+    "instanceExists": "Instance with name '{instanceName}' already exists"
   },
   "settings": {
     "title": "Settings",

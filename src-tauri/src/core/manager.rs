@@ -589,12 +589,20 @@ pub async fn open_instance_folder(version_id: String) -> Result<(), String> {
 pub async fn delete_instance(
     version_id: String,
     task_manager: tauri::State<'_, crate::core::task::TaskManager>,
+    running_instances: tauri::State<'_, crate::core::launcher::RunningInstances>,
 ) -> Result<(), String> {
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&version_id);
 
     if !instance_dir.exists() {
         return Err(format!("Instance {} not found", version_id));
+    }
+
+    {
+        let map = running_instances.0.lock().await;
+        if map.contains_key(&version_id) {
+            return Err(format!("Cannot delete instance {} because it is currently running", version_id));
+        }
     }
 
     let config_path = instance_dir.join("dlml.json");

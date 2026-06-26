@@ -866,7 +866,11 @@ pub async fn install_vanilla_version(
     let version_dir = if is_dependency.unwrap_or(false) {
         crate::core::mojang::get_dawnland_cache().join(&version_id)
     } else {
-        base_dir.join("versions").join(&instance_id)
+        let dir = base_dir.join("versions").join(&instance_id);
+        if dir.exists() {
+            return Err(format!("Instance with name '{}' already exists", instance_id));
+        }
+        dir
     };
     let _ = std::fs::create_dir_all(&version_dir);
     let config_path = version_dir.join("dlml.json");
