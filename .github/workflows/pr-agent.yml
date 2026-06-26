@@ -22,3 +22,9 @@ jobs:
           config.model: "glm-5.2"
           config.custom_model_max_tokens: "1024000"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          pr_description.extra_instructions: ${{ secrets.PR_AGENT_PROMPT }}
+          pr_reviewer.extra_instructions: ${{ secrets.PR_AGENT_PROMPT }}
+          pr_code_suggestions.extra_instructions: ${{ secrets.PR_AGENT_PROMPT }}
+          pr_reviewer.require_score_review: "true"
+          pr_reviewer.require_tests_review: "true"
