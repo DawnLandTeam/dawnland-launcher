@@ -1,0 +1,23 @@
+on:
+  issue_comment:
+    types: [created, edited]
+jobs:
+  pr_agent_job:
+    if: ${{ github.event.sender.type != 'Bot' }}
+    runs-on: "ubuntu-latest"
+    environment: pr-agent
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: write
+    name: Run pr agent on every pull request, respond to user comments
+    steps:
+      - name: PR Agent action step
+        id: pragent
+        uses: the-pr-agent/pr-agent@main
+        env:
+          OPENAI.API_BASE: ${{ secrets.OPENAI_API_BASE }}
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          config.model: "glm-5.2"
+          config.custom_model_max_tokens: "1024000"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
