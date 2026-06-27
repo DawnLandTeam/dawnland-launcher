@@ -172,7 +172,12 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             register_deep_link();
 
-            let app_dir = core::mojang::get_minecraft_base()
+            let base_dir = core::mojang::get_minecraft_base();
+            if let Err(e) = app.asset_protocol_scope().allow_directory(&base_dir, true) {
+                tracing::warn!("Failed to allow asset protocol scope for minecraft base dir: {}", e);
+            }
+
+            let app_dir = base_dir
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .join(".dawnland");
