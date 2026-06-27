@@ -342,6 +342,8 @@ pub fn run() {
             commands::install_mod_to_instance,
             core::manager::import_local_mod_to_instance,
             core::manager::bind_instance_to_server,
+            core::manager::get_instance_mod_mapping,
+            core::manager::download_mod_to_directory,
             // Java commands
             core::java::scan_local_javas,
             core::java::clear_java_cache,
