@@ -999,7 +999,8 @@ pub async fn resolve_preset_for_instance(preset_name: String, asset_type: String
         } else if pm.source == "curseforge" {
             crate::core::curseforge::get_cf_mod_files(pm.project_id.clone(), mc_version.clone(), loaders.clone()).await
         } else {
-            Err("Unknown source".to_string())
+            tracing::warn!("Unknown source '{}' for mod '{}', skipping", pm.source, pm.name);
+            continue;
         };
 
         match files_result {
@@ -1181,7 +1182,7 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
             .unwrap_or(0);
         let cache_key = format!("{}_{}_{}", actual_filename, metadata.len(), mtime);
 
-        let meta = resolve_mod_metadata(&path, &cache_key, &mut cache_entries, &parser, &base_dir, skip_parsing.unwrap_or(false)).await;
+        let meta = resolve_mod_metadata(&path, &cache_key, &mut cache_entries, &parser, base_dir, skip_parsing.unwrap_or(false)).await;
         let icon_url = get_mod_icon_url(&meta, &parser, &cache_key);
 
         mods.push(LocalModItem {
@@ -2023,7 +2024,21 @@ pub struct InstallModOptions {
     pub keep_both: Option<bool>,
 }
 
+pub struct DownloadDependencyContext<'a> {
+    pub dep: &'a crate::core::modrinth::UnifiedDependency,
+    pub dep_ctx: &'a crate::core::task::TaskContext,
+    pub client: &'a reqwest::Client,
+    pub target_dir_path: &'a std::path::Path,
+    pub version_id_opt: &'a Option<String>,
+    pub mc_version: &'a str,
+    pub loader: &'a str,
+}
+
 impl InstallModTask {
+    fn get_required_dependencies(&self) -> Vec<crate::core::modrinth::UnifiedDependency> {
+        self.options.dependencies.clone().unwrap_or_default().into_iter().filter(|d| d.required).collect()
+    }
+
     fn prepare_sub_tasks(&self) -> Vec<crate::core::task::state::SubTaskState> {
         let options = &self.options;
         let mut sub_tasks = vec![crate::core::task::state::SubTaskState {
@@ -2035,7 +2050,7 @@ impl InstallModTask {
             weight: 50,
         }];
 
-        let req_deps: Vec<_> = options.dependencies.clone().unwrap_or_default().into_iter().filter(|d| d.required).collect();
+        let req_deps = self.get_required_dependencies();
         let dep_weight = if req_deps.is_empty() { 0 } else { 50 / req_deps.len() as u32 };
 
         for dep in req_deps {
@@ -2111,7 +2126,7 @@ impl InstallModTask {
         target_dir_path: &std::path::Path,
         version_id_opt: &Option<String>,
     ) -> Result<(), crate::core::task::TaskError> {
-        let req_deps: Vec<_> = self.options.dependencies.clone().unwrap_or_default().into_iter().filter(|d| d.required).collect();
+        let req_deps = self.get_required_dependencies();
         if req_deps.is_empty() { return Ok(()); }
 
         let (mc_version, loader) = if let Some(vid) = version_id_opt {
@@ -2127,7 +2142,16 @@ impl InstallModTask {
             let dep_ctx = ctx.with_sub_task(&dep.project_id);
             dep_ctx.update_progress(0, 100, "Resolving dependency...").await;
 
-            let result = self.download_single_dependency(&dep, &dep_ctx, client, target_dir_path, version_id_opt, &mc_version, &loader, &mut installed_map).await;
+            let ctx_info = DownloadDependencyContext {
+                dep: &dep,
+                dep_ctx: &dep_ctx,
+                client,
+                target_dir_path,
+                version_id_opt,
+                mc_version: &mc_version,
+                loader: &loader,
+            };
+            let result = self.download_single_dependency(ctx_info, &mut installed_map).await;
             if let Err(e) = result { tracing::warn!("Failed to resolve dependency {}: {:?}", dep.project_id, e); }
         }
         Ok(())
@@ -2135,42 +2159,37 @@ impl InstallModTask {
 
     async fn download_single_dependency(
         &self,
-        dep: &crate::core::modrinth::UnifiedDependency,
-        dep_ctx: &crate::core::task::TaskContext,
-        client: &reqwest::Client,
-        target_dir_path: &std::path::Path,
-        version_id_opt: &Option<String>,
-        mc_version: &str,
-        loader: &str,
+        ctx: DownloadDependencyContext<'_>,
         installed_map: &mut std::collections::HashMap<String, String>,
     ) -> Result<(), crate::core::task::TaskError> {
-        let dep_key = format!("{}_{}", self.options.source, dep.project_id);
+        let dep_key = format!("{}_{}", self.options.source, ctx.dep.project_id);
+        let has_instance = ctx.version_id_opt.is_some();
         
         let (url, fname) = if self.options.source == "modrinth" {
-            self.resolve_modrinth_dep(dep, client, version_id_opt, mc_version, loader).await?
+            self.resolve_modrinth_dep(ctx.dep, ctx.client, has_instance, ctx.mc_version, ctx.loader).await?
         } else if self.options.source == "curseforge" {
-            self.resolve_curseforge_dep(dep, client, version_id_opt, mc_version, loader).await?
+            self.resolve_curseforge_dep(ctx.dep, ctx.client, has_instance, ctx.mc_version, ctx.loader).await?
         } else {
             return Err(crate::core::task::TaskError::ExecutionError("Unknown source".to_string()));
         };
 
-        if let Some(v_id) = version_id_opt {
+        if let Some(v_id) = ctx.version_id_opt {
             if let Some(old_fname) = installed_map.get(&dep_key) {
                 if old_fname != &fname {
-                    let _ = tokio::fs::remove_file(target_dir_path.join(old_fname)).await;
-                    let _ = tokio::fs::remove_file(target_dir_path.join(format!("{}.disable", old_fname))).await;
+                    let _ = tokio::fs::remove_file(ctx.target_dir_path.join(old_fname)).await;
+                    let _ = tokio::fs::remove_file(ctx.target_dir_path.join(format!("{}.disable", old_fname))).await;
                 }
             }
         }
 
-        let dep_path = target_dir_path.join(&fname);
+        let dep_path = ctx.target_dir_path.join(&fname);
         if !dep_path.exists() {
-            download_mod_file_task(dep_ctx, client, &url, &dep_path).await.map_err(crate::core::task::TaskError::ExecutionError)?;
+            download_mod_file_task(ctx.dep_ctx, ctx.client, &url, &dep_path).await.map_err(crate::core::task::TaskError::ExecutionError)?;
         } else {
-            dep_ctx.update_progress(100, 100, "File exists").await;
+            ctx.dep_ctx.update_progress(100, 100, "File exists").await;
         }
 
-        if let Some(v_id) = version_id_opt {
+        if let Some(v_id) = ctx.version_id_opt {
             installed_map.retain(|_, v| v != &fname);
             installed_map.insert(dep_key, fname);
             save_installed_mods_json(v_id, installed_map).await;
@@ -2182,7 +2201,7 @@ impl InstallModTask {
         &self,
         dep: &crate::core::modrinth::UnifiedDependency,
         client: &reqwest::Client,
-        version_id_opt: &Option<String>,
+        has_instance: bool,
         mc_version: &str,
         loader: &str,
     ) -> Result<(String, String), crate::core::task::TaskError> {
@@ -2201,7 +2220,7 @@ impl InstallModTask {
             Err(crate::core::task::TaskError::ExecutionError("Modrinth dep version files not found".to_string()))
         } else {
             let pid = &dep.project_id;
-            if version_id_opt.is_some() && !mc_version.is_empty() {
+            if has_instance && !mc_version.is_empty() {
                 if let Ok(files) = crate::core::modrinth::get_modrinth_mod_files(pid.clone(), mc_version.to_string(), vec![loader.to_string()]).await {
                     if let Some(primary) = files.first() {
                         return Ok((primary.download_url.clone(), primary.filename.clone()));
@@ -2230,11 +2249,11 @@ impl InstallModTask {
         &self,
         dep: &crate::core::modrinth::UnifiedDependency,
         client: &reqwest::Client,
-        version_id_opt: &Option<String>,
+        has_instance: bool,
         mc_version: &str,
         loader: &str,
     ) -> Result<(String, String), crate::core::task::TaskError> {
-        if version_id_opt.is_some() && !mc_version.is_empty() {
+        if has_instance && !mc_version.is_empty() {
             if let Ok(files) = crate::core::curseforge::get_cf_mod_files(dep.project_id.clone(), mc_version.to_string(), vec![loader.to_string()]).await {
                 if let Some(primary) = files.first() {
                     return Ok((primary.download_url.clone(), primary.filename.clone()));
