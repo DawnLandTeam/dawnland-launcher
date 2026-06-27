@@ -1969,8 +1969,9 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
                 async move {
                     ctx.update_progress(0, 100, "Starting download...").await;
 
-                    // Wait until cancelled check
-                    ctx.wait_cancelled().await;
+                    if ctx.is_cancelled() {
+                        return Err(crate::core::task::TaskError::ExecutionError("Cancelled".to_string()));
+                    }
 
                     let result = install_mod_to_instance(
                         app,
