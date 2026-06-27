@@ -315,7 +315,8 @@ pub async fn ensure_authlib_token_valid(account_id: &str) -> Result<Account, App
     let final_result = match refreshed_result {
         Ok(res) => Ok(res),
         Err(e) => {
-            if e.message.contains("不一致") || e.message.contains("not match") {
+            let msg_lower = e.message.to_lowercase();
+            if e.message.contains("不一致") || msg_lower.contains("not match") || msg_lower.contains("doesn't match") {
                 tracing::warn!("Authlib server rejected selectedProfile (possibly buggy server). Retrying without selectedProfile...");
                 refresh_authlib_token(&authlib_url, access_token, client_token, None).await
             } else {
