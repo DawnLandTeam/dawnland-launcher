@@ -28,7 +28,10 @@ export function getErrorMessage(err: unknown): string {
   if (msg.includes("Failed to write launcher settings") && msg.includes("os error 5")) {
     return (i18n.global.t as any)('errors.settingsAccessDenied');
   }
-
+  if (msg.startsWith("Instance with name '") && msg.includes("' already exists")) {
+    const instanceName = msg.split("'")[1];
+    return (i18n.global.t as any)('errors.instanceExists', { instanceName });
+  }
 
 
   return msg || "Unknown error";

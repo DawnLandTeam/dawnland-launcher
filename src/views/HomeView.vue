@@ -38,6 +38,7 @@ interface InstanceItem {
   packVersionId?: string;
   packFileName?: string;
   isInstalling?: boolean;
+  isUpdating?: boolean;
 }
 
 interface GameLog {
@@ -122,7 +123,7 @@ const selectedAccount = computed(() => {
 const isActionDisabled = computed(() => {
   if (!selectedInstanceId.value || !selectedAccountId.value) return true;
   
-  if (selectedInstance.value?.isInstalling) return true;
+  if (selectedInstance.value?.isInstalling || selectedInstance.value?.isUpdating) return true;
   
   if (launchingInstances.value.has(selectedInstanceId.value) || 
       repairingInstances.value.has(selectedInstanceId.value)) {
@@ -423,7 +424,7 @@ async function loadInstances() {
     installedInstances.value = instances;
     // Auto-select first non-installing instance if none selected
     if (!selectedInstanceId.value && instances.length > 0) {
-      const validInstance = instances.find(i => !i.isInstalling);
+      const validInstance = instances.find(i => !(i.isInstalling || i.isUpdating));
       if (validInstance) {
         selectedInstanceId.value = validInstance.id;
       }
@@ -691,10 +692,10 @@ function loaderBadgeClass(loaderType: string): string {
                   </button>
                 </template>
                 <div class="max-h-60 overflow-y-auto">
-                  <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="!instance.isInstalling && (selectedInstanceId = instance.id)" class="flex items-center gap-3 p-2 rounded-lg" :class="instance.isInstalling ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'" :disabled="instance.isInstalling">
+                  <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="!(instance.isInstalling || instance.isUpdating) && (selectedInstanceId = instance.id)" class="flex items-center gap-3 p-2 rounded-lg" :class="(instance.isInstalling || instance.isUpdating) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'" :disabled="instance.isInstalling || instance.isUpdating">
                     <Package class="h-4 w-4 shrink-0 text-muted-foreground" />
                     <span class="truncate font-medium flex-1 text-left">{{ instance.name }}</span>
-                    <Loader2 v-if="instance.isInstalling" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+                    <Loader2 v-if="instance.isInstalling || instance.isUpdating" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                   </DropdownMenuItem>
 
                   <div v-if="installedInstances.length > 0" class="h-px bg-border my-1 mx-2"></div>
@@ -757,7 +758,7 @@ function loaderBadgeClass(loaderType: string): string {
 
             <!-- Action Buttons -->
             <div class="flex items-center justify-center gap-3 mt-6">
-              <button @click="openInstanceSettings" :disabled="!selectedInstanceId || selectedInstance?.isInstalling" class="flex items-center gap-2 px-4 py-3 border border-white/20 dark:border-zinc-700 bg-white/40 dark:bg-zinc-800/40 rounded-xl hover:bg-white/60 dark:hover:bg-zinc-700/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shadow-sm shrink-0" title="Configure instance">
+              <button @click="openInstanceSettings" :disabled="!selectedInstanceId || selectedInstance?.isInstalling || selectedInstance?.isUpdating" class="flex items-center gap-2 px-4 py-3 border border-white/20 dark:border-zinc-700 bg-white/40 dark:bg-zinc-800/40 rounded-xl hover:bg-white/60 dark:hover:bg-zinc-700/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shadow-sm shrink-0" title="Configure instance">
                 <Settings class="h-5 w-5" />
               </button>
               <button @click="handlePrimaryAction" :disabled="isActionDisabled" 

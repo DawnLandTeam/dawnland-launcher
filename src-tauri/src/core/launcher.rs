@@ -215,6 +215,9 @@ pub struct InstanceConfig {
     /// Whether this instance is currently being installed
     #[serde(default)]
     pub is_installing: bool,
+    /// Whether this instance is currently being updated
+    #[serde(default)]
+    pub is_updating: bool,
     /// Map of installed mod keys to filenames
     #[serde(default)]
     pub installed_mods: std::collections::HashMap<String, String>,
@@ -224,7 +227,7 @@ pub struct InstanceConfig {
 }
 
 impl InstanceConfig {
-    pub async fn ensure_installing(instance_dir: &std::path::Path, is_dependency: bool) {
+    pub async fn ensure_installing(instance_dir: &std::path::Path, is_dependency: bool) -> Result<(), String> {
         let config_path = instance_dir.join("dlml.json");
         let mut config: Self = if config_path.exists() {
             tokio::fs::read_to_string(&config_path)
@@ -239,11 +242,12 @@ impl InstanceConfig {
         if is_dependency {
             config.hidden = true;
         }
-        let _ = tokio::fs::write(
-            &config_path,
-            serde_json::to_string_pretty(&config).unwrap_or_default(),
-        )
-        .await;
+        let json = serde_json::to_string_pretty(&config)
+            .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
+        tokio::fs::write(&config_path, json)
+            .await
+            .map_err(|e| format!("Failed to write instance config: {}", e))?;
+        Ok(())
     }
 }
 
@@ -1419,6 +1423,7 @@ async fn auto_repair_missing_instance(app: &AppHandle, version_id: &str) -> Resu
             crate::core::mojang::install_vanilla_version(
                 version_id.to_string(),
                 version.url.clone(),
+                None,
                 Some(true),
                 app.clone(),
             )

@@ -8,6 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { trackEvent, getErrorType } from "../../utils/analytics";
 import { getErrorMessage } from "../../utils/error";
+import { toast } from "../../composables/useToast";
 import { useI18n } from "vue-i18n";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../../components/ui/alert-dialog";
@@ -25,10 +26,20 @@ const currentTask = computed(() => {
 });
 const route = useRoute();
 
+const props = defineProps<{
+  updateId?: string;
+  updateProjectId?: string;
+  updateSource?: string;
+  updateCurrentVersion?: string;
+  isModalUpdate?: boolean;
+}>();
+
+const emit = defineEmits(['cancel-update']);
+
 // Modes: 'online' or 'local'
 const installMode = ref<'online' | 'local'>('online');
 
-const isUpdate = computed(() => !!route.query.update_id && !route.query.server_id);
+const isUpdate = computed(() => !!props.updateId || (!!route.query.update_id && !route.query.server_id));
 
 const zipPath = ref("");
 const onlineUrl = ref("");
@@ -73,9 +84,9 @@ const activeDownloads = ref(new Map<string, any>());
 
 const lastProcessedQueryStr = ref("");
 
-const initializeView = () => {
+const initializeView = async () => {
   const currentQueryStr = JSON.stringify(route.query);
-  if (lastProcessedQueryStr.value === currentQueryStr) {
+  if (lastProcessedQueryStr.value === currentQueryStr && !props.isModalUpdate) {
     return;
   }
   lastProcessedQueryStr.value = currentQueryStr;
@@ -104,6 +115,30 @@ const initializeView = () => {
   selectedVersionName.value = null;
   instanceName.value = "";
   isInstalling.value = false;
+
+  if (props.updateId) {
+    instanceName.value = props.updateId;
+    installMode.value = 'online';
+    searchQuery.value = props.updateId;
+    source.value = props.updateSource || 'curseforge';
+    
+    if (props.updateProjectId) {
+      const dummyModpack = {
+        project_id: props.updateProjectId,
+        title: props.updateId,
+        source: source.value
+      };
+      try {
+        await openVersionsModal(dummyModpack);
+      } catch (err) {
+        toast.error(t('common.error', 'Error'), getErrorMessage(err));
+        showVersionsModal.value = false;
+        isInstalling.value = false;
+        emit('cancel-update');
+      }
+    }
+    return;
+  }
 
   if (route.query.update_id) {
     instanceName.value = route.query.update_id as string;
@@ -294,8 +329,8 @@ const searchModpacks = async () => {
 
 const openVersionsModal = async (modpack: any) => {
   selectedModpack.value = modpack;
-  if (route.query.update_id) {
-    instanceNameInput.value = route.query.update_id as string;
+  if (isUpdate.value) {
+    instanceNameInput.value = instanceName.value;
   } else {
     instanceNameInput.value = modpack.title.replace(/[^a-zA-Z0-9_ -]/g, '_');
   }
@@ -311,19 +346,48 @@ const openVersionsModal = async (modpack: any) => {
     }
   } catch (error) {
     console.error("Failed to fetch modpack versions:", error);
+    throw error;
   } finally {
     isFetchingVersions.value = false;
   }
 };
 
 const getVersionUpgradeStatus = (index: number) => {
-  if (!route.query.current_version) return { text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+  let cv = "";
+  if (props.isModalUpdate) {
+    cv = String(props.updateCurrentVersion || "");
+  } else {
+    cv = String(route.query.current_version || "");
+  }
+  cv = cv.trim();
+
+  if (!cv || cv === "undefined" || cv === "null") {
+    return { text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+  }
   
+  const cvLower = cv.toLowerCase();
   const currentVersionIndex = modpackVersions.value.findIndex(v => {
-    const cv = route.query.current_version as string;
-    return v.name === cv || 
-           v.id.toString() === cv || 
-           (cv && typeof v.name === 'string' && v.name.includes(cv));
+    const vName = String(v.name || "");
+    const vId = String(v.id || "");
+    
+    if (vName === cv || vId === cv || (vName && vName.toLowerCase().includes(cvLower))) {
+      return true;
+    }
+    
+    // Fuzzy match: extract the semver part (e.g., "1.7.31" from "v1.7.31-CF" and "COBBLEVERSE 1.7.31 [CF]")
+    const extractVer = (s: string) => {
+      const match = s.match(/\d+(?:\.\d+)+/);
+      return match ? match[0] : "";
+    };
+    
+    const cvVer = extractVer(cv);
+    const vNameVer = extractVer(vName);
+    
+    if (cvVer && vNameVer && cvVer === vNameVer) {
+      return true;
+    }
+    
+    return false;
   });
   
   if (currentVersionIndex === -1) {
@@ -518,7 +582,7 @@ const formatDate = (dateString: string) => {
       </div>
     </div>
     <!-- ONLINE MODE UI -->
-    <template v-if="!isInstalling && installMode === 'online'">
+    <template v-if="!isInstalling && installMode === 'online' && !props.isModalUpdate">
       <!-- Search Controls -->
       <div class="flex gap-4 items-center bg-white dark:bg-zinc-950 p-4 rounded-xl border border-neutral-200 dark:border-zinc-800 shadow-sm shrink-0">
         <div class="relative flex-1">
@@ -682,7 +746,7 @@ const formatDate = (dateString: string) => {
     <!-- Modpack Versions Modal -->
     <DialogContent 
       :open="showVersionsModal" 
-      @update:open="showVersionsModal = $event"
+      @update:open="val => { showVersionsModal = val; if (!val && props.isModalUpdate) emit('cancel-update'); }"
       class="max-w-4xl max-h-[85vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-950 border-neutral-200 dark:border-zinc-800 shadow-2xl p-6 text-neutral-900 dark:text-zinc-100"
     >
         <div class="flex flex-col space-y-1.5 text-center sm:text-left shrink-0">
@@ -703,7 +767,7 @@ const formatDate = (dateString: string) => {
               </label>
               <DInput 
                 v-model="instanceNameInput" 
-                :disabled="!!route.query.update_id"
+                :disabled="isUpdate"
                 :placeholder="t('install.instanceNamePlaceholder', '输入安装后的游戏实例名称...')" 
               />
             </div>
@@ -711,7 +775,7 @@ const formatDate = (dateString: string) => {
 
           <div class="flex-1 overflow-hidden border rounded-xl bg-background/50 flex flex-col">
             <!-- Table Header -->
-            <div class="grid grid-cols-12 gap-4 p-3 bg-secondary/50 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b shrink-0">
+            <div class="grid grid-cols-12 gap-4 p-3 bg-secondary/50 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-b shrink-0 relative">
               <div class="col-span-4 pl-2">{{ t('modpacks.packVersion') }}</div>
               <div class="col-span-2">{{ t('modpacks.gameVersion') }}</div>
               <div class="col-span-2">{{ t('modpacks.loader') }}</div>

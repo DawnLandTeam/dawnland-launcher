@@ -1,5 +1,5 @@
 export type TaskType = 
-  | { InstallVanilla: { version_id: string; version_json_url: string; is_dependency?: boolean } }
+  | { InstallVanilla: { version_id: string; version_json_url: string; custom_instance_name?: string; is_dependency?: boolean } }
   | { InstallForge: { mc_version: string; loader_version: string; loader_type: string; custom_instance_name: string; is_dependency?: boolean } }
   | { InstallFabric: { mc_version: string; fabric_version: string; custom_instance_name: string; is_dependency?: boolean } }
   | { InstallModpack: { zip_path: string; instance_name: string; is_update: boolean; project_id?: string } }
@@ -9,6 +9,7 @@ export type TaskType =
   | { InstallShaderpack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { InstallWorld: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { InstallDatapack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
+  | { InstallPreset: { preset_name: string; instance_id: string; } }
   | { Generic: { name: string } };
 
 export type TaskStatus = 
@@ -54,7 +55,7 @@ import i18n from '../i18n';
 
 export function getTaskName(taskType: TaskType): string {
   const t = i18n.global.t;
-  if ('InstallVanilla' in taskType) return t('task.installVanilla', { version: taskType.InstallVanilla.version_id });
+  if ('InstallVanilla' in taskType) return t('task.installVanilla', { version: taskType.InstallVanilla.custom_instance_name || taskType.InstallVanilla.version_id });
   if ('InstallForge' in taskType) return t('task.installLoader', { loader: taskType.InstallForge.loader_type, version: taskType.InstallForge.mc_version });
   if ('InstallFabric' in taskType) return t('task.installLoader', { loader: 'Fabric', version: taskType.InstallFabric.mc_version });
   if ('InstallModpack' in taskType) return t('task.installModpack', { name: taskType.InstallModpack.instance_name });
@@ -64,6 +65,7 @@ export function getTaskName(taskType: TaskType): string {
   if ('InstallShaderpack' in taskType) return t('task.installShaderpack', { name: taskType.InstallShaderpack.pack_name });
   if ('InstallWorld' in taskType) return t('task.installWorld', { name: taskType.InstallWorld.pack_name });
   if ('InstallDatapack' in taskType) return t('task.installDatapack', { name: taskType.InstallDatapack.pack_name });
+  if ('InstallPreset' in taskType) return t('task.installPreset', { name: taskType.InstallPreset.preset_name });
   if ('Generic' in taskType) return taskType.Generic.name;
   return t('task.unknown');
 }

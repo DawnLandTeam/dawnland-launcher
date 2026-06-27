@@ -169,9 +169,9 @@ impl ExecutableTask for InstallFabricTask {
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
         crate::core::launcher::InstanceConfig::ensure_installing(
             &instance_dir,
-            is_dependency.unwrap_or(false),
+            self.options.is_dependency.unwrap_or(false),
         )
-        .await;
+        .await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
         let client = crate::core::utils::get_http_client();
 
@@ -251,6 +251,7 @@ impl ExecutableTask for InstallFabricTask {
                 options: VanillaInstallOptions {
                     version_id: mc_version.clone(),
                     version_json_url: version_url.to_string(),
+                    custom_instance_name: None,
                     is_dependency: Some(effective_is_dep),
                 },
             };
@@ -478,6 +479,7 @@ impl ExecutableTask for InstallFabricTask {
                 pack_version_id: None,
                 pack_file_name: None,
                 is_installing: false,
+                is_updating: false,
                 installed_mods: std::collections::HashMap::new(),
                 extra: std::collections::HashMap::new(),
             }
@@ -524,12 +526,17 @@ pub async fn install_fabric_instance(
     let instance_dir = if is_dependency.unwrap_or(false) {
         crate::core::mojang::get_dawnland_cache().join(&custom_instance_name)
     } else {
-        base_dir.join("versions").join(&custom_instance_name)
+        let dir = base_dir.join("versions").join(&custom_instance_name);
+        if dir.exists() {
+            return Err(crate::error::DawnlandError::Unknown(format!("Instance with name '{}' already exists", custom_instance_name)).into());
+        }
+        dir
     };
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
     let pre_config = crate::core::launcher::InstanceConfig {
         is_installing: true,
+        is_updating: false,
         hidden: is_dependency.unwrap_or(false),
         ..Default::default()
     };

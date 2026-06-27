@@ -47,10 +47,17 @@
   },
   "instances": {
     "title": "实例",
+    "management": "实例管理",
     "add": "新建实例",
     "play": "游玩",
-    "settings": "设置",
+    "settings": "实例设置",
     "mods": "模组",
+    "resourcepacks": "资源包",
+    "folder": "文件夹",
+    "folderSizeSkipped": "为保证性能，已跳过文件夹大小计算。",
+    "customModGroup": "模组",
+    "customShaders": "光影",
+    "customResourcepacks": "资源包",
     "delete": "删除",
     "search": "搜索实例...",
     "installedCount": "已安装 {count} 个实例 | 已安装 {count} 个实例",
@@ -89,6 +96,24 @@
     "deleteDatapackConfirmDesc": "此操作无法撤销，该数据包将被永久删除。",
     "deleteModConfirm": "确定要删除该模组吗？",
     "deleteModConfirmDesc": "此操作无法撤销，该模组文件将被永久删除。",
+    "searchResourcepacks": "搜索已安装的资源包...",
+    "downloadMore": "下载更多",
+    "noResourcepacks": "该实例还没有安装任何资源包",
+    "searchShaders": "搜索已安装的光影...",
+    "noShaders": "该实例还没有安装任何光影",
+    "searchWorlds": "搜索已安装的存档...",
+    "noWorlds": "该实例还没有任何存档",
+    "searchModGroups": "搜索模组...",
+    "noModGroups": "该实例还没有任何模组预设",
+    "newModGroup": "新建模组预设",
+    "deleteConfirm": "确定要删除吗？",
+    "deleteConfirmDesc": "此操作无法撤销，文件将被永久删除。",
+    "modGroup": "模组预设",
+    "noCustomAssets": "未找到任何全局自定义资产。",
+    "customAssetsHint": "您可以将常用的文件放置在 global_assets 目录下，以便快速应用到任何实例中。",
+    "applying": "应用中...",
+    "applyToInstance": "应用",
+    "deleteGlobalAssetConfirmDesc": "此操作无法撤销，该全局预设文件将被永久删除。",
     "delete": "删除",
     "cancel": "取消",
     "enable": "启用",
@@ -115,7 +140,8 @@
       "deleteTitle": "删除实例？",
       "deleteDescPrefix": "您确定要删除",
       "deleteDescSuffix": " 吗？这将永久移除该实例的所有数据，包括存档、模组和资源包。",
-      "deleteUndone": "此操作不可撤销。"
+      "deleteUndone": "此操作不可撤销。",
+      "deleteWarning": "该实例存在游戏数据，删除后将彻底丢失！"
     }
   },
   "servers": {
@@ -300,7 +326,8 @@
   "errors": {
     "conflictingTask": "有冲突的任务正在运行: {taskName}",
     "md5Mismatch": "更新文件已损坏 (MD5 校验失败)。更新已中止。",
-    "settingsAccessDenied": "保存设置失败：访问被拒绝 (权限不足或文件被占用)"
+    "settingsAccessDenied": "无法保存设置：访问被拒绝（权限不足或文件被占用）",
+    "instanceExists": "名称为 '{instanceName}' 的实例已存在"
   },
   "settings": {
     "title": "设置",
@@ -597,6 +624,7 @@
     "installLoader": "安装 {loader} (适用于 {version})",
     "installModpack": "安装整合包 {name}",
     "downloadModpack": "下载整合包 {name}",
+    "installPreset": "应用预设 {name}",
     "unknown": "未知任务",
     "failedTitle": "{name} 失败",
     "failedDesc": "由于发生错误，该任务已失败，尚未完成的实例已被安全移除。",
@@ -645,8 +673,9 @@
       "datapack": "数据包"
     },
     "groups": {
-      "game": "游戏",
-      "resources": "资源"
+      "game": "游戏资源",
+      "resources": "资源",
+      "custom": "预设"
     },
     "inDevelopment": "此功能还在开发中..."
   },
@@ -740,5 +769,17 @@
     "content": "为了持续改善启动器体验，我们会收集纯匿名的遥测数据（如模块使用频率、操作系统类型、错误日志类型等）。\n\n这些数据仅用于产品统计和问题排查，绝不会包含任何能够识别您身份的个人隐私信息。您可以随时在「设置」中关闭此项数据收集。是否允许我们收集您的匿名使用数据？",
     "agree": "同意并继续",
     "decline": "拒绝并继续"
+  },
+  "addToPreset": {
+    "title": "添加到预设",
+    "desc": "将 {name} 添加到预设分组中。",
+    "existing": "选择现有预设",
+    "new": "创建新预设",
+    "placeholder": "预设名称，例如：基础优化整合",
+    "cancel": "取消",
+    "confirm": "确认添加",
+    "success": "已成功添加到预设",
+    "failed": "添加失败: {error}",
+    "emptyName": "请输入预设名称"
   }
 }

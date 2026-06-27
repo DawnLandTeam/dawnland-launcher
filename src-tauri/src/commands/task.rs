@@ -49,6 +49,7 @@ pub async fn retry_task(
         TaskType::InstallVanilla {
             version_id,
             version_json_url,
+            custom_instance_name,
             is_dependency,
         } => {
             let base_dir = crate::core::mojang::get_minecraft_base();
@@ -58,12 +59,13 @@ pub async fn retry_task(
                 &version_dir,
                 is_dependency.unwrap_or(false),
             )
-            .await;
+            .await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
             let executable = crate::core::mojang::InstallVanillaTask {
                 options: crate::core::mojang::VanillaInstallOptions {
-                    version_id,
-                    version_json_url,
+                    version_id: version_id.clone(),
+                    version_json_url: version_json_url.clone(),
+                    custom_instance_name: custom_instance_name.clone(),
                     is_dependency,
                 },
             };
@@ -139,7 +141,7 @@ pub async fn retry_task(
             let base_dir = crate::core::mojang::get_minecraft_base();
             let instance_dir = base_dir.join("versions").join(&instance_name);
             let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
             let executable = crate::commands::modpack::InstallModpackTask {
                 options: crate::commands::modpack::InstallModpackOptions {
@@ -217,7 +219,7 @@ pub async fn retry_task(
             let base_dir = crate::core::mojang::get_minecraft_base();
             let instance_dir = base_dir.join("versions").join(&instance_name);
             let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
             let executable = crate::commands::modpack::InstallOnlineModpackTask {
                 options: crate::commands::modpack::InstallOnlineModpackOptions {
@@ -306,6 +308,9 @@ pub async fn retry_task(
                 .spawn_task_with_id(task_id.clone(), task.task_type, executable)
                 .await
                 .map_err(|e| e.to_string())?
+        }
+        TaskType::InstallPreset { .. } => {
+            return Err(DawnlandError::Unknown("Cannot retry preset install task".to_string()).into())
         }
         TaskType::Generic { .. } => {
             return Err(DawnlandError::Unknown("Cannot retry generic task".to_string()).into())
@@ -426,6 +431,23 @@ pub async fn task_create(
             };
 
             let executable = crate::core::manager::InstallWorldTask { options };
+            task_manager
+                .spawn_task(task_type_enum, executable)
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        "install-preset" => {
+            let options: crate::core::manager::InstallPresetOptions =
+                serde_json::from_value(payload)
+                    .map_err(|e| DawnlandError::Unknown(format!("Invalid payload: {}", e)))?;
+
+            let task_type_enum = TaskType::InstallPreset {
+                preset_name: options.preset_name.clone(),
+                asset_type: options.asset_type.clone(),
+                instance_id: options.instance_id.clone(),
+            };
+
+            let executable = crate::core::manager::InstallPresetTask { options, app };
             task_manager
                 .spawn_task(task_type_enum, executable)
                 .await

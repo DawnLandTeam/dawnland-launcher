@@ -7,6 +7,7 @@ import SettingsView from "../views/SettingsView.vue";
 
 import UITestView from "../views/UITestView.vue";
 import DownloadsView from "../views/DownloadsView.vue";
+import InstanceManagementView from "../views/InstanceManagementView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -20,6 +21,11 @@ const router = createRouter({
       path: "/instances",
       name: "instances",
       component: InstancesView,
+    },
+    {
+      path: "/instances/:id",
+      name: "instance-management",
+      component: InstanceManagementView,
     },
     {
       path: "/servers",

@@ -6,6 +6,7 @@ pub enum TaskType {
     InstallVanilla {
         version_id: String,
         version_json_url: String,
+        custom_instance_name: Option<String>,
         is_dependency: Option<bool>,
     },
     InstallForge {
@@ -71,6 +72,11 @@ pub enum TaskType {
         download_url: String,
         file_id: String,
     },
+    InstallPreset {
+        preset_name: String,
+        asset_type: String,
+        instance_id: String,
+    },
 
     InstallWorld {
         source: String,
@@ -89,8 +95,9 @@ pub enum TaskType {
 impl TaskType {
     pub fn name(&self) -> String {
         match self {
-            TaskType::InstallVanilla { version_id, .. } => {
-                format!("Downloading Vanilla {}", version_id)
+            TaskType::InstallVanilla { version_id, custom_instance_name, .. } => {
+                let id = custom_instance_name.clone().unwrap_or(version_id.clone());
+                format!("Installing Vanilla {}", id)
             }
             TaskType::InstallForge {
                 mc_version,
@@ -165,13 +172,20 @@ impl TaskType {
                     format!("Downloading Datapack {}", pack_name)
                 }
             }
+            TaskType::InstallPreset {
+                preset_name,
+                instance_id,
+                ..
+            } => format!("Installing Preset {} to {}", preset_name, instance_id),
             TaskType::Generic { name } => name.clone(),
         }
     }
 
     pub fn instance_id(&self) -> Option<String> {
         match self {
-            TaskType::InstallVanilla { version_id, .. } => Some(version_id.clone()),
+            TaskType::InstallVanilla { version_id, custom_instance_name, .. } => {
+                Some(custom_instance_name.clone().unwrap_or(version_id.clone()))
+            }
             TaskType::InstallForge {
                 custom_instance_name,
                 ..
@@ -187,7 +201,16 @@ impl TaskType {
             TaskType::InstallShaderpack { instance_id, .. } => instance_id.clone(),
             TaskType::InstallWorld { instance_id, .. } => instance_id.clone(),
             TaskType::InstallDatapack { instance_id, .. } => instance_id.clone(),
+            TaskType::InstallPreset { instance_id, .. } => Some(instance_id.clone()),
             TaskType::Generic { .. } => None,
+        }
+    }
+
+    pub fn is_update(&self) -> bool {
+        match self {
+            TaskType::InstallModpack { is_update, .. } => *is_update,
+            TaskType::InstallOnlineModpack { is_update, .. } => *is_update,
+            _ => false,
         }
     }
 
@@ -210,6 +233,7 @@ impl TaskType {
             TaskType::InstallResourcepack { project_id, instance_id, .. } => Some(("resourcepack", project_id, instance_id)),
             TaskType::InstallShaderpack { project_id, instance_id, .. } => Some(("shaderpack", project_id, instance_id)),
             TaskType::InstallWorld { project_id, instance_id, .. } => Some(("world", project_id, instance_id)),
+            TaskType::InstallPreset { preset_name, .. } => None, // Let presets run without strict asset locking, or could add custom preset locking if needed.
             _ => None,
         }
     }
@@ -231,6 +255,7 @@ impl TaskType {
             | TaskType::InstallResourcepack { .. }
             | TaskType::InstallShaderpack { .. }
             | TaskType::InstallWorld { .. }
+            | TaskType::InstallPreset { .. }
             | TaskType::InstallDatapack { .. } => TaskMutex::Shared,
 
             // Generic tasks do not target instances in a standardized way.
@@ -402,19 +427,22 @@ mod tests {
     #[test]
     fn test_task_type_conflicts() {
         let vanilla_1 = TaskType::InstallVanilla {
-            version_id: "1.20.1".to_string(),
-            version_json_url: "".to_string(),
-            is_dependency: None,
+            version_id: "1.16.5".to_string(),
+            version_json_url: "url".to_string(),
+            custom_instance_name: None,
+            is_dependency: Some(false),
         };
         let vanilla_2 = TaskType::InstallVanilla {
-            version_id: "1.20.1".to_string(),
-            version_json_url: "".to_string(),
-            is_dependency: None,
+            version_id: "1.17.1".to_string(),
+            version_json_url: "url".to_string(),
+            custom_instance_name: None,
+            is_dependency: Some(false),
         };
         let vanilla_3 = TaskType::InstallVanilla {
-            version_id: "1.19.4".to_string(),
-            version_json_url: "".to_string(),
-            is_dependency: None,
+            version_id: "1.18.2".to_string(),
+            version_json_url: "url".to_string(),
+            custom_instance_name: None,
+            is_dependency: Some(false),
         };
 
         let forge_1 = TaskType::InstallForge {

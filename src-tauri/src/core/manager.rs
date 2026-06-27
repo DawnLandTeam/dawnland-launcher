@@ -33,6 +33,8 @@ pub struct InstanceItem {
     pub pack_file_name: Option<String>,
     /// Whether this instance is currently being installed
     pub is_installing: bool,
+    /// Whether this instance is currently being updated
+    pub is_updating: bool,
 }
 
 #[tauri::command]
@@ -129,6 +131,7 @@ pub async fn scan_installed_instances(
                 // Check if instance is hidden via dlml.json
                 let mut is_hidden = false;
                 let mut is_installing = false;
+                let mut is_updating = false;
                 let mut server_id = None;
                 let mut pack_version_id = None;
                 let mut pack_file_name = None;
@@ -140,6 +143,7 @@ pub async fn scan_installed_instances(
                         {
                             is_hidden = config.hidden;
                             is_installing = config.is_installing;
+                            is_updating = config.is_updating;
                             server_id = config.server_id;
                             pack_version_id = config.pack_version_id;
                             pack_file_name = config.pack_file_name;
@@ -147,22 +151,42 @@ pub async fn scan_installed_instances(
                     }
                 }
 
-                // If it is installing, check if its corresponding task exists and is not cancelled
-                if is_installing {
-                    let mut has_valid_task = false;
-                    for task in &tasks {
-                        if let Some(tid) = task.task_type.instance_id() {
-                            if tid == id && task.status != crate::core::task::TaskStatus::Cancelled
-                            {
-                                has_valid_task = true;
-                                break;
+                let mut has_valid_task = false;
+                for task in &tasks {
+                    if let Some(tid) = task.task_type.instance_id() {
+                        if tid == id && matches!(task.status, crate::core::task::TaskStatus::Pending | crate::core::task::TaskStatus::Running | crate::core::task::TaskStatus::Paused) {
+                            has_valid_task = true;
+                            if task.task_type.is_update() {
+                                is_updating = true;
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // If it is installing or updating, check if its corresponding task exists and is not cancelled
+                if (is_installing || is_updating) && !has_valid_task {
+                    // For first time installation, always clean up zombie instances (even if they have partial data from extraction)
+                    if is_installing && !is_updating {
+                        tracing::info!("Cleaning up zombie installing instance: {}", id);
+                        let _ = tokio::fs::remove_dir_all(&path).await;
+                    } else {
+                        tracing::warn!("Instance {} is marked as updating. Skipping zombie auto-cleanup and rescuing it.", id);
+                        if config_path.exists() {
+                            if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+                                if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                                    config.is_installing = false;
+                                    config.is_updating = false;
+                                    if let Ok(json) = serde_json::to_string_pretty(&config) {
+                                        let _ = tokio::fs::write(&config_path, json).await;
+                                    }
+                                    is_installing = false;
+                                    is_updating = false;
+                                }
                             }
                         }
                     }
-
-                    if !has_valid_task {
-                        tracing::info!("Cleaning up zombie installing instance: {}", id);
-                        let _ = tokio::fs::remove_dir_all(&path).await;
+                    if is_installing {
                         continue;
                     }
                 }
@@ -242,6 +266,7 @@ pub async fn scan_installed_instances(
                             pack_version_id,
                             pack_file_name,
                             is_installing,
+                            is_updating,
                         });
                     }
                     Err(e) => {
@@ -259,6 +284,7 @@ pub async fn scan_installed_instances(
                             pack_version_id,
                             pack_file_name,
                             is_installing,
+                            is_updating,
                         });
                     }
                 }
@@ -536,6 +562,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         pack_version_id,
         pack_file_name,
         is_installing,
+        is_updating: false,
     })
 }
 
@@ -561,12 +588,49 @@ pub async fn open_instance_folder(version_id: String) -> Result<(), String> {
 
 /// Delete an instance (removes version directory).
 #[tauri::command]
-pub async fn delete_instance(version_id: String) -> Result<(), String> {
+pub async fn delete_instance(
+    version_id: String,
+    task_manager: tauri::State<'_, crate::core::task::TaskManager>,
+    running_instances: tauri::State<'_, crate::core::launcher::RunningInstances>,
+) -> Result<(), String> {
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&version_id);
 
     if !instance_dir.exists() {
         return Err(format!("Instance {} not found", version_id));
+    }
+
+    {
+        let map = running_instances.0.lock().await;
+        if map.contains_key(&version_id) {
+            return Err(format!("Cannot delete instance {} because it is currently running", version_id));
+        }
+    }
+
+    let config_path = instance_dir.join("dlml.json");
+    let mut is_busy = false;
+    if config_path.exists() {
+        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+            if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                if config.is_installing || config.is_updating {
+                    is_busy = true;
+                }
+            }
+        }
+    }
+
+    let tasks = task_manager.load_history().await.unwrap_or_default();
+    for task in &tasks {
+        if let Some(tid) = task.task_type.instance_id() {
+            if tid == version_id && matches!(task.status, crate::core::task::TaskStatus::Pending | crate::core::task::TaskStatus::Running | crate::core::task::TaskStatus::Paused) {
+                is_busy = true;
+                break;
+            }
+        }
+    }
+
+    if is_busy {
+        return Err(format!("Cannot delete instance {} while it is installing or updating", version_id));
     }
 
     // Use blocking remove_dir_all since the recursive directory removal
@@ -580,6 +644,29 @@ pub async fn delete_instance(version_id: String) -> Result<(), String> {
 
     tracing::info!("Deleted instance: {}", version_id);
     Ok(())
+}
+
+pub async fn instance_has_data_async(instance_dir: &std::path::Path) -> bool {
+    let data_folders = [
+        "saves",
+        "resourcepacks",
+        "shaderpacks",
+        "screenshots",
+        "servers.dat",
+    ];
+    for folder in &data_folders {
+        if tokio::fs::try_exists(instance_dir.join(folder)).await.unwrap_or(false) {
+            return true;
+        }
+    }
+    false
+}
+
+#[tauri::command]
+pub async fn check_instance_data(version_id: String) -> Result<bool, String> {
+    let base_dir = get_minecraft_base();
+    let instance_dir = base_dir.join("versions").join(&version_id);
+    Ok(instance_has_data_async(&instance_dir).await)
 }
 
 // ============================================================================
@@ -672,6 +759,338 @@ pub async fn delete_local_datapack(version_id: String, world_name: String, filen
     
     Ok(())
 }
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalAssetItem {
+    pub filename: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+async fn get_assets_in_dir(dir: std::path::PathBuf) -> Result<Vec<LocalAssetItem>, String> {
+    if !tokio::fs::try_exists(&dir).await.unwrap_or(false) {
+        return Ok(Vec::new());
+    }
+    let mut assets = Vec::new();
+    let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
+    while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+        let path = entry.path();
+        let filename = entry.file_name().to_string_lossy().to_string();
+        let metadata = tokio::fs::metadata(&path).await.map_err(|e| e.to_string())?;
+        
+        let mut size = metadata.len();
+        if metadata.is_dir() {
+            // Very naive size calculation for directories, could be slow for huge worlds
+            // For now, we skip deep recursion to avoid blocking, returning 0
+            size = 0;
+        }
+
+        assets.push(LocalAssetItem {
+            filename,
+            is_dir: metadata.is_dir(),
+            size,
+        });
+    }
+    Ok(assets)
+}
+
+async fn delete_asset_in_dir(dir: std::path::PathBuf, filename: String) -> Result<(), String> {
+    if filename.contains('/') || filename.contains('\\') || filename == ".." || filename == "." {
+        return Err("Invalid filename".to_string());
+    }
+    let target = dir.join(&filename);
+    if tokio::fs::try_exists(&target).await.unwrap_or(false) {
+        let metadata = tokio::fs::metadata(&target).await.map_err(|e| e.to_string())?;
+        if metadata.is_dir() {
+            tokio::fs::remove_dir_all(&target).await.map_err(|e| e.to_string())?;
+        } else {
+            tokio::fs::remove_file(&target).await.map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_installed_resourcepacks(version_id: String) -> Result<Vec<LocalAssetItem>, String> {
+    let dir = get_minecraft_base().join("versions").join(&version_id).join("resourcepacks");
+    get_assets_in_dir(dir).await
+}
+
+#[tauri::command]
+pub async fn delete_local_resourcepack(version_id: String, filename: String) -> Result<(), String> {
+    let dir = get_minecraft_base().join("versions").join(&version_id).join("resourcepacks");
+    delete_asset_in_dir(dir, filename).await
+}
+
+#[tauri::command]
+pub async fn get_installed_shaders(version_id: String) -> Result<Vec<LocalAssetItem>, String> {
+    let dir = get_minecraft_base().join("versions").join(&version_id).join("shaderpacks");
+    get_assets_in_dir(dir).await
+}
+
+#[tauri::command]
+pub async fn delete_local_shader(version_id: String, filename: String) -> Result<(), String> {
+    let dir = get_minecraft_base().join("versions").join(&version_id).join("shaderpacks");
+    delete_asset_in_dir(dir, filename).await
+}
+
+#[tauri::command]
+pub async fn get_installed_worlds(version_id: String) -> Result<Vec<LocalAssetItem>, String> {
+    let dir = get_minecraft_base().join("versions").join(&version_id).join("saves");
+    get_assets_in_dir(dir).await
+}
+
+#[tauri::command]
+pub async fn delete_local_world(version_id: String, world_name: String) -> Result<(), String> {
+    let dir = get_minecraft_base().join("versions").join(&version_id).join("saves");
+    delete_asset_in_dir(dir, world_name).await
+}
+
+// Global custom assets logic
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct OnlinePreset {
+    pub name: String,
+    pub mods: Vec<PresetMod>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct PresetMod {
+    pub source: String, // "modrinth" or "curseforge"
+    pub project_id: String,
+    pub name: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct ResolvedPresetMod {
+    pub source: String,
+    pub project_id: String,
+    pub project_name: String,
+    pub file_id: String,
+    pub filename: String,
+    pub download_url: String,
+    pub dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct ResolvePresetResult {
+    pub resolved_mods: Vec<ResolvedPresetMod>,
+    pub failed_mods: Vec<PresetMod>,
+}
+
+#[tauri::command]
+pub async fn get_custom_assets(asset_type: String) -> Result<Vec<LocalAssetItem>, String> {
+    if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
+        return Err("Invalid asset type".to_string());
+    }
+    let dir = get_minecraft_base().join("global_assets").join(&asset_type);
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
+
+    let mut results = Vec::new();
+    let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
+    
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let is_valid = match asset_type.as_str() {
+            "mod_groups" => path.extension().is_some_and(|e| e == "json"),
+            "resourcepacks" | "shaderpacks" => path.extension().is_some_and(|e| e == "zip"),
+            _ => false,
+        };
+
+        if path.is_file() && is_valid {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            
+            let metadata = entry.metadata().await.ok();
+            let size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
+            
+            results.push(LocalAssetItem {
+                filename,
+                is_dir: false,
+                size: size_bytes,
+            });
+        }
+    }
+    
+    Ok(results)
+}
+
+#[tauri::command]
+pub async fn get_asset_presets(asset_type: String) -> Result<Vec<LocalAssetItem>, String> {
+    if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
+        return Err("Invalid asset type".to_string());
+    }
+    let dir = get_minecraft_base().join("global_assets").join(&asset_type);
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
+
+    let mut results = Vec::new();
+    let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
+    
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|e| e == "json") {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let metadata = entry.metadata().await.ok();
+            let size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
+            
+            results.push(LocalAssetItem {
+                filename,
+                is_dir: false,
+                size: size_bytes,
+            });
+        }
+    }
+    
+    Ok(results)
+}
+
+#[tauri::command]
+pub async fn delete_custom_asset(asset_type: String, filename: String) -> Result<(), String> {
+    if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
+        return Err("Invalid asset type".to_string());
+    }
+    let dir = get_minecraft_base().join("global_assets").join(&asset_type);
+    delete_asset_in_dir(dir, filename).await
+}
+
+#[tauri::command]
+pub async fn open_custom_asset_folder(asset_type: String) -> Result<(), String> {
+    if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
+        return Err("Invalid asset type".to_string());
+    }
+    let dir = get_minecraft_base().join("global_assets").join(&asset_type);
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
+    
+    if let Err(e) = open::that(dir) {
+        tracing::error!("Failed to open global asset folder: {}", e);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resolve_preset_for_instance(preset_name: String, asset_type: String, version_id: String) -> Result<ResolvePresetResult, String> {
+    if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
+        return Err("Invalid asset type".to_string());
+    }
+    
+    // Get instance details
+    let instance = get_instance_details(version_id.clone()).await?;
+    let mc_version = instance.mc_version.clone();
+    let loader = instance.loader_type.to_lowercase();
+    
+    let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
+    let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
+    
+    let preset_content = tokio::fs::read_to_string(&file_path).await.map_err(|e| e.to_string())?;
+    let preset: OnlinePreset = serde_json::from_str(&preset_content).map_err(|e| e.to_string())?;
+    
+    let mut resolved_mods = Vec::new();
+    let mut failed_mods = Vec::new();
+    let loaders = vec![loader.clone()];
+
+    for pm in preset.mods {
+        if pm.source == "modrinth" {
+            match crate::core::modrinth::get_modrinth_mod_files(pm.project_id.clone(), mc_version.clone(), loaders.clone()).await {
+                Ok(files) => {
+                    if let Some(best) = files.into_iter().next() {
+                        resolved_mods.push(ResolvedPresetMod {
+                            source: pm.source.clone(),
+                            project_id: pm.project_id.clone(),
+                            project_name: pm.name.clone(),
+                            file_id: best.id,
+                            filename: best.filename,
+                            download_url: best.download_url,
+                            dependencies: Some(best.dependencies),
+                        });
+                    } else {
+                        failed_mods.push(pm);
+                    }
+                },
+                Err(_) => failed_mods.push(pm),
+            }
+        } else if pm.source == "curseforge" {
+            match crate::core::curseforge::get_cf_mod_files(pm.project_id.clone(), mc_version.clone(), loaders.clone()).await {
+                Ok(files) => {
+                    if let Some(best) = files.into_iter().next() {
+                        resolved_mods.push(ResolvedPresetMod {
+                            source: pm.source.clone(),
+                            project_id: pm.project_id.clone(),
+                            project_name: pm.name.clone(),
+                            file_id: best.id,
+                            filename: best.filename,
+                            download_url: best.download_url,
+                            dependencies: Some(best.dependencies),
+                        });
+                    } else {
+                        failed_mods.push(pm);
+                    }
+                },
+                Err(_) => failed_mods.push(pm),
+            }
+        }
+    }
+    
+    Ok(ResolvePresetResult { resolved_mods, failed_mods })
+}
+
+#[tauri::command]
+pub async fn download_resolved_preset(
+    app: tauri::AppHandle,
+    version_id: String,
+    resolved_mods: Vec<ResolvedPresetMod>
+) -> Result<(), String> {
+    for rm in resolved_mods {
+        crate::commands::install_mod_to_instance(
+            app.clone(),
+            crate::core::manager::InstallModOptions {
+                source: rm.source,
+                project_id: rm.project_id,
+                mod_name: None,
+                instance_id: Some(version_id.clone()),
+                target_dir: None,
+                download_url: rm.download_url,
+                file_id: rm.file_id,
+                dependencies: rm.dependencies,
+                keep_both: Some(false),
+            }
+        ).await.map_err(|e| format!("{:?}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn add_mod_to_preset(preset_name: String, asset_type: String, source: String, project_id: String, project_name: String) -> Result<(), String> {
+    if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
+        return Err("Invalid asset type".to_string());
+    }
+    
+    let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
+    let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
+    
+    let mut preset = if tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
+        let content = tokio::fs::read_to_string(&file_path).await.map_err(|e| e.to_string())?;
+        serde_json::from_str::<OnlinePreset>(&content).unwrap_or(OnlinePreset {
+            name: preset_name.clone(),
+            mods: vec![],
+        })
+    } else {
+        OnlinePreset {
+            name: preset_name.clone(),
+            mods: vec![],
+        }
+    };
+
+    if !preset.mods.iter().any(|m| m.project_id == project_id && m.source == source) {
+        preset.mods.push(PresetMod { source, project_id, name: project_name });
+    }
+
+    let json_content = serde_json::to_string_pretty(&preset).map_err(|e| e.to_string())?;
+    tokio::fs::create_dir_all(file_path.parent().unwrap()).await.map_err(|e| e.to_string())?;
+    tokio::fs::write(&file_path, json_content).await.map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 
 /// Get list of installed mods for a specific instance
 #[tauri::command]
@@ -1050,6 +1469,7 @@ async fn save_installed_mods_json(
 pub async fn install_mod_to_instance(
     app: tauri::AppHandle,
     options: InstallModOptions,
+    ctx: Option<crate::core::task::TaskContext>,
 ) -> Result<String, String> {
     let version_id = options
         .instance_id
@@ -1110,7 +1530,11 @@ pub async fn install_mod_to_instance(
     }
 
     if !target_path.exists() {
-        download_mod_file_stream(&app, &client, &download_url, &target_path, &filename).await?;
+        if let Some(ref c) = ctx {
+            download_mod_file_task(c, &client, &download_url, &target_path).await?;
+        } else {
+            download_mod_file_stream(&app, &client, &download_url, &target_path, &filename).await?;
+        }
     }
 
     tracing::info!(
@@ -1166,10 +1590,14 @@ pub async fn install_mod_to_instance(
                                             }
                                             let dep_path = mods_dir.join(fname);
                                             if !dep_path.exists() {
-                                                let _ = download_mod_file_stream(
-                                                    &app, &client, url, &dep_path, fname,
-                                                )
-                                                .await;
+                                                if let Some(ref c) = ctx {
+                                                    let _ = download_mod_file_task(c, &client, url, &dep_path).await;
+                                                } else {
+                                                    let _ = download_mod_file_stream(
+                                                        &app, &client, url, &dep_path, fname,
+                                                    )
+                                                    .await;
+                                                }
                                             }
                                             // Enforce 1-to-1 mapping
                                             installed_map.retain(|_, v| v != fname);
@@ -1210,10 +1638,14 @@ pub async fn install_mod_to_instance(
                                 }
                                 let dep_path = mods_dir.join(fname);
                                 if !dep_path.exists() {
-                                    let _ = download_mod_file_stream(
-                                        &app, &client, url, &dep_path, fname,
-                                    )
-                                    .await;
+                                    if let Some(ref c) = ctx {
+                                        let _ = download_mod_file_task(c, &client, url, &dep_path).await;
+                                    } else {
+                                        let _ = download_mod_file_stream(
+                                            &app, &client, url, &dep_path, fname,
+                                        )
+                                        .await;
+                                    }
                                 }
                                 // Enforce 1-to-1 mapping
                                 installed_map.retain(|_, v| v != fname);
@@ -1487,6 +1919,95 @@ async fn download_mod_file_task(
     ctx.update_progress(final_len, final_len, "Download finished")
         .await;
     Ok(())
+}
+
+pub struct InstallPresetTask {
+    pub options: InstallPresetOptions,
+    pub app: tauri::AppHandle,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct InstallPresetOptions {
+    pub preset_name: String,
+    pub asset_type: String,
+    pub instance_id: String,
+    pub mods: Vec<crate::core::manager::ResolvedPresetMod>,
+}
+
+#[async_trait::async_trait]
+impl crate::core::task::ExecutableTask for InstallPresetTask {
+    async fn execute(
+        &self,
+        ctx: crate::core::task::TaskContext,
+    ) -> Result<(), crate::core::task::TaskError> {
+        let options = &self.options;
+        let mut sub_tasks = Vec::new();
+        for m in &options.mods {
+            let name = if !m.project_name.is_empty() { m.project_name.clone() } else { m.project_id.clone() };
+            sub_tasks.push(crate::core::task::state::SubTaskState {
+                key: m.project_id.clone(),
+                name,
+                status: crate::core::task::state::SubTaskStatus::Pending,
+                current: 0,
+                total: 100,
+                weight: 10,
+            });
+        }
+        ctx.init_sub_tasks(sub_tasks).await;
+
+        use futures::StreamExt;
+        
+        let mods = options.mods.clone();
+        let instance_id = options.instance_id.clone();
+        let app = self.app.clone();
+
+        let results = futures::stream::iter(mods)
+            .map(|m| {
+                let app = app.clone();
+                let ctx = ctx.with_sub_task(&m.project_id);
+                let instance_id = instance_id.clone();
+                async move {
+                    ctx.update_progress(0, 100, "Starting download...").await;
+
+                    if ctx.is_cancelled() {
+                        return Err(crate::core::task::TaskError::ExecutionError("Cancelled".to_string()));
+                    }
+
+                    let result = install_mod_to_instance(
+                        app,
+                        InstallModOptions {
+                            source: m.source.clone(),
+                            project_id: m.project_id.clone(),
+                            mod_name: Some(m.project_name.clone()),
+                            instance_id: Some(instance_id),
+                            target_dir: None,
+                            download_url: m.download_url.clone(),
+                            file_id: m.file_id.clone(),
+                            dependencies: m.dependencies.clone(),
+                            keep_both: Some(false),
+                        },
+                        Some(ctx.clone()),
+                    ).await;
+
+                    if let Err(e) = result {
+                        tracing::error!("Failed to install preset mod {}: {}", m.project_id, e);
+                        return Err(crate::core::task::TaskError::ExecutionError(format!("Failed to install {}: {}", m.project_id, e)));
+                    }
+
+                    ctx.update_progress(100, 100, "Completed").await;
+                    Ok(())
+                }
+            })
+            .buffered(1) // Execute sequentially to prevent instance config race conditions
+            .collect::<Vec<Result<(), crate::core::task::TaskError>>>()
+            .await;
+
+        for res in results {
+            res?;
+        }
+
+        Ok(())
+    }
 }
 
 pub struct InstallModTask {

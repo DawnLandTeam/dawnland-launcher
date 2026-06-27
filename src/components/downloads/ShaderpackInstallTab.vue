@@ -62,6 +62,8 @@ interface UnifiedModFile {
 }
 
 // State
+import AddToPresetDialog from './AddToPresetDialog.vue';
+
 const installedInstances = ref<InstanceItem[]>([]);
 const selectedInstanceId = ref<string>("");
 
@@ -72,6 +74,7 @@ const currentPage = ref(0);
 const hasMore = ref(true);
 const isLoadingMore = ref(false);
 const includeDependencies = ref(true);
+const showAddToPresetDialog = ref(false);
 const intersectionObserver = ref<IntersectionObserver | null>(null);
 const bottomSentinel = ref<HTMLElement | null>(null);
 const scrollContainer = ref<HTMLElement | null>(null);
@@ -740,6 +743,13 @@ onUnmounted(() => {
             {{ $t('common.cancel') }}
           </button>
           <button
+            @click="showAddToPresetDialog = true"
+            :disabled="!pendingMod"
+            class="px-4 py-2 text-sm font-medium border border-emerald-200 dark:border-emerald-900/50 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {{ t('addToPreset.title') }}
+          </button>
+          <button
             @click="startInstallToInstance"
             v-if="selectedInstanceId"
             :disabled="isDownloading || isFetchingFiles || isCheckingDependencies || installFiles.length === 0"
@@ -757,5 +767,16 @@ onUnmounted(() => {
         </div>
 
   </DialogContent>
+
+  <!-- Add to Preset Dialog -->
+  <AddToPresetDialog
+    v-if="pendingMod"
+    v-model:open="showAddToPresetDialog"
+    assetType="shaderpacks"
+    :source="pendingMod.source"
+    :projectId="pendingMod.project_id"
+    :projectName="pendingMod.title"
+    @close="showAddToPresetDialog = false"
+  />
 </template>
 

@@ -96,25 +96,21 @@ pub async fn remove_account(id: String) -> Result<(), AppError> {
 #[allow(clippy::too_many_arguments)]
 pub async fn install_mod_to_instance(
     app: tauri::AppHandle,
-    version_id: String,
-    mod_source: String,
-    project_id: String,
-    file_id: String,
-    download_url: String,
-    dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
-    keep_both: Option<bool>,
-) -> Result<String, String> {
+    options: crate::core::manager::InstallModOptions,
+) -> Result<String, AppError> {
     crate::core::manager::install_mod_to_instance(app, crate::core::manager::InstallModOptions {
-        source: mod_source,
-        project_id,
-        mod_name: None,
-        instance_id: Some(version_id),
-        target_dir: None,
-        download_url,
-        file_id,
-        dependencies,
-        keep_both,
-    }).await
+        source: options.source,
+        project_id: options.project_id,
+        mod_name: options.mod_name,
+        instance_id: options.instance_id,
+        target_dir: options.target_dir,
+        download_url: options.download_url,
+        file_id: options.file_id,
+        dependencies: options.dependencies,
+        keep_both: options.keep_both,
+    }, None)
+    .await
+    .map_err(|e| DawnlandError::Unknown(e).into())
 }
 
 /// Start Microsoft Device Code Flow login.
