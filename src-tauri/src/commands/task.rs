@@ -59,7 +59,7 @@ pub async fn retry_task(
                 &version_dir,
                 is_dependency.unwrap_or(false),
             )
-            .await;
+            .await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
             let executable = crate::core::mojang::InstallVanillaTask {
                 options: crate::core::mojang::VanillaInstallOptions {
@@ -141,7 +141,7 @@ pub async fn retry_task(
             let base_dir = crate::core::mojang::get_minecraft_base();
             let instance_dir = base_dir.join("versions").join(&instance_name);
             let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
             let executable = crate::commands::modpack::InstallModpackTask {
                 options: crate::commands::modpack::InstallModpackOptions {
@@ -219,7 +219,7 @@ pub async fn retry_task(
             let base_dir = crate::core::mojang::get_minecraft_base();
             let instance_dir = base_dir.join("versions").join(&instance_name);
             let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
             let executable = crate::commands::modpack::InstallOnlineModpackTask {
                 options: crate::commands::modpack::InstallOnlineModpackOptions {

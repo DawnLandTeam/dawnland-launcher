@@ -1997,7 +1997,7 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
                     Ok(())
                 }
             })
-            .buffer_unordered(5) // Limit concurrency to 5
+            .buffered(1) // Execute sequentially to prevent instance config race conditions
             .collect::<Vec<Result<(), crate::core::task::TaskError>>>()
             .await;
 

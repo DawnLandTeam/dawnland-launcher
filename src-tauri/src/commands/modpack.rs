@@ -104,7 +104,7 @@ impl ExecutableTask for InstallModpackTask {
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
         if !is_update {
-            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
         }
 
         macro_rules! check_cancel {
@@ -537,7 +537,7 @@ impl ExecutableTask for InstallOnlineModpackTask {
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
         if !is_update {
-            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await;
+            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
         }
 
         let temp_dir = base_dir

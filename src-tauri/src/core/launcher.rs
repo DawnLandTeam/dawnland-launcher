@@ -227,7 +227,7 @@ pub struct InstanceConfig {
 }
 
 impl InstanceConfig {
-    pub async fn ensure_installing(instance_dir: &std::path::Path, is_dependency: bool) {
+    pub async fn ensure_installing(instance_dir: &std::path::Path, is_dependency: bool) -> Result<(), String> {
         let config_path = instance_dir.join("dlml.json");
         let mut config: Self = if config_path.exists() {
             tokio::fs::read_to_string(&config_path)
@@ -242,9 +242,12 @@ impl InstanceConfig {
         if is_dependency {
             config.hidden = true;
         }
-        if let Ok(json) = serde_json::to_string_pretty(&config) {
-            let _ = tokio::fs::write(&config_path, json).await;
-        }
+        let json = serde_json::to_string_pretty(&config)
+            .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
+        tokio::fs::write(&config_path, json)
+            .await
+            .map_err(|e| format!("Failed to write instance config: {}", e))?;
+        Ok(())
     }
 }
 

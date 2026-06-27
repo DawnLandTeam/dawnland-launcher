@@ -169,9 +169,9 @@ impl ExecutableTask for InstallFabricTask {
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
         crate::core::launcher::InstanceConfig::ensure_installing(
             &instance_dir,
-            is_dependency.unwrap_or(false),
+            self.options.is_dependency.unwrap_or(false),
         )
-        .await;
+        .await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
         let client = crate::core::utils::get_http_client();
 
