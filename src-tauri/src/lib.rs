@@ -173,8 +173,9 @@ pub fn run() {
             register_deep_link();
 
             let base_dir = core::mojang::get_minecraft_base();
-            if let Err(e) = app.asset_protocol_scope().allow_directory(&base_dir, true) {
-                tracing::warn!("Failed to allow asset protocol scope for minecraft base dir: {}", e);
+            let cache_dir = base_dir.join(".mod_cache");
+            if let Err(e) = app.asset_protocol_scope().allow_directory(&cache_dir, true) {
+                tracing::warn!("Failed to allow asset protocol scope for directory {}: {}", cache_dir.display(), e);
             }
 
             let app_dir = base_dir
