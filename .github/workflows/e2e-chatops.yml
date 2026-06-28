@@ -137,7 +137,7 @@ jobs:
       - name: Install Playwright Browsers
         run: pnpm exec playwright install --with-deps chromium
       - name: Run Playwright E2E
-        run: pnpm run test:e2e
+        run: pnpm run test:e2e-with-build
 
       # 4. Reply with results in the PR using Quote format
       - name: Quote command and report result
