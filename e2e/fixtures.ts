@@ -125,13 +125,14 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       childProcess.kill();
       
       // Give the process a moment to exit before deleting the folder
-      setTimeout(() => {
-        try {
-          fs.rmSync(e2eTempDir, { recursive: true, force: true });
-        } catch (e) {
-          console.warn(`Failed to cleanup temp dir ${e2eTempDir}:`, e);
-        }
-      }, 1500);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      try {
+        fs.rmSync(e2eTempDir, { recursive: true, force: true });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(`[e2e] Failed to cleanup temp dir ${e2eTempDir}:`, e);
+      }
     },
     { scope: 'worker' } // This makes it initialize once per worker!
   ],
