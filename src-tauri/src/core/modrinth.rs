@@ -349,7 +349,7 @@ async fn search_modrinth_internal(
             icon_url: p.icon_url,
             downloads: p.downloads,
             author: p.author,
-            mc_versions: p.game_versions.unwrap_or_default(),
+            mc_versions: p.versions.or(p.game_versions).unwrap_or_default(),
             loaders: p.loaders.unwrap_or_default(),
             download_url: None,
             file_id: None,
