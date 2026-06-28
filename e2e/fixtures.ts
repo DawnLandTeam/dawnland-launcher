@@ -39,32 +39,69 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       };
       
       // 4. Start the copied executable with sandbox as CWD
+      // (Security Note: sandboxExePath is locally constructed and isolated from user input)
+      const tauriLogPath = path.join(e2eTempDir, `tauri-worker-${workerInfo.workerIndex}.log`);
+      const tauriLogStream = fs.createWriteStream(tauriLogPath, { flags: 'a' });
+
       const childProcess: ChildProcess = spawn(sandboxExePath, [], { 
         env,
         cwd: e2eTempDir,
-        stdio: 'ignore' 
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      if (childProcess.stdout) {
+        childProcess.stdout.pipe(tauriLogStream);
+      }
+
+      if (childProcess.stderr) {
+        childProcess.stderr.pipe(tauriLogStream);
+      }
+
+      childProcess.on('close', () => {
+        tauriLogStream.end();
       });
 
       // 5. Wait for the CDP port to become available
       let browser: Browser | null = null;
       const maxRetries = 40;
       const retryDelay = 500;
+      let lastError: unknown = null;
+
       for (let i = 0; i < maxRetries; i++) {
         try {
           browser = await chromium.connectOverCDP(`http://localhost:${port}`);
           break;
         } catch (e) {
+          lastError = e;
+          // eslint-disable-next-line no-console
+          console.error(`[e2e] Failed to connect to CDP port ${port} (attempt ${i + 1}/${maxRetries}):`, e);
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
       }
 
       if (!browser) {
         childProcess.kill();
-        throw new Error(`Failed to connect to CDP port ${port} after ${maxRetries * retryDelay}ms`);
+        throw new Error(
+          `Failed to connect to CDP port ${port} after ${maxRetries} attempts. ` +
+          `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+        );
       }
 
-      const defaultContext = browser.contexts()[0];
-      const page = defaultContext.pages()[0];
+      let defaultContext = browser.contexts()[0];
+      let page = defaultContext?.pages()[0];
+      let pageRetries = 20;
+      
+      while ((!defaultContext || !page) && pageRetries > 0) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        defaultContext = browser.contexts()[0];
+        page = defaultContext?.pages()[0];
+        pageRetries--;
+      }
+
+      if (!defaultContext || !page) {
+        childProcess.kill();
+        throw new Error(`Failed to attach to default CDP context/page after waiting. App may have crashed or failed to load Webview.`);
+      }
 
       // Auto-dismiss Privacy Policy modal if it appears at any time
       await page.addLocatorHandler(page.locator('.z-\\[100\\] button:has-text("拒绝并继续"), .z-\\[100\\] button:has-text("Agree")'), async () => {

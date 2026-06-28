@@ -45,17 +45,73 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // Load PR info so we can inspect branch protection on the base branch
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
             const { data: checks } = await github.rest.checks.listForRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
               ref: '${{ steps.pr-info.outputs.sha }}'
             });
-            
-            const failed = checks.check_runs.some(run => run.conclusion === 'failure' || run.conclusion === 'timed_out');
-            const pending = checks.check_runs.some(run => run.status !== 'completed' && run.name !== context.job);
-            
-            if (failed || pending) {
-              core.setFailed('Other CI tests are not completed or have failed! E2E tests are blocked. Please wait for the base CI to pass.');
+
+            // Determine which checks are actually required by branch protection.
+            // If branch protection cannot be read or has no required status checks,
+            // we fall back to treating all non-current jobs as core CI.
+            let requiredContexts = [];
+            try {
+              const { data: protection } = await github.rest.repos.getBranchProtection({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: pr.data.base.ref
+              });
+
+              requiredContexts = protection.required_status_checks?.contexts ?? [];
+              core.info(`Required status checks for branch ${pr.data.base.ref}: ${requiredContexts.join(', ')}`);
+            } catch (error) {
+              core.info(
+                `Unable to load branch protection settings for ${pr.data.base.ref}, ` +
+                `falling back to checking all non-current jobs. Error: ${error}`
+              );
+            }
+
+            const isRelevantRun = (run) => {
+              // Ignore the current job by name so we don't block on ourselves
+              if (run.name === context.job) {
+                return false;
+              }
+
+              // If branch protection defines required checks, use that list.
+              if (requiredContexts.length > 0) {
+                return requiredContexts.includes(run.name);
+              }
+
+              // Fallback: treat all other check runs as core CI.
+              return true;
+            };
+
+            const relevantRuns = checks.check_runs.filter(isRelevantRun);
+
+            const failed = relevantRuns.some(
+              (run) => run.conclusion === 'failure' || run.conclusion === 'timed_out'
+            );
+            const pending = relevantRuns.some(
+              (run) => run.status !== 'completed'
+            );
+
+            if (failed) {
+              core.setFailed(
+                'One or more required CI checks have failed or timed out. ' +
+                'E2E tests are blocked until required CI passes.'
+              );
+            } else if (pending) {
+              core.setFailed(
+                'Required CI checks are still pending or running. ' +
+                'E2E tests are blocked until required CI completes.'
+              );
             }
 
   run-e2e:
