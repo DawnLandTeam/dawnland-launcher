@@ -8,28 +8,19 @@ test.describe('Account Management (E2E)', () => {
     // Check if the current URL is loaded
     await page.waitForLoadState('domcontentloaded');
 
-    // Click the Accounts nav item. Find by href or text.
-    // Usually it's in the sidebar. Let's just look for an element with text matching account or profile icon.
-    // Dawnland Launcher uses Lucide icons and Vue router.
-    // If we are already on Home, there is an account switcher at the bottom left or top right.
-    const accountLink = page.locator('a[href="/accounts"]');
+    // Click the Accounts nav item. 
+    const accountLink = page.locator('a[href="/accounts"], a[href="#/accounts"]');
+    const accountsMenu = page.locator('text=账号管理, text=账号').first();
+    const accountsMenuEn = page.locator('text=Accounts').first();
+
     if (await accountLink.isVisible()) {
       await accountLink.click();
+    } else if (await accountsMenu.isVisible()) {
+      await accountsMenu.click();
+    } else if (await accountsMenuEn.isVisible()) {
+      await accountsMenuEn.click();
     } else {
-      // Fallback: evaluate router push
-      await page.evaluate(() => {
-        // @ts-ignore
-        window.__TAURI_INTERNALS__ = window.__TAURI_INTERNALS__ || {};
-        // If we can't find the link, we can just trigger a click on the text that says "Accounts" or similar.
-      });
-      // Just click the text "Accounts" or Chinese "账号"
-      const accountsMenu = page.locator('text=账号管理').first();
-      if (await accountsMenu.isVisible()) {
-        await accountsMenu.click();
-      } else {
-        const accountsMenuEn = page.locator('text=Accounts').first();
-        if (await accountsMenuEn.isVisible()) await accountsMenuEn.click();
-      }
+      throw new Error("Unable to locate the Accounts navigation menu. Test cannot proceed.");
     }
 
     // Now on Accounts View
