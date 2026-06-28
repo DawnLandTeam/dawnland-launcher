@@ -12,6 +12,21 @@ pub fn get_http_client() -> &'static reqwest::Client {
     })
 }
 
+/// Helper to parse a reqwest::Response into JSON, propagating I/O errors and logging JSON parsing failures.
+pub async fn parse_json_response<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, String> {
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+        
+    serde_json::from_str(&body).map_err(|e| {
+        let snippet = if body.len() > 200 { &body[..200] } else { &body };
+        format!("Failed to parse JSON: {} - body: {}", e, snippet)
+    })
+}
+
 /// Compare two version strings numerically (segment by segment)
 /// e.g., "0.9.1" < "0.10.1" < "0.19.1"
 #[async_recursion::async_recursion]
