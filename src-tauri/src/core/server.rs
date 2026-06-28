@@ -98,10 +98,7 @@ pub async fn get_servers(
         return Err(format!("Server API error: {}", status));
     }
 
-    let result: ServerListResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse server response: {}", e))?;
+    let result: ServerListResponse = crate::core::utils::parse_json_response(response).await?;
 
     tracing::info!(
         "Fetched {} servers (page {}/{})",
@@ -134,10 +131,7 @@ pub async fn get_recommended_servers() -> Result<Vec<Server>, String> {
         return Err(format!("Server API error: {}", status));
     }
 
-    let result: Vec<Server> = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let result: Vec<Server> = crate::core::utils::parse_json_response(response).await?;
 
     tracing::info!("Fetched {} recommended servers", result.len());
     Ok(result)

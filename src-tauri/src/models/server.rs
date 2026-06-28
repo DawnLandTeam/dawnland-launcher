@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct Server {
     pub id: u32,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
     pub name: String,
     pub ip: String,
     pub port: i32,
-    pub motd: String,
+    pub motd: Option<String>,
     pub version: String,
     pub server_type: String, // "vanilla", "modded", "custom"
     pub auth_type: String,   // "offline", "online", "authlib"
@@ -21,8 +21,8 @@ pub struct Server {
     pub pack_project_id: Option<String>, // CurseForge or Modrinth Project ID
     pub pack_version_id: Option<String>, // CurseForge or Modrinth Version/File ID
     pub pack_source: Option<String>,     // "curseforge" or "modrinth"
-    pub icon_url: String,
-    pub email: String,
+    pub icon_url: Option<String>,
+    pub email: Option<String>,
     pub is_active: bool,
     pub tags: Option<String>,
     pub description: Option<String>,

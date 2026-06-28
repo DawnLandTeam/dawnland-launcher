@@ -104,20 +104,20 @@ struct ModrinthProject {
 
 #[derive(Debug, Deserialize)]
 struct ModrinthProjectDetails {
-    #[serde(rename = "project_id")]
+    #[serde(alias = "id", alias = "project_id")]
     project_id: String,
     title: String,
     description: String,
     #[serde(rename = "icon_url")]
     icon_url: Option<String>,
     downloads: u64,
-    author: String,
+    author: Option<String>,
     body: Option<String>,
     #[serde(rename = "game_versions")]
-    game_versions: Vec<String>,
-    loaders: Vec<String>,
-    categories: Vec<String>,
-    version_groups: Vec<String>,
+    game_versions: Option<Vec<String>>,
+    loaders: Option<Vec<String>>,
+    categories: Option<Vec<String>>,
+    version_groups: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -349,7 +349,7 @@ async fn search_modrinth_internal(
             icon_url: p.icon_url,
             downloads: p.downloads,
             author: p.author,
-            mc_versions: p.game_versions.unwrap_or_default(),
+            mc_versions: p.versions.or(p.game_versions).unwrap_or_default(),
             loaders: p.loaders.unwrap_or_default(),
             download_url: None,
             file_id: None,
@@ -399,10 +399,7 @@ pub async fn get_modrinth_mod_files(
         return Err(format!("Modrinth API error: {}", status));
     }
 
-    let versions: Vec<ModrinthVersion> = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let versions: Vec<ModrinthVersion> = crate::core::utils::parse_json_response(response).await?;
 
     // Sort by date_published (descending)
     let mut sorted_versions = versions;
@@ -491,10 +488,7 @@ pub async fn get_modrinth_mod_details(project_id: String) -> Result<UnifiedModPr
         return Err(format!("Modrinth API error: {}", status));
     }
 
-    let details: ModrinthProjectDetails = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let details: ModrinthProjectDetails = crate::core::utils::parse_json_response(response).await?;
 
     Ok(UnifiedModProject {
         source: "modrinth".to_string(),
@@ -503,9 +497,9 @@ pub async fn get_modrinth_mod_details(project_id: String) -> Result<UnifiedModPr
         description: details.description,
         icon_url: details.icon_url,
         downloads: details.downloads,
-        author: details.author,
-        mc_versions: details.game_versions,
-        loaders: details.loaders,
+        author: details.author.unwrap_or_default(),
+        mc_versions: details.game_versions.unwrap_or_default(),
+        loaders: details.loaders.unwrap_or_default(),
         download_url: None,
         file_id: None,
     })
@@ -540,10 +534,7 @@ pub async fn get_modrinth_mod_versions(project_id: String) -> Result<Vec<String>
         loaders: Vec<String>,
     }
 
-    let versions: Vec<VersionInfo> = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let versions: Vec<VersionInfo> = crate::core::utils::parse_json_response(response).await?;
 
     // Return version info as JSON string
     let version_list: Vec<String> = versions
@@ -644,10 +635,7 @@ pub async fn get_modrinth_modpack_versions(
         return Err(format!("Modrinth API error: {}", status));
     }
 
-    let versions: Vec<ModrinthVersion> = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {:?}", e))?;
+    let versions: Vec<ModrinthVersion> = crate::core::utils::parse_json_response(response).await?;
 
     let mut result = Vec::new();
     for version in versions {
