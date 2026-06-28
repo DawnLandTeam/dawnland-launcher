@@ -10,7 +10,9 @@
     "tauri": "tauri",
     "test": "vitest run",
     "test:ui": "vitest --ui",
-    "e2e": "playwright test"
+    "e2e": "playwright test --ui",
+    "build:e2e": "pnpm tauri build --features e2e",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@aptabase/tauri": "^0.4.1",

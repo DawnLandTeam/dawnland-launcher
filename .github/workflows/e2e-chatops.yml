@@ -1,0 +1,105 @@
+name: ChatOps E2E Test
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  trigger-e2e:
+    name: Check Trigger Conditions
+    # Only trigger in PRs, when the comment starts with /e2e-test, and the author is a repository member.
+    # Unauthorized comments will be completely ignored (the workflow won't even start).
+    if: >
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/e2e-test') &&
+      (github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Acknowledge the command by reacting with 👀
+      - name: Add 👀 reaction to comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes'
+            });
+
+      # 2. Get PR Info and HEAD Commit
+      - name: Get PR Info
+        id: pr-info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            core.setOutput('sha', pr.data.head.sha);
+
+      # 3. Verify that all other Check Runs have Succeeded
+      - name: Check if other CI tests passed
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: '${{ steps.pr-info.outputs.sha }}'
+            });
+            
+            const failed = checks.check_runs.some(run => run.conclusion === 'failure' || run.conclusion === 'timed_out');
+            const pending = checks.check_runs.some(run => run.status !== 'completed' && run.name !== context.job);
+            
+            if (failed || pending) {
+              core.setFailed('Other CI tests are not completed or have failed! E2E tests are blocked. Please wait for the base CI to pass.');
+            }
+
+  run-e2e:
+    name: Execute E2E Test
+    needs: trigger-e2e
+    runs-on: [ 'self-hosted', 'Windows' ]
+    steps:
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3
+        with:
+          version: 11
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: lts/*
+      - name: Install Dependencies
+        run: pnpm install
+      - name: Install Playwright Browsers
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run Playwright E2E
+        run: pnpm run test:e2e
+
+      # 4. Reply with results in the PR using Quote format
+      - name: Quote command and report result
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ job.status }}';
+            const user = '${{ github.actor }}';
+            const commentUrl = '${{ github.event.comment.html_url }}';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            
+            const statusIcon = status === 'success' ? '✅' : '❌';
+            const body = `> [!NOTE]\n> **@${user}** triggered [E2E test command](${commentUrl})\n\n**Test execution finished!** Final result: ${statusIcon} **${status}**\n\n🔍 [Click here to view detailed logs and test traces](${runUrl})`;
+            
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
