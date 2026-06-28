@@ -1,104 +1,146 @@
-import { test as base, expect } from '@playwright/test';
+import { test as base, chromium, type Page, type Browser } from '@playwright/test';
+import { spawn, type ChildProcess } from 'child_process';
+import path from 'path';
+import fs from 'fs';
 
-export type MockedIpcCall = {
-  cmd: string;
-  args: any;
+// Define worker-level fixtures
+type WorkerFixtures = {
+  sharedApp: { page: Page };
 };
 
-type TauriFixtures = {
-  mockTauri: {
-    setMockResponses: (responses: Record<string, any>) => Promise<void>;
-    getIpcCalls: () => Promise<MockedIpcCall[]>;
-    clearIpcCalls: () => Promise<void>;
-  };
-};
+// Export a custom test fixture that provisions a clean Tauri process per worker
+export const test = base.extend<{ page: Page }, WorkerFixtures>({
+  sharedApp: [
+    async ({}, use, workerInfo) => {
+      // Explicitly parse and sanitize the worker index to ensure no command injection taint exists
+      const safeWorkerIndex = parseInt(String(workerInfo.workerIndex), 10);
+      if (isNaN(safeWorkerIndex)) throw new Error("Invalid worker index");
 
-// Extend base test with our mock fixture
-export const test = base.extend<TauriFixtures>({
-  mockTauri: async ({ page }, use) => {
-    let ipcCalls: MockedIpcCall[] = [];
-    let mockResponses: Record<string, any> = {
-      // Default common mocks
-      'get_system_info': { os: 'windows', arch: 'x86_64' },
-      'get_accounts': [],
-      'scan_installed_instances': [],
-      'get_servers': [],
-      'scan_local_javas': [],
-      'get_system_locale': 'en-US',
-      'get_system_memory': { totalMb: 16384, recommendedMaxMb: 4096 },
-      'get_settings': { java_path: '', memory_limit: 4096, language: 'en' },
-      'load_launcher_settings': { enableTelemetry: true, downloadSource: 'official' },
-      'fetch_available_javas': [8, 17, 21],
-      'plugin:app|version': '0.0.1',
-      'plugin:window|show': null,
-      'save_launcher_settings': null,
-    };
+      const port = 9222 + safeWorkerIndex; // Ensure unique port per worker
+      
+      // 1. Create a unique sandbox directory for this worker (persists across tests in the same worker)
+      const e2eTempDir = path.resolve(process.cwd(), 'e2e', '.temp', `worker-${safeWorkerIndex}`);
+      // Clean up previous runs if any
+      if (fs.existsSync(e2eTempDir)) {
+        fs.rmSync(e2eTempDir, { recursive: true, force: true });
+      }
+      fs.mkdirSync(e2eTempDir, { recursive: true });
 
-    // Expose functions to the browser context
-    await page.exposeFunction('__recordIpcCall', (cmd: string, args: any) => {
-      ipcCalls.push({ cmd, args });
-    });
+      // 2. Copy the executable to the sandbox directory to isolate data
+      const originalExePath = path.resolve(process.cwd(), 'src-tauri', 'target', 'release', 'DLML.exe');
+      if (!fs.existsSync(originalExePath)) {
+        throw new Error(`Executable not found at ${originalExePath}. Did you run 'pnpm run build:e2e'?`);
+      }
+      
+      const sandboxExePath = path.join(e2eTempDir, 'DLML.exe');
+      fs.copyFileSync(originalExePath, sandboxExePath);
 
-    await page.exposeFunction('__getIpcResponse', (cmd: string) => {
-      if (cmd in mockResponses) {
-        return mockResponses[cmd];
+      // 3. Set environment variable to open WebView2 debugging port
+      const env = { 
+        ...process.env,
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` 
+      };
+      
+      // 4. Start the copied executable with sandbox as CWD
+      // (Security Note: sandboxExePath is locally constructed and isolated from user input)
+      const tauriLogPath = path.join(e2eTempDir, `tauri-worker-${safeWorkerIndex}.log`);
+      const tauriLogStream = fs.createWriteStream(tauriLogPath, { flags: 'a' });
+
+      // nosemgrep: javascript.lang.security.detect-child-process
+      const childProcess: ChildProcess = spawn(sandboxExePath, [], { 
+        env,
+        cwd: e2eTempDir,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      if (childProcess.stdout) {
+        childProcess.stdout.pipe(tauriLogStream);
       }
 
-      const availableCommands = Object.keys(mockResponses);
-      const message =
-        `No mock response registered for IPC command "${cmd}".` +
-        (availableCommands.length
-          ? ` Available mocked commands: ${availableCommands.join(', ')}.`
-          : ' No IPC commands are currently mocked.');
+      if (childProcess.stderr) {
+        childProcess.stderr.pipe(tauriLogStream);
+      }
 
-      // Log prominently so missing mocks / unexpected commands are easy to spot in CI output
-      // eslint-disable-next-line no-console
-      console.error(message);
+      childProcess.on('close', () => {
+        tauriLogStream.end();
+      });
 
-      // Fail fast when tests hit an unexpected / unmocked IPC command
-      throw new Error(message);
-    });
+      // 5. Wait for the CDP port to become available
+      let browser: Browser | null = null;
+      const maxRetries = 40;
+      const retryDelay = 500;
+      let lastError: unknown = null;
 
-    // Inject the Tauri mock early before page loads
-    await page.addInitScript(() => {
-      // @ts-ignore
-      window.isTauri = true;
-      // @ts-ignore
-      window.__TAURI_INTERNALS__ = window.__TAURI_INTERNALS__ || {};
-      // @ts-ignore
-      window.__TAURI_INTERNALS__.metadata = {
-        currentWindow: { label: 'main' },
-        currentWebview: { windowLabel: 'main', label: 'main' }
-      };
-      // @ts-ignore
-      window.__TAURI_INTERNALS__.invoke = async (cmd: string, args: any) => {
-        // @ts-ignore
-        await window.__recordIpcCall(cmd, args);
-        // @ts-ignore
-        const response = await window.__getIpcResponse(cmd);
-        
-        // Emulate typical Tauri error handling where some commands return Result<T, E>
-        // Here we just return the raw response, but if we need to mock an error,
-        // we can add a convention like { __error: "message" }
-        if (response && typeof response === 'object' && response.__error) {
-          throw new Error(response.__error);
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          browser = await chromium.connectOverCDP(`http://localhost:${port}`);
+          break;
+        } catch (e) {
+          lastError = e;
+          // eslint-disable-next-line no-console
+          console.error(`[e2e] Failed to connect to CDP port ${port} (attempt ${i + 1}/${maxRetries}):`, e);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
-        
-        return response;
-      };
-    });
-
-    // Provide the fixture to the test
-    await use({
-      setMockResponses: async (responses: Record<string, any>) => {
-        mockResponses = { ...mockResponses, ...responses };
-      },
-      getIpcCalls: async () => ipcCalls,
-      clearIpcCalls: async () => {
-        ipcCalls = [];
       }
-    });
+
+      if (!browser) {
+        childProcess.kill();
+        throw new Error(
+          `Failed to connect to CDP port ${port} after ${maxRetries} attempts. ` +
+          `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+        );
+      }
+
+      let defaultContext = browser.contexts()[0];
+      let page = defaultContext?.pages()[0];
+      let pageRetries = 20;
+      
+      while ((!defaultContext || !page) && pageRetries > 0) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        defaultContext = browser.contexts()[0];
+        page = defaultContext?.pages()[0];
+        pageRetries--;
+      }
+
+      if (!defaultContext || !page) {
+        childProcess.kill();
+        throw new Error(`Failed to attach to default CDP context/page after waiting. App may have crashed or failed to load Webview.`);
+      }
+
+      // Auto-dismiss Privacy Policy modal if it appears at any time
+      await page.addLocatorHandler(page.locator('.z-\\[100\\] button:has-text("拒绝并继续"), .z-\\[100\\] button:has-text("Agree")'), async () => {
+        await page.locator('.z-\\[100\\] button:has-text("拒绝并继续"), .z-\\[100\\] button:has-text("Agree")').first().click();
+      });
+
+      // Auto-dismiss Updater modal if it appears at any time
+      await page.addLocatorHandler(page.locator('.z-\\[100\\] button:has-text("稍后再说"), .z-\\[100\\] button:has-text("Later")'), async () => {
+        await page.locator('.z-\\[100\\] button:has-text("稍后再说"), .z-\\[100\\] button:has-text("Later")').first().click();
+      });
+
+      // 6. Provide the shared app to the tests running in this worker
+      await use({ page });
+
+      // 7. Cleanup after all tests in this worker complete
+      await browser.close();
+      childProcess.kill();
+      
+      // Give the process a moment to exit before deleting the folder
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      try {
+        fs.rmSync(e2eTempDir, { recursive: true, force: true });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(`[e2e] Failed to cleanup temp dir ${e2eTempDir}:`, e);
+      }
+    },
+    { scope: 'worker' } // This makes it initialize once per worker!
+  ],
+
+  // Override the test-level `page` fixture to just return our shared worker page
+  page: async ({ sharedApp }, use) => {
+    await use(sharedApp.page);
   }
 });
 
-export { expect };
+export { expect } from '@playwright/test';

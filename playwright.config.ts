@@ -2,13 +2,13 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
-  fullyParallel: true,
+  timeout: 5 * 60 * 1000, // 5 minutes for long downloads (mods/instances)
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1, // Must be 1 because Tauri single-instance plugin prevents multiple instances
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:1420',
     trace: 'on-first-retry',
   },
   projects: [
@@ -17,11 +17,4 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'pnpm run dev',
-    url: 'http://localhost:1420',
-    reuseExistingServer: !process.env.CI,
-    stdout: 'ignore',
-    stderr: 'pipe',
-  },
 });
