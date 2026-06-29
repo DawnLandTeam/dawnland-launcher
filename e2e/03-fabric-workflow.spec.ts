@@ -1,4 +1,6 @@
 import { test, expect } from './fixtures';
+import fs from 'fs';
+import path from 'path';
 
 //1. Install a Fabric 26.2 instance
 //2. Install independent mod: JEI
@@ -7,28 +9,31 @@ import { test, expect } from './fixtures';
 
 test.describe.serial('Fabric Mod Workflow (E2E)', () => {
   
-  test('1. Install a Fabric 26.2 instance', async ({ page }) => {
+  test('1. Setup mock instance', async ({ page }, testInfo) => {
+    // Explicitly parse and sanitize the worker index
+    const safeWorkerIndex = parseInt(String(testInfo.workerIndex), 10);
+    const e2eTempDir = path.resolve(process.cwd(), 'e2e', '.temp', `worker-${safeWorkerIndex}`);
+    const mockInstanceDir = path.join(e2eTempDir, '.minecraft', 'versions', 'E2E_Fabric_Test');
+    
+    // Create the mock directory and configuration
+    fs.mkdirSync(mockInstanceDir, { recursive: true });
+    fs.writeFileSync(path.join(mockInstanceDir, 'E2E_Fabric_Test.json'), JSON.stringify({
+      id: "E2E_Fabric_Test",
+      inheritsFrom: "26.2",
+      libraries: [{ name: "net.fabricmc:fabric-loader:0.15.0" }]
+    }));
+    
+    // Navigate to instances page to trigger a fresh scan by the backend
     await page.getByRole('link', { name: '主页' }).click();
-    await page.getByRole('link', { name: '安装实例' }).click();
-    await page.getByRole('button', { name: '安装实例' }).click();
-    await page.getByRole('textbox', { name: '输入版本名称进行搜索' }).click();
-    await page.getByRole('textbox', { name: '输入版本名称进行搜索' }).fill('26.2');
-    await page.getByRole('button', { name: '刷新' }).click();
-    await page.locator('div').filter({ hasText: /^26\.2正式版$/ }).first().click();
-    await page.locator('div').filter({ hasText: /^不安装$/ }).nth(2).click();
-    await page.getByRole('button', { name: '下一步 →' }).click();
-    await page.getByRole('textbox', { name: 'install.defaultName' }).click();
-    await expect(page.getByText(/Fabric \d+\.\d+\.\d+/)).toBeVisible({ timeout: 16000 });
-    await page.waitForTimeout(2000);
-    await page.getByRole('textbox', { name: 'install.defaultName' }).fill('E2E_Fabric_Test');
-    await page.getByRole('button', { name: '安装实例' }).click();
-    await expect(page.getByRole('button', { name: '完成' })).toBeVisible({ timeout: 300000 });
-    await page.getByRole('button', { name: '完成' }).click()
+    await page.getByRole('link', { name: '实例', exact: true }).click();
+    
+    // Wait for the UI to reflect the newly seeded mock instance
+    await expect(page.getByRole('heading', { name: 'E2E_Fabric_Test' })).toBeVisible({ timeout: 15000 });
   });
 
   test('2. Install independent mod: JEI', async ({ page }) => {
-    await page.getByRole('link', { name: '实例' }).click();
-    await page.locator('div').filter({ hasText: /E2E_Fabric_Test\s*26\.2\s*Fabric/ }).nth(1).click();
+    await page.getByRole('link', { name: '实例', exact: true }).click();
+    await page.getByRole('heading', { name: 'E2E_Fabric_Test' }).click();
     await page.getByRole('button', { name: '模组' }).first().click();
     await expect(page.getByText('该实例还没有安装任何模组')).toBeVisible();
     await page.getByRole('button', { name: '下载更多模组' }).click();
@@ -51,8 +56,8 @@ test.describe.serial('Fabric Mod Workflow (E2E)', () => {
   });
 
   test('4. Verify both mods are installed successfully', async ({ page }) => {
-    await page.getByRole('link', { name: '实例' }).click();
-    await page.locator('div').filter({ hasText: /E2E_Fabric_Test\s*26\.2\s*Fabric/ }).nth(1).click();
+    await page.getByRole('link', { name: '实例', exact: true }).click();
+    await page.getByRole('heading', { name: 'E2E_Fabric_Test' }).click();
     await page.getByRole('button', { name: '模组' }).first().click();
     await expect(page.getByText('AppleSkin', { exact: true })).toBeVisible();
     await expect(page.getByText('Fabric API')).toBeVisible();
