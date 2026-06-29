@@ -307,7 +307,7 @@ const mcVersionOptions = computed(() => {
     getValidMcVersions(f).forEach(v => versions.add(v));
   });
   
-  if (selectedGroupVersion.value && selectedGroupVersion.value !== 'Other' && isValidMcVersion(selectedGroupVersion.value)) {
+  if (selectedGroupVersion.value && selectedGroupVersion.value !== 'Other') {
     versions.add(selectedGroupVersion.value);
   }
   
@@ -369,6 +369,15 @@ async function fetchModFilesForSelectedVersion() {
     const filtered = files.filter(f => getValidMcVersions(f).includes(selectedGroupVersion.value));
     if (filtered.length > 0) {
       selectedFileId.value = filtered[0].id;
+      await checkDependenciesForSelectedFile();
+    } else if (files.length > 0) {
+      // Fallback: If Modrinth returned files but our strict version matching failed,
+      // forcefully select the first available file and sync the game version to it.
+      selectedFileId.value = files[0].id;
+      const validVersions = getValidMcVersions(files[0]);
+      if (validVersions.length > 0 && validVersions[0] !== 'Other') {
+        selectedGroupVersion.value = validVersions[0];
+      }
       await checkDependenciesForSelectedFile();
     }
   } catch (err) {
