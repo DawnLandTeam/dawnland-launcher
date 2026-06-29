@@ -265,15 +265,18 @@ const sourceOptions = [
   { label: 'Modrinth', value: 'modrinth' }
 ];
 
+const isValidMcVersion = (v: string): boolean => {
+  if (!v) return false;
+  const lower = v.toLowerCase();
+  const excluded = ['forge', 'fabric', 'quilt', 'neoforge', 'liteloader', 'rift', 'vanilla', 'client', 'server'];
+  if (lower.startsWith('java ')) return false;
+  if (excluded.some(ex => lower.includes(ex))) return false;
+  return true;
+};
+
 const getValidMcVersions = (f: UnifiedModFile): string[] => {
   if (!f.mc_versions || f.mc_versions.length === 0) return ["Other"];
-  const excluded = ['forge', 'fabric', 'quilt', 'neoforge', 'liteloader', 'rift', 'vanilla', 'client', 'server'];
-  const valid = f.mc_versions.filter(v => {
-    const lower = v.toLowerCase();
-    if (lower.startsWith('java ')) return false;
-    if (excluded.some(ex => lower.includes(ex))) return false;
-    return true;
-  });
+  const valid = f.mc_versions.filter(isValidMcVersion);
   return valid.length > 0 ? valid : ["Other"];
 };
 
@@ -303,6 +306,10 @@ const mcVersionOptions = computed(() => {
   installFiles.value.forEach(f => {
     getValidMcVersions(f).forEach(v => versions.add(v));
   });
+  
+  if (selectedGroupVersion.value && selectedGroupVersion.value !== 'Other') {
+    versions.add(selectedGroupVersion.value);
+  }
   
   return Array.from(versions).sort((a, b) => {
     if (a === 'Other') return 1;
@@ -350,9 +357,27 @@ async function fetchModFilesForSelectedVersion() {
 
     installFiles.value = files;
     
+    if (files.length === 0 && selectedGroupVersion.value === currentMcVersion.value && pendingMod.value.mc_versions.length > 0) {
+      let sorted = [...pendingMod.value.mc_versions].sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
+      if (sorted[0] !== selectedGroupVersion.value) {
+        selectedGroupVersion.value = sorted[0];
+        // The watcher will re-trigger this fetch automatically
+        return;
+      }
+    }
+    
     const filtered = files.filter(f => getValidMcVersions(f).includes(selectedGroupVersion.value));
     if (filtered.length > 0) {
       selectedFileId.value = filtered[0].id;
+      await checkDependenciesForSelectedFile();
+    } else if (files.length > 0) {
+      // Fallback: If Modrinth returned files but our strict version matching failed,
+      // forcefully select the first available file and sync the game version to it.
+      selectedFileId.value = files[0].id;
+      const validVersions = getValidMcVersions(files[0]);
+      if (validVersions.length > 0 && validVersions[0] !== 'Other') {
+        selectedGroupVersion.value = validVersions[0];
+      }
       await checkDependenciesForSelectedFile();
     }
   } catch (err) {
@@ -457,7 +482,7 @@ async function handleCardClick(mod: UnifiedModProject) {
   showInstallDialog.value = true;
   includeDependencies.value = true; // default to true
 
-  if (currentMcVersion.value && mod.mc_versions.includes(currentMcVersion.value)) {
+  if (currentMcVersion.value) {
     selectedGroupVersion.value = currentMcVersion.value;
   } else if (mod.mc_versions.length > 0) {
     let sorted = [...mod.mc_versions].sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
@@ -831,7 +856,7 @@ onUnmounted(() => {
           <span class="text-sm">{{ $t('downloads.fetchingVersions') }}</span>
         </div>
 
-        <template v-else-if="installFiles.length > 0">
+        <div v-else class="space-y-4">
           <!-- Version Selector -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="space-y-2">
@@ -849,34 +874,37 @@ onUnmounted(() => {
                 :options="filteredFileOptions"
                 @update:model-value="checkDependenciesForSelectedFile"
                 class="w-full"
+                :disabled="installFiles.length === 0"
               />
             </div>
           </div>
-
-          <!-- Dependencies Check -->
-          <div v-if="isCheckingDependencies" class="flex items-center gap-2 text-sm text-neutral-500 py-2">
-            <Loader2 class="w-4 h-4 animate-spin" />
-            <span>{{ $t('downloads.checkingDependencies') }}</span>
+          
+          <div v-if="installFiles.length === 0" class="text-center py-4 text-sm text-neutral-500">
+            {{ $t('downloads.noCompatibleFiles') }}
           </div>
           
-          <div v-else-if="pendingDependencies.length > 0" class="space-y-2">
-            <label class="text-sm font-medium text-neutral-700 dark:text-neutral-300">{{ $t('downloads.detectedDependencies') }}</label>
-            <div class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg p-3 space-y-2 max-h-40 overflow-y-auto">
-              <div v-for="dep in pendingDependencies" :key="dep.project_id" class="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-300">
-                <Info class="h-4 w-4 shrink-0" />
-                <span class="truncate">{{ pendingDependencyTitles[dep.project_id] || dep.project_id }}</span>
+          <!-- Dependencies Check -->
+          <div v-else class="space-y-4">
+            <div v-if="isCheckingDependencies" class="flex items-center gap-2 text-sm text-neutral-500 py-2">
+              <Loader2 class="w-4 h-4 animate-spin" />
+              <span>{{ $t('downloads.checkingDependencies') }}</span>
+            </div>
+            
+            <div v-else-if="pendingDependencies.length > 0" class="space-y-2">
+              <label class="text-sm font-medium text-neutral-700 dark:text-neutral-300">{{ $t('downloads.detectedDependencies') }}</label>
+              <div class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg p-3 space-y-2 max-h-40 overflow-y-auto">
+                <div v-for="dep in pendingDependencies" :key="dep.project_id" class="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-300">
+                  <Info class="h-4 w-4 shrink-0" />
+                  <span class="truncate">{{ pendingDependencyTitles[dep.project_id] || dep.project_id }}</span>
+                </div>
               </div>
             </div>
+            
+            <div v-else class="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 py-2 bg-emerald-50 dark:bg-emerald-900/20 px-3 rounded-lg border border-emerald-100 dark:border-emerald-800/50">
+              <Check class="h-4 w-4 shrink-0" />
+              <span>{{ $t('downloads.noDependenciesNeeded') }}</span>
+            </div>
           </div>
-          
-          <div v-else class="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 py-2 bg-emerald-50 dark:bg-emerald-900/20 px-3 rounded-lg border border-emerald-100 dark:border-emerald-800/50">
-            <Check class="h-4 w-4 shrink-0" />
-            <span>{{ $t('downloads.noDependenciesNeeded') }}</span>
-          </div>
-        </template>
-        
-        <div v-else class="text-center py-4 text-sm text-neutral-500">
-          {{ $t('downloads.noCompatibleFiles') }}
         </div>
       </div>
 
