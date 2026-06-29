@@ -3,6 +3,29 @@ import { spawn, execSync, type ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 
+async function forceKillChildProcess(childProcess: ChildProcess) {
+  if (!childProcess.pid) return;
+  if (process.platform === 'win32') {
+    try {
+      // nosemgrep: javascript.lang.security.detect-child-process
+      execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' });
+    } catch (e) {
+      // Ignore if process is already dead
+    }
+  } else {
+    // Attempt graceful shutdown first
+    childProcess.kill('SIGTERM');
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      // Sending signal 0 checks if process still exists
+      process.kill(childProcess.pid, 0);
+      childProcess.kill('SIGKILL');
+    } catch (e) {
+      // Process already dead
+    }
+  }
+}
+
 // Define worker-level fixtures
 type WorkerFixtures = {
   sharedApp: { page: Page };
@@ -79,17 +102,14 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
         } catch (e) {
           lastError = e;
           // eslint-disable-next-line no-console
-          console.warn(`[e2e] Waiting for CDP port ${port}... (attempt ${i + 1}/${maxRetries}) - ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`);
+          const errMsg = e instanceof Error ? e.message.replace(/\n/g, ' | ') : String(e);
+          console.warn(`[e2e] Waiting for CDP port ${port}... (attempt ${i + 1}/${maxRetries}) - ${errMsg}`);
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
       }
 
       if (!browser) {
-        if (process.platform === 'win32') {
-          try { execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' }); } catch (e) {}
-        } else {
-          childProcess.kill('SIGKILL');
-        }
+        await forceKillChildProcess(childProcess);
         throw new Error(
           `Failed to connect to CDP port ${port} after ${maxRetries} attempts. ` +
           `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
@@ -108,11 +128,7 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       }
 
       if (!defaultContext || !page) {
-        if (process.platform === 'win32') {
-          try { execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' }); } catch (e) {}
-        } else {
-          childProcess.kill('SIGKILL');
-        }
+        await forceKillChildProcess(childProcess);
         throw new Error(`Failed to attach to default CDP context/page after waiting. App may have crashed or failed to load Webview.`);
       }
 
@@ -132,15 +148,8 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       // 7. Cleanup after all tests in this worker complete
       await browser.close();
       
-      // On Windows, childProcess.kill() leaves msedgewebview2.exe running which holds file locks.
-      // We must forcefully kill the entire process tree.
-      if (process.platform === 'win32') {
-        try {
-          execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' });
-        } catch (e) {}
-      } else {
-        childProcess.kill('SIGKILL');
-      }
+      // Forcefully kill the entire process tree (especially critical on Windows to release file locks)
+      await forceKillChildProcess(childProcess);
       
       // Give the process a moment to exit before deleting the folder
       await new Promise(resolve => setTimeout(resolve, 1500));
