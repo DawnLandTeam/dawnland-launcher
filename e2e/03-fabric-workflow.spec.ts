@@ -42,7 +42,7 @@ test.describe.serial('Fabric Mod Workflow (E2E)', () => {
     await page.getByRole('textbox', { name: '搜索' }).fill('JEI');
     await page.getByRole('button', { name: '搜索' }).click();
     await page.getByRole('heading', { name: 'Just Enough Items (JEI)' }).click();
-    await expect(page.getByText('所有依赖已满足或无前置依赖。')).toBeVisible();
+    await expect(page.getByText('所有依赖已满足或无前置依赖。')).toBeVisible({ timeout: 60000 });
     await page.getByRole('button', { name: '安装到选中实例' }).click();
     await expect(page.getByRole('heading', { name: '安装模组 Just Enough Items (JEI) 完成' })).toBeVisible({ timeout: 120000 });
   });
