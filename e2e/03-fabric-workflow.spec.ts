@@ -37,6 +37,8 @@ test.describe.serial('Fabric Mod Workflow (E2E)', () => {
     await page.getByRole('button', { name: '模组' }).first().click();
     await expect(page.getByText('该实例还没有安装任何模组')).toBeVisible();
     await page.getByRole('button', { name: '下载更多模组' }).click();
+    await page.getByRole('button', { name: 'CurseForge' }).click();
+    await page.locator('div').filter({ hasText: /^Modrinth$/ }).click();
     await page.getByRole('textbox', { name: '搜索' }).fill('JEI');
     await page.getByRole('button', { name: '搜索' }).click();
     await page.getByRole('heading', { name: 'Just Enough Items (JEI)' }).click();
