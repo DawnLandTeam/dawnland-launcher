@@ -1,5 +1,5 @@
 import { test as base, chromium, type Page, type Browser } from '@playwright/test';
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execSync, type ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 
@@ -73,18 +73,23 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
 
       for (let i = 0; i < maxRetries; i++) {
         try {
-          browser = await chromium.connectOverCDP(`http://localhost:${port}`);
+          // Force IPv4 loopback to avoid ECONNREFUSED ::1 issues on Node 17+
+          browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
           break;
         } catch (e) {
           lastError = e;
           // eslint-disable-next-line no-console
-          console.error(`[e2e] Failed to connect to CDP port ${port} (attempt ${i + 1}/${maxRetries}):`, e);
+          console.warn(`[e2e] Waiting for CDP port ${port}... (attempt ${i + 1}/${maxRetries}) - ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`);
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
       }
 
       if (!browser) {
-        childProcess.kill();
+        if (process.platform === 'win32') {
+          try { execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' }); } catch (e) {}
+        } else {
+          childProcess.kill('SIGKILL');
+        }
         throw new Error(
           `Failed to connect to CDP port ${port} after ${maxRetries} attempts. ` +
           `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
@@ -103,7 +108,11 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       }
 
       if (!defaultContext || !page) {
-        childProcess.kill();
+        if (process.platform === 'win32') {
+          try { execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' }); } catch (e) {}
+        } else {
+          childProcess.kill('SIGKILL');
+        }
         throw new Error(`Failed to attach to default CDP context/page after waiting. App may have crashed or failed to load Webview.`);
       }
 
@@ -122,7 +131,16 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
 
       // 7. Cleanup after all tests in this worker complete
       await browser.close();
-      childProcess.kill();
+      
+      // On Windows, childProcess.kill() leaves msedgewebview2.exe running which holds file locks.
+      // We must forcefully kill the entire process tree.
+      if (process.platform === 'win32') {
+        try {
+          execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' });
+        } catch (e) {}
+      } else {
+        childProcess.kill('SIGKILL');
+      }
       
       // Give the process a moment to exit before deleting the folder
       await new Promise(resolve => setTimeout(resolve, 1500));

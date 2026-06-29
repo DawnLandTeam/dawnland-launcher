@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 5 * 60 * 1000, // 5 minutes for long downloads (mods/instances)
+  timeout: 15 * 60 * 1000, // 15 minutes for slow CI runners doing long downloads
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
