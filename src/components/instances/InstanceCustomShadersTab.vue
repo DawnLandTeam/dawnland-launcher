@@ -77,6 +77,17 @@
             </DButton>
 
             <DButton 
+              v-if="asset.filename.endsWith('.json')"
+              variant="outline" 
+              size="sm" 
+              class="px-2"
+              :title="$t('instances.editPreset', 'Edit Preset')"
+              @click="openEditor(asset)"
+            >
+              <Edit class="w-4 h-4" />
+            </DButton>
+
+            <DButton 
               variant="danger" 
               size="sm" 
               class="px-2"
@@ -120,6 +131,13 @@
       :resolvedData="resolvedData"
       @close="handleResolveDialogClose"
     />
+
+    <PresetEditorDialog
+      v-if="assetToEdit"
+      v-model:open="showEditorDialog"
+      :presetName="assetToEdit"
+      :assetType="ASSET_TYPE"
+    />
   </div>
 </template>
 
@@ -127,13 +145,14 @@
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
-import { Sparkles, Search, Trash2, FolderArchive, Folder, ArrowRight, FolderOpen, RefreshCw } from '@lucide/vue';
+import { Search, Trash2, FolderArchive, Folder, ArrowRight, FolderOpen, RefreshCw, Edit, Sparkles } from '@lucide/vue';
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from '../ui/alert-dialog';
 import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
 import PresetResolveDialog from './PresetResolveDialog.vue';
+import PresetEditorDialog from './PresetEditorDialog.vue';
 
 const props = defineProps<{
   instanceId: string;
@@ -160,6 +179,14 @@ const applyingAsset = ref<string | null>(null);
 const showResolveDialog = ref(false);
 const resolvedData = ref<any>(null);
 const assetToApply = ref<string | null>(null);
+
+const showEditorDialog = ref(false);
+const assetToEdit = ref<string | null>(null);
+
+const openEditor = (asset: LocalAssetItem) => {
+  assetToEdit.value = asset.filename;
+  showEditorDialog.value = true;
+};
 
 const filteredAssets = computed(() => {
   if (!searchQuery.value) return assets.value;
