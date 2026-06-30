@@ -39,4 +39,4 @@ jobs:
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_SCANNER_OPTS: "-Dsonar.ws.timeout=300"
+          SONAR_SCANNER_OPTS: "-Dsonar.ws.timeout=600"
