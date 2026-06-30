@@ -338,6 +338,8 @@ pub fn run() {
             core::manager::resolve_preset_for_instance,
             core::manager::download_resolved_preset,
             core::manager::add_mod_to_preset,
+            core::manager::get_preset_details,
+            core::manager::update_preset,
             core::manager::open_custom_asset_folder,
             commands::install_mod_to_instance,
             core::manager::import_local_mod_to_instance,

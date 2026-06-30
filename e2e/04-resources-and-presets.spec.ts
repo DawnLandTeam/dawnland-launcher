@@ -33,7 +33,7 @@ test.describe.serial('Resources and Presets Workflow (E2E)', () => {
     // Ensure Modrinth is selected
     await page.getByRole('button', { name: 'CurseForge' }).click();
     await page.locator('div').filter({ hasText: /^Modrinth$/ }).click();
-
+    await page.waitForTimeout(3000)
     // Search for Bare Bones
     await page.getByRole('textbox', { name: '搜索' }).fill('Bare Bones');
     await page.getByRole('button', { name: '搜索' }).click();
@@ -106,6 +106,45 @@ test.describe.serial('Resources and Presets Workflow (E2E)', () => {
     // Check Resourcepacks list
     await page.getByRole('button', { name: '资源包' }).first().click();
     await expect(page.getByText('Bare Bones', { exact: false })).toBeVisible();
+  });
+
+  test('6. Graphically Edit Preset', async ({ page }) => {
+    await page.getByRole('link', { name: '实例', exact: true }).click();
+    await page.getByRole('heading', { name: 'E2E_NeoForge_Preset', exact: true }).click();
+
+    // Go to Mod Groups tab
+    await page.getByRole('button', { name: '模组' }).nth(1).click();
+
+    // Ensure preset is visible
+    await expect(page.getByText('E2E_NeoForge_Preset_Mod.json')).toBeVisible({ timeout: 15000 });
+
+    // Click Edit button
+    await page.getByRole('button', { name: '编辑预设' }).first().click();
+
+    // Wait for Dialog to appear
+    await expect(page.getByRole('heading', { name: /编辑预设/ })).toBeVisible({ timeout: 10000 });
+
+    // Ensure JEI is listed
+    await expect(page.getByText('Just Enough Items (JEI)', { exact: true })).toBeVisible();
+
+    // Click Remove button
+    await page.getByRole('button', { name: '移除' }).click();
+
+    // It should be removed immediately from DOM
+    await expect(page.getByText('Just Enough Items (JEI)', { exact: true })).not.toBeVisible();
+
+    // Close dialog
+    await page.getByRole('button', { name: '取消' }).click();
+
+    // Re-open to verify persistence
+    await page.getByRole('button', { name: '编辑预设' }).first().click();
+    await expect(page.getByRole('heading', { name: /编辑预设/ })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Just Enough Items (JEI)', { exact: true })).not.toBeVisible();
+
+    // Should display empty state
+    await expect(page.getByText('该预设目前为空')).toBeVisible();
+
+    await page.getByRole('button', { name: '取消' }).click();
   });
 
 });

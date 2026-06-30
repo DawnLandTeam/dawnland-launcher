@@ -1084,6 +1084,44 @@ pub async fn add_mod_to_preset(preset_name: String, asset_type: String, source: 
     Ok(())
 }
 
+#[tauri::command]
+pub async fn get_preset_details(asset_type: String, preset_name: String) -> Result<OnlinePreset, String> {
+    if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
+        return Err("Invalid asset type".to_string());
+    }
+    
+    let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
+    let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
+    
+    match tokio::fs::try_exists(&file_path).await {
+        Ok(true) => {},
+        Ok(false) => return Err("Preset not found".to_string()),
+        Err(e) => return Err(format!("Failed to check if preset exists: {}", e)),
+    }
+    
+    let content = tokio::fs::read_to_string(&file_path).await.map_err(|e| e.to_string())?;
+    let preset: OnlinePreset = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    
+    Ok(preset)
+}
+
+#[tauri::command]
+pub async fn update_preset(asset_type: String, preset_name: String, preset: OnlinePreset) -> Result<(), String> {
+    if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
+        return Err("Invalid asset type".to_string());
+    }
+    
+    let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
+    let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
+    
+    let json_content = serde_json::to_string_pretty(&preset).map_err(|e| e.to_string())?;
+    tokio::fs::create_dir_all(file_path.parent().unwrap()).await.map_err(|e| e.to_string())?;
+    tokio::fs::write(&file_path, json_content).await.map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+
 
 async fn resolve_mod_metadata(
     path: &std::path::Path,
