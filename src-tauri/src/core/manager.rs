@@ -1093,8 +1093,10 @@ pub async fn get_preset_details(asset_type: String, preset_name: String) -> Resu
     let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
     let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
     
-    if !tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
-        return Err("Preset not found".to_string());
+    match tokio::fs::try_exists(&file_path).await {
+        Ok(true) => {},
+        Ok(false) => return Err("Preset not found".to_string()),
+        Err(e) => return Err(format!("Failed to check if preset exists: {}", e)),
     }
     
     let content = tokio::fs::read_to_string(&file_path).await.map_err(|e| e.to_string())?;

@@ -135,7 +135,7 @@
     <PresetEditorDialog
       v-if="assetToEdit"
       v-model:open="showEditorDialog"
-      :presetName="assetToEdit"
+      :presetName="narrowedPresetName"
       :assetType="ASSET_TYPE"
     />
   </div>
@@ -182,6 +182,13 @@ const assetToApply = ref<string | null>(null);
 
 const showEditorDialog = ref(false);
 const assetToEdit = ref<string | null>(null);
+
+const narrowedPresetName = computed<string>(() => {
+  if (assetToEdit.value == null) {
+    throw new Error('PresetEditorDialog rendered with null assetToEdit');
+  }
+  return assetToEdit.value;
+});
 
 const openEditor = (asset: LocalAssetItem) => {
   assetToEdit.value = asset.filename;

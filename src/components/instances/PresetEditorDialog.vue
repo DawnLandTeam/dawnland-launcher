@@ -18,7 +18,7 @@ const props = defineProps<{
   assetType: string;
 }>();
 
-const emit = defineEmits(['update:open', 'close']);
+const emit = defineEmits(['update:open']);
 
 const { t } = useI18n();
 
@@ -48,7 +48,6 @@ const loadPreset = async () => {
   } catch (err) {
     toast.error(t('common.error', 'Error'), getErrorMessage(err));
     emit('update:open', false);
-    emit('close');
   } finally {
     loading.value = false;
   }
@@ -66,8 +65,12 @@ onMounted(() => {
   }
 });
 
+const isUpdatingMods = ref(false);
+
 const removeMod = async (index: number) => {
-  if (!presetData.value) return;
+  if (!presetData.value || isUpdatingMods.value) return;
+  
+  isUpdatingMods.value = true;
   
   // Optimistically remove from local state
   const previousMods = [...presetData.value.mods];
@@ -83,6 +86,8 @@ const removeMod = async (index: number) => {
     // Revert on failure
     presetData.value.mods = previousMods;
     toast.error(t('common.error', 'Error'), getErrorMessage(err));
+  } finally {
+    isUpdatingMods.value = false;
   }
 };
 </script>
@@ -126,6 +131,7 @@ const removeMod = async (index: number) => {
               size="sm" 
               class="px-2 flex-shrink-0"
               @click="removeMod(index)"
+              :disabled="isUpdatingMods"
               :title="t('instances.removeFromPreset', 'Remove')"
             >
               <Trash2 class="w-4 h-4" />
