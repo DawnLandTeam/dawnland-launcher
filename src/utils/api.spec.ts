@@ -56,8 +56,13 @@ describe('fetchApi utility', () => {
 
   it('should propagate errors if invoke fails', async () => {
     (invoke as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Signature generation failed'));
+    
+    // Silence expected console error during test
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await expect(fetchApi('https://api.example.com')).rejects.toThrow('Signature generation failed');
     expect(globalThis.fetch).not.toHaveBeenCalled();
+    
+    consoleSpy.mockRestore();
   });
 });
