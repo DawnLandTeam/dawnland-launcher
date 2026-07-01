@@ -24,6 +24,8 @@ const selectOption = (value: string | number) => {
       v-for="option in options"
       :key="option.value"
       @click="selectOption(option.value)"
+      role="radio"
+      :aria-checked="modelValue === option.value"
       class="px-6 py-2 rounded-md text-sm font-medium transition-all"
       :class="modelValue === option.value 
         ? 'bg-white dark:bg-gray-800 text-emerald-600 shadow-sm' 

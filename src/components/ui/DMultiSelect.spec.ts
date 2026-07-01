@@ -63,7 +63,7 @@ describe('DMultiSelect', () => {
     await wrapper.find('button').trigger('click');
     
     // Click Option 2 to add it
-    const optionElements = wrapper.findAll('.cursor-pointer');
+    const optionElements = wrapper.findAll('[role="option"]:not([aria-disabled="true"])');
     await optionElements[1].trigger('click'); // Option 2
     
     expect(wrapper.emitted('update:modelValue')).toBeTruthy();

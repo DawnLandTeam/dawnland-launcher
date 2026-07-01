@@ -4,7 +4,7 @@ import DSidebarTabs from './DSidebarTabs.vue';
 import type { SidebarTab } from './DSidebarTabs.vue';
 
 describe('DSidebarTabs', () => {
-  const tabs: SidebarTab[] = [
+  const getTabs = (): SidebarTab[] => [
     { id: 'tab1', name: 'Tab 1' },
     { id: 'tab2', name: 'Tab 2' },
     { id: 'tab3', name: 'Tab 3', disabled: true },
@@ -15,7 +15,7 @@ describe('DSidebarTabs', () => {
     const wrapper = mount(DSidebarTabs, {
       props: {
         title: 'Settings',
-        tabs,
+        tabs: getTabs(),
         modelValue: 'tab1'
       }
     });
@@ -28,19 +28,20 @@ describe('DSidebarTabs', () => {
   it('applies active styles to the selected tab', () => {
     const wrapper = mount(DSidebarTabs, {
       props: {
-        tabs,
+        tabs: getTabs(),
         modelValue: 'tab1'
       }
     });
     
-    const activeTab = wrapper.findAll('button')[0];
-    expect(activeTab.classes()).toContain('bg-indigo-100');
+    const activeTab = wrapper.find('[role="tab"][aria-selected="true"]');
+    expect(activeTab.exists()).toBe(true);
+    expect(activeTab.text()).toContain('Tab 1');
   });
 
   it('emits update:modelValue when a normal tab is clicked', async () => {
     const wrapper = mount(DSidebarTabs, {
       props: {
-        tabs,
+        tabs: getTabs(),
         modelValue: 'tab1'
       }
     });
@@ -55,7 +56,7 @@ describe('DSidebarTabs', () => {
   it('does not emit for disabled tabs', async () => {
     const wrapper = mount(DSidebarTabs, {
       props: {
-        tabs,
+        tabs: getTabs(),
         modelValue: 'tab1'
       }
     });
@@ -67,6 +68,7 @@ describe('DSidebarTabs', () => {
   });
 
   it('calls action instead of emitting if action is defined', async () => {
+    const tabs = getTabs();
     const wrapper = mount(DSidebarTabs, {
       props: {
         tabs,

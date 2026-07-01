@@ -117,6 +117,9 @@ const selectedIcon = computed(() => {
             v-for="option in group.options"
             :key="option.value"
             @click="selectOption(option)"
+            role="option"
+            :aria-selected="modelValue === option.value"
+            :aria-disabled="option.disabled ? 'true' : undefined"
             class="relative flex w-full cursor-default select-none items-center gap-2 rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none transition-colors"
             :class="[
               option.disabled 

@@ -53,7 +53,7 @@ describe('DSelect', () => {
     await wrapper.find('button').trigger('click');
     
     // Find all options in the dropdown and click the first one
-    const optionElements = wrapper.findAll('.cursor-pointer');
+    const optionElements = wrapper.findAll('[role="option"]:not([aria-disabled="true"])');
     await optionElements[0].trigger('click');
     
     expect(wrapper.emitted('update:modelValue')).toBeTruthy();
@@ -67,8 +67,8 @@ describe('DSelect', () => {
     
     await wrapper.find('button').trigger('click');
     
-    // The disabled option has cursor-not-allowed class
-    const disabledOption = wrapper.find('.cursor-not-allowed');
+    // The disabled option has aria-disabled
+    const disabledOption = wrapper.find('[role="option"][aria-disabled="true"]');
     await disabledOption.trigger('click');
     
     expect(wrapper.emitted('update:modelValue')).toBeFalsy();

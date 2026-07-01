@@ -30,8 +30,8 @@ describe('DToggleGroup', () => {
     });
     
     const buttons = wrapper.findAll('button');
-    expect(buttons[0].classes()).toContain('text-emerald-600');
-    expect(buttons[1].classes()).toContain('text-gray-500');
+    expect(buttons[0].attributes('aria-checked')).toBe('true');
+    expect(buttons[1].attributes('aria-checked')).toBe('false');
   });
 
   it('emits update:modelValue when an option is clicked', async () => {
