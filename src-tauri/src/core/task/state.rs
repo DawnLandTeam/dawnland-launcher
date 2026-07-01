@@ -427,13 +427,13 @@ mod tests {
     #[test]
     fn test_task_type_conflicts() {
         let vanilla_1 = TaskType::InstallVanilla {
-            version_id: "1.16.5".to_string(),
+            version_id: "1.20.1".to_string(),
             version_json_url: "url".to_string(),
             custom_instance_name: None,
             is_dependency: Some(false),
         };
         let vanilla_2 = TaskType::InstallVanilla {
-            version_id: "1.17.1".to_string(),
+            version_id: "1.20.1".to_string(),
             version_json_url: "url".to_string(),
             custom_instance_name: None,
             is_dependency: Some(false),

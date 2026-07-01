@@ -266,3 +266,34 @@ impl ModParser {
         meta
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_mod_parser_cache_db() {
+        let dir = tempdir().unwrap();
+        let parser = ModParser::new(dir.path());
+        
+        let meta = ModMetadata {
+            mod_id: Some("test_mod".to_string()),
+            name: Some("Test Mod".to_string()),
+            version: Some("1.0.0".to_string()),
+            has_icon: true,
+        };
+
+        parser.set_cache_entry("hash123", &meta);
+        
+        let cache = parser.load_all_cache();
+        assert_eq!(cache.len(), 1);
+        let loaded = cache.get("hash123").unwrap();
+        
+        assert_eq!(loaded.mod_id, Some("test_mod".to_string()));
+        assert_eq!(loaded.name, Some("Test Mod".to_string()));
+        assert_eq!(loaded.version, Some("1.0.0".to_string()));
+        assert_eq!(loaded.has_icon, true);
+    }
+}

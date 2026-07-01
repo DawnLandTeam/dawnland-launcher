@@ -149,3 +149,42 @@ pub fn replace_download_url(url: &str, source: &DownloadSource) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_replace_download_url_official() {
+        let url = "https://libraries.minecraft.net/com/mojang/test.jar";
+        let replaced = replace_download_url(url, &DownloadSource::Official);
+        assert_eq!(replaced, "https://libraries.minecraft.net/com/mojang/test.jar");
+    }
+
+    #[test]
+    fn test_replace_download_url_bmclapi() {
+        let url = "https://libraries.minecraft.net/com/mojang/test.jar";
+        let replaced = replace_download_url(url, &DownloadSource::Bmclapi);
+        assert_eq!(replaced, "https://bmclapi2.bangbang93.com/maven/com/mojang/test.jar");
+
+        let launchermeta = "https://launchermeta.mojang.com/v1/packages/test.json";
+        assert_eq!(
+            replace_download_url(launchermeta, &DownloadSource::Bmclapi),
+            "https://bmclapi2.bangbang93.com/v1/packages/test.json"
+        );
+        
+        let fabric_meta = "https://meta.fabricmc.net/v2/versions";
+        assert_eq!(
+            replace_download_url(fabric_meta, &DownloadSource::Bmclapi),
+            "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions"
+        );
+    }
+    
+    #[test]
+    fn test_launcher_settings_default() {
+        let default_settings = LauncherSettings::default();
+        assert_eq!(default_settings.max_concurrent_downloads, 32);
+        assert_eq!(default_settings.download_source, DownloadSource::Bmclapi);
+        assert_eq!(default_settings.enable_instance_inheritance, false);
+    }
+}
