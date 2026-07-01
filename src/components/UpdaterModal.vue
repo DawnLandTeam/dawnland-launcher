@@ -4,8 +4,11 @@ import { Download, Rocket, X, Loader2, CheckCircle2 } from "@lucide/vue";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { CustomUpdate } from "../composables/useUpdate";
 import { getErrorMessage } from "../utils/error";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 
 interface UpdateProgressPayload {
   event: string;
@@ -36,11 +39,22 @@ function close() {
   emit("update:open", false);
 }
 
-// Convert markdown-ish body or just plain text to lines
-const releaseNotes = computed(() => {
-  if (!props.updateInfo?.body) return [];
-  return props.updateInfo.body.split('\n').filter(line => line.trim().length > 0);
+// Parse markdown to HTML securely
+const parsedReleaseNotes = computed(() => {
+  if (!props.updateInfo?.body) return '';
+  const rawHtml = marked.parse(props.updateInfo.body) as string;
+  return DOMPurify.sanitize(rawHtml);
 });
+
+// Intercept link clicks in markdown to open in external browser
+async function handleLinkClick(event: MouseEvent) {
+  const target = event.target as HTMLElement;
+  const a = target.closest('a');
+  if (a && a.href) {
+    event.preventDefault();
+    await openUrl(a.href);
+  }
+}
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 B";
@@ -114,7 +128,7 @@ async function startUpdate() {
         <div class="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm pointer-events-auto transition-opacity" @click="close" />
         
         <!-- Modal Card -->
-        <div class="relative z-10 w-full max-w-md bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl border border-white/20 dark:border-zinc-800/50 rounded-3xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden">
+        <div class="relative z-10 w-full max-w-lg max-h-[90vh] bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl border border-white/20 dark:border-zinc-800/50 rounded-3xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden">
           
           <!-- Subtle Glow Background -->
           <div class="absolute top-0 left-1/2 -translate-x-1/2 w-full h-32 bg-primary/20 dark:bg-primary/10 blur-[50px] rounded-full pointer-events-none"></div>
@@ -124,36 +138,36 @@ async function startUpdate() {
             <X class="w-5 h-5" />
           </button>
           
-          <div class="px-8 pt-10 pb-8 text-center relative z-10">
+          <div class="px-6 pt-8 pb-6 text-center relative z-10 flex flex-col min-h-0">
             <!-- Icon -->
-            <div class="mx-auto w-16 h-16 bg-gradient-to-br from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/5 border border-primary/20 rounded-2xl flex items-center justify-center shadow-inner mb-5 relative">
+            <div class="shrink-0 mx-auto w-14 h-14 bg-gradient-to-br from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/5 border border-primary/20 rounded-2xl flex items-center justify-center shadow-inner mb-4 relative">
               <div class="absolute inset-0 bg-primary/10 blur-md rounded-2xl"></div>
-              <Rocket class="w-8 h-8 text-primary relative z-10 drop-shadow-sm" />
+              <Rocket class="w-7 h-7 text-primary relative z-10 drop-shadow-sm" />
             </div>
             
             <!-- Title & Version -->
-            <h2 class="text-2xl font-bold text-neutral-900 dark:text-white mb-2 tracking-tight">{{ $t('updater.title') }}</h2>
-            <div class="inline-flex items-center justify-center px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-semibold tracking-wide mb-6 shadow-sm">
+            <h2 class="shrink-0 text-2xl font-bold text-neutral-900 dark:text-white mb-1 tracking-tight">{{ $t('updater.title') }}</h2>
+            <div class="shrink-0 mx-auto inline-flex items-center justify-center px-3 py-0.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-semibold tracking-wide mb-4 shadow-sm">
               v{{ updateInfo.version }}
             </div>
             
             <!-- Release Notes -->
-            <div class="text-left bg-white/50 dark:bg-black/20 rounded-2xl p-5 mb-6 border border-black/5 dark:border-white/5 max-h-52 overflow-y-auto custom-scrollbar shadow-inner backdrop-blur-sm">
-              <h3 class="text-sm font-bold text-neutral-800 dark:text-neutral-200 mb-3 flex items-center gap-2">
+            <div class="text-left bg-white/50 dark:bg-black/20 rounded-xl p-4 mb-5 border border-black/5 dark:border-white/5 max-h-[50vh] min-h-0 shrink overflow-y-auto custom-scrollbar shadow-inner backdrop-blur-sm">
+              <h3 class="text-sm font-bold text-neutral-800 dark:text-neutral-200 mb-2 flex items-center gap-2">
                 <span class="w-1 h-4 bg-primary rounded-full"></span>
                 {{ $t('updater.releaseNotes') }}
               </h3>
-              <ul class="space-y-2">
-                <li v-for="(line, i) in releaseNotes" :key="i" class="text-sm text-neutral-600 dark:text-neutral-400 flex items-start gap-2.5 leading-relaxed">
-                  <span class="text-primary/60 mt-1.5 shrink-0 text-[10px]">●</span>
-                  <span>{{ line }}</span>
-                </li>
-                <li v-if="releaseNotes.length === 0" class="text-sm text-neutral-500 italic">{{ $t('updater.noNotes') }}</li>
-              </ul>
+              <div 
+                v-if="parsedReleaseNotes"
+                class="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-a:text-primary hover:prose-a:text-primary/80 prose-li:my-0 prose-ul:my-2 prose-ol:my-2"
+                v-html="parsedReleaseNotes"
+                @click="handleLinkClick"
+              ></div>
+              <div v-else class="text-sm text-neutral-500 italic">{{ $t('updater.noNotes') }}</div>
             </div>
             
             <!-- Progress Section -->
-            <div v-if="isDownloading" class="mb-6 bg-white/50 dark:bg-black/20 p-5 rounded-2xl border border-black/5 dark:border-white/5 backdrop-blur-sm shadow-inner">
+            <div v-if="isDownloading" class="shrink-0 mb-5 bg-white/50 dark:bg-black/20 p-5 rounded-2xl border border-black/5 dark:border-white/5 backdrop-blur-sm shadow-inner">
               <div class="flex justify-between text-sm mb-3 font-semibold">
                 <span class="text-neutral-800 dark:text-neutral-200">
                   {{ isFinished ? $t('updater.preparingRestart') : $t('updater.downloading') }}
@@ -174,7 +188,7 @@ async function startUpdate() {
             </div>
             
             <!-- Error Alert -->
-            <div v-if="error" class="mb-6 p-4 bg-red-50/80 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-2xl text-left backdrop-blur-sm">
+            <div v-if="error" class="shrink-0 mb-5 p-4 bg-red-50/80 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-2xl text-left backdrop-blur-sm">
               <p class="text-sm font-bold text-red-600 dark:text-red-400 mb-1 flex items-center gap-2">
                 <X class="w-4 h-4" /> {{ $t('updater.updateFailed') }}
               </p>
@@ -182,7 +196,7 @@ async function startUpdate() {
             </div>
             
             <!-- Action Buttons -->
-            <div class="flex gap-3 mt-2">
+            <div class="shrink-0 flex gap-3 mt-1">
               <button 
                 @click="close" 
                 :disabled="isDownloading"
