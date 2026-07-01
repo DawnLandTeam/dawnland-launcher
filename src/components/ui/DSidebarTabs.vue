@@ -75,6 +75,8 @@ const groupedTabs = computed(() => {
         :key="tab.id"
         @click="selectTab(tab)"
         :disabled="tab.disabled"
+        role="tab"
+        :aria-selected="modelValue === tab.id"
         class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all w-full text-left"
         :class="[
           tab.disabled 

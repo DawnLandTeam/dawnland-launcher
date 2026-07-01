@@ -139,6 +139,9 @@ const selectedLabels = computed(() => {
               v-for="option in group.options"
               :key="option.value"
               @click="toggleOption(option)"
+              role="option"
+              :aria-selected="modelValue.includes(option.value)"
+              :aria-disabled="option.disabled ? 'true' : undefined"
               class="relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none transition-colors"
               :class="[
                 option.disabled 
