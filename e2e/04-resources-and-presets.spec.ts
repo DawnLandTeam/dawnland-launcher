@@ -31,9 +31,15 @@ test.describe.serial('Resources and Presets Workflow (E2E)', () => {
     await page.getByRole('button', { name: '下载更多' }).click();
 
     // Ensure Modrinth is selected
-    await page.getByRole('button', { name: 'CurseForge' }).click();
-    await page.locator('div').filter({ hasText: /^Modrinth$/ }).click();
-    await page.waitForTimeout(3000)
+    const sourceBtn = page.locator('.w-36 button').first();
+    const sourceText = await sourceBtn.textContent();
+    if (sourceText && !sourceText.includes('Modrinth')) {
+      await sourceBtn.click();
+      await page.locator('div').filter({ hasText: /^Modrinth$/ }).click();
+    }
+    
+    // Wait for the search query to be clear (indicates source switch side-effects are done)
+    await expect(page.getByRole('textbox', { name: '搜索' })).toHaveValue('', { timeout: 10000 });
     // Search for Bare Bones
     await page.getByRole('textbox', { name: '搜索' }).fill('Bare Bones');
     await page.getByRole('button', { name: '搜索' }).click();
@@ -42,7 +48,7 @@ test.describe.serial('Resources and Presets Workflow (E2E)', () => {
     await expect(page.getByRole('button', { name: '安装到选中实例' })).toBeVisible({ timeout: 60000 });
     await page.getByRole('button', { name: '安装到选中实例' }).click();
 
-    await expect(page.getByRole('heading', { name: /完成/ })).toBeVisible({ timeout: 180000 });
+    await expect(page.getByRole('heading', { name: /完成|Completed/ })).toBeVisible({ timeout: 180000 });
   });
 
   test('3. Add Mod to Preset from Modrinth', async ({ page }) => {
@@ -54,8 +60,15 @@ test.describe.serial('Resources and Presets Workflow (E2E)', () => {
     await page.getByRole('button', { name: '下载更多模组' }).click();
     
     // Ensure Modrinth is selected
-    await page.getByRole('button', { name: 'CurseForge' }).click();
-    await page.locator('div').filter({ hasText: /^Modrinth$/ }).click();
+    const sourceBtn = page.locator('.w-36 button').first();
+    const sourceText = await sourceBtn.textContent();
+    if (sourceText && !sourceText.includes('Modrinth')) {
+      await sourceBtn.click();
+      await page.locator('div').filter({ hasText: /^Modrinth$/ }).click();
+    }
+    // await page.pause();
+    // Wait for the search query to be clear (indicates source switch side-effects are done)
+    // await expect(page.getByRole('textbox', { name: '搜索' })).toHaveValue('', { timeout: 10000 });
     
     await page.getByPlaceholder('搜索...').fill('JEI');
     await page.getByRole('button', { name: '搜索', exact: true }).click({ timeout: 15000 });
@@ -92,7 +105,7 @@ test.describe.serial('Resources and Presets Workflow (E2E)', () => {
     await page.getByRole('button', { name: '开始下载' }).click();
     
     // Apply triggers a task, wait for the task to finish
-    await expect(page.getByRole('heading', { name: /完成/ })).toBeVisible({ timeout: 120000 });
+    await expect(page.getByRole('heading', { name: /完成|Completed/ })).toBeVisible({ timeout: 120000 });
   });
 
   test('5. Verify Installation', async ({ page }) => {
