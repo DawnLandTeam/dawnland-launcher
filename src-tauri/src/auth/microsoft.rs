@@ -1078,4 +1078,86 @@ mod tests {
         mock_mc.assert_async().await;
         mock_profile.assert_async().await;
     }
+
+    #[tokio::test]
+    async fn test_refresh_microsoft_token_success() {
+        let _guard = TEST_MUTEX.lock().await;
+        let mut server = Server::new_async().await;
+
+        {
+            let mut url = MOCK_SERVER_URL.write().unwrap();
+            *url = server.url();
+        }
+
+        // Setup a mock account in storage
+        let account = Account {
+            id: "test-uuid-refresh".to_string(),
+            username: "RefreshPlayer".to_string(),
+            account_type: AccountType::Microsoft,
+            access_token: Some("old_mc_token".to_string()),
+            refresh_token: Some("old_ms_refresh".to_string()),
+            textures: None,
+            authlib_url: None,
+            authlib_server_name: None,
+            client_token: None,
+            authlib_email: None,
+        };
+        crate::auth::save_accounts(&[account]).await.unwrap();
+
+        let mock_token = server
+            .mock("POST", "/oauth20_token.srf")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "access_token": "new_ms_access_token",
+                "refresh_token": "new_ms_refresh_token"
+            }"#)
+            .create_async()
+            .await;
+
+        let mock_xbl = server
+            .mock("POST", "/user/authenticate")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{ "Token": "new_xbl_token" }"#)
+            .create_async()
+            .await;
+
+        let mock_xsts = server
+            .mock("POST", "/xsts/authorize")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{ "Token": "new_xsts_token", "DisplayClaims": { "xui": [{"uhs": "user_hash"}] } }"#)
+            .create_async()
+            .await;
+
+        let mock_mc = server
+            .mock("POST", "/authentication/login_with_xbox")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{ "access_token": "new_mc_access_token" }"#)
+            .create_async()
+            .await;
+
+        let result = refresh_microsoft_token("test-uuid-refresh").await;
+        assert!(result.is_ok(), "Refresh failed: {:?}", result.as_ref().err());
+        let updated = result.unwrap();
+        
+        assert_eq!(updated.access_token, Some("new_mc_access_token".to_string()));
+        assert_eq!(updated.refresh_token, Some("new_ms_refresh_token".to_string()));
+
+        // Verify that the persisted account was updated as well
+        let accounts = crate::auth::get_accounts().await.expect("failed to load accounts");
+        let stored = accounts
+            .into_iter()
+            .find(|a| a.id == "test-uuid-refresh")
+            .expect("persisted account should exist after refresh");
+        assert_eq!(stored.access_token, Some("new_mc_access_token".to_string()));
+        assert_eq!(stored.refresh_token, Some("new_ms_refresh_token".to_string()));
+
+        mock_token.assert_async().await;
+        mock_xbl.assert_async().await;
+        mock_xsts.assert_async().await;
+        mock_mc.assert_async().await;
+    }
 }

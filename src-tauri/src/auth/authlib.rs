@@ -576,4 +576,42 @@ mod tests {
         mock_meta.assert_async().await;
         mock_auth.assert_async().await;
     }
+
+    #[tokio::test]
+    async fn test_validate_and_refresh_authlib_token() {
+        let mut server = Server::new_async().await;
+        
+        // Mock validate (success)
+        let mock_validate = server
+            .mock("POST", "/authserver/validate")
+            .with_status(204)
+            .create_async()
+            .await;
+
+        // Mock refresh
+        let mock_refresh = server
+            .mock("POST", "/authserver/refresh")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{
+                "accessToken": "new_access",
+                "clientToken": "new_client",
+                "selectedProfile": {
+                    "id": "123",
+                    "name": "RefreshPlayer"
+                }
+            }"#)
+            .create_async()
+            .await;
+
+        let url = server.url();
+        let valid = validate_authlib_token(&url, "token1", "client1").await.unwrap();
+        assert!(valid);
+        mock_validate.assert_async().await;
+
+        let refresh_res = refresh_authlib_token(&url, "token1", "client1", None).await.unwrap();
+        assert_eq!(refresh_res.access_token, "new_access");
+        assert_eq!(refresh_res.client_token, "new_client");
+        mock_refresh.assert_async().await;
+    }
 }
