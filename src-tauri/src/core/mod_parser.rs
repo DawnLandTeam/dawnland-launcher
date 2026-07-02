@@ -294,6 +294,6 @@ mod tests {
         assert_eq!(loaded.mod_id, Some("test_mod".to_string()));
         assert_eq!(loaded.name, Some("Test Mod".to_string()));
         assert_eq!(loaded.version, Some("1.0.0".to_string()));
-        assert_eq!(loaded.has_icon, true);
+        assert!(loaded.has_icon);
     }
 }

@@ -185,6 +185,6 @@ mod tests {
         let default_settings = LauncherSettings::default();
         assert_eq!(default_settings.max_concurrent_downloads, 32);
         assert_eq!(default_settings.download_source, DownloadSource::Bmclapi);
-        assert_eq!(default_settings.enable_instance_inheritance, false);
+        assert!(!default_settings.enable_instance_inheritance);
     }
 }
