@@ -65,4 +65,29 @@ describe('fetchApi utility', () => {
     
     consoleSpy.mockRestore();
   });
+
+  it('should fallback to full url if URL parsing fails', async () => {
+    await fetchApi('not-a-valid-url-format', { method: 'GET' });
+    expect(invoke).toHaveBeenCalledWith('generate_api_signature', {
+      method: 'GET',
+      path: 'not-a-valid-url-format',
+      body: ''
+    });
+  });
+
+  it('should fallback to empty string if body cannot be stringified', async () => {
+    const circularObj: any = {};
+    circularObj.self = circularObj; // Creates circular reference
+
+    await fetchApi('https://api.example.com/test', {
+      method: 'POST',
+      body: circularObj
+    });
+    
+    expect(invoke).toHaveBeenCalledWith('generate_api_signature', {
+      method: 'POST',
+      path: '/test',
+      body: ''
+    });
+  });
 });
