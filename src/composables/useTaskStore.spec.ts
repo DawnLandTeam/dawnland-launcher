@@ -96,7 +96,6 @@ describe('useTaskStore composable', () => {
     deleteCallback({ payload: 'task-1' });
     
     expect(store.tasks.value).toHaveLength(0);
-    expect(store.tasks.value).toHaveLength(0);
   });
 
   it('updates task state when task fails', async () => {
