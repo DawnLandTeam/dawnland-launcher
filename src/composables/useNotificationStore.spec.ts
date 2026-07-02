@@ -87,4 +87,38 @@ describe('useNotificationStore composable', () => {
     expect(store.notifications.value[0].isPopup).toBe(false);
     expect(store.notifications.value[0].status).toBe('read');
   });
+
+  it('manually dismisses transient popup completely', () => {
+    const store = useNotificationStore();
+    
+    store.addNotification({ id: 'transient-1', title: 'Test', isPopup: true, duration: 5000, transient: true });
+    expect(store.notifications.value).toHaveLength(1);
+    
+    store.dismissPopup('transient-1');
+    expect(store.notifications.value).toHaveLength(0);
+  });
+
+  it('removes notification completely', () => {
+    const store = useNotificationStore();
+    store.addNotification({ id: 'rem-1', title: 'Test' });
+    expect(store.notifications.value).toHaveLength(1);
+    
+    store.removeNotification('rem-1');
+    expect(store.notifications.value).toHaveLength(0);
+  });
+
+  it('clears expired (read and not popup) notifications', () => {
+    const store = useNotificationStore();
+    
+    store.addNotification({ id: 'c-1', title: 'Keep unread', status: 'unread', isPopup: false });
+    store.addNotification({ id: 'c-2', title: 'Keep popup', status: 'read', isPopup: true });
+    store.addNotification({ id: 'c-3', title: 'Remove me', status: 'read', isPopup: false });
+    
+    expect(store.notifications.value).toHaveLength(3);
+    
+    store.clearExpired();
+    
+    expect(store.notifications.value).toHaveLength(2);
+    expect(store.notifications.value.find(n => n.id === 'c-3')).toBeUndefined();
+  });
 });
