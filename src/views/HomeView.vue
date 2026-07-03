@@ -81,6 +81,7 @@ const showCrashAlert = ref(false);
 const crashExitCode = ref(0);
 const crashVersionId = ref("");
 const crashIsOpenJ9 = ref(false);
+const crashReportContent = ref<string | null>(null);
 
 // Repair progress state
 interface DownloadProgress {
@@ -207,7 +208,7 @@ onMounted(async () => {
 
   // Listen for instance state changes
   listen<InstanceState>("instance-state-changed", (event) => {
-    const { versionId, status, exitCode, missingCount, isOpenJ9 } = event.payload;
+    const { versionId, status, exitCode, missingCount, isOpenJ9, crashReport } = event.payload;
 
     if (status === "running") {
       jvmSpawnedInstances.value.add(versionId);
@@ -242,6 +243,7 @@ onMounted(async () => {
         crashVersionId.value = versionId;
         crashExitCode.value = exitCode ?? -1;
         crashIsOpenJ9.value = !!isOpenJ9;
+        crashReportContent.value = crashReport ?? null;
         showCrashAlert.value = true;
       }
     } else if (status === "repairing") {
@@ -808,7 +810,7 @@ function loaderBadgeClass(loaderType: string): string {
     </Teleport>
 
     <!-- Crash Report Modal -->
-    <CrashReportModal :open="showCrashAlert" :exit-code="crashExitCode" :version-id="crashVersionId" :logs="gameLogs" :is-open-j9="crashIsOpenJ9" @update:open="showCrashAlert = $event" />
+    <CrashReportModal :open="showCrashAlert" :exit-code="crashExitCode" :version-id="crashVersionId" :logs="gameLogs" :is-open-j9="crashIsOpenJ9" :crash-report="crashReportContent" @update:open="showCrashAlert = $event" />
 
     <!-- Repair Progress Modal -->
     <Teleport to="body">

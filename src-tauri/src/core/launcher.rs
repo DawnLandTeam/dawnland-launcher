@@ -2417,6 +2417,7 @@ pub async fn launch_instance(
     let app_handle_clone = app.clone();
     let version_id_clone = version_id.clone();
     let window_clone = window.clone();
+    let game_dir_clone = game_dir.clone();
 
     tokio::spawn(async move {
         // Wait for process to exit
@@ -2431,13 +2432,19 @@ pub async fn launch_instance(
                 let _ = window_clone.set_focus();
 
                 // Notify frontend game has exited with exit code
+                let mut crash_report_content: Option<String> = None;
+                if exit_code != 0 {
+                    crash_report_content = crate::core::ai::get_latest_crash_report(&game_dir_clone).await;
+                }
+
                 let _ = app_handle_clone.emit(
                     "instance-state-changed",
                     serde_json::json!({
                         "versionId": version_id_clone,
                         "status": "exited",
                         "exitCode": exit_code,
-                        "isOpenJ9": is_openj9
+                        "isOpenJ9": is_openj9,
+                        "crashReport": crash_report_content
                     }),
                 );
 

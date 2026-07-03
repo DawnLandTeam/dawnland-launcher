@@ -235,7 +235,6 @@ async function loadInstances() {
       if (!aIsVanilla && bIsVanilla) return -1;
       return 0;
     });
-    
     installedInstances.value = instances;
 
     // Check if deep linked
@@ -244,6 +243,12 @@ async function loadInstances() {
       if (exists) {
         selectedInstanceId.value = route.query.instanceId;
       }
+    }
+    
+    // Check if deep linked with search query
+    if (route.query.q && typeof route.query.q === "string") {
+      searchQuery.value = route.query.q;
+      // performSearch will be triggered after options are loaded
     }
   } catch (err) {
     console.error("Failed to load instances:", err);
@@ -679,9 +684,14 @@ useTaskStatusReload(loadInstances);
 
 onMounted(async () => {
   await loadInstances();
-  loadCategories();
-  loadOptions();
-  performSearch(false);
+  await loadCategories();
+  await loadOptions();
+  
+  if (searchQuery.value) {
+    performSearch(true);
+  } else {
+    performSearch(false);
+  }
   setupIntersectionObserver();
 });
 

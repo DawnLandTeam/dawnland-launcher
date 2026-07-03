@@ -4,8 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
+import DCombobox from "../components/ui/DCombobox.vue";
 import DSidebarTabs, { type SidebarTab } from '../components/ui/DSidebarTabs.vue';
-import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info } from "@lucide/vue";
+import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot } from "@lucide/vue";
 import { useI18n } from 'vue-i18n';
 import DSelect from '../components/ui/DSelect.vue';
 import { useRoute, useRouter } from "vue-router";
@@ -32,6 +33,46 @@ onMounted(async () => {
   }
 
   window.addEventListener('authlib-servers-updated', loadAuthlibServers);
+
+  listen<any>('download-progress', (event) => {
+    const { taskId, downloaded, total, speed, error } = event.payload;
+    const isSplit = taskId.includes('|');
+    const mainId = isSplit ? taskId.split('|')[0] : taskId;
+
+    if (downloadingModels.value[mainId]) {
+      if (error) {
+        delete downloadingModels.value[mainId];
+      } else {
+        if (isSplit) {
+          const modelData = downloadingModels.value[mainId];
+          if (!modelData.parts) modelData.parts = {};
+          modelData.parts[taskId] = { downloaded, total, speed };
+          
+          let sumDownloaded = 0;
+          let sumTotal = 0;
+          let sumSpeed = 0;
+          
+          for (const key in modelData.parts) {
+            sumDownloaded += modelData.parts[key].downloaded;
+            sumTotal += modelData.parts[key].total;
+            sumSpeed += modelData.parts[key].speed;
+          }
+          
+          modelData.downloaded = sumDownloaded;
+          modelData.total = sumTotal;
+          modelData.speed = sumSpeed;
+        } else {
+          downloadingModels.value[mainId] = { downloaded, total, speed };
+        }
+      }
+    }
+  });
+  
+  listen<string>('model-download-complete', (event) => {
+    const filename = event.payload;
+    delete downloadingModels.value[filename];
+    loadLocalModels(); // refresh list
+  });
 });
 
 onUnmounted(() => {
@@ -45,12 +86,14 @@ onActivated(async () => {
   await scanLocalJavas();
   await loadJavaDownloadPath();
   await loadAvailableJavas();
+  await loadLocalModels();
 });
 
 const tabs = [
   { id: 'general', name: 'settings.tabs.general', icon: Settings },
   { id: 'java', name: 'settings.tabs.java', icon: Coffee },
   { id: 'authlib', name: 'settings.authlib.tab', icon: Shield },
+  { id: 'ai', name: 'settings.ai.tab', icon: Bot },
   { id: 'about', name: 'settings.tabs.about', icon: Info },
 ] as const;
 
@@ -67,7 +110,7 @@ watch(
   () => route.query.tab,
   (newTab) => {
     if (newTab) {
-      if (['general', 'java', 'authlib', 'about'].includes(newTab as string)) {
+      if (['general', 'java', 'authlib', 'ai', 'about'].includes(newTab as string)) {
         activeTab.value = newTab as any;
       }
       // Clean up the query so it doesn't persist
@@ -130,6 +173,15 @@ async function loadLauncherSettings() {
     if (settings.globalMaxMemory) {
       defaultMaxMemory.value = settings.globalMaxMemory;
     }
+    if (settings.aiConfig) {
+      aiProviderType.value = settings.aiConfig.providerType === 'remoteApi' ? 'remoteApi' : 'embeddedLlm';
+      aiRemoteApiKey.value = settings.aiConfig.remoteApiKey || '';
+      aiRemoteBaseUrl.value = settings.aiConfig.remoteBaseUrl || '';
+      aiRemoteModel.value = settings.aiConfig.remoteModel || '';
+      aiActiveEmbeddedModel.value = settings.aiConfig.activeEmbeddedModel || '';
+      aiMaxRamUsage.value = settings.aiConfig.maxRamUsage || 4096;
+      aiUnlockContextSize.value = settings.aiConfig.unlockContextSize || false;
+    }
   } catch (e) {
     console.error('Failed to load launcher settings:', e);
   }
@@ -143,7 +195,16 @@ async function saveLauncherSettings() {
         downloadSource: downloadSource.value,
         maxConcurrentDownloads: maxConcurrentDownloads.value,
         enableTelemetry: enableTelemetry.value,
-        globalMaxMemory: defaultMaxMemory.value
+        globalMaxMemory: defaultMaxMemory.value,
+        aiConfig: {
+          providerType: aiProviderType.value,
+          remoteApiKey: aiRemoteApiKey.value,
+          remoteBaseUrl: aiRemoteBaseUrl.value,
+          remoteModel: aiRemoteModel.value,
+          activeEmbeddedModel: aiActiveEmbeddedModel.value,
+          maxRamUsage: aiMaxRamUsage.value,
+          unlockContextSize: aiUnlockContextSize.value,
+        }
       }
     });
   } catch (e) {
@@ -471,6 +532,89 @@ function changeLanguage(lang: string) {
   locale.value = lang;
   localStorage.setItem('language', lang);
   localStorage.setItem('userSelectedLanguage', 'true');
+}
+
+// --- AI State ---
+const aiProviderType = ref<'remoteApi' | 'embeddedLlm'>('embeddedLlm');
+const aiRemoteApiKey = ref('');
+const aiRemoteBaseUrl = ref('');
+const aiRemoteModel = ref('');
+const aiActiveEmbeddedModel = ref('');
+const aiMaxRamUsage = ref(4096);
+const aiUnlockContextSize = ref(false);
+const localModels = ref<string[]>([]);
+const isFetchingModels = ref(false);
+
+const availableRemoteModels = ref<string[]>([]);
+const isTestingApi = ref(false);
+
+async function testRemoteApi() {
+  if (!aiRemoteBaseUrl.value) return;
+  isTestingApi.value = true;
+  try {
+    const models = await invoke<string[]>('fetch_remote_models', { baseUrl: aiRemoteBaseUrl.value, apiKey: aiRemoteApiKey.value });
+    availableRemoteModels.value = models;
+    if (models.length > 0 && !aiRemoteModel.value) {
+      aiRemoteModel.value = models[0];
+      await saveLauncherSettings();
+    }
+    alert(t('settings.ai.testSuccess', '测试成功！共获取到 {count} 个模型。', { count: models.length }));
+  } catch(e) {
+    console.error("API test failed", e);
+    alert(t('settings.ai.testFailed', 'API 测试失败：{error}', { error: String(e) }));
+  } finally {
+    isTestingApi.value = false;
+  }
+}
+
+const recommendedModels = computed(() => [
+  { name: `DeepSeek-R1-Distill-Qwen-1.5B ${t('settings.ai.deepseekHint', '(深度思考)')}`, filename: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf', url: 'https://hf-mirror.com/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf', size: '1.12 GB' },
+  { name: `Qwen2.5-7B-Instruct ${t('settings.ai.qwenHint', '(更精确)')}`, filename: 'qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf', urls: [
+    { url: 'https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf', filename: 'qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf' },
+    { url: 'https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf', filename: 'qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf' }
+  ], size: '4.6 GB' }
+]);
+
+const downloadingModels = ref<Record<string, { downloaded: number, total: number, speed: number, parts?: Record<string, {downloaded: number, total: number, speed: number}> }>>({});
+
+function formatSpeed(bytesPerSec: number) {
+  if (!bytesPerSec || bytesPerSec === 0) return '0 B/s';
+  const k = 1024;
+  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+  const i = Math.floor(Math.log(bytesPerSec) / Math.log(k));
+  return parseFloat((bytesPerSec / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatModelName(filename: string) {
+  return filename.replace(/-00001-of-\d{5}/, '');
+}
+
+async function downloadModel(model: { filename: string, url?: string, urls?: {url: string, filename: string}[] }) {
+  if (downloadingModels.value[model.filename]) return;
+  downloadingModels.value[model.filename] = { downloaded: 0, total: 1, speed: 0 };
+  try {
+    let targets = [];
+    if (model.urls) {
+      targets = model.urls;
+    } else if (model.url) {
+      targets = [{ url: model.url, filename: model.filename }];
+    }
+    await invoke('download_model', { targets, mainFilename: model.filename });
+  } catch(e) {
+    console.error("Failed to start model download", e);
+    delete downloadingModels.value[model.filename];
+  }
+}
+
+async function loadLocalModels() {
+  isFetchingModels.value = true;
+  try {
+    localModels.value = await invoke<string[]>('list_local_models');
+  } catch (err) {
+    console.error('Failed to load local models:', err);
+  } finally {
+    isFetchingModels.value = false;
+  }
 }
 </script>
 
@@ -820,6 +964,148 @@ function changeLanguage(lang: string) {
               <Trash2 :size="16" />
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Settings Tab -->
+    <div v-if="activeTab === 'ai'" class="space-y-6">
+      <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
+        <h2 class="text-lg font-semibold mb-4">{{ $t('settings.ai.title', 'AI 崩溃分析') }}</h2>
+        
+        <div class="space-y-4">
+          <div>
+            <label class="text-sm font-medium">{{ $t('settings.ai.provider', '大模型提供商') }}</label>
+            <DSelect
+              v-model="aiProviderType"
+              :options="[{ label: $t('settings.ai.embedded', '内置本地推理引擎 (推荐)'), value: 'embeddedLlm' }, { label: $t('settings.ai.remote', '云端 API (如 OpenAI)'), value: 'remoteApi' }]"
+              @update:model-value="saveLauncherSettings"
+            />
+          </div>
+
+          <template v-if="aiProviderType === 'embeddedLlm'">
+            <div class="p-4 bg-muted/30 rounded-lg space-y-4">
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-sm font-medium">{{ $t('settings.ai.activeModel', '当前加载的模型') }}</label>
+                <button
+                  class="flex items-center gap-2 rounded-lg bg-secondary px-3 py-1.5 text-xs font-medium hover:bg-secondary/80 disabled:opacity-50"
+                  :disabled="isFetchingModels"
+                  @click="loadLocalModels"
+                >
+                  <Loader2 v-if="isFetchingModels" :size="12" class="animate-spin" />
+                  <Search v-else :size="12" />
+                  {{ $t('settings.java.refresh', '刷新') }}
+                </button>
+              </div>
+              <DSelect
+                v-model="aiActiveEmbeddedModel"
+                :options="localModels.map(m => ({ label: formatModelName(m), value: m }))"
+                @update:model-value="saveLauncherSettings"
+              />
+              <p v-if="localModels.length === 0" class="text-xs text-muted-foreground">{{ $t('settings.ai.noModels', '尚未下载任何本地模型。稍后支持在线下载。') }}</p>
+              
+              <div class="space-y-2 mt-4">
+                <div class="flex items-center justify-between">
+                  <label class="text-sm font-medium">{{ $t('settings.ai.maxRam', '推理最大内存分配') }}</label>
+                  <span class="text-sm font-mono text-primary">{{ aiMaxRamUsage }} MB</span>
+                </div>
+                <input
+                  v-model.number="aiMaxRamUsage"
+                  type="range"
+                  min="2048"
+                  :max="systemMemory.totalMb"
+                  step="512"
+                  class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-800 accent-blue-500"
+                  @change="saveLauncherSettings"
+                />
+              </div>
+            </div>
+
+            <!-- Unlock Context Size Option -->
+            <div class="relative rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+              <div>
+                <h3 class="text-sm font-semibold flex items-center gap-2">
+                  <span class="i-lucide-unlock w-4 h-4 text-orange-500"></span>
+                  {{ $t('settings.ai.unlockContext', '极客选项：解锁原生上下文限制') }}
+                </h3>
+                <p class="text-xs text-muted-foreground mt-1">{{ $t('settings.ai.unlockContextDesc', '使用模型支持的最大上下文长度。警告：非常吃内存，低配电脑请勿开启。') }}</p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" v-model="aiUnlockContextSize" @change="saveLauncherSettings" class="sr-only peer">
+                <div class="w-11 h-6 bg-zinc-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-zinc-600 peer-checked:bg-primary"></div>
+              </label>
+            </div>
+
+            <!-- Model Hub -->
+            <div class="p-4 bg-muted/30 rounded-lg space-y-4">
+              <h3 class="text-sm font-medium">{{ $t('settings.ai.modelHub', '模型下载中心') }}</h3>
+              <div class="space-y-3">
+                <div v-for="model in recommendedModels" :key="model.filename" class="flex flex-col gap-2 p-3 bg-white/50 dark:bg-zinc-800/50 rounded-lg border border-white/20 dark:border-zinc-700/50">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <p class="text-sm font-medium">{{ model.name }}</p>
+                      <p class="text-xs text-muted-foreground">{{ model.size }} · {{ formatModelName(model.filename) }}</p>
+                    </div>
+                    <button
+                      v-if="!localModels.includes(model.filename) && !downloadingModels[model.filename]"
+                      @click="downloadModel(model)"
+                      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                    >
+                      <Download :size="12" /> {{ $t('settings.ai.download', '下载') }}
+                    </button>
+                    <span v-else-if="localModels.includes(model.filename)" class="text-xs font-medium text-green-600 bg-green-100 dark:bg-green-900/40 dark:text-green-400 px-2 py-1 rounded-md">
+                      {{ $t('settings.ai.installed', '已安装') }}
+                    </span>
+                  </div>
+                  <!-- Progress bar -->
+                  <div v-if="downloadingModels[model.filename]" class="w-full">
+                    <div class="flex justify-between text-xs mb-1">
+                      <span>{{ $t('settings.ai.downloading', '下载中...') }} ({{ formatSpeed(downloadingModels[model.filename].speed) }})</span>
+                      <span>{{ Math.round((downloadingModels[model.filename].downloaded / downloadingModels[model.filename].total) * 100) }}%</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-gray-200 rounded-full dark:bg-zinc-700 overflow-hidden">
+                      <div class="h-full bg-blue-500 rounded-full transition-all" :style="{ width: `${Math.round((downloadingModels[model.filename].downloaded / downloadingModels[model.filename].total) * 100)}%` }"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template v-if="aiProviderType === 'remoteApi'">
+            <div class="space-y-4 p-4 bg-muted/30 rounded-lg">
+              <div>
+                <label class="text-sm font-medium">Base URL</label>
+                <DInput v-model="aiRemoteBaseUrl" placeholder="https://api.openai.com/v1" @blur="saveLauncherSettings" />
+              </div>
+              <div>
+                <label class="text-sm font-medium">API Key</label>
+                <DInput v-model="aiRemoteApiKey" type="password" placeholder="sk-..." @blur="saveLauncherSettings" />
+              </div>
+              
+              <div class="pt-2">
+                <button
+                  @click="testRemoteApi"
+                  :disabled="isTestingApi || !aiRemoteBaseUrl"
+                  class="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                >
+                  <span v-if="isTestingApi" class="i-lucide-loader-2 w-4 h-4 animate-spin"></span>
+                  <span v-else class="i-lucide-zap w-4 h-4"></span>
+                  {{ isTestingApi ? $t('settings.ai.testingApi', '测试中...') : $t('settings.ai.testApi', '测试 API 并获取模型列表') }}
+                </button>
+              </div>
+              
+              <div class="mt-4">
+                <label class="text-sm font-medium">{{ $t('settings.ai.selectModel', '选择模型 (或手动输入)') }}</label>
+                <DCombobox
+                  v-model="aiRemoteModel"
+                  :options="availableRemoteModels.map(m => ({ label: m, value: m }))"
+                  @blur="saveLauncherSettings"
+                  placeholder="如 gpt-3.5-turbo"
+                />
+              </div>
+            </div>
+          </template>
         </div>
       </div>
     </div>
