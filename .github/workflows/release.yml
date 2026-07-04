@@ -187,7 +187,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: 'Dawnland Launcher v${{ env.VERSION }}'
+          name: 'v${{ env.VERSION }}'
           draft: true
           prerelease: false
           body: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
