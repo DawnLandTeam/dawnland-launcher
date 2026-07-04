@@ -52,7 +52,7 @@ interface InstanceState {
   exitCode?: number;
   missingCount?: number;
   isOpenJ9?: boolean;
-  crashReport?: any;
+  crashReport?: string;
 }
 
 import { Account, AuthlibAuthResult } from "../types";
