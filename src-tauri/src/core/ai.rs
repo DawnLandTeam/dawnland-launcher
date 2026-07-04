@@ -13,9 +13,10 @@ use reqwest::Client;
 use std::sync::atomic::AtomicBool;
 use tauri::{AppHandle, Emitter};
 
-static LLAMA_ENGINE: std::sync::OnceLock<Arc<Mutex<Option<(Child, u16)>>>> = std::sync::OnceLock::new();
+type EngineState = Arc<Mutex<Option<(Child, u16)>>>;
+static LLAMA_ENGINE: std::sync::OnceLock<EngineState> = std::sync::OnceLock::new();
 
-fn get_engine_lock() -> Arc<Mutex<Option<(Child, u16)>>> {
+fn get_engine_lock() -> EngineState {
     LLAMA_ENGINE.get_or_init(|| Arc::new(Mutex::new(None))).clone()
 }
 
@@ -139,7 +140,7 @@ pub async fn download_engine(app: AppHandle) -> Result<(), AppError> {
     }
         
     let final_url = res.url().as_str();
-    let tag = final_url.split('/').last().unwrap_or("b3248").to_string();
+    let tag = final_url.split('/').next_back().unwrap_or("b3248").to_string();
     tracing::info!("Resolved latest llama.cpp tag: {}", tag);
     
     #[cfg(target_os = "windows")]
@@ -415,9 +416,7 @@ fn denoise_crash_log(log: &str) -> String {
             || lower.contains("gl info:")
             || lower.contains("jvm uptime");
 
-        if is_error_or_warn {
-            denoised.push(line);
-        } else if !is_info_or_debug {
+        if is_error_or_warn || !is_info_or_debug {
             denoised.push(line);
         }
     }
