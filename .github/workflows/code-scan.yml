@@ -35,8 +35,7 @@ jobs:
           cargo clippy --all-targets --all-features --message-format=json > clippy-report.json || true
           
       - name: SonarQube Scan (Node.js Version)
-        run: pnpm --package=sonarqube-scanner dlx sonar-scanner
+        run: pnpm --package=sonarqube-scanner dlx sonar-scanner -Dsonar.ws.timeout=600
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_SCANNER_OPTS: "-Dsonar.ws.timeout=600"
