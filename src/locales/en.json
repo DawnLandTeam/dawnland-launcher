@@ -416,6 +416,7 @@
       "testingApi": "Testing...",
       "testApi": "Test API and Fetch Models",
       "selectModel": "Select Model (or input manually)",
+      "modelPlaceholder": "e.g. gpt-3.5-turbo",
       "testSuccess": "Test successful! Fetched {count} models.",
       "testFailed": "API Test Failed: {error}"
     },

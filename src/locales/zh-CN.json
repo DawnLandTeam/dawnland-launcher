@@ -401,6 +401,7 @@
       "testingApi": "测试中...",
       "testApi": "测试 API 并获取模型列表",
       "selectModel": "选择模型 (或手动输入)",
+      "modelPlaceholder": "如 gpt-3.5-turbo",
       "testSuccess": "测试成功！共获取到 {count} 个模型。",
       "testFailed": "API 测试失败：{error}"
     },

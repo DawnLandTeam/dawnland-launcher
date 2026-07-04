@@ -132,7 +132,11 @@ pub async fn download_engine(app: AppHandle) -> Result<(), AppError> {
     let res = client.get("https://github.com/ggerganov/llama.cpp/releases/latest")
         .send()
         .await
-        .map_err(|e| AppError::from(format!("Failed to fetch latest release: {}", e)))?;
+        .map_err(|e| AppError::from(format!("Failed to fetch latest release (Network error): {}", e)))?;
+        
+    if !res.status().is_success() {
+        return Err(AppError::from(format!("Failed to fetch latest release (HTTP {}): {}", res.status(), res.text().await.unwrap_or_default())));
+    }
         
     let final_url = res.url().as_str();
     let tag = final_url.split('/').last().unwrap_or("b3248").to_string();
@@ -159,7 +163,7 @@ pub async fn download_engine(app: AppHandle) -> Result<(), AppError> {
         tracing::info!("Trying to download engine directly from GitHub");
         if let Err(e) = run_batch_download(vec![task], app.clone(), cancel_flag).await {
             tracing::error!("Failed to download AI engine: {}", e);
-            let _ = app.emit("engine-download-error", format!("直接从 GitHub 下载失败，请检查您的网络连接或加速器状态: {}", e));
+            let _ = app.emit("engine-download-error", format!("引擎下载失败 (Engine download failed): {}", e));
         } else {
             tracing::info!("Engine downloaded, extracting...");
             if let Err(e) = crate::core::modpack::extract_zip(&zip_path, &engine_dir).await {
@@ -213,7 +217,7 @@ fn get_free_port() -> u16 {
         .unwrap_or(18080)
 }
 
-pub async fn start_llama_engine(model_name: &str, max_ram_mb: u32) -> Result<u16, String> {
+pub async fn start_llama_engine(model_name: &str) -> Result<u16, String> {
     let engine_lock_arc = get_engine_lock();
     let mut engine_lock = engine_lock_arc.lock().await;
     if let Some((_, port)) = engine_lock.as_ref() {
@@ -442,11 +446,11 @@ pub async fn analyze_crash(crash_log: String, language: Option<String>) -> Resul
             let model_name = ai_config.active_embedded_model
                 .ok_or_else(|| AppError::from("No active embedded model selected. Please select one in settings.".to_string()))?;
             
-            let port = start_llama_engine(&model_name, ai_config.max_ram_usage)
+            let port = start_llama_engine(&model_name)
                 .await
                 .map_err(|e| AppError::from(e.to_string()))?;
                 
-            (format!("http://localhost:{}/v1", port), "sk-dummy".to_string(), model_name)
+            (format!("http://localhost:{}/v1", port), "".to_string(), model_name)
         }
     };
     
@@ -520,11 +524,14 @@ pub async fn analyze_crash(crash_log: String, language: Option<String>) -> Resul
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| AppError::from(format!("Failed to build client: {}", e)))?;
-    let response = client
-        .post(format!("{}/chat/completions", base_url))
-        .bearer_auth(api_key)
-        .json(&request)
-        .send()
+        
+    let mut req = client.post(format!("{}/chat/completions", base_url)).json(&request);
+    
+    if !api_key.is_empty() {
+        req = req.bearer_auth(api_key);
+    }
+    
+    let response = req.send()
         .await
         .map_err(|e| AppError::from(format!("API request failed: {}", e)))?;
         

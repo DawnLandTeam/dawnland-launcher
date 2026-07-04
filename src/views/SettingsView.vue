@@ -554,14 +554,11 @@ async function testRemoteApi() {
   try {
     const models = await invoke<string[]>('fetch_remote_models', { baseUrl: aiRemoteBaseUrl.value, apiKey: aiRemoteApiKey.value });
     availableRemoteModels.value = models;
-    if (models.length > 0 && !aiRemoteModel.value) {
-      aiRemoteModel.value = models[0];
-      await saveLauncherSettings();
-    }
-    alert(t('settings.ai.testSuccess', '测试成功！共获取到 {count} 个模型。', { count: models.length }));
+
+    alert(t('settings.ai.testSuccess', { count: models.length }));
   } catch(e) {
     console.error("API test failed", e);
-    alert(t('settings.ai.testFailed', 'API 测试失败：{error}', { error: String(e) }));
+    alert(t('settings.ai.testFailed', { error: String(e) }));
   } finally {
     isTestingApi.value = false;
   }
@@ -577,8 +574,14 @@ const recommendedModels = computed(() => [
 
 const downloadingModels = ref<Record<string, { downloaded: number, total: number, speed: number, parts?: Record<string, {downloaded: number, total: number, speed: number}> }>>({});
 
+function getDownloadPercentage(filename: string) {
+  const model = downloadingModels.value[filename];
+  if (!model || !model.total) return 0;
+  return Math.round((model.downloaded / model.total) * 100);
+}
+
 function formatSpeed(bytesPerSec: number) {
-  if (!bytesPerSec || bytesPerSec === 0) return '0 B/s';
+  if (!bytesPerSec) return '0 B/s';
   const k = 1024;
   const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
   const i = Math.floor(Math.log(bytesPerSec) / Math.log(k));
@@ -1061,10 +1064,10 @@ async function loadLocalModels() {
                   <div v-if="downloadingModels[model.filename]" class="w-full">
                     <div class="flex justify-between text-xs mb-1">
                       <span>{{ $t('settings.ai.downloading', '下载中...') }} ({{ formatSpeed(downloadingModels[model.filename].speed) }})</span>
-                      <span>{{ Math.round((downloadingModels[model.filename].downloaded / downloadingModels[model.filename].total) * 100) }}%</span>
+                      <span>{{ getDownloadPercentage(model.filename) }}%</span>
                     </div>
                     <div class="w-full h-1.5 bg-gray-200 rounded-full dark:bg-zinc-700 overflow-hidden">
-                      <div class="h-full bg-blue-500 rounded-full transition-all" :style="{ width: `${Math.round((downloadingModels[model.filename].downloaded / downloadingModels[model.filename].total) * 100)}%` }"></div>
+                      <div class="h-full bg-blue-500 rounded-full transition-all" :style="{ width: `${getDownloadPercentage(model.filename)}%` }"></div>
                     </div>
                   </div>
                 </div>
@@ -1101,7 +1104,7 @@ async function loadLocalModels() {
                   v-model="aiRemoteModel"
                   :options="availableRemoteModels.map(m => ({ label: m, value: m }))"
                   @blur="saveLauncherSettings"
-                  placeholder="如 gpt-3.5-turbo"
+                  :placeholder="$t('settings.ai.modelPlaceholder', '如 gpt-3.5-turbo')"
                 />
               </div>
             </div>
