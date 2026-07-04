@@ -12,6 +12,47 @@ pub enum DownloadSource {
     Bmclapi,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[derive(Default)]
+pub enum AiProviderType {
+    RemoteApi,
+    #[default]
+    EmbeddedLlm,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConfig {
+    #[serde(default)]
+    pub provider_type: AiProviderType,
+    pub remote_api_key: Option<String>,
+    pub remote_base_url: Option<String>,
+    pub remote_model: Option<String>,
+    pub active_embedded_model: Option<String>,
+    #[serde(default = "default_max_ram_usage")]
+    pub max_ram_usage: u32,
+    #[serde(default)]
+    pub unlock_context_size: bool,
+}
+
+fn default_max_ram_usage() -> u32 {
+    4096
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            provider_type: AiProviderType::default(),
+            remote_api_key: None,
+            remote_base_url: None,
+            remote_model: None,
+            active_embedded_model: None,
+            max_ram_usage: default_max_ram_usage(),
+            unlock_context_size: false,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +67,8 @@ pub struct LauncherSettings {
     pub enable_telemetry: Option<bool>,
     #[serde(default)]
     pub global_max_memory: Option<u32>,
+    #[serde(default)]
+    pub ai_config: AiConfig,
 }
 
 fn default_max_concurrent_downloads() -> u32 {
@@ -40,6 +83,7 @@ impl Default for LauncherSettings {
             max_concurrent_downloads: 32,
             enable_telemetry: None,
             global_max_memory: None,
+            ai_config: AiConfig::default(),
         }
     }
 }

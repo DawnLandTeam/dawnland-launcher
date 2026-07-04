@@ -50,8 +50,8 @@ fn emit_progress_throttled(
     let elapsed = last_emit_time.elapsed().as_millis() as u64;
     let since_last = current_total.saturating_sub(*last_downloaded);
 
-    if elapsed >= PROGRESS_THROTTLE_MS || since_last >= 512 * 1024 {
-        let speed = if elapsed > 0 { since_last.saturating_div(elapsed.max(1)) * 1000 } else { 0 };
+    if elapsed >= PROGRESS_THROTTLE_MS {
+        let speed = (since_last * 1000).checked_div(elapsed).unwrap_or(0);
         let mut progress = DownloadProgress::progress(task_id.to_string(), current_total, total_size, speed);
         progress.file_name = Some(file_name.to_string());
         let _ = app.emit("download-progress", &progress);

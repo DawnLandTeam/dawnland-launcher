@@ -406,6 +406,12 @@ pub fn run() {
             // Settings commands
             core::settings::load_launcher_settings,
             core::settings::save_launcher_settings,
+            // AI commands
+            core::ai::list_local_models,
+            core::ai::download_model,
+            core::ai::download_engine,
+            core::ai::fetch_remote_models,
+            core::ai::analyze_crash,
             // Custom Analytics Command
             commands::app_track_event,
         ])

@@ -4,7 +4,9 @@
     "searchPlaceholder": "Search...",
     "cancel": "Cancel",
     "confirm": "Confirm",
-    "select": "Please select..."
+    "select": "Please select...",
+    "back": "Back",
+    "saveSuccess": "Save successful"
   },
   "sidebar": {
     "home": "Home",
@@ -394,6 +396,30 @@
       "submitIssue": "Submit Issue",
       "suggestFeature": "Suggest Feature"
     },
+    "ai": {
+      "tab": "AI Settings",
+      "title": "AI Crash Analysis",
+      "provider": "AI Model Provider",
+      "embedded": "Built-in Local Engine (Recommended)",
+      "remote": "Cloud API (e.g. OpenAI)",
+      "activeModel": "Currently Loaded Model",
+      "noModels": "No local models downloaded yet. Online download support coming soon.",
+      "maxRam": "Max RAM for Inference",
+      "unlockContext": "Geek Option: Unlock Native Context Limit",
+      "unlockContextDesc": "Uses the max context length supported by the model. Warning: High memory usage, do not enable on low-end PCs.",
+      "modelHub": "Model Download Center",
+      "deepseekHint": "(Deep Reasoning)",
+      "qwenHint": "(More Accurate)",
+      "download": "Download",
+      "installed": "Installed",
+      "downloading": "Downloading...",
+      "testingApi": "Testing...",
+      "testApi": "Test API and Fetch Models",
+      "selectModel": "Select Model (or input manually)",
+      "modelPlaceholder": "e.g. gpt-3.5-turbo",
+      "testSuccess": "Test successful! Fetched {count} models.",
+      "testFailed": "API Test Failed: {error}"
+    },
     "authlib": {
       "tab": "Authlib",
       "title": "Authentication Servers",
@@ -590,7 +616,22 @@
     "copy": "Copy",
     "copyLogs": "Copy Logs",
     "copied": "Copied!",
-    "close": "Close"
+    "close": "Close",
+    "ai": {
+      "resultTitle": "AI Crash Analysis Result",
+      "cause": "Cause Analysis",
+      "solution": "Solution",
+      "error": "AI Analysis Failed",
+      "downloadEngine": "Download AI Engine (Once only)",
+      "retry": "Retry",
+      "analyzing": "AI is analyzing deeply...",
+      "analyze": "One-click AI Smart Analysis"
+    },
+    "actions": {
+      "searchMod": "Search Mod: {mod}",
+      "gotoJava": "Go to Java Settings",
+      "gotoMods": "Go to Mod Management"
+    }
   },
   "updater": {
     "title": "Update Available",

@@ -22,3 +22,4 @@ pub use crate::core::mojang::VanillaVersion;
 pub use crate::core::modrinth::{OnlineModpackVersion, UnifiedModFile, UnifiedModProject};
 pub mod security;
 pub mod settings;
+pub mod ai;
