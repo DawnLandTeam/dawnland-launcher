@@ -241,6 +241,22 @@ pub async fn start_llama_engine(model_name: &str) -> Result<u16, String> {
         .map_err(|e| format!("Failed to create log file: {}", e))?;
         
     let settings = crate::core::settings::get_launcher_settings_sync();
+    
+    // Pre-flight memory check
+    let model_meta = std::fs::metadata(&model_path)
+        .map_err(|e| format!("Failed to read model metadata: {}", e))?;
+    let model_size_mb = (model_meta.len() / 1024 / 1024) as u32;
+    // Rough estimation: 8192 context ~ 1GB RAM, 0 (unlocked) ~ 2GB RAM.
+    let ctx_ram_estimation = if settings.ai_config.unlock_context_size { 2048 } else { 1024 };
+    let estimated_total_ram = model_size_mb + ctx_ram_estimation;
+    
+    if estimated_total_ram > settings.ai_config.max_ram_usage {
+        return Err(format!(
+            "Insufficient Max RAM Limit. The model ({} MB) and context (~{} MB) are estimated to require {} MB of RAM, which exceeds your configured limit of {} MB. Please increase the Max RAM Limit in Settings.",
+            model_size_mb, ctx_ram_estimation, estimated_total_ram, settings.ai_config.max_ram_usage
+        ));
+    }
+
     let ctx_size = if settings.ai_config.unlock_context_size { "0" } else { "8192" };
 
     let mut cmd = Command::new(&bin_path);
