@@ -100,7 +100,7 @@ describe('useNotificationStore composable', () => {
 
   it('removes notification completely', () => {
     const store = useNotificationStore();
-    store.addNotification({ id: 'rem-1', title: 'Test' });
+    store.addNotification({ id: 'rem-1', title: 'Test', isPopup: false, duration: 5000 });
     expect(store.notifications.value).toHaveLength(1);
     
     store.removeNotification('rem-1');
@@ -110,9 +110,9 @@ describe('useNotificationStore composable', () => {
   it('clears expired (read and not popup) notifications', () => {
     const store = useNotificationStore();
     
-    store.addNotification({ id: 'c-1', title: 'Keep unread', status: 'unread', isPopup: false });
-    store.addNotification({ id: 'c-2', title: 'Keep popup', status: 'read', isPopup: true });
-    store.addNotification({ id: 'c-3', title: 'Remove me', status: 'read', isPopup: false });
+    store.addNotification({ id: 'c-1', title: 'Keep unread', status: 'unread', isPopup: false, duration: 5000 });
+    store.addNotification({ id: 'c-2', title: 'Keep popup', status: 'read', isPopup: true, duration: 5000 });
+    store.addNotification({ id: 'c-3', title: 'Remove me', status: 'read', isPopup: false, duration: 5000 });
     
     expect(store.notifications.value).toHaveLength(3);
     

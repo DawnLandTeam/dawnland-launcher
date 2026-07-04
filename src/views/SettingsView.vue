@@ -596,7 +596,7 @@ async function downloadModel(model: { filename: string, url?: string, urls?: {ur
   if (downloadingModels.value[model.filename]) return;
   downloadingModels.value[model.filename] = { downloaded: 0, total: 1, speed: 0 };
   try {
-    let targets = [];
+    let targets: NonNullable<typeof model.urls> = [];
     if (model.urls) {
       targets = model.urls;
     } else if (model.url) {
