@@ -21,10 +21,36 @@ jobs:
         with:
           version: 11
 
+      - name: Ensure pnpm store dir
+        run: pnpm config set store-dir ~/.pnpm-store
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+
+      - name: Configure persistent Cargo target dir
+        run: |
+          echo "CARGO_TARGET_DIR=$HOME/.cache/cargo-target" >> $GITHUB_ENV
+
+      - name: Cache Cargo registry, git and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ env.CARGO_TARGET_DIR }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/src-tauri/Cargo.lock','**/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Install Frontend Dependencies
         run: pnpm install
