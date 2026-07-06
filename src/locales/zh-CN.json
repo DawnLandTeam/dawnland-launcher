@@ -153,6 +153,9 @@
   },
   "servers": {
     "title": "服务器",
+    "refreshList": "刷新列表",
+    "favorite": "收藏",
+    "pinging": "正在测速...",
     "available": "共有 {count} 个服务器可用 | 共有 {count} 个服务器可用",
     "publish": "发布服务器",
     "searchPlaceholder": "搜索服务器...",
@@ -182,7 +185,8 @@
     "offline": "离线",
     "filters": {
       "allTypes": "所有类型",
-      "allAuth": "所有验证"
+      "allAuth": "所有验证",
+      "favorites": "我的收藏"
     },
     "types": {
       "vanilla": "原版",
@@ -343,7 +347,15 @@
     "tabs": {
       "general": "常用设置",
       "java": "Java",
+      "logs": "日志中心",
       "about": "关于"
+    },
+    "logs": {
+      "desc": "查看和筛选应用程序运行期间产生的日志。",
+      "search": "搜索日志内容或任务 ID...",
+      "allLevels": "全部级别",
+      "clear": "清空日志",
+      "noLogs": "暂无匹配的日志记录"
     },
     "general": {
       "memoryTitle": "默认内存设置",
@@ -629,7 +641,7 @@
     "copied": "已复制！",
     "close": "关闭",
     "ai": {
-      "resultTitle": "AI 崩溃分析结果",
+      "resultTitle": "AI 智能分析结果",
       "cause": "原因分析",
       "solution": "解决方案",
       "error": "AI 分析失败",
@@ -698,6 +710,9 @@
     "noSubTasks": "暂无详细子任务",
     "installing": "正在安装...",
     "cancel": "取消任务",
+    "actions": {
+      "retryTask": "重试任务"
+    },
     "sub": {
       "resolve_loader": "获取安装程序",
       "download_loader_libs": "下载依赖库",

@@ -6,9 +6,11 @@ import { open } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
 import DCombobox from "../components/ui/DCombobox.vue";
 import DSidebarTabs, { type SidebarTab } from '../components/ui/DSidebarTabs.vue';
-import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot } from "@lucide/vue";
+import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText } from "@lucide/vue";
 import { useI18n } from 'vue-i18n';
 import DSelect from '../components/ui/DSelect.vue';
+import DButton from '../components/ui/DButton.vue';
+import { useLogStore } from '../composables/useLogStore';
 import { useRoute, useRouter } from "vue-router";
 import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
@@ -94,6 +96,7 @@ const tabs = [
   { id: 'java', name: 'settings.tabs.java', icon: Coffee },
   { id: 'authlib', name: 'settings.authlib.tab', icon: Shield },
   { id: 'ai', name: 'settings.ai.tab', icon: Bot },
+  { id: 'logs', name: 'settings.tabs.logs', icon: ScrollText },
   { id: 'about', name: 'settings.tabs.about', icon: Info },
 ] as const;
 
@@ -110,7 +113,7 @@ watch(
   () => route.query.tab,
   (newTab) => {
     if (newTab) {
-      if (['general', 'java', 'authlib', 'ai', 'about'].includes(newTab as string)) {
+      if (['general', 'java', 'authlib', 'ai', 'logs', 'about'].includes(newTab as string)) {
         activeTab.value = newTab as any;
       }
       // Clean up the query so it doesn't persist
@@ -619,6 +622,32 @@ async function loadLocalModels() {
     isFetchingModels.value = false;
   }
 }
+
+// Log Center State
+const logStore = useLogStore();
+const logLevelFilter = ref('ALL');
+const logSearchQuery = ref('');
+
+const filteredLogs = computed(() => {
+  let logs = logStore.globalLogs.value;
+  if (logLevelFilter.value !== 'ALL') {
+    logs = logs.filter(l => l.level.toUpperCase() === logLevelFilter.value);
+  }
+  if (logSearchQuery.value) {
+    const q = logSearchQuery.value.toLowerCase();
+    logs = logs.filter(l => 
+      l.message.toLowerCase().includes(q) || 
+      (l.task_id && l.task_id.toLowerCase().includes(q))
+    );
+  }
+  // Reverse to show latest first
+  return [...logs].reverse();
+});
+
+const clearLogs = () => {
+  logStore.globalLogs.value = [];
+  logStore.taskLogs.value = {};
+};
 </script>
 
 <template>
@@ -1109,6 +1138,49 @@ async function loadLocalModels() {
               </div>
             </div>
           </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- Logs Tab -->
+    <div v-if="activeTab === 'logs'" class="h-full flex flex-col">
+      <div class="mb-6 shrink-0">
+        <h2 class="text-lg font-bold">{{ $t('settings.tabs.logs', '日志中心') }}</h2>
+        <p class="text-sm text-muted-foreground">{{ $t('settings.logs.desc', '查看和筛选应用程序运行期间产生的日志。') }}</p>
+      </div>
+
+      <div class="flex gap-4 mb-6 shrink-0">
+        <DInput v-model="logSearchQuery" :placeholder="$t('settings.logs.search', '搜索日志内容或任务 ID...')" class="flex-1" :icon="Search" />
+        <DSelect 
+          v-model="logLevelFilter" 
+          :options="[
+            {label: $t('settings.logs.allLevels', '全部级别'), value: 'ALL'},
+            {label: 'INFO', value: 'INFO'},
+            {label: 'WARN', value: 'WARN'},
+            {label: 'ERROR', value: 'ERROR'},
+            {label: 'DEBUG', value: 'DEBUG'}
+          ]" 
+          class="w-40" 
+        />
+        <DButton @click="clearLogs" variant="danger" class="gap-2">
+          <Trash2 class="w-4 h-4" /> {{ $t('settings.logs.clear', '清空日志') }}
+        </DButton>
+      </div>
+
+      <div class="bg-card/50 border rounded-lg p-4 space-y-2 flex-1 overflow-y-auto relative">
+        <div v-if="filteredLogs.length === 0" class="absolute inset-0 flex items-center justify-center text-muted-foreground">
+          {{ $t('settings.logs.noLogs', '暂无匹配的日志记录') }}
+        </div>
+        <div v-for="(log, i) in filteredLogs" :key="i" class="font-mono text-sm break-all">
+          <span class="text-muted-foreground mr-2">[{{ log.timestamp }}]</span>
+          <span :class="{
+            'text-blue-500': log.level.toUpperCase() === 'INFO',
+            'text-yellow-500': log.level.toUpperCase() === 'WARN',
+            'text-red-500': log.level.toUpperCase() === 'ERROR',
+            'text-gray-500': log.level.toUpperCase() === 'DEBUG',
+          }" class="font-bold mr-2">[{{ log.level.toUpperCase() }}]</span>
+          <span v-if="log.task_id" class="text-purple-500 mr-2">[{{ log.task_id }}]</span>
+          <span class="text-foreground/90">{{ log.message }}</span>
         </div>
       </div>
     </div>

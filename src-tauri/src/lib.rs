@@ -166,8 +166,19 @@ pub fn run() {
             tokio::sync::Mutex::new(std::collections::HashMap::new()),
         )))
         .setup(|app| {
-            use tauri::Manager;
+            use tauri::{Manager, Emitter};
             let app_handle = app.handle().clone();
+
+            // Set up frontend logger broadcast
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            if logger::frontend::LOG_TX.set(tx).is_ok() {
+                let app_handle_clone = app_handle.clone();
+                tokio::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        let _ = app_handle_clone.emit("app-log", event);
+                    }
+                });
+            }
 
             #[cfg(target_os = "windows")]
             register_deep_link();

@@ -299,6 +299,9 @@ impl TaskManager {
             sub_task_key: None,
         };
 
+        use tracing::Instrument;
+        let span = tracing::info_span!("task", task_id = %id_clone);
+        
         tokio::spawn(async move {
             {
                 let mut state = state_arc.write().await;
@@ -368,7 +371,7 @@ impl TaskManager {
             }
 
             manager.active_tasks.write().await.remove(&id_clone);
-        });
+        }.instrument(span));
 
         Ok(id)
     }

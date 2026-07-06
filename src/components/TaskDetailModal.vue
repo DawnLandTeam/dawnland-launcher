@@ -4,9 +4,12 @@ import { useI18n } from 'vue-i18n';
 import { useTaskStore } from '../composables/useTaskStore';
 import { X, Clock, Loader2, CheckCircle, Pause, XCircle, Ban, ArrowRight } from '@lucide/vue';
 import { getTaskName } from '../types/task';
+import AiAnalysisPanel from './ai/AiAnalysisPanel.vue';
+import { useLogStore } from '../composables/useLogStore';
 
 const { t, te } = useI18n();
 const taskStore = useTaskStore();
+const logStore = useLogStore();
 
 function getSubTaskName(sub: any) {
   const key = `task.sub.${sub.key}`;
@@ -23,6 +26,16 @@ function formatSpeed(speed: number | undefined) {
 const task = computed(() => {
   if (!taskStore.selectedTaskId.value) return null;
   return taskStore.tasks.value.find(t => t.id === taskStore.selectedTaskId.value) || null;
+});
+
+const taskErrorLogs = computed(() => {
+  if (!task.value || task.value.status !== 'Failed') return '';
+  // Try to use task error directly if log store has no logs for it
+  const logs = logStore.getTaskErrorLogs(task.value.id);
+  if (!logs && task.value.error) {
+    return task.value.error;
+  }
+  return logs;
 });
 
 const isCancelable = computed(() => {
@@ -46,6 +59,16 @@ function getSubTaskPercentage(sub: any) {
   if (sub.status === 'Completed') return 100;
   if (sub.total === 0) return 0;
   return Math.min(100, Math.floor((sub.current / sub.total) * 100));
+}
+
+function getInstanceName(taskType: any): string | undefined {
+  if (taskType && typeof taskType === 'object') {
+    if ('InstallModpack' in taskType) return taskType.InstallModpack.instance_name;
+    if ('InstallVanilla' in taskType) return taskType.InstallVanilla.instance_name || taskType.InstallVanilla.custom_instance_name;
+    if ('InstallForge' in taskType) return taskType.InstallForge.custom_instance_name;
+    if ('InstallFabric' in taskType) return taskType.InstallFabric.custom_instance_name;
+  }
+  return undefined;
 }
 </script>
 
@@ -148,6 +171,16 @@ function getSubTaskPercentage(sub: any) {
             </div>
             <div v-else class="h-full rounded-full bg-emerald-400/50 indeterminate-progress"></div>
           </div>
+        </div>
+        
+        <!-- AI Analysis for Failed Task -->
+        <div v-if="task.status === 'Failed' && taskErrorLogs" class="pt-2 border-t border-black/10 dark:border-white/10 mt-2">
+          <AiAnalysisPanel
+            :log-context="taskErrorLogs"
+            context-type="task"
+            :task-id="task.id"
+            :version-id="getInstanceName(task.task_type)"
+          />
         </div>
       </div>
 
