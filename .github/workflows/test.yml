@@ -81,6 +81,9 @@ jobs:
         with:
           version: 11
 
+      - name: Ensure pnpm is on PATH
+        run: echo "$PNPM_HOME" >> $GITHUB_PATH
+
       - name: Ensure pnpm store dir
         run: pnpm config set store-dir ~/.pnpm-store
 
