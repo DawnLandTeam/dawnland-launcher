@@ -6,7 +6,8 @@
     "confirm": "Confirm",
     "select": "Please select...",
     "back": "Back",
-    "saveSuccess": "Save successful"
+    "saveSuccess": "Save successful",
+    "save": "Save"
   },
   "sidebar": {
     "home": "Home",
@@ -57,6 +58,8 @@
     "resourcepacks": "Resource Packs",
     "folder": "Folder",
     "folderSizeSkipped": "Directory size calculation is skipped for performance.",
+    "searchCustomShaders": "Search custom shaders...",
+    "searchCustomResourcepacks": "Search custom resource packs...",
     "customModGroup": "Mod Groups",
     "customShaders": "Shaders",
     "customResourcepacks": "Resource Packs",
@@ -669,6 +672,7 @@
     "uploadLocal": "Local Upload",
     "searchBtn": "Search",
     "searchHint": "Enter keywords to search for modpacks",
+    "defaultInstanceName": "Default Instance Name",
     "instanceNamePrefix": "Instance name to create",
     "packVersion": "Modpack Version",
     "gameVersion": "Game Version",

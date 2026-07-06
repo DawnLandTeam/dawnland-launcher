@@ -61,10 +61,10 @@ function getSubTaskPercentage(sub: any) {
   return Math.min(100, Math.floor((sub.current / sub.total) * 100));
 }
 
-function getInstanceName(taskType: any): string | undefined {
+function getInstanceId(taskType: any): string | undefined {
   if (taskType && typeof taskType === 'object') {
     if ('InstallModpack' in taskType) return taskType.InstallModpack.instance_name;
-    if ('InstallVanilla' in taskType) return taskType.InstallVanilla.instance_name || taskType.InstallVanilla.custom_instance_name;
+    if ('InstallVanilla' in taskType) return taskType.InstallVanilla.custom_instance_name || taskType.InstallVanilla.version_id;
     if ('InstallForge' in taskType) return taskType.InstallForge.custom_instance_name;
     if ('InstallFabric' in taskType) return taskType.InstallFabric.custom_instance_name;
   }
@@ -179,7 +179,7 @@ function getInstanceName(taskType: any): string | undefined {
             :log-context="taskErrorLogs"
             context-type="task"
             :task-id="task.id"
-            :version-id="getInstanceName(task.task_type)"
+            :version-id="getInstanceId(task.task_type)"
           />
         </div>
       </div>

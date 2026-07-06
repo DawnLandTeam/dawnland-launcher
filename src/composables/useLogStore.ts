@@ -10,6 +10,7 @@ export interface LogEntry {
 
 const globalLogs = ref<LogEntry[]>([]);
 const taskLogs = ref<Record<string, LogEntry[]>>({});
+const taskOrder: string[] = [];
 let isInitialized = false;
 
 export function useLogStore() {
@@ -28,8 +29,21 @@ export function useLogStore() {
       if (log.task_id) {
         if (!taskLogs.value[log.task_id]) {
           taskLogs.value[log.task_id] = [];
+          taskOrder.push(log.task_id);
+          // Keep only the logs for the last 20 tasks
+          if (taskOrder.length > 20) {
+            const oldTaskId = taskOrder.shift();
+            if (oldTaskId) {
+              delete taskLogs.value[oldTaskId];
+            }
+          }
         }
         taskLogs.value[log.task_id].push(log);
+        
+        // Limit logs per task to 2000 lines
+        if (taskLogs.value[log.task_id].length > 2000) {
+          taskLogs.value[log.task_id].shift();
+        }
       }
     });
   }

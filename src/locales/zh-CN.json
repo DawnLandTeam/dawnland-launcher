@@ -6,7 +6,8 @@
     "confirm": "确认",
     "select": "请选择...",
     "back": "返回",
-    "saveSuccess": "保存成功"
+    "saveSuccess": "保存成功",
+    "save": "保存"
   },
   "sidebar": {
     "home": "主页",
@@ -57,6 +58,8 @@
     "resourcepacks": "资源包",
     "folder": "文件夹",
     "folderSizeSkipped": "为保证性能，已跳过文件夹大小计算。",
+    "searchCustomShaders": "搜索本地光影...",
+    "searchCustomResourcepacks": "搜索本地资源包...",
     "customModGroup": "模组",
     "customShaders": "光影",
     "customResourcepacks": "资源包",
@@ -680,6 +683,7 @@
     "uploadLocal": "本地上传",
     "searchBtn": "搜索",
     "searchHint": "输入关键词开始搜索整合包",
+    "defaultInstanceName": "默认实例名称",
     "instanceNamePrefix": "将要创建的实例名称",
     "packVersion": "整合包版本",
     "gameVersion": "游戏版本",

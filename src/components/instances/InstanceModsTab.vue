@@ -49,7 +49,7 @@
           <div class="flex-1 min-w-0">
             <div class="font-medium text-sm truncate" :title="mod.name || mod.filename">{{ mod.name || mod.filename }}</div>
             <div class="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-              <span v-if="mod.version" class="bg-secondary px-1.5 py-0.5 rounded">{{ mod.version }}</span>
+              <span v-if="mod.version && !mod.version.includes('${')" class="bg-secondary px-1.5 py-0.5 rounded">{{ mod.version }}</span>
               <span class="truncate">{{ mod.filename }}</span>
             </div>
           </div>
