@@ -11,53 +11,67 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install or Repair Rust (Windows Self-Hosted)
+      - name: Install / Repair Rust (Windows Self-Hosted)
+        if: matrix.platform == 'windows-x86_64'
         shell: powershell
         run: |
           Write-Host "=== Rust toolchain bootstrap: start ==="
-
+      
           if (Get-Command rustup -ErrorAction SilentlyContinue) {
             Write-Host "rustup found. Updating and verifying toolchain..."
             rustup self update
             rustup update
             rustup default stable
-            rustup component add clippy || Write-Host "clippy component not available/failed to add"
-            rustup component add rust-src || Write-Host "rust-src component not available/failed to add"
+      
+            try {
+              rustup component add clippy
+            } catch {
+              Write-Host "Warning: failed to add clippy component: $_"
+            }
+      
+            try {
+              rustup component add rust-src
+            } catch {
+              Write-Host "Warning: failed to add rust-src component: $_"
+            }
           } else {
             Write-Host "rustup not found. Installing rustup-init.exe..."
-            Invoke-WebRequest -Uri https://win.rustup.rs/ -OutFile rustup-init.exe
-            Start-Process -FilePath .\rustup-init.exe -ArgumentList '-y','--default-toolchain','stable','--profile','default' -Wait
+            Invoke-WebRequest -Uri https://win.rustup.rs/ -OutFile rustup-init.exe -UseBasicParsing
+            Start-Process -FilePath .\rustup-init.exe -ArgumentList '-y','--default-toolchain','stable','--profile','default' -Wait -NoNewWindow
           }
-
-          # Ensure the cargo bin directory is on PATH for subsequent steps
+      
+          # Ensure rustup-managed cargo is on PATH for the job
           $cargoBin = "$env:USERPROFILE\.cargo\bin"
-          if (-Not ($env:Path -split ';' | Where-Object { $_ -eq $cargoBin })) {
+          $pathParts = $env:Path -split ';'
+          if (-not ($pathParts -contains $cargoBin)) {
             Write-Host "Adding $cargoBin to PATH for this job..."
             echo $cargoBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           }
-
+      
           Write-Host "Inspecting cargo/rustup state..."
-          Write-Host "where cargo:"; where.exe cargo || Write-Host "where.exe failed"
+          $whereOut = & where.exe cargo 2>&1
+          if ($LASTEXITCODE -ne 0) { Write-Host "where.exe failed or cargo not found: $whereOut" } else { Write-Host "where cargo: $whereOut" }
+      
           Write-Host "rustup --version:"; rustup --version 2>&1 | Write-Host
           Write-Host "rustup show:"; rustup show 2>&1 | Write-Host
-
+      
           # Validate cargo works and is compatible; if not, reinstall the stable toolchain
           $cargoOk = $false
           try {
-            Write-Host "cargo --version:"; cargo --version 2>&1 | Write-Host
+            Write-Host "cargo --version:"; (& cargo --version) 2>&1 | Write-Host
             $cargoOk = $true
           } catch {
             Write-Host "cargo --version failed: $_"
             $cargoOk = $false
           }
-
-          if (-Not $cargoOk) {
+      
+          if (-not $cargoOk) {
             Write-Host "cargo unusable or incompatible. Reinstalling stable toolchain via rustup..."
-            rustup toolchain install stable-x86_64-pc-windows-msvc -y
+            rustup toolchain install stable-x86_64-pc-windows-msvc --force
             rustup default stable-x86_64-pc-windows-msvc
-            Write-Host "After reinstall: cargo --version:"; cargo --version 2>&1 | Write-Host
+            Write-Host "After reinstall: cargo --version:"; (& cargo --version) 2>&1 | Write-Host
           }
-
+      
           Write-Host "=== Rust toolchain bootstrap: end ==="
 
       - name: Configure persistent Cargo target dir
