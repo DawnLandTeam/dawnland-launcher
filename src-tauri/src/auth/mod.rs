@@ -17,6 +17,9 @@ pub use microsoft::{
     LoginInitResponse,
 };
 
+#[cfg(test)]
+pub(crate) static TEST_MUTEX: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// Account types supported by the launcher.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]

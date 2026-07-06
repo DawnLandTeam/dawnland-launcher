@@ -941,7 +941,7 @@ mod tests {
     use std::sync::LazyLock;
     use tokio::sync::Mutex;
 
-    static TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+    use crate::auth::TEST_MUTEX;
 
     async fn clear_accounts() {
         let _ = crate::auth::save_accounts(&[]).await;
