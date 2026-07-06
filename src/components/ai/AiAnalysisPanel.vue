@@ -49,9 +49,6 @@ const parsedAiResult = computed<AiResponse | null>(() => {
       jsonStr = jsonStr.substring(startIndex, endIndex + 1);
     }
     
-    // Sanitize control characters (like unescaped newlines inside strings)
-    jsonStr = jsonStr.replace(/[\u0000-\u001F]/g, ' ');
-    
     const parsed = JSON.parse(jsonStr);
     
     // Normalize keys to lowercase to handle model variations (e.g., "Cause" instead of "cause")
@@ -135,7 +132,7 @@ async function analyzeWithAi() {
     const result = await invoke<string>("analyze_crash", { 
       crashLog: props.logContext, 
       language: locale.value,
-      contextType: props.contextType 
+      context_type: props.contextType 
     });
     aiAnalysisResult.value = result;
   } catch (err: any) {
