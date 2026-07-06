@@ -18,66 +18,35 @@ jobs:
           Write-Host "=== Rust toolchain bootstrap: start ==="
       
           if (Get-Command rustup -ErrorAction SilentlyContinue) {
-            Write-Host "rustup found. Updating and verifying toolchain..."
+            Write-Host "rustup found. Updating..."
             rustup self update
             rustup update
             rustup default stable
-      
-            try {
-              rustup component add clippy
-            } catch {
-              Write-Host "Warning: failed to add clippy component: $_"
-            }
-      
-            try {
-              rustup component add rust-src
-            } catch {
-              Write-Host "Warning: failed to add rust-src component: $_"
-            }
           } else {
             Write-Host "rustup not found. Installing rustup-init.exe..."
             Invoke-WebRequest -Uri https://win.rustup.rs/ -OutFile rustup-init.exe -UseBasicParsing
             Start-Process -FilePath .\rustup-init.exe -ArgumentList '-y','--default-toolchain','stable','--profile','default' -Wait -NoNewWindow
           }
       
-          # Ensure rustup-managed cargo is on PATH for the job
+          # Ensure cargo component exists for the toolchain
+          try { rustup component add cargo --toolchain stable-x86_64-pc-windows-msvc } catch { Write-Host "cargo component add warning: $_" }
+          try { rustup component add clippy --toolchain stable-x86_64-pc-windows-msvc } catch { Write-Host "clippy add warning: $_" }
+      
+          # Prepend rustup-managed cargo to PATH for subsequent steps
           $cargoBin = "$env:USERPROFILE\.cargo\bin"
-          $pathParts = $env:Path -split ';'
-          if (-not ($pathParts -contains $cargoBin)) {
-            Write-Host "Adding $cargoBin to PATH for this job..."
-            echo $cargoBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          }
+          $newPath = "$cargoBin;$env:Path"
+          echo "PATH=$newPath" >> $env:GITHUB_ENV
       
-          Write-Host "Inspecting cargo/rustup state..."
-          $whereOut = & where.exe cargo 2>&1
-          if ($LASTEXITCODE -ne 0) { Write-Host "where.exe failed or cargo not found: $whereOut" } else { Write-Host "where cargo: $whereOut" }
-      
-          Write-Host "rustup --version:"; rustup --version 2>&1 | Write-Host
-          Write-Host "rustup show:"; rustup show 2>&1 | Write-Host
-      
-          # Validate cargo works and is compatible; if not, reinstall the stable toolchain
-          $cargoOk = $false
-          try {
-            Write-Host "cargo --version:"; (& cargo --version) 2>&1 | Write-Host
-            $cargoOk = $true
-          } catch {
-            Write-Host "cargo --version failed: $_"
-            $cargoOk = $false
-          }
-      
-          if (-not $cargoOk) {
-            Write-Host "cargo unusable or incompatible. Reinstalling stable toolchain via rustup..."
-            rustup toolchain install stable-x86_64-pc-windows-msvc --force
-            rustup default stable-x86_64-pc-windows-msvc
-            Write-Host "After reinstall: cargo --version:"; (& cargo --version) 2>&1 | Write-Host
-          }
+          # Diagnostics (can remove after CI stable)
+          Write-Host "where cargo ->"; (& where.exe cargo) 2>&1 | Write-Host
+          Write-Host "rustup which cargo ->"; try { rustup which cargo | Write-Host } catch { Write-Host "rustup which cargo failed: $_" }
+          Write-Host "cargo --version ->"; try { (& cargo --version) 2>&1 | Write-Host } catch { Write-Host "cargo --version failed: $_" }
       
           Write-Host "=== Rust toolchain bootstrap: end ==="
 
       - name: Configure persistent Cargo target dir
-        run: |
-          echo "CARGO_TARGET_DIR=$HOME/.cache/cargo-target" >> $GITHUB_ENV
-
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/cargo-target" >> $GITHUB_ENV
+      
       - name: Cache Cargo registry, git and target
         uses: actions/cache@v4
         with:
