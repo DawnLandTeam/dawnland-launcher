@@ -5,7 +5,7 @@ import DSelect from "../ui/DSelect.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { trackEvent, getErrorType } from "../../utils/analytics";
 import DInput from "../ui/DInput.vue";
-import { Search, Check, AlertCircle, Loader2, Info } from "@lucide/vue";
+import { Search, Check, AlertCircle, Loader2, Info, Puzzle } from "@lucide/vue";
 import { getErrorMessage } from "../../utils/error";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";

@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+pub mod frontend;
+
 fn log_dir() -> Result<PathBuf, String> {
     let base = std::env::current_exe()
         .map(|p| p.parent().unwrap().to_path_buf())
@@ -42,6 +44,7 @@ pub fn init() -> Result<(), String> {
                 .with_ansi(false)
                 .with_writer(non_blocking_file),
         )
+        .with(frontend::FrontendBroadcastLayer)
         .init();
 
     tracing::info!("Dawnland Launcher core initialized.");

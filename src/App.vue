@@ -11,6 +11,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
 import { useTaskStore } from "./composables/useTaskStore";
+import { useLogStore } from "./composables/useLogStore";
 import TaskCenter from "./components/TaskCenter.vue";
 import TaskDetailModal from "./components/TaskDetailModal.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
@@ -30,6 +31,7 @@ const showDeepLinkModal = ref(false);
 const incomingLinkData = ref<DeepLinkData | null>(null);
 const { locale, t } = useI18n();
 const taskStore = useTaskStore();
+const logStore = useLogStore();
 const router = useRouter();
 
 let unlistenDeepLink: (() => void) | null = null;
@@ -50,6 +52,9 @@ onMounted(async () => {
 
   // Initialize task center
   await taskStore.init();
+
+  // Initialize log center
+  await logStore.init();
 
   // Deep Link listener
   try {

@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { 
-  User, Trash2, Plus, UserPlus, Loader2, WifiOff, Globe, MonitorCheck
+  User, Trash2, Plus, UserPlus, Loader2, WifiOff, Globe, MonitorCheck, AlertCircle
 } from "@lucide/vue";
 import { DialogContent, DialogTitle } from "../components/ui/dialog";
 import { useRouter, useRoute } from "vue-router";
@@ -775,7 +775,7 @@ watch(
     </DialogContent>
 
     <!-- Delete Confirmation Dialog -->
-    <AlertDialog :open="showDeleteDialog" @update:open="showDeleteDialog = $event" class="max-w-sm p-4">
+    <AlertDialog :open="showDeleteDialog" @update:open="showDeleteDialog = $event">
       <div class="flex items-center gap-3 mb-4">
         <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
           <AlertCircle :size="20" class="text-red-600 dark:text-red-400" />

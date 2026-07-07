@@ -155,7 +155,10 @@ impl ExecutableTask for InstallModpackTask {
                 let temp = temp_dir.clone();
                 extract_zip(zip, temp)
                     .await
-                    .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+                    .map_err(|e| {
+                        tracing::error!(target: "frontend", "Failed to extract modpack zip: {}", e);
+                        TaskError::ExecutionError(e.to_string())
+                    })?;
 
                 ctx_extract
                     .update_progress(100, 100, "Extract complete")
@@ -170,7 +173,10 @@ impl ExecutableTask for InstallModpackTask {
 
                 let modpack = parse_modpack_manifest(&temp_dir)
                     .await
-                    .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+                    .map_err(|e| {
+                        tracing::error!(target: "frontend", "Failed to parse modpack manifest: {}", e);
+                        TaskError::ExecutionError(e.to_string())
+                    })?;
 
                 let modpack_type_str = match &modpack {
                     ModpackType::CurseForge(_) => "CurseForge",

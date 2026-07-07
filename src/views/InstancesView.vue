@@ -3,7 +3,7 @@ import { ref, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
-import { Gamepad2, Plus, Package, Trash2, Share2, Check } from "@lucide/vue";
+import { Gamepad2, Plus, Package, Trash2, Share2, Check, Loader2 } from "@lucide/vue";
 import { getErrorMessage } from "../utils/error";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { useInstances } from "../composables/useInstances";

@@ -6,7 +6,8 @@
     "confirm": "Confirm",
     "select": "Please select...",
     "back": "Back",
-    "saveSuccess": "Save successful"
+    "saveSuccess": "Save successful",
+    "save": "Save"
   },
   "sidebar": {
     "home": "Home",
@@ -57,6 +58,8 @@
     "resourcepacks": "Resource Packs",
     "folder": "Folder",
     "folderSizeSkipped": "Directory size calculation is skipped for performance.",
+    "searchCustomShaders": "Search custom shaders...",
+    "searchCustomResourcepacks": "Search custom resource packs...",
     "customModGroup": "Mod Groups",
     "customShaders": "Shaders",
     "customResourcepacks": "Resource Packs",
@@ -153,6 +156,9 @@
   },
   "servers": {
     "title": "Servers",
+    "refreshList": "Refresh List",
+    "favorite": "Favorite",
+    "pinging": "Pinging...",
     "available": "{count} server available | {count} servers available",
     "publish": "Publish Server",
     "searchPlaceholder": "Search servers...",
@@ -182,7 +188,8 @@
     "offline": "Offline",
     "filters": {
       "allTypes": "All Types",
-      "allAuth": "All Auth"
+      "allAuth": "All Auth",
+      "favorites": "Favorites"
     },
     "types": {
       "vanilla": "Vanilla",
@@ -343,7 +350,15 @@
     "tabs": {
       "general": "General",
       "java": "Java",
+      "logs": "Log Center",
       "about": "About"
+    },
+    "logs": {
+      "desc": "View and filter logs generated during the application runtime.",
+      "search": "Search log content or task ID...",
+      "allLevels": "All Levels",
+      "clear": "Clear Logs",
+      "noLogs": "No matching logs found"
     },
     "general": {
       "memoryTitle": "Default Memory Settings",
@@ -618,7 +633,7 @@
     "copied": "Copied!",
     "close": "Close",
     "ai": {
-      "resultTitle": "AI Crash Analysis Result",
+      "resultTitle": "AI Smart Analysis Result",
       "cause": "Cause Analysis",
       "solution": "Solution",
       "error": "AI Analysis Failed",
@@ -657,6 +672,7 @@
     "uploadLocal": "Local Upload",
     "searchBtn": "Search",
     "searchHint": "Enter keywords to search for modpacks",
+    "defaultInstanceName": "Default Instance Name",
     "instanceNamePrefix": "Instance name to create",
     "packVersion": "Modpack Version",
     "gameVersion": "Game Version",
@@ -687,6 +703,9 @@
     "noSubTasks": "No detailed sub-tasks",
     "installing": "Installing...",
     "cancel": "Cancel",
+    "actions": {
+      "retryTask": "Retry Task"
+    },
     "sub": {
       "resolve_loader": "Fetch installer",
       "download_loader_libs": "Download loader libraries",

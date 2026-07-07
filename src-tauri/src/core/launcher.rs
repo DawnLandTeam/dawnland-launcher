@@ -2418,6 +2418,7 @@ pub async fn launch_instance(
     let version_id_clone = version_id.clone();
     let window_clone = window.clone();
     let game_dir_clone = game_dir.clone();
+    let start_time = std::time::SystemTime::now();
 
     tokio::spawn(async move {
         // Wait for process to exit
@@ -2433,8 +2434,10 @@ pub async fn launch_instance(
 
                 // Notify frontend game has exited with exit code
                 let mut crash_report_content: Option<String> = None;
-                if exit_code != 0 {
-                    crash_report_content = crate::core::ai::get_latest_crash_report(&game_dir_clone).await;
+                let (report_content, is_real_crash) = crate::core::ai::get_latest_crash_report(&game_dir_clone, start_time).await;
+                
+                if exit_code != 0 || is_real_crash {
+                    crash_report_content = report_content;
                 }
 
                 let _ = app_handle_clone.emit(

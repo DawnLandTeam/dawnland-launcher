@@ -133,7 +133,10 @@ where
     };
     let response = match req_clone.send().await {
         Ok(resp) => resp,
-        Err(e) => return Err(format!("Request failed: {}", e)),
+        Err(e) => {
+            tracing::error!(target: "frontend", "Failed to connect to {}: {}", task.url, e);
+            return Err(format!("Request failed: {}", e))
+        },
     };
 
     let mut response = if !response.status().is_success() {
@@ -151,10 +154,12 @@ where
                 }
             }
             if !fallback_success {
+                tracing::error!(target: "frontend", "HTTP Error for {}: {} (Fallbacks failed)", task.url, fallback_resp.status());
                 return Err(format!("HTTP error: {} (Fallbacks failed)", fallback_resp.status()));
             }
             fallback_resp
         } else {
+            tracing::error!(target: "frontend", "HTTP Error for {}: {}", task.url, response.status());
             return Err(format!("HTTP error: {}", response.status()));
         }
     } else {

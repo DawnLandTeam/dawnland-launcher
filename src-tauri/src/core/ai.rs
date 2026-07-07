@@ -317,36 +317,24 @@ pub async fn start_llama_engine(model_name: &str) -> Result<u16, String> {
     }
 
 /// Helper to get the latest crash report from a game directory
-pub async fn get_latest_crash_report(game_dir: &Path) -> Option<String> {
+pub async fn get_latest_crash_report(game_dir: &Path, since: std::time::SystemTime) -> (Option<String>, bool) {
     let crash_dir = game_dir.join("crash-reports");
-    if !crash_dir.exists() {
-        // Fallback to latest.log if no crash report exists
-        let log_path = game_dir.join("logs").join("latest.log");
-        if log_path.exists() {
-            if let Ok(content) = fs::read_to_string(&log_path).await {
-                // Return only the last 150 lines to avoid massive context
-                let lines: Vec<&str> = content.lines().collect();
-                let start = if lines.len() > 150 { lines.len() - 150 } else { 0 };
-                return Some(lines[start..].join("\n"));
-            }
-        }
-        return None;
-    }
-
     let mut latest_file: Option<(PathBuf, std::time::SystemTime)> = None;
     
-    if let Ok(mut entries) = fs::read_dir(&crash_dir).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|e| e == "txt") {
-                if let Ok(metadata) = entry.metadata().await {
-                    if let Ok(modified) = metadata.modified() {
-                        if let Some((_, latest_time)) = latest_file.clone() {
-                            if modified > latest_time {
+    if crash_dir.exists() {
+        if let Ok(mut entries) = fs::read_dir(&crash_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|e| e == "txt") {
+                    if let Ok(metadata) = entry.metadata().await {
+                        if let Ok(modified) = metadata.modified() {
+                            if let Some((_, latest_time)) = latest_file.clone() {
+                                if modified > latest_time {
+                                    latest_file = Some((path, modified));
+                                }
+                            } else {
                                 latest_file = Some((path, modified));
                             }
-                        } else {
-                            latest_file = Some((path, modified));
                         }
                     }
                 }
@@ -354,11 +342,24 @@ pub async fn get_latest_crash_report(game_dir: &Path) -> Option<String> {
         }
     }
 
-    if let Some((path, _)) = latest_file {
-        fs::read_to_string(path).await.ok()
-    } else {
-        None
+    if let Some((path, modified)) = latest_file {
+        if modified >= since {
+            return (fs::read_to_string(path).await.ok(), true);
+        }
     }
+
+    // Fallback to latest.log if no recent crash report exists
+    let log_path = game_dir.join("logs").join("latest.log");
+    if log_path.exists() {
+        if let Ok(content) = fs::read_to_string(&log_path).await {
+            // Return only the last 150 lines to avoid massive context
+            let lines: Vec<&str> = content.lines().collect();
+            let start = if lines.len() > 150 { lines.len() - 150 } else { 0 };
+            return (Some(lines[start..].join("\n")), false);
+        }
+    }
+
+    (None, false)
 }
 
 #[derive(Deserialize, Debug)]
@@ -446,7 +447,7 @@ fn denoise_crash_log(log: &str) -> String {
 }
 
 #[tauri::command]
-pub async fn analyze_crash(crash_log: String, language: Option<String>) -> Result<String, AppError> {
+pub async fn analyze_crash(crash_log: String, language: Option<String>, context_type: Option<String>) -> Result<String, AppError> {
     let settings = get_launcher_settings_sync();
     let ai_config = settings.ai_config;
     
@@ -479,21 +480,46 @@ pub async fn analyze_crash(crash_log: String, language: Option<String>) -> Resul
         None => "English", // Default
     };
     
+    let (role_prompt, rules_prompt) = match context_type.as_deref() {
+        Some("task") => {
+            (
+                "You are an expert software diagnostic analyzer.\n\
+                You must diagnose why a launcher background task (e.g. downloading, extracting, installing) failed based on the provided error logs.",
+                "RULES FOR 'actions' ARRAY (This is a JSON array of objects):\n\
+                - If the failure seems temporary (e.g. network timeout or file lock), provide a retry action. Example: [{{ \"type\": \"retry-task\", \"payload\": \"\" }}]\n\
+                - If the issue is related to Java configuration, you can provide a goto action. Example: [{{ \"type\": \"goto\", \"payload\": \"settings-java\" }}]\n\
+                - If no specific action is needed, return an empty array: []"
+            )
+        },
+        _ => { // "crash" or None
+            (
+                "You are an expert Minecraft crash log analyzer.\n\
+                You must diagnose why the game crashed based on the provided crash logs.",
+                "RULES FOR 'actions' ARRAY (This is a JSON array of objects):\n\
+                - If a mod is missing, you MUST provide a search action. Example: [{{ \"type\": \"search-mod\", \"payload\": \"example_mod_name\" }}]\n\
+                - If there is a Java version mismatch, you MUST provide a goto action. Example: [{{ \"type\": \"goto\", \"payload\": \"settings-java\" }}]\n\
+                - If no specific action is needed, return an empty array: []"
+            )
+        }
+    };
+
     let system_prompt = format!(
-        "You are an expert Minecraft crash log analyzer.\n\
-        CRITICAL REQUIREMENT: You MUST reply entirely in {0}. The cause and solution fields MUST be written in {0}!\n\n\
+        "{}\n\
+        CRITICAL REQUIREMENT: You MUST reply entirely in {}. The cause and solution fields MUST be written in {}!\n\n\
         You MUST return your analysis strictly in the following JSON format, and NOTHING ELSE:\n\
         {{\n\
-            \"cause\": \"Brief explanation of the cause in {0}\",\n\
-            \"solution\": \"Proposed solution in {0}\",\n\
+            \"cause\": \"Brief explanation of the cause in {}\",\n\
+            \"solution\": \"Proposed solution in {}\",\n\
             \"actions\": []\n\
         }}\n\n\
-        RULES FOR 'actions' ARRAY (This is a JSON array of objects):\n\
-        - If a mod is missing, you MUST provide a search action. Example: [{{ \"type\": \"search-mod\", \"payload\": \"example_mod_name\" }}]\n\
-        - If there is a Java version mismatch, you MUST provide a goto action. Example: [{{ \"type\": \"goto\", \"payload\": \"settings-java\" }}]\n\
-        - If no specific action is needed, return an empty array: []\n\n\
+        {}\n\n\
         Do NOT wrap the JSON in Markdown code blocks. Output pure JSON only.",
-        lang_str
+        role_prompt,
+        lang_str,
+        lang_str,
+        lang_str,
+        lang_str,
+        rules_prompt
     );
     
     let mut final_log = denoise_crash_log(&crash_log);

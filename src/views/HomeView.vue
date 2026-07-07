@@ -239,8 +239,8 @@ onMounted(async () => {
       const wasIntentionallyKilled = intentionallyKilledInstances.value.has(versionId);
       intentionallyKilledInstances.value.delete(versionId);
 
-      // Show crash alert if exit code is non-zero and it wasn't intentionally killed
-      if (exitCode !== 0 && !wasIntentionallyKilled) {
+      // Show crash alert if exit code is non-zero or there's a fresh crash report, and it wasn't intentionally killed
+      if ((exitCode !== 0 || crashReport) && !wasIntentionallyKilled) {
         crashVersionId.value = versionId;
         crashExitCode.value = exitCode ?? -1;
         crashIsOpenJ9.value = !!isOpenJ9;
