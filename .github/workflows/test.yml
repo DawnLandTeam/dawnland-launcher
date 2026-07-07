@@ -44,16 +44,13 @@ jobs:
       
           Write-Host "=== Rust toolchain bootstrap: end ==="
 
-      - name: Configure persistent Cargo target dir
-        run: echo "CARGO_TARGET_DIR=$HOME/.cache/cargo-target" >> $GITHUB_ENV
-      
       - name: Cache Cargo registry, git and target
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ env.CARGO_TARGET_DIR }}
+            src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/src-tauri/Cargo.lock','**/src-tauri/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
