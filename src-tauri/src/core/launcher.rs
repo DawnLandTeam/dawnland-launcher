@@ -1706,10 +1706,10 @@ pub async fn launch_instance(
                 tracing::info!("Successfully refreshed Microsoft token");
             }
             Err(e) => {
-                tracing::warn!("Failed to refresh Microsoft token: {}. Will try launching with existing token.", e.message);
                 if e.code == "MICROSOFT_REAUTH_REQUIRED" {
-                    return Err(DawnlandError::Unknown("Your Microsoft login session has expired. Please log out and log in again.".to_string()).into());
+                    return Err(e); // Let UI handle this specific error variant
                 }
+                tracing::warn!("Failed to refresh Microsoft token: {}. Will try launching with existing token.", e.message);
             }
         }
     }

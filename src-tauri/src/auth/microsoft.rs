@@ -686,14 +686,29 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppErr
     if let Some(error) = &refresh_resp.error {
         let error_desc = refresh_resp.error_description.clone().unwrap_or_default();
 
-        // Any error from Microsoft's token endpoint means the refresh failed at the OAuth level.
-        // It's safer to prompt for re-authentication than to try launching with an expired token.
-        tracing::info!(
-            "Microsoft token refresh failed ({}): {}. User needs to re-authenticate.",
-            error,
-            error_desc
-        );
-        return Err(DawnlandError::MicrosoftReauthRequired.into());
+        // Only treat specific OAuth error codes as requiring re-authentication.
+        // Other errors (like transient server errors) should not invalidate the session.
+        let is_auth_error = error == "invalid_grant"
+            || error == "invalid_client"
+            || error == "invalid_request"
+            || error == "unauthorized_client"
+            || error == "refresh_token_expired";
+
+        if is_auth_error {
+            tracing::info!(
+                "Microsoft token has expired or is invalid ({}): {}. User needs to re-authenticate.",
+                error,
+                error_desc
+            );
+            return Err(DawnlandError::MicrosoftReauthRequired.into());
+        }
+
+        tracing::error!("Token refresh failed: {} - {}", error, error_desc);
+        return Err(DawnlandError::Unknown(format!(
+            "Token refresh error: {} - {}",
+            error, error_desc
+        ))
+        .into());
     }
 
     let new_ms_token = refresh_resp
