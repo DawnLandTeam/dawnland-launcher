@@ -517,7 +517,7 @@ async function handleLaunchError(e: any) {
     showAuthlibReauth.value = true;
   } else {
     const errorStr = getErrorMessage(e);
-    if (errorStr.includes("login session has expired") || errorStr.includes("REAUTH_REQUIRED")) {
+    if (errorObj?.code === "MICROSOFT_REAUTH_REQUIRED" || errorStr.includes("login session has expired") || errorStr.includes("REAUTH_REQUIRED")) {
       const confirmed = await confirm(
         t('home.sessionExpiredConfirm'),
         { title: t('home.sessionExpiredConfirmTitle'), kind: "warning" }
