@@ -20,6 +20,8 @@ pub enum DawnlandError {
     Md5Mismatch,
     #[error("AUTHLIB_REAUTH_REQUIRED")]
     AuthlibReauthRequired,
+    #[error("MICROSOFT_REAUTH_REQUIRED")]
+    MicrosoftReauthRequired,
     #[error("{0}")]
     Unknown(String),
 }
@@ -52,6 +54,7 @@ impl From<DawnlandError> for AppError {
             DawnlandError::NoCompatibleJava { .. } => "NO_COMPATIBLE_JAVA",
             DawnlandError::Md5Mismatch => "MD5_MISMATCH",
             DawnlandError::AuthlibReauthRequired => "AUTHLIB_REAUTH_REQUIRED",
+            DawnlandError::MicrosoftReauthRequired => "MICROSOFT_REAUTH_REQUIRED",
             DawnlandError::Unknown(_) => "UNKNOWN_ERROR",
         };
 
