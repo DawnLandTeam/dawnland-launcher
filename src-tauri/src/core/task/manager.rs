@@ -15,6 +15,7 @@ pub struct TaskContext {
     pub manager: TaskManager,
     state: Arc<RwLock<TaskState>>,
     pub sub_task_key: Option<String>,
+    last_emit_time: Arc<RwLock<tokio::time::Instant>>,
 }
 
 impl TaskContext {
@@ -28,6 +29,7 @@ impl TaskContext {
         let mut state = self.state.write().await;
         state.progress.sub_tasks = tasks;
         state.updated_at = chrono::Utc::now().timestamp();
+        *self.last_emit_time.write().await = tokio::time::Instant::now();
         self.manager.emit_state(&state).await;
     }
 
@@ -39,6 +41,7 @@ impl TaskContext {
             }
         }
         state.updated_at = chrono::Utc::now().timestamp();
+        *self.last_emit_time.write().await = tokio::time::Instant::now();
         self.manager.emit_state(&state).await;
     }
 
@@ -83,7 +86,20 @@ impl TaskContext {
         }
 
         state.updated_at = chrono::Utc::now().timestamp();
-        self.manager.emit_state(&state).await;
+        
+        let mut should_emit = false;
+        let now = tokio::time::Instant::now();
+        {
+            let mut last_emit = self.last_emit_time.write().await;
+            if current == total || now.duration_since(*last_emit).as_millis() >= 200 {
+                should_emit = true;
+                *last_emit = now;
+            }
+        }
+
+        if should_emit {
+            self.manager.emit_state(&state).await;
+        }
     }
 
     pub async fn update_download_metrics(&self, speed: u64, remaining_files: u32) {
@@ -91,13 +107,27 @@ impl TaskContext {
         state.progress.speed = speed;
         state.progress.remaining_files = remaining_files;
         state.updated_at = chrono::Utc::now().timestamp();
-        self.manager.emit_state(&state).await;
+        
+        let mut should_emit = false;
+        let now = tokio::time::Instant::now();
+        {
+            let mut last_emit = self.last_emit_time.write().await;
+            if remaining_files == 0 || now.duration_since(*last_emit).as_millis() >= 200 {
+                should_emit = true;
+                *last_emit = now;
+            }
+        }
+
+        if should_emit {
+            self.manager.emit_state(&state).await;
+        }
     }
 
     pub async fn set_total_steps(&self, total_steps: u32) {
         let mut state = self.state.write().await;
         state.progress.total_steps = total_steps;
         state.updated_at = chrono::Utc::now().timestamp();
+        *self.last_emit_time.write().await = tokio::time::Instant::now();
         self.manager.emit_state(&state).await;
     }
 
@@ -109,6 +139,7 @@ impl TaskContext {
         state.progress.current = 0;
         state.progress.detail = detail.to_string();
         state.updated_at = chrono::Utc::now().timestamp();
+        *self.last_emit_time.write().await = tokio::time::Instant::now();
         self.manager.emit_state(&state).await;
     }
 
@@ -119,6 +150,7 @@ impl TaskContext {
         state.progress.current = 0;
         state.progress.detail = detail.to_string();
         state.updated_at = chrono::Utc::now().timestamp();
+        *self.last_emit_time.write().await = tokio::time::Instant::now();
         self.manager.emit_state(&state).await;
     }
 
@@ -144,6 +176,7 @@ impl TaskContext {
         if let Ok(val) = serde_json::to_value(data) {
             state.context_data = Some(val);
         }
+        *self.last_emit_time.write().await = tokio::time::Instant::now();
         self.manager.emit_state(&state).await;
     }
 }
@@ -297,6 +330,7 @@ impl TaskManager {
             manager: manager.clone(),
             state: state_arc.clone(),
             sub_task_key: None,
+            last_emit_time: Arc::new(RwLock::new(tokio::time::Instant::now())),
         };
 
         use tracing::Instrument;
