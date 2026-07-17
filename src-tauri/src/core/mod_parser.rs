@@ -11,6 +11,8 @@ pub struct ModMetadata {
     pub name: Option<String>,
     pub version: Option<String>,
     pub has_icon: bool,
+    /// Declared dependencies (mod ids). Used by prelaunch checks.
+    pub depends: Vec<String>,
 }
 
 pub struct ModParser {
@@ -105,6 +107,7 @@ impl ModParser {
                                     name: row.get(2).ok(),
                                     version: row.get(3).ok(),
                                     has_icon: row.get::<_, i32>(4).unwrap_or(0) == 1,
+                                    depends: Vec::new(),
                                 },
                             );
                         }
@@ -140,6 +143,7 @@ impl ModParser {
             name: None,
             version: None,
             has_icon: false,
+            depends: Vec::new(),
         };
 
         let file = match File::open(file_path) {
@@ -188,6 +192,11 @@ impl ModParser {
                     .get("version")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+
+                // Extract dependencies (fabric.mod.json "depends" is an object keyed by mod id)
+                if let Some(depends) = json.get("depends").and_then(|v| v.as_object()) {
+                    meta.depends = depends.keys().cloned().collect();
+                }
 
                 if let Some(icon_path) = json.get("icon").and_then(|v| v.as_str()) {
                     let icon_path = icon_path.trim_start_matches('/');
@@ -244,6 +253,29 @@ impl ModParser {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
 
+                    // Extract dependencies from [[dependencies.<modid>]] entries.
+                    // Forge uses mandatory=true; NeoForge uses type="required".
+                    if let Some(deps) = toml_val.get("dependencies").and_then(|d| d.as_table()) {
+                        for (_, dep_list) in deps {
+                            if let Some(arr) = dep_list.as_array() {
+                                for dep in arr {
+                                    let is_required = dep.get("mandatory")
+                                        .and_then(|m| m.as_bool())
+                                        .unwrap_or_else(|| {
+                                            dep.get("type")
+                                                .and_then(|t| t.as_str())
+                                                .is_none_or(|t| t == "required")
+                                        });
+                                    if is_required {
+                                        if let Some(dep_id) = dep.get("modId").and_then(|m| m.as_str()) {
+                                            meta.depends.push(dep_id.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(logo_path) = mods.get("logoFile").and_then(|v| v.as_str()) {
                         let logo_path = logo_path.trim_start_matches('/');
                         let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
@@ -283,6 +315,7 @@ mod tests {
             name: Some("Test Mod".to_string()),
             version: Some("1.0.0".to_string()),
             has_icon: true,
+            depends: vec![],
         };
 
         parser.set_cache_entry("hash123", &meta);

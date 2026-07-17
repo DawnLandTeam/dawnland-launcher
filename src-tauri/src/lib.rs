@@ -195,6 +195,7 @@ pub fn run() {
                 .join(".dawnland");
             std::fs::create_dir_all(&app_dir).unwrap_or_default();
             let db_path = app_dir.join("tasks.db");
+            let crash_db_path = app_dir.join("crash_history.db");
 
             tauri::async_runtime::block_on(async move {
                 match core::task::db::TaskDatabase::new(db_path).await {
@@ -206,6 +207,15 @@ pub fn run() {
                     }
                     Err(e) => {
                         tracing::error!("Failed to initialize task database: {}", e);
+                    }
+                }
+
+                match core::crash_history::CrashHistoryDb::new(crash_db_path).await {
+                    Ok(crash_db) => {
+                        app_handle.manage(crash_db);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to initialize crash history database: {}", e);
                     }
                 }
             });
@@ -336,6 +346,8 @@ pub fn run() {
             core::manager::delete_local_datapack,
             core::manager::get_installed_mods,
             core::manager::toggle_mod_status,
+            core::manager::disable_mod_by_name,
+            core::manager::prelaunch_check,
             core::manager::delete_local_mod,
             core::manager::get_installed_resourcepacks,
             core::manager::delete_local_resourcepack,
@@ -423,6 +435,11 @@ pub fn run() {
             core::ai::download_engine,
             core::ai::fetch_remote_models,
             core::ai::analyze_crash,
+            // Crash History commands
+            core::crash_history::save_crash_history,
+            core::crash_history::get_crash_history,
+            core::crash_history::delete_crash_history,
+            core::crash_history::clear_crash_history,
             // Custom Analytics Command
             commands::app_track_event,
         ])

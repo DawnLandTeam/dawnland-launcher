@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod crash_history;
 pub mod curseforge;
 pub mod fabric;
 pub mod forge;

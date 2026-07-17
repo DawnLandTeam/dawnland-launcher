@@ -1294,6 +1294,151 @@ pub async fn toggle_mod_status(
     Ok(())
 }
 
+/// Disable all enabled mods whose name/id/filename fuzzy-matches the given mod_name.
+/// Returns the display names of disabled mods. Used by the AI crash analysis one-click fix.
+#[tauri::command]
+pub async fn disable_mod_by_name(
+    version_id: String,
+    mod_name: String,
+) -> Result<Vec<String>, String> {
+    tracing::info!("Disabling mods matching '{}' in instance {}", mod_name, version_id);
+
+    let mods = get_installed_mods(version_id.clone(), None).await?;
+    let needle = mod_name.to_lowercase();
+    let mut disabled = Vec::new();
+
+    for m in &mods {
+        if !m.enabled {
+            continue;
+        }
+
+        let name_match = m.name.as_ref().is_some_and(|n| n.to_lowercase().contains(&needle));
+        let id_match = m.mod_id.as_ref().is_some_and(|i| i.to_lowercase().contains(&needle));
+        let file_match = m.filename.to_lowercase().contains(&needle);
+
+        if name_match || id_match || file_match {
+            match toggle_mod_status(version_id.clone(), m.filename.clone(), false).await {
+                Ok(_) => {
+                    let mod_display = m.name.clone().unwrap_or_else(|| m.filename.clone());
+                    tracing::info!("Disabled mod '{}' (matched '{}')", mod_display, mod_name);
+                    disabled.push(mod_display);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to disable mod '{}': {}", m.filename, e);
+                }
+            }
+        }
+    }
+
+    if disabled.is_empty() {
+        return Err(format!(
+            "No enabled mod matching '{}' was found in instance {}",
+            mod_name, version_id
+        ));
+    }
+
+    Ok(disabled)
+}
+
+/// A single warning from a prelaunch mod dependency check.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrelaunchWarning {
+    pub kind: String,
+    pub dependency_id: String,
+    pub required_by: String,
+}
+
+/// Result of a prelaunch check: list of warnings and total mod count.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrelaunchCheckResult {
+    pub warnings: Vec<PrelaunchWarning>,
+    pub mod_count: usize,
+}
+
+/// Scan installed mods and detect missing dependencies before launching.
+#[tauri::command]
+pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult, String> {
+    tracing::info!("Running prelaunch check for instance: {}", version_id);
+
+    let base_dir = get_minecraft_base();
+    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
+
+    if !mods_dir.exists() {
+        return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: 0 });
+    }
+
+    // Collect enabled .jar file paths based on installed mod metadata
+    let installed_mods = get_installed_mods(version_id.clone(), Some(true))
+        .await
+        .map_err(|e| format!("Failed to get installed mods: {}", e))?;
+
+    let mut jar_entries = Vec::new();
+    for mod_entry in installed_mods.into_iter().filter(|m| m.enabled) {
+        jar_entries.push((mod_entry.filename.clone(), mods_dir.join(&mod_entry.filename)));
+    }
+
+    if jar_entries.is_empty() {
+        return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: 0 });
+    }
+
+    // Parse all mod metadata in a blocking thread (parse_mod uses sync IO)
+    let base_dir_for_parser = base_dir.clone();
+    let metas = tokio::task::spawn_blocking(move || {
+        let parser = crate::core::mod_parser::ModParser::new(&base_dir_for_parser);
+        jar_entries.iter().map(|(filename, path)| {
+            let cache_key = format!("{}_prelaunch", filename);
+            parser.parse_mod(path, &cache_key)
+        }).collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| format!("Blocking task failed: {}", e))?;
+
+    // Collect installed mod ids (lowercase for case-insensitive matching)
+    let mut installed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for meta in &metas {
+        if let Some(ref id) = meta.mod_id {
+            installed_ids.insert(id.to_lowercase());
+        }
+    }
+
+    // Platform-level dependencies that are always present
+    const PLATFORM_DEPS: &[&str] = &[
+        "minecraft", "java", "fabricloader", "quilt_loader", "quiltloader",
+        "forge", "neoforge", "minecraftforge",
+    ];
+
+    let mut warnings = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for meta in &metas {
+        let display_name = meta.name.clone()
+            .or_else(|| meta.mod_id.clone())
+            .unwrap_or_default();
+
+        for dep in &meta.depends {
+            let dep_lower = dep.to_lowercase();
+            if PLATFORM_DEPS.contains(&dep_lower.as_str()) {
+                continue;
+            }
+            if !installed_ids.contains(&dep_lower) {
+                let key = format!("{}|{}", dep_lower, display_name);
+                if seen.insert(key) {
+                    warnings.push(PrelaunchWarning {
+                        kind: "missing_dependency".to_string(),
+                        dependency_id: dep.clone(),
+                        required_by: display_name.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    tracing::info!("Prelaunch check: {} mods, {} warnings", metas.len(), warnings.len());
+    Ok(PrelaunchCheckResult { warnings, mod_count: metas.len() })
+}
+
 /// Delete a local mod file
 #[tauri::command]
 pub async fn delete_local_mod(
