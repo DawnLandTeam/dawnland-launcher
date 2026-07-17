@@ -8,7 +8,7 @@ export default {
 import { ref, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { Settings, Puzzle, Package, Box, Globe, Sparkles, FolderArchive, ArrowLeft, RefreshCw, Share2, Trash2, Check } from "@lucide/vue";
+import { Settings, Puzzle, Package, Box, Globe, Sparkles, FolderArchive, ArrowLeft, RefreshCw, Share2, Trash2, Check, AlertTriangle } from "@lucide/vue";
 import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
 import DButton from "../components/ui/DButton.vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from '../components/ui/alert-dialog';
@@ -28,6 +28,7 @@ import InstanceModGroupTab from "../components/instances/InstanceModGroupTab.vue
 import InstanceCustomShadersTab from "../components/instances/InstanceCustomShadersTab.vue";
 import InstanceCustomResourcepacksTab from "../components/instances/InstanceCustomResourcepacksTab.vue";
 import ModpackInstallTab from "../components/downloads/ModpackInstallTab.vue";
+import CrashHistoryPanel from "../components/CrashHistoryPanel.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -48,6 +49,7 @@ const tabs = [
   { id: 'mod_group', name: 'instances.customModGroup', icon: FolderArchive, group: 'downloadsCenter.groups.custom' },
   { id: 'custom_shaders', name: 'instances.customShaders', icon: Sparkles, group: 'downloadsCenter.groups.custom' },
   { id: 'custom_resourcepacks', name: 'instances.customResourcepacks', icon: Box, group: 'downloadsCenter.groups.custom' },
+  { id: 'crash_history', name: 'instances.crashHistory', icon: AlertTriangle },
 ];
 
 const copiedShareInstanceId = ref<string | null>(null);
@@ -125,7 +127,7 @@ const translatedTabs = computed(() => {
   if (currentInstance.value?.modpackType) {
     additionalTabs.push({
       id: 'update_modpack',
-      name: t('install.updateModpackTitle', 'Update Modpack'),
+      name: t('install.updateModpackTitle'),
       icon: RefreshCw,
       action: () => { activeTab.value = 'update_modpack'; },
       disabled: currentInstance.value?.isInstalling || currentInstance.value?.isUpdating
@@ -133,7 +135,7 @@ const translatedTabs = computed(() => {
     
     additionalTabs.push({
       id: 'share_modpack',
-      name: t('instances.shareModpack', 'Share Modpack'),
+      name: t('instances.shareModpack'),
       icon: copiedShareInstanceId.value === currentInstance.value.id ? Check : Share2,
       action: shareModpack,
       disabled: currentInstance.value?.isInstalling || currentInstance.value?.isUpdating
@@ -142,7 +144,7 @@ const translatedTabs = computed(() => {
   
   additionalTabs.push({
     id: 'delete_instance',
-    name: t('instances.delete', 'Delete'),
+    name: t('instances.delete'),
     icon: Trash2,
     action: confirmDeleteInstance,
     disabled: currentInstance.value?.isInstalling || currentInstance.value?.isUpdating
@@ -190,7 +192,7 @@ watch(instanceId, async (newId) => {
             class="flex items-center gap-2 rounded-xl bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md px-4 py-3 text-sm font-medium hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-colors shadow-sm border border-neutral-200/50 dark:border-zinc-800/50 w-56 text-left justify-start text-neutral-600 dark:text-neutral-400"
         >
           <ArrowLeft class="h-4 w-4 shrink-0" />
-          {{ t('common.back', '返回') }}
+          {{ t('common.back') }}
         </button>
         
         <div class="flex-1 min-h-0 overflow-y-auto">
@@ -214,6 +216,7 @@ watch(instanceId, async (newId) => {
           <InstanceModGroupTab v-else-if="activeTab === 'mod_group'" :instance-id="instanceId" />
           <InstanceCustomShadersTab v-else-if="activeTab === 'custom_shaders'" :instance-id="instanceId" />
           <InstanceCustomResourcepacksTab v-else-if="activeTab === 'custom_resourcepacks'" :instance-id="instanceId" />
+          <CrashHistoryPanel v-else-if="activeTab === 'crash_history'" :instance-id="instanceId" />
           <ModpackInstallTab 
             v-else-if="activeTab === 'update_modpack'"
             :is-modal-update="true"
@@ -243,12 +246,12 @@ watch(instanceId, async (newId) => {
           </AlertDialogDescription>
           
           <div class="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 mt-4">
-            <DButton variant="outline" @click="showDeleteDialog = false">{{ $t('common.cancel', '取消') }}</DButton>
+            <DButton variant="outline" @click="showDeleteDialog = false">{{ $t('common.cancel') }}</DButton>
             <DButton variant="danger" @click="deleteInstance" :disabled="isDeletingInstance">
                <template v-if="isDeletingInstance">
                  <div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2"></div>
                </template>
-               {{ $t('instances.delete', '删除') }}
+               {{ $t('instances.delete') }}
             </DButton>
           </div>
         </div>

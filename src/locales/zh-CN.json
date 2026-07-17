@@ -1,5 +1,6 @@
 {
   "common": {
+    "delete": "删除",
     "search": "搜索",
     "searchPlaceholder": "搜索...",
     "cancel": "取消",
@@ -17,6 +18,10 @@
     "settings": "设置"
   },
   "home": {
+    "prelaunchWarningTitle": "启动前检测到问题",
+    "prelaunchWarningDesc": "以下模组可能缺少前置依赖，继续启动可能导致崩溃。",
+    "requiredBy": "需要于",
+    "launchAnyway": "仍要启动",
     "welcome": "欢迎来到 Dawnland",
     "noInstances": "安装你的第一个 Minecraft 实例以开始游戏。",
     "installInstance": "安装实例",
@@ -152,7 +157,8 @@
       "deleteDescSuffix": " 吗？这将永久移除该实例的所有数据，包括存档、模组和资源包。",
       "deleteUndone": "此操作不可撤销。",
       "deleteWarning": "该实例存在游戏数据，删除后将彻底丢失！"
-    }
+    },
+    "crashHistory": "崩溃历史"
   },
   "servers": {
     "title": "服务器",
@@ -410,15 +416,21 @@
       "modelHub": "模型下载中心",
       "deepseekHint": "(深度思考)",
       "qwenHint": "(更精确)",
+      "qwen14bHint": "(最强分析)",
       "download": "下载",
       "installed": "已安装",
       "downloading": "下载中...",
       "testingApi": "测试中...",
       "testApi": "测试 API 并获取模型列表",
-      "selectModel": "选择模型 (或手动输入)",
+      "selectModel": "选择模型 (or 手动输入)",
       "modelPlaceholder": "如 gpt-3.5-turbo",
       "testSuccess": "测试成功！共获取到 {count} 个模型。",
-      "testFailed": "API 测试失败：{error}"
+      "testFailed": "API 测试失败：{error}",
+      "systemMemoryInfo": "系统内存",
+      "recommendedForSystem": "推荐",
+      "memoryTight": "内存偏紧",
+      "memoryInsufficient": "内存不足",
+      "minRamRequired": "需要至少"
     },
     "authlib": {
       "tab": "外置登录",
@@ -635,10 +647,9 @@
     "keepBoth": "保留两者"
   },
   "crash": {
-    "title": "游戏崩溃",
     "warning": "游戏意外崩溃",
     "exitCode": "退出代码",
-    "viewLog": "查看日志",
+    "viewLog": "查看崩溃日志",
     "copy": "复制",
     "copyLogs": "复制日志",
     "copied": "已复制！",
@@ -657,6 +668,13 @@
       "searchMod": "搜索模组: {mod}",
       "gotoJava": "前往 Java 设置",
       "gotoMods": "前往模组管理"
+    },
+    "history": {
+      "empty": "暂无崩溃历史",
+      "emptyDesc": "崩溃记录将在游戏异常退出时自动保存",
+      "clearAll": "清空全部",
+      "deleted": "已删除",
+      "cleared": "已清空"
     }
   },
   "updater": {
@@ -693,6 +711,9 @@
     "installBtn": "安装"
   },
   "task": {
+    "actions": {
+      "retryTask": "重试任务 (Retry Task)"
+    },
     "installVanilla": "安装原版 {version}",
     "installLoader": "安装 {loader} (适用于 {version})",
     "installModpack": "安装整合包 {name}",

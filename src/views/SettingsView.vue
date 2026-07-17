@@ -212,7 +212,7 @@ async function saveLauncherSettings() {
     });
   } catch (e) {
     console.error('Failed to save launcher settings:', e);
-    toast.error(t('settings.saveFailed', '保存设置失败'), getErrorMessage(e));
+    toast.error(t('settings.saveFailed'), getErrorMessage(e));
   }
 }
 
@@ -568,12 +568,41 @@ async function testRemoteApi() {
 }
 
 const recommendedModels = computed(() => [
-  { name: `DeepSeek-R1-Distill-Qwen-1.5B ${t('settings.ai.deepseekHint', '(深度思考)')}`, filename: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf', url: 'https://hf-mirror.com/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf', size: '1.12 GB' },
-  { name: `Qwen2.5-7B-Instruct ${t('settings.ai.qwenHint', '(更精确)')}`, filename: 'qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf', urls: [
+  { name: `DeepSeek-R1-Distill-Qwen-1.5B ${t('settings.ai.deepseekHint')}`, filename: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf', url: 'https://hf-mirror.com/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf', size: '1.12 GB', parameters: '1.5B', quantization: 'Q4_K_M', recommendedMinRam: 4096 },
+  { name: `Qwen2.5-7B-Instruct ${t('settings.ai.qwenHint')}`, filename: 'qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf', urls: [
     { url: 'https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf', filename: 'qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf' },
     { url: 'https://hf-mirror.com/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf', filename: 'qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf' }
-  ], size: '4.6 GB' }
+  ], size: '4.6 GB', parameters: '7B', quantization: 'Q4_K_M', recommendedMinRam: 12288 },
+  { name: `Qwen2.5-14B-Instruct ${t('settings.ai.qwen14bHint')}`, filename: 'qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf', urls: [
+    { url: 'https://hf-mirror.com/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf', filename: 'qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf' },
+    { url: 'https://hf-mirror.com/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m-00002-of-00003.gguf', filename: 'qwen2.5-14b-instruct-q4_k_m-00002-of-00003.gguf' },
+    { url: 'https://hf-mirror.com/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m-00003-of-00003.gguf', filename: 'qwen2.5-14b-instruct-q4_k_m-00003-of-00003.gguf' }
+  ], size: '8.5 GB', parameters: '14B', quantization: 'Q4_K_M', recommendedMinRam: 24576 }
 ]);
+
+type MemoryTag = 'recommended' | 'available' | 'tight' | 'insufficient';
+
+const recommendedModelsWithMemory = computed(() => {
+  const totalMb = systemMemory.value.totalMb;
+  return recommendedModels.value
+    .map(model => {
+      let memoryTag: MemoryTag;
+      if (totalMb >= model.recommendedMinRam * 1.5) {
+        memoryTag = 'recommended';
+      } else if (totalMb >= model.recommendedMinRam) {
+        memoryTag = 'available';
+      } else if (totalMb >= model.recommendedMinRam * 0.75) {
+        memoryTag = 'tight';
+      } else {
+        memoryTag = 'insufficient';
+      }
+      return { ...model, memoryTag };
+    })
+    .sort((a, b) => {
+      const order: Record<MemoryTag, number> = { recommended: 0, available: 1, tight: 2, insufficient: 3 };
+      return order[a.memoryTag] - order[b.memoryTag];
+    });
+});
 
 const downloadingModels = ref<Record<string, { downloaded: number, total: number, speed: number, parts?: Record<string, {downloaded: number, total: number, speed: number}> }>>({});
 
@@ -734,11 +763,11 @@ const clearLogs = () => {
       <div class="relative z-10 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
         <h2 class="mb-4 text-lg font-semibold flex items-center gap-2">
           <Download :size="20" class="text-primary" />
-          {{ $t('settings.general.concurrentDownloadsTitle', '最大并发下载数') }}
+          {{ $t('settings.general.concurrentDownloadsTitle') }}
         </h2>
         <div class="space-y-3">
           <div class="flex items-center justify-between">
-            <label class="text-sm font-medium">{{ $t('settings.general.concurrentDownloadsDesc', '允许的最大同时下载任务数量') }}</label>
+            <label class="text-sm font-medium">{{ $t('settings.general.concurrentDownloadsDesc') }}</label>
             <span class="text-sm font-mono text-primary">{{ maxConcurrentDownloads }}</span>
           </div>
           <input
@@ -762,9 +791,9 @@ const clearLogs = () => {
         <div>
           <h2 class="text-lg font-semibold flex items-center gap-2">
             <Shield :size="20" class="text-primary" />
-            {{ $t('settings.general.telemetryTitle', '遥测数据收集') }}
+            {{ $t('settings.general.telemetryTitle') }}
           </h2>
-          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.telemetryDesc', '允许收集纯匿名的使用数据，帮助我们持续改善启动器体验') }}</p>
+          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.telemetryDesc') }}</p>
         </div>
         <label class="relative inline-flex items-center cursor-pointer">
           <input type="checkbox" v-model="enableTelemetry" @change="saveLauncherSettings" class="sr-only peer">
@@ -1003,14 +1032,14 @@ const clearLogs = () => {
     <!-- AI Settings Tab -->
     <div v-if="activeTab === 'ai'" class="space-y-6">
       <div class="rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
-        <h2 class="text-lg font-semibold mb-4">{{ $t('settings.ai.title', 'AI 崩溃分析') }}</h2>
+        <h2 class="text-lg font-semibold mb-4">{{ $t('settings.ai.title') }}</h2>
         
         <div class="space-y-4">
           <div>
-            <label class="text-sm font-medium">{{ $t('settings.ai.provider', '大模型提供商') }}</label>
+            <label class="text-sm font-medium">{{ $t('settings.ai.provider') }}</label>
             <DSelect
               v-model="aiProviderType"
-              :options="[{ label: $t('settings.ai.embedded', '内置本地推理引擎 (推荐)'), value: 'embeddedLlm' }, { label: $t('settings.ai.remote', '云端 API (如 OpenAI)'), value: 'remoteApi' }]"
+              :options="[{ label: $t('settings.ai.embedded'), value: 'embeddedLlm' }, { label: $t('settings.ai.remote'), value: 'remoteApi' }]"
               @update:model-value="saveLauncherSettings"
             />
           </div>
@@ -1018,7 +1047,7 @@ const clearLogs = () => {
           <template v-if="aiProviderType === 'embeddedLlm'">
             <div class="p-4 bg-muted/30 rounded-lg space-y-4">
               <div class="flex items-center justify-between mb-2">
-                <label class="text-sm font-medium">{{ $t('settings.ai.activeModel', '当前加载的模型') }}</label>
+                <label class="text-sm font-medium">{{ $t('settings.ai.activeModel') }}</label>
                 <button
                   class="flex items-center gap-2 rounded-lg bg-secondary px-3 py-1.5 text-xs font-medium hover:bg-secondary/80 disabled:opacity-50"
                   :disabled="isFetchingModels"
@@ -1026,7 +1055,7 @@ const clearLogs = () => {
                 >
                   <Loader2 v-if="isFetchingModels" :size="12" class="animate-spin" />
                   <Search v-else :size="12" />
-                  {{ $t('settings.java.refresh', '刷新') }}
+                  {{ $t('settings.java.refresh') }}
                 </button>
               </div>
               <DSelect
@@ -1034,11 +1063,11 @@ const clearLogs = () => {
                 :options="localModels.map(m => ({ label: formatModelName(m), value: m }))"
                 @update:model-value="saveLauncherSettings"
               />
-              <p v-if="localModels.length === 0" class="text-xs text-muted-foreground">{{ $t('settings.ai.noModels', '尚未下载任何本地模型。稍后支持在线下载。') }}</p>
+              <p v-if="localModels.length === 0" class="text-xs text-muted-foreground">{{ $t('settings.ai.noModels') }}</p>
               
               <div class="space-y-2 mt-4">
                 <div class="flex items-center justify-between">
-                  <label class="text-sm font-medium">{{ $t('settings.ai.maxRam', '推理最大内存分配') }}</label>
+                  <label class="text-sm font-medium">{{ $t('settings.ai.maxRam') }}</label>
                   <span class="text-sm font-mono text-primary">{{ aiMaxRamUsage }} MB</span>
                 </div>
                 <input
@@ -1058,9 +1087,9 @@ const clearLogs = () => {
               <div>
                 <h3 class="text-sm font-semibold flex items-center gap-2">
                   <span class="i-lucide-unlock w-4 h-4 text-orange-500"></span>
-                  {{ $t('settings.ai.unlockContext', '极客选项：解锁原生上下文限制') }}
+                  {{ $t('settings.ai.unlockContext') }}
                 </h3>
-                <p class="text-xs text-muted-foreground mt-1">{{ $t('settings.ai.unlockContextDesc', '使用模型支持的最大上下文长度。警告：非常吃内存，低配电脑请勿开启。') }}</p>
+                <p class="text-xs text-muted-foreground mt-1">{{ $t('settings.ai.unlockContextDesc') }}</p>
               </div>
               <label class="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" v-model="aiUnlockContextSize" @change="saveLauncherSettings" class="sr-only peer">
@@ -1070,29 +1099,59 @@ const clearLogs = () => {
 
             <!-- Model Hub -->
             <div class="p-4 bg-muted/30 rounded-lg space-y-4">
-              <h3 class="text-sm font-medium">{{ $t('settings.ai.modelHub', '模型下载中心') }}</h3>
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-medium">{{ $t('settings.ai.modelHub') }}</h3>
+                <span class="text-xs text-muted-foreground">{{ $t('settings.ai.systemMemoryInfo') }}: {{ Math.round(systemMemory.totalMb / 1024) }} GB</span>
+              </div>
               <div class="space-y-3">
-                <div v-for="model in recommendedModels" :key="model.filename" class="flex flex-col gap-2 p-3 bg-white/50 dark:bg-zinc-800/50 rounded-lg border border-white/20 dark:border-zinc-700/50">
+                <div v-for="model in recommendedModelsWithMemory" :key="model.filename"
+                  class="flex flex-col gap-2 p-3 rounded-lg border transition-colors"
+                  :class="{
+                    'bg-green-50/60 dark:bg-green-900/15 border-green-200 dark:border-green-800/50': model.memoryTag === 'recommended',
+                    'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800/40': model.memoryTag === 'available',
+                    'bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/40': model.memoryTag === 'tight',
+                    'bg-red-50/50 dark:bg-red-900/10 border-red-200 dark:border-red-800/40': model.memoryTag === 'insufficient'
+                  }">
                   <div class="flex items-center justify-between">
-                    <div>
-                      <p class="text-sm font-medium">{{ model.name }}</p>
-                      <p class="text-xs text-muted-foreground">{{ model.size }} · {{ formatModelName(model.filename) }}</p>
+                    <div class="flex items-center gap-2 min-w-0">
+                      <p class="text-sm font-medium truncate">{{ model.name }}</p>
+                      <span v-if="model.memoryTag === 'recommended'"
+                        class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400">
+                        {{ $t('settings.ai.recommendedForSystem') }}
+                      </span>
+                      <span v-else-if="model.memoryTag === 'tight'"
+                        class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400">
+                        {{ $t('settings.ai.memoryTight') }}
+                      </span>
+                      <span v-else-if="model.memoryTag === 'insufficient'"
+                        class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400">
+                        {{ $t('settings.ai.memoryInsufficient') }}
+                      </span>
                     </div>
                     <button
                       v-if="!localModels.includes(model.filename) && !downloadingModels[model.filename]"
                       @click="downloadModel(model)"
-                      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                      class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
                     >
-                      <Download :size="12" /> {{ $t('settings.ai.download', '下载') }}
+                      <Download :size="12" /> {{ $t('settings.ai.download') }}
                     </button>
-                    <span v-else-if="localModels.includes(model.filename)" class="text-xs font-medium text-green-600 bg-green-100 dark:bg-green-900/40 dark:text-green-400 px-2 py-1 rounded-md">
-                      {{ $t('settings.ai.installed', '已安装') }}
+                    <span v-else-if="localModels.includes(model.filename)" class="shrink-0 text-xs font-medium text-green-600 bg-green-100 dark:bg-green-900/40 dark:text-green-400 px-2 py-1 rounded-md">
+                      {{ $t('settings.ai.installed') }}
                     </span>
+                  </div>
+                  <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>{{ model.size }}</span>
+                    <span class="text-zinc-300 dark:text-zinc-600">·</span>
+                    <span>{{ model.parameters }}</span>
+                    <span class="text-zinc-300 dark:text-zinc-600">·</span>
+                    <span>{{ model.quantization }}</span>
+                    <span class="text-zinc-300 dark:text-zinc-600">·</span>
+                    <span>{{ $t('settings.ai.minRamRequired') }} {{ Math.round(model.recommendedMinRam / 1024) }} GB</span>
                   </div>
                   <!-- Progress bar -->
                   <div v-if="downloadingModels[model.filename]" class="w-full">
                     <div class="flex justify-between text-xs mb-1">
-                      <span>{{ $t('settings.ai.downloading', '下载中...') }} ({{ formatSpeed(downloadingModels[model.filename].speed) }})</span>
+                      <span>{{ $t('settings.ai.downloading') }} ({{ formatSpeed(downloadingModels[model.filename].speed) }})</span>
                       <span>{{ getDownloadPercentage(model.filename) }}%</span>
                     </div>
                     <div class="w-full h-1.5 bg-gray-200 rounded-full dark:bg-zinc-700 overflow-hidden">
@@ -1123,17 +1182,17 @@ const clearLogs = () => {
                 >
                   <span v-if="isTestingApi" class="i-lucide-loader-2 w-4 h-4 animate-spin"></span>
                   <span v-else class="i-lucide-zap w-4 h-4"></span>
-                  {{ isTestingApi ? $t('settings.ai.testingApi', '测试中...') : $t('settings.ai.testApi', '测试 API 并获取模型列表') }}
+                  {{ isTestingApi ? $t('settings.ai.testingApi') : $t('settings.ai.testApi') }}
                 </button>
               </div>
               
               <div class="mt-4">
-                <label class="text-sm font-medium">{{ $t('settings.ai.selectModel', '选择模型 (或手动输入)') }}</label>
+                <label class="text-sm font-medium">{{ $t('settings.ai.selectModel') }}</label>
                 <DCombobox
                   v-model="aiRemoteModel"
                   :options="availableRemoteModels.map(m => ({ label: m, value: m }))"
                   @blur="saveLauncherSettings"
-                  :placeholder="$t('settings.ai.modelPlaceholder', '如 gpt-3.5-turbo')"
+                  :placeholder="$t('settings.ai.modelPlaceholder')"
                 />
               </div>
             </div>
@@ -1145,16 +1204,16 @@ const clearLogs = () => {
     <!-- Logs Tab -->
     <div v-if="activeTab === 'logs'" class="h-full flex flex-col">
       <div class="mb-6 shrink-0">
-        <h2 class="text-lg font-bold">{{ $t('settings.tabs.logs', '日志中心') }}</h2>
-        <p class="text-sm text-muted-foreground">{{ $t('settings.logs.desc', '查看和筛选应用程序运行期间产生的日志。') }}</p>
+        <h2 class="text-lg font-bold">{{ $t('settings.tabs.logs') }}</h2>
+        <p class="text-sm text-muted-foreground">{{ $t('settings.logs.desc') }}</p>
       </div>
 
       <div class="flex gap-4 mb-6 shrink-0">
-        <DInput v-model="logSearchQuery" :placeholder="$t('settings.logs.search', '搜索日志内容或任务 ID...')" class="flex-1" :icon="Search" />
+        <DInput v-model="logSearchQuery" :placeholder="$t('settings.logs.search')" class="flex-1" :icon="Search" />
         <DSelect 
           v-model="logLevelFilter" 
           :options="[
-            {label: $t('settings.logs.allLevels', '全部级别'), value: 'ALL'},
+            {label: $t('settings.logs.allLevels'), value: 'ALL'},
             {label: 'INFO', value: 'INFO'},
             {label: 'WARN', value: 'WARN'},
             {label: 'ERROR', value: 'ERROR'},
@@ -1163,13 +1222,13 @@ const clearLogs = () => {
           class="w-40" 
         />
         <DButton @click="clearLogs" variant="danger" class="gap-2">
-          <Trash2 class="w-4 h-4" /> {{ $t('settings.logs.clear', '清空日志') }}
+          <Trash2 class="w-4 h-4" /> {{ $t('settings.logs.clear') }}
         </DButton>
       </div>
 
       <div class="bg-card/50 border rounded-lg p-4 space-y-2 flex-1 overflow-y-auto relative">
         <div v-if="filteredLogs.length === 0" class="absolute inset-0 flex items-center justify-center text-muted-foreground">
-          {{ $t('settings.logs.noLogs', '暂无匹配的日志记录') }}
+          {{ $t('settings.logs.noLogs') }}
         </div>
         <div v-for="(log, i) in filteredLogs" :key="i" class="font-mono text-sm break-all">
           <span class="text-muted-foreground mr-2">[{{ log.timestamp }}]</span>

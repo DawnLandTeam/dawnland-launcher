@@ -194,6 +194,25 @@ struct ChatRequest {
     temperature: f32,
     max_tokens: Option<u32>,
     stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
+}
+
+/// SSE stream chunk from an OpenAI-compatible /chat/completions stream response.
+#[derive(Deserialize, Debug)]
+struct ChatStreamChunk {
+    choices: Vec<ChatStreamChoice>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ChatStreamChoice {
+    delta: ChatStreamDelta,
+}
+
+#[derive(Deserialize, Debug)]
+struct ChatStreamDelta {
+    #[serde(default)]
+    content: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -447,7 +466,7 @@ fn denoise_crash_log(log: &str) -> String {
 }
 
 #[tauri::command]
-pub async fn analyze_crash(crash_log: String, language: Option<String>, context_type: Option<String>) -> Result<String, AppError> {
+pub async fn analyze_crash(crash_log: String, language: Option<String>, context_type: Option<String>, app: AppHandle) -> Result<String, AppError> {
     let settings = get_launcher_settings_sync();
     let ai_config = settings.ai_config;
     
@@ -497,6 +516,7 @@ pub async fn analyze_crash(crash_log: String, language: Option<String>, context_
                 You must diagnose why the game crashed based on the provided crash logs.",
                 "RULES FOR 'actions' ARRAY (This is a JSON array of objects):\n\
                 - If a mod is missing, you MUST provide a search action. Example: [{{ \"type\": \"search-mod\", \"payload\": \"example_mod_name\" }}]\n\
+                - If two mods are conflicting, you MUST provide a disable-mod action with the mod name (mod_id or filename) to disable. Example: [{{ \"type\": \"disable-mod\", \"payload\": \"create\" }}]\n\
                 - If there is a Java version mismatch, you MUST provide a goto action. Example: [{{ \"type\": \"goto\", \"payload\": \"settings-java\" }}]\n\
                 - If no specific action is needed, return an empty array: []"
             )
@@ -559,40 +579,114 @@ pub async fn analyze_crash(crash_log: String, language: Option<String>, context_
         temperature: 0.1,
         max_tokens: Some(2048),
         stop: Some(vec!["<|im_end|>".to_string(), "<|endoftext|>".to_string()]),
+        stream: Some(true),
     };
-    
+
+    // Notify frontend that streaming analysis has started.
+    let _ = app.emit("ai-analysis-started", ());
+
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| AppError::from(format!("Failed to build client: {}", e)))?;
-        
+
     let mut req = client.post(format!("{}/chat/completions", base_url)).json(&request);
-    
+
     if !api_key.is_empty() {
         req = req.bearer_auth(api_key);
     }
-    
+
     let response = req.send()
         .await
-        .map_err(|e| AppError::from(format!("API request failed: {}", e)))?;
-        
+        .map_err(|e| {
+            let msg = format!("API request failed: {}", e);
+            let _ = app.emit("ai-analysis-error", &msg);
+            AppError::from(msg)
+        })?;
+
     if !response.status().is_success() {
         let status = response.status();
         let err_text = response.text().await.unwrap_or_default();
-        return Err(AppError::from(format!("API error ({}): {}", status, err_text)));
+        let msg = format!("API error ({}): {}", status, err_text);
+        let _ = app.emit("ai-analysis-error", &msg);
+        return Err(AppError::from(msg));
     }
-    
-    let chat_res: ChatResponse = response.json().await
-        .map_err(|e| AppError::from(format!("Failed to parse response: {}", e)))?;
-    
-    // For embedded, we can leave the engine running or stop it.
+
+    // Stream the response body as SSE and forward each content delta to the frontend.
+    use futures_util::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut full_content = String::new();
+    let mut buffer = String::new();
+    let mut stream_done = false;
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = match chunk_result {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = format!("Stream error: {}", e);
+                let _ = app.emit("ai-analysis-error", &msg);
+                return Err(AppError::from(msg));
+            }
+        };
+
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process complete lines from the buffer (SSE is line-delimited).
+        while let Some(newline_pos) = buffer.find('\n') {
+            let line = buffer[..newline_pos].trim().to_string();
+            // Retain the remainder (may be a partial line continued in the next chunk).
+            buffer = buffer[newline_pos + 1..].to_string();
+
+            // Skip empty lines and SSE comments (lines starting with ':').
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+
+            // SSE data lines are prefixed with "data: ".
+            let data = match line.strip_prefix("data: ") {
+                Some(d) => d.trim(),
+                None => continue,
+            };
+
+            // "[DONE]" marks the end of the stream.
+            if data == "[DONE]" {
+                stream_done = true;
+                break;
+            }
+
+            // Parse the JSON chunk and extract the content delta.
+            if let Ok(chunk_data) = serde_json::from_str::<ChatStreamChunk>(data) {
+                if let Some(content) = chunk_data
+                    .choices
+                    .first()
+                    .and_then(|c| c.delta.content.as_ref())
+                {
+                    if !content.is_empty() {
+                        full_content.push_str(content);
+                        let _ = app.emit("ai-analysis-chunk", content);
+                    }
+                }
+            }
+        }
+
+        if stream_done {
+            break;
+        }
+    }
+
+    // For embedded, stop the engine after analysis completes.
     if ai_config.provider_type == AiProviderType::EmbeddedLlm {
         stop_llama_engine().await;
     }
-    
-    let answer = chat_res.choices.first()
-        .map(|c| c.message.content.clone())
-        .ok_or_else(|| AppError::from("Empty response from AI".to_string()))?;
-        
-    Ok(answer)
+
+    if full_content.trim().is_empty() {
+        let msg = "Empty response from AI".to_string();
+        let _ = app.emit("ai-analysis-error", &msg);
+        return Err(AppError::from(msg));
+    }
+
+    // Notify frontend that streaming has completed with the full text.
+    let _ = app.emit("ai-analysis-completed", &full_content);
+
+    Ok(full_content)
 }

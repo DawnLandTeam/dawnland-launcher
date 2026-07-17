@@ -1,5 +1,6 @@
 {
   "common": {
+    "delete": "Delete",
     "search": "Search",
     "searchPlaceholder": "Search...",
     "cancel": "Cancel",
@@ -17,6 +18,10 @@
     "settings": "Settings"
   },
   "home": {
+    "prelaunchWarningTitle": "Pre-launch Warning",
+    "prelaunchWarningDesc": "The following mods may be missing dependencies. Launching anyway may cause a crash.",
+    "requiredBy": "Required by",
+    "launchAnyway": "Launch Anyway",
     "welcome": "Welcome to Dawnland",
     "noInstances": "Install your first Minecraft instance to get started.",
     "installInstance": "Install Instance",
@@ -152,7 +157,8 @@
       "deleteDescSuffix": "? This will remove all instance data including saves, mods, and resource packs.",
       "deleteUndone": "This action cannot be undone.",
       "deleteWarning": "This instance contains game data which will be permanently lost upon deletion!"
-    }
+    },
+    "crashHistory": "Crash History"
   },
   "servers": {
     "title": "Servers",
@@ -425,6 +431,7 @@
       "modelHub": "Model Download Center",
       "deepseekHint": "(Deep Reasoning)",
       "qwenHint": "(More Accurate)",
+      "qwen14bHint": "(Strongest Analysis)",
       "download": "Download",
       "installed": "Installed",
       "downloading": "Downloading...",
@@ -433,7 +440,12 @@
       "selectModel": "Select Model (or input manually)",
       "modelPlaceholder": "e.g. gpt-3.5-turbo",
       "testSuccess": "Test successful! Fetched {count} models.",
-      "testFailed": "API Test Failed: {error}"
+      "testFailed": "API Test Failed: {error}",
+      "systemMemoryInfo": "System RAM",
+      "recommendedForSystem": "Recommended",
+      "memoryTight": "RAM Tight",
+      "memoryInsufficient": "Insufficient RAM",
+      "minRamRequired": "Requires at least"
     },
     "authlib": {
       "tab": "Authlib",
@@ -627,7 +639,7 @@
     "title": "Game Crashed",
     "warning": "Game crashed unexpectedly",
     "exitCode": "Exit Code",
-    "viewLog": "View Log",
+    "viewLog": "View Crash Log",
     "copy": "Copy",
     "copyLogs": "Copy Logs",
     "copied": "Copied!",
@@ -646,6 +658,13 @@
       "searchMod": "Search Mod: {mod}",
       "gotoJava": "Go to Java Settings",
       "gotoMods": "Go to Mod Management"
+    },
+    "history": {
+      "empty": "No Crash History",
+      "emptyDesc": "Crash records are saved automatically when the game exits unexpectedly",
+      "clearAll": "Clear All",
+      "deleted": "Deleted",
+      "cleared": "Cleared"
     }
   },
   "updater": {
@@ -682,6 +701,9 @@
     "installBtn": "Install"
   },
   "task": {
+    "actions": {
+      "retryTask": "Retry Task"
+    },
     "installVanilla": "Installing Vanilla {version}",
     "installLoader": "Installing {loader} for {version}",
     "installModpack": "Install Modpack {name}",

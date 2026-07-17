@@ -18,7 +18,8 @@ import {
   WifiOff,
   Square,
   Globe,
-  Plus
+  Plus,
+  AlertTriangle
 } from "@lucide/vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
@@ -55,6 +56,17 @@ interface InstanceState {
   crashReport?: string;
 }
 
+interface PrelaunchWarning {
+  kind: string;
+  dependencyId: string;
+  requiredBy: string;
+}
+
+interface PrelaunchCheckResult {
+  warnings: PrelaunchWarning[];
+  modCount: number;
+}
+
 import { Account, AuthlibAuthResult } from "../types";
 
 // Router for navigation to settings
@@ -73,6 +85,8 @@ import { launchingInstances, jvmSpawnedInstances, runningInstances, repairingIns
 // Running state
 const gameLogs = ref<string[]>([]);
 const showGameLog = ref(false);
+const prelaunchWarnings = ref<PrelaunchWarning[]>([]);
+const showPrelaunchWarning = ref(false);
 
 // Kill tracking state
 const intentionallyKilledInstances = ref<Set<string>>(new Set());
@@ -473,6 +487,24 @@ async function handlePrimaryAction() {
     return;
   }
 
+  // Prelaunch mod dependency check
+  try {
+    const result = await invoke<PrelaunchCheckResult>("prelaunch_check", {
+      versionId: selectedInstanceId.value,
+    });
+    if (result.warnings.length > 0) {
+      prelaunchWarnings.value = result.warnings;
+      showPrelaunchWarning.value = true;
+      return;
+    }
+  } catch (e) {
+    console.warn("Prelaunch check failed, continuing launch:", e);
+  }
+
+  await doLaunch();
+}
+
+async function doLaunch() {
   // Add to launching set immediately for UI feedback
   launchingInstances.value.add(selectedInstanceId.value);
   gameLogs.value = [];
@@ -501,6 +533,16 @@ async function handlePrimaryAction() {
     isRepairing.value = false;
     await handleLaunchError(e);
   }
+}
+
+function confirmLaunchWithWarnings() {
+  showPrelaunchWarning.value = false;
+  doLaunch();
+}
+
+function cancelLaunchWithWarnings() {
+  showPrelaunchWarning.value = false;
+  prelaunchWarnings.value = [];
 }
 
 async function handleLaunchError(e: any) {
@@ -770,7 +812,7 @@ function loaderBadgeClass(loaderType: string): string {
                 <Loader2 v-if="isLaunching" class="h-6 w-6 animate-spin" />
                 <Square v-else-if="isRunning" class="h-6 w-6 fill-current" />
                 <Play v-else class="h-6 w-6 fill-current" />
-                {{ isLaunching ? $t('home.launching') : (isRunning ? $t('home.stopGame', '停止运行') : $t('home.play')) }}
+                {{ isLaunching ? $t('home.launching') : (isRunning ? $t('home.stopGame') : $t('home.play')) }}
               </button>
             </div>
 
@@ -812,6 +854,43 @@ function loaderBadgeClass(loaderType: string): string {
 
     <!-- Crash Report Modal -->
     <CrashReportModal :open="showCrashAlert" :exit-code="crashExitCode" :version-id="crashVersionId" :logs="gameLogs" :is-open-j9="crashIsOpenJ9" :crash-report="crashReportContent" @update:open="showCrashAlert = $event" />
+
+    <!-- Prelaunch Mod Dependency Warning -->
+    <Teleport to="body">
+      <Transition name="dialog">
+        <div v-if="showPrelaunchWarning" class="fixed inset-0 z-50 flex items-center justify-center">
+          <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="cancelLaunchWithWarnings" />
+          <div class="relative w-full max-w-md mx-4 bg-white dark:bg-zinc-900 rounded-xl shadow-xl border border-zinc-200 dark:border-zinc-700 p-6">
+            <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-2 flex items-center gap-2">
+              <AlertTriangle class="w-5 h-5 text-amber-500" />
+              {{ $t('home.prelaunchWarningTitle') }}
+            </h3>
+            <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+              {{ $t('home.prelaunchWarningDesc') }}
+            </p>
+            <div class="max-h-48 overflow-y-auto space-y-2 mb-4">
+              <div v-for="w in prelaunchWarnings" :key="w.dependencyId + w.requiredBy"
+                class="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800/50">
+                <span class="text-sm text-amber-700 dark:text-amber-400">
+                  <strong>{{ w.dependencyId }}</strong>
+                  <span class="text-amber-600/70 dark:text-amber-500/70"> - {{ $t('home.requiredBy') }} {{ w.requiredBy }}</span>
+                </span>
+              </div>
+            </div>
+            <div class="flex justify-end gap-2">
+              <button @click="cancelLaunchWithWarnings"
+                class="px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors">
+                {{ $t('common.cancel') }}
+              </button>
+              <button @click="confirmLaunchWithWarnings"
+                class="px-4 py-2 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-lg transition-colors">
+                {{ $t('home.launchAnyway') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <!-- Repair Progress Modal -->
     <Teleport to="body">
