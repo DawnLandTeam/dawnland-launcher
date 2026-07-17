@@ -195,7 +195,7 @@ pub fn run() {
                 .join(".dawnland");
             std::fs::create_dir_all(&app_dir).unwrap_or_default();
             let db_path = app_dir.join("tasks.db");
-            let crash_db_path = db_path.clone();
+            let crash_db_path = app_dir.join("crash_history.db");
 
             tauri::async_runtime::block_on(async move {
                 match core::task::db::TaskDatabase::new(db_path).await {

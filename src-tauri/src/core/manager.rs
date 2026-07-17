@@ -1369,16 +1369,14 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
         return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: 0 });
     }
 
-    // Collect enabled .jar file paths asynchronously
-    let mut jar_entries = Vec::new();
-    let mut entries = tokio::fs::read_dir(&mods_dir)
+    // Collect enabled .jar file paths based on installed mod metadata
+    let installed_mods = get_installed_mods(version_id.clone(), Some(true))
         .await
-        .map_err(|e| format!("Failed to read mods directory: {}", e))?;
-    while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
-        let filename = entry.file_name().to_string_lossy().to_string();
-        if filename.ends_with(".jar") {
-            jar_entries.push((filename, entry.path()));
-        }
+        .map_err(|e| format!("Failed to get installed mods: {}", e))?;
+
+    let mut jar_entries = Vec::new();
+    for mod_entry in installed_mods.into_iter().filter(|m| m.enabled) {
+        jar_entries.push((mod_entry.filename.clone(), mods_dir.join(&mod_entry.filename)));
     }
 
     if jar_entries.is_empty() {

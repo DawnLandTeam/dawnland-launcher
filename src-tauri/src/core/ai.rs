@@ -465,6 +465,56 @@ fn denoise_crash_log(log: &str) -> String {
     }
 }
 
+
+enum StreamParseResult {
+    Content(String),
+    Done,
+    None,
+}
+
+// Encapsulated parsing logic for AI stream responses (handles SSE, NDJSON, and raw JSON formats)
+fn parse_stream_line(line: &str) -> StreamParseResult {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with(':') {
+        return StreamParseResult::None;
+    }
+
+    let data = match line.strip_prefix("data: ") {
+        Some(d) => {
+            let d = d.trim();
+            if d == "[DONE]" {
+                return StreamParseResult::Done;
+            }
+            d
+        }
+        None => line,
+    };
+
+    if let Ok(chunk_data) = serde_json::from_str::<ChatStreamChunk>(data) {
+        if let Some(content) = chunk_data
+            .choices
+            .first()
+            .and_then(|c| c.delta.content.as_ref())
+        {
+            if !content.is_empty() {
+                return StreamParseResult::Content(content.clone());
+            }
+        }
+    } else if let Ok(full_response) = serde_json::from_str::<ChatResponse>(data) {
+        if let Some(content) = full_response
+            .choices
+            .first()
+            .map(|c| c.message.content.as_str())
+        {
+            if !content.is_empty() {
+                return StreamParseResult::Content(content.to_string());
+            }
+        }
+    }
+
+    StreamParseResult::None
+}
+
 #[tauri::command]
 pub async fn analyze_crash(crash_log: String, language: Option<String>, context_type: Option<String>, app: AppHandle) -> Result<String, AppError> {
     let settings = get_launcher_settings_sync();
@@ -637,35 +687,16 @@ pub async fn analyze_crash(crash_log: String, language: Option<String>, context_
             // Retain the remainder (may be a partial line continued in the next chunk).
             buffer = buffer[newline_pos + 1..].to_string();
 
-            // Skip empty lines and SSE comments (lines starting with ':').
-            if line.is_empty() || line.starts_with(':') {
-                continue;
-            }
-
-            // SSE data lines are prefixed with "data: ".
-            let data = match line.strip_prefix("data: ") {
-                Some(d) => d.trim(),
-                None => continue,
-            };
-
-            // "[DONE]" marks the end of the stream.
-            if data == "[DONE]" {
-                stream_done = true;
-                break;
-            }
-
-            // Parse the JSON chunk and extract the content delta.
-            if let Ok(chunk_data) = serde_json::from_str::<ChatStreamChunk>(data) {
-                if let Some(content) = chunk_data
-                    .choices
-                    .first()
-                    .and_then(|c| c.delta.content.as_ref())
-                {
-                    if !content.is_empty() {
-                        full_content.push_str(content);
-                        let _ = app.emit("ai-analysis-chunk", content);
-                    }
+            match parse_stream_line(&line) {
+                StreamParseResult::Content(content) => {
+                    full_content.push_str(&content);
+                    let _ = app.emit("ai-analysis-chunk", content);
                 }
+                StreamParseResult::Done => {
+                    stream_done = true;
+                    break;
+                }
+                StreamParseResult::None => {}
             }
         }
 
