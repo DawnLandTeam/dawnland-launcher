@@ -264,7 +264,7 @@ impl ModParser {
                                         .unwrap_or_else(|| {
                                             dep.get("type")
                                                 .and_then(|t| t.as_str())
-                                                .map_or(true, |t| t == "required")
+                                                .is_none_or(|t| t == "required")
                                         });
                                     if is_required {
                                         if let Some(dep_id) = dep.get("modId").and_then(|m| m.as_str()) {
@@ -315,6 +315,7 @@ mod tests {
             name: Some("Test Mod".to_string()),
             version: Some("1.0.0".to_string()),
             has_icon: true,
+            depends: vec![],
         };
 
         parser.set_cache_entry("hash123", &meta);
