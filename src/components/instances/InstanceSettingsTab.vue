@@ -6,6 +6,7 @@ import { Save } from '@lucide/vue';
 import DSelect from '../ui/DSelect.vue';
 import { getErrorMessage } from '../../utils/error';
 import { launchingInstances, runningInstances, repairingInstances } from '../../composables/useLaunchState';
+import { toast } from '../../composables/useToast';
 
 const props = defineProps<{
   instanceId: string;
@@ -140,10 +141,10 @@ async function saveSettings() {
       versionId: props.instanceId,
       config,
     });
-    alert(t('common.saveSuccess', '保存成功'));
+    toast.success(t('common.saveSuccess', '保存成功'));
   } catch (e) {
     console.error('Failed to save instance config:', e);
-    alert(`Failed to save: ${getErrorMessage(e)}`);
+    toast.error(t('common.saveFailed', '保存失败'), getErrorMessage(e));
   } finally {
     isSavingConfig.value = false;
   }
@@ -155,11 +156,11 @@ async function setAsGlobalPreset() {
   if (!props.instanceId) return;
   isSettingGlobalPreset.value = true;
   try {
-    await invoke('set_instance_options_as_global', { versionId: props.instanceId });
-    alert(t('instances.settingsDialog.setAsGlobalPresetSuccess', '已成功将此实例的游戏设置设为全局预设！'));
+    await invoke('set_instance_options_as_global', { version_id: props.instanceId });
+    toast.success(t('instances.settingsDialog.setAsGlobalPresetSuccess', '已成功将此实例的游戏设置设为全局预设！'));
   } catch (e) {
     console.error('Failed to set global preset:', e);
-    alert(`Failed: ${getErrorMessage(e)}`);
+    toast.error(t('instances.settingsDialog.setAsGlobalPresetFailed', '设置全局预设失败'), getErrorMessage(e));
   } finally {
     isSettingGlobalPreset.value = false;
   }

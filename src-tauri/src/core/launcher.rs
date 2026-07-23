@@ -2596,12 +2596,12 @@ pub async fn apply_global_game_settings(instance_dir: &std::path::Path) {
     }
 
     let global_options_path = get_minecraft_base().join("global_options.txt");
-    if !global_options_path.exists() {
+    if tokio::fs::metadata(&global_options_path).await.is_err() {
         return;
     }
 
     let instance_options_path = instance_dir.join("options.txt");
-    if !instance_options_path.exists() {
+    if tokio::fs::metadata(&instance_options_path).await.is_err() {
         match tokio::fs::copy(&global_options_path, &instance_options_path).await {
             Ok(_) => tracing::info!("Copied global options.txt to {:?}", instance_dir),
             Err(e) => tracing::error!("Failed to copy global options.txt to {:?}: {}", instance_dir, e),
@@ -2643,9 +2643,13 @@ pub async fn apply_global_game_settings(instance_dir: &std::path::Path) {
         new_lines.push(line.to_string());
     }
 
-    // Append remaining global settings
-    for (k, v) in global_map {
-        new_lines.push(format!("{}:{}", k, v));
+    // Append remaining global settings in their original order
+    for line in global_content.lines() {
+        if let Some((k, _)) = line.split_once(':') {
+            if global_map.contains_key(k) {
+                new_lines.push(line.to_string());
+            }
+        }
     }
 
     let new_content = new_lines.join("\n") + "\n";

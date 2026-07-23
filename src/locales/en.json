@@ -156,6 +156,7 @@
       "gameSettingsDesc": "Extract this instance's options.txt and set it as the global preset, automatically applying it when installing or launching new instances. You need to enable \"Global Game Settings Auto-Apply\" in Settings -> General for this to take effect.",
       "setAsGlobalPreset": "Set as Global Preset",
       "setAsGlobalPresetSuccess": "Successfully extracted game settings as global preset!",
+      "setAsGlobalPresetFailed": "Failed to set global preset",
       "deleteTitle": "Delete Instance?",
       "deleteDescPrefix": "Are you sure you want to delete",
       "deleteDescSuffix": "? This will remove all instance data including saves, mods, and resource packs.",

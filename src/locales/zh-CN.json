@@ -156,6 +156,7 @@
       "gameSettingsDesc": "将此实例的 options.txt 提取并设置为全局预设，在安装或启动新实例时自动应用。您需要在“设置 -> 通用”中开启“自动应用预设游戏设置”功能才会生效。",
       "setAsGlobalPreset": "设为全局预设",
       "setAsGlobalPresetSuccess": "已成功将此实例的游戏设置提取为全局预设！",
+      "setAsGlobalPresetFailed": "设置全局预设失败",
       "deleteTitle": "删除实例？",
       "deleteDescPrefix": "您确定要删除",
       "deleteDescSuffix": " 吗？这将永久移除该实例的所有数据，包括存档、模组和资源包。",
