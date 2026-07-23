@@ -141,10 +141,10 @@ async function saveSettings() {
       versionId: props.instanceId,
       config,
     });
-    toast.success(t('common.saveSuccess', '保存成功'));
+    toast.success(t('common.saveSuccess', 'Save successful'));
   } catch (e) {
     console.error('Failed to save instance config:', e);
-    toast.error(t('common.saveFailed', '保存失败'), getErrorMessage(e));
+    toast.error(t('common.saveFailed', 'Failed to save'), getErrorMessage(e));
   } finally {
     isSavingConfig.value = false;
   }
@@ -157,10 +157,10 @@ async function setAsGlobalPreset() {
   isSettingGlobalPreset.value = true;
   try {
     await invoke('set_instance_options_as_global', { version_id: props.instanceId });
-    toast.success(t('instances.settingsDialog.setAsGlobalPresetSuccess', '已成功将此实例的游戏设置设为全局预设！'));
+    toast.success(t('instances.settingsDialog.setAsGlobalPresetSuccess', 'Successfully set as global preset'));
   } catch (e) {
     console.error('Failed to set global preset:', e);
-    toast.error(t('instances.settingsDialog.setAsGlobalPresetFailed', '设置全局预设失败'), getErrorMessage(e));
+    toast.error(t('instances.settingsDialog.setAsGlobalPresetFailed', 'Failed to set global preset'), getErrorMessage(e));
   } finally {
     isSettingGlobalPreset.value = false;
   }
