@@ -842,6 +842,10 @@ impl ExecutableTask for InstallVanillaTask {
         })?;
         let _ = tokio::fs::write(&config_path, config_json).await;
 
+        if !is_dependency.unwrap_or(false) {
+            crate::core::launcher::apply_global_game_settings(&version_dir).await;
+        }
+
         Ok(())
     }
 }

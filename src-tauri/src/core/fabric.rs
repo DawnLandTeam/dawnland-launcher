@@ -499,6 +499,10 @@ impl ExecutableTask for InstallFabricTask {
 
         tracing::info!("Created instance config at: {:?}", config_path);
 
+        if !is_dependency.unwrap_or(false) {
+            crate::core::launcher::apply_global_game_settings(&version_dir).await;
+        }
+
         // Emit complete
         ctx.update_progress(100, 100, "Complete").await;
 

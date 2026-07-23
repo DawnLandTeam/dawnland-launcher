@@ -1358,6 +1358,10 @@ impl ExecutableTask for InstallForgeTask {
             }
         }
 
+        if !is_dep {
+            crate::core::launcher::apply_global_game_settings(&version_dir).await;
+        }
+
         // Emit complete
         ctx.update_progress(0, 0, "Complete").await;
 

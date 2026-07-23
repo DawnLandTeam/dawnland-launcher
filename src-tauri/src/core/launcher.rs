@@ -1630,6 +1630,9 @@ pub async fn launch_instance(
     // Version isolation: Use instance-specific directory for game data
     let instance_dir = base_dir.join("versions").join(&version_id);
 
+    // Apply global game settings before launch
+    apply_global_game_settings(&instance_dir).await;
+
     // Verify and repair instance integrity before proceeding
     verify_instance_integrity(&app, &instance_dir).await?;
     let game_dir = instance_dir.clone();
@@ -2582,6 +2585,127 @@ async fn inject_server_to_dat(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// ============ Global Game Settings ============
+
+pub async fn apply_global_game_settings(instance_dir: &std::path::Path) {
+    let settings = crate::core::settings::get_launcher_settings_sync();
+    if !settings.enable_global_game_settings {
+        return;
+    }
+
+    let global_options_path = get_minecraft_base().join("global_options.txt");
+    if !global_options_path.exists() {
+        return;
+    }
+
+    let instance_options_path = instance_dir.join("options.txt");
+    if !instance_options_path.exists() {
+        match tokio::fs::copy(&global_options_path, &instance_options_path).await {
+            Ok(_) => tracing::info!("Copied global options.txt to {:?}", instance_dir),
+            Err(e) => tracing::error!("Failed to copy global options.txt to {:?}: {}", instance_dir, e),
+        }
+        return;
+    }
+
+    let global_content = match tokio::fs::read_to_string(&global_options_path).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to read global options.txt: {}", e);
+            return;
+        }
+    };
+
+    let mut global_map = std::collections::HashMap::new();
+    for line in global_content.lines() {
+        if let Some((k, v)) = line.split_once(':') {
+            global_map.insert(k.to_string(), v.to_string());
+        }
+    }
+
+    let instance_content = match tokio::fs::read_to_string(&instance_options_path).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to read instance options.txt: {}", e);
+            return;
+        }
+    };
+
+    let mut new_lines = Vec::new();
+    for line in instance_content.lines() {
+        if let Some((k, _)) = line.split_once(':') {
+            if let Some(global_v) = global_map.remove(k) {
+                new_lines.push(format!("{}:{}", k, global_v));
+                continue;
+            }
+        }
+        new_lines.push(line.to_string());
+    }
+
+    // Append remaining global settings
+    for (k, v) in global_map {
+        new_lines.push(format!("{}:{}", k, v));
+    }
+
+    let new_content = new_lines.join("\n") + "\n";
+    match tokio::fs::write(&instance_options_path, new_content).await {
+        Ok(_) => tracing::info!("Merged global options.txt into {:?}", instance_dir),
+        Err(e) => tracing::error!("Failed to merge global options.txt into {:?}: {}", instance_dir, e),
+    }
+}
+
+#[tauri::command]
+pub async fn get_global_game_settings() -> Result<String, crate::error::AppError> {
+    let global_options_path = get_minecraft_base().join("global_options.txt");
+    if !global_options_path.exists() {
+        return Ok(String::new());
+    }
+
+    tokio::fs::read_to_string(&global_options_path)
+        .await
+        .map_err(|e| crate::error::AppError::from(format!("Failed to read global game settings: {}", e)))
+}
+
+#[tauri::command]
+pub async fn save_global_game_settings(content: String) -> Result<(), crate::error::AppError> {
+    let global_options_path = get_minecraft_base().join("global_options.txt");
+    
+    if let Some(parent) = global_options_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| crate::error::AppError::from(format!("Failed to create directory for global settings: {}", e)))?;
+    }
+
+    tokio::fs::write(&global_options_path, content)
+        .await
+        .map_err(|e| crate::error::AppError::from(format!("Failed to save global game settings: {}", e)))
+}
+
+#[tauri::command]
+pub async fn set_instance_options_as_global(version_id: String) -> Result<(), crate::error::AppError> {
+    let instance_dir = get_minecraft_base().join("versions").join(&version_id);
+    let options_path = instance_dir.join("options.txt");
+
+    if !options_path.exists() {
+        return Err(crate::error::AppError::from(format!("options.txt not found in instance: {}", version_id)));
+    }
+
+    let content = tokio::fs::read_to_string(&options_path)
+        .await
+        .map_err(|e| crate::error::AppError::from(format!("Failed to read instance options.txt: {}", e)))?;
+
+    save_global_game_settings(content).await?;
+
+    let mut settings = crate::core::settings::get_launcher_settings_sync();
+    if !settings.enable_global_game_settings {
+        settings.enable_global_game_settings = true;
+        crate::core::settings::save_launcher_settings(settings)
+            .await
+            .map_err(|e| crate::error::AppError::from(format!("Failed to update launcher settings: {}", e)))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
