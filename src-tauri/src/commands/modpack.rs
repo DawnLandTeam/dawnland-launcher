@@ -509,6 +509,8 @@ impl ExecutableTask for InstallModpackTask {
             }
         }
 
+        crate::core::launcher::apply_global_game_settings(&instance_dir).await;
+
         Ok(())
     }
 }

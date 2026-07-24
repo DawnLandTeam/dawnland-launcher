@@ -6,6 +6,7 @@ import { Save } from '@lucide/vue';
 import DSelect from '../ui/DSelect.vue';
 import { getErrorMessage } from '../../utils/error';
 import { launchingInstances, runningInstances, repairingInstances } from '../../composables/useLaunchState';
+import { toast } from '../../composables/useToast';
 
 const props = defineProps<{
   instanceId: string;
@@ -140,12 +141,28 @@ async function saveSettings() {
       versionId: props.instanceId,
       config,
     });
-    alert(t('common.saveSuccess', '保存成功'));
+    toast.success(t('common.saveSuccess', 'Save successful'));
   } catch (e) {
     console.error('Failed to save instance config:', e);
-    alert(`Failed to save: ${getErrorMessage(e)}`);
+    toast.error(t('common.saveFailed', 'Failed to save'), getErrorMessage(e));
   } finally {
     isSavingConfig.value = false;
+  }
+}
+
+const isSettingGlobalPreset = ref(false);
+
+async function setAsGlobalPreset() {
+  if (!props.instanceId) return;
+  isSettingGlobalPreset.value = true;
+  try {
+    await invoke('set_instance_options_as_global', { version_id: props.instanceId });
+    toast.success(t('instances.settingsDialog.setAsGlobalPresetSuccess', 'Successfully set as global preset'));
+  } catch (e) {
+    console.error('Failed to set global preset:', e);
+    toast.error(t('instances.settingsDialog.setAsGlobalPresetFailed', 'Failed to set global preset'), getErrorMessage(e));
+  } finally {
+    isSettingGlobalPreset.value = false;
   }
 }
 </script>
@@ -257,6 +274,24 @@ async function saveSettings() {
               {{ t('instances.settingsDialog.showGameLogDesc') }}
             </p>
           </label>
+        </div>
+        <!-- Game Settings -->
+        <div class="space-y-4 pt-4 border-t border-neutral-200 dark:border-zinc-800">
+          <div>
+            <h4 class="text-sm font-medium mb-1">{{ t('instances.settingsDialog.gameSettings') }}</h4>
+            <p class="text-xs text-muted-foreground">{{ t('instances.settingsDialog.gameSettingsDesc') }}</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              @click="setAsGlobalPreset"
+              :disabled="isSettingGlobalPreset"
+              class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium border border-neutral-300 dark:border-zinc-700 rounded-md hover:bg-neutral-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <svg v-if="!isSettingGlobalPreset" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin text-primary"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              {{ t('instances.settingsDialog.setAsGlobalPreset') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>

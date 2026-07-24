@@ -6,7 +6,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
 import DCombobox from "../components/ui/DCombobox.vue";
 import DSidebarTabs, { type SidebarTab } from '../components/ui/DSidebarTabs.vue';
-import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText } from "@lucide/vue";
+import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText, Edit, X, RefreshCw } from "@lucide/vue";
 import { useI18n } from 'vue-i18n';
 import DSelect from '../components/ui/DSelect.vue';
 import DButton from '../components/ui/DButton.vue';
@@ -22,6 +22,8 @@ import { toast } from "../composables/useToast";
 
 const route = useRoute();
 const router = useRouter();
+
+const { t, locale } = useI18n();
 
 // App version state
 const appVersion = ref('0.0.0');
@@ -165,6 +167,35 @@ const enableInstanceInheritance = ref(false);
 const downloadSource = ref<'official' | 'bmclapi'>('official');
 const maxConcurrentDownloads = ref(32);
 const enableTelemetry = ref(false);
+const enableGlobalGameSettings = ref(false);
+
+const showGlobalGameSettingsModal = ref(false);
+const globalGameSettingsContent = ref('');
+const isSavingGlobalSettings = ref(false);
+
+async function openGlobalGameSettings() {
+  try {
+    globalGameSettingsContent.value = await invoke<string>('get_global_game_settings');
+    showGlobalGameSettingsModal.value = true;
+  } catch (e) {
+    console.error('Failed to load global game settings:', e);
+    toast.error(t('settings.general.globalGameSettingsLoadFailed'), getErrorMessage(e));
+  }
+}
+
+async function saveGlobalGameSettingsContent() {
+  isSavingGlobalSettings.value = true;
+  try {
+    await invoke('save_global_game_settings', { content: globalGameSettingsContent.value });
+    toast.success(t('settings.general.globalGameSettingsSaveSuccess'));
+    showGlobalGameSettingsModal.value = false;
+  } catch (e) {
+    console.error('Failed to save global game settings:', e);
+    toast.error(t('settings.general.globalGameSettingsSaveFailed'), getErrorMessage(e));
+  } finally {
+    isSavingGlobalSettings.value = false;
+  }
+}
 
 async function loadLauncherSettings() {
   try {
@@ -173,6 +204,7 @@ async function loadLauncherSettings() {
     downloadSource.value = settings.downloadSource === 'bmclapi' ? 'bmclapi' : 'official';
     maxConcurrentDownloads.value = settings.maxConcurrentDownloads || 32;
     enableTelemetry.value = settings.enableTelemetry === true;
+    enableGlobalGameSettings.value = settings.enableGlobalGameSettings === true;
     if (settings.globalMaxMemory) {
       defaultMaxMemory.value = settings.globalMaxMemory;
     }
@@ -198,6 +230,7 @@ async function saveLauncherSettings() {
         downloadSource: downloadSource.value,
         maxConcurrentDownloads: maxConcurrentDownloads.value,
         enableTelemetry: enableTelemetry.value,
+        enableGlobalGameSettings: enableGlobalGameSettings.value,
         globalMaxMemory: defaultMaxMemory.value,
         aiConfig: {
           providerType: aiProviderType.value,
@@ -508,7 +541,6 @@ async function downloadJava(majorVersion: number): Promise<void> {
 }
 
 
-const { t, locale } = useI18n();
 
 const languageOptions = [
   { label: 'English', value: 'en' },
@@ -740,6 +772,29 @@ const clearLogs = () => {
           <input type="checkbox" v-model="enableInstanceInheritance" @change="saveLauncherSettings" class="sr-only peer">
           <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
         </label>
+      </div>
+
+      <!-- Global Game Settings -->
+      <div class="relative z-25 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex flex-col gap-4 shadow-sm">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-semibold flex items-center gap-2">
+              <Settings class="w-5 h-5 text-primary" />
+              {{ $t('settings.general.globalGameSettingsTitle') }}
+            </h2>
+            <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.globalGameSettingsDesc') }}</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" v-model="enableGlobalGameSettings" @change="saveLauncherSettings" class="sr-only peer">
+            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+          </label>
+        </div>
+        <div v-if="enableGlobalGameSettings" class="flex justify-end">
+          <DButton variant="outline" size="sm" @click="openGlobalGameSettings">
+            <Edit class="w-4 h-4 mr-2" />
+            {{ $t('settings.general.editGlobalGameSettings') }}
+          </DButton>
+        </div>
       </div>
 
       <!-- Download Source Settings -->
@@ -1303,6 +1358,40 @@ const clearLogs = () => {
     </div>
     
     <UpdaterModal v-model:open="showUpdaterModal" :update-info="updateInfo" />
+    </div>
+  </div>
+  
+  <!-- Global Game Settings Modal -->
+  <div v-if="showGlobalGameSettingsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" @click.self="showGlobalGameSettingsModal = false">
+    <div class="bg-white dark:bg-zinc-900 p-6 rounded-xl shadow-xl max-w-2xl w-full flex flex-col gap-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold flex items-center gap-2">
+          <Settings class="w-5 h-5 text-primary" />
+          {{ $t('settings.general.globalGameSettingsModalTitle') }}
+        </h2>
+        <button @click="showGlobalGameSettingsModal = false" class="text-muted-foreground hover:text-foreground">
+          <X :size="20" />
+        </button>
+      </div>
+      <p class="text-sm text-muted-foreground">
+        {{ $t('settings.general.globalGameSettingsModalDesc') }}
+      </p>
+      <textarea 
+        v-model="globalGameSettingsContent" 
+        class="w-full h-64 p-3 rounded-md bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
+        spellcheck="false"
+      ></textarea>
+      <div class="flex justify-end gap-3 mt-2">
+        <DButton variant="ghost" @click="showGlobalGameSettingsModal = false">
+          {{ $t('common.cancel') }}
+        </DButton>
+        <DButton @click="saveGlobalGameSettingsContent" :disabled="isSavingGlobalSettings">
+          <span v-if="isSavingGlobalSettings" class="animate-spin mr-2">
+            <RefreshCw class="w-4 h-4" />
+          </span>
+          {{ $t('common.save') }}
+        </DButton>
+      </div>
     </div>
   </div>
 </template>

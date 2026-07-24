@@ -325,6 +325,9 @@ pub fn run() {
             core::launcher::is_instance_running,
             core::launcher::get_instance_config,
             core::launcher::save_instance_config,
+            core::launcher::get_global_game_settings,
+            core::launcher::save_global_game_settings,
+            core::launcher::set_instance_options_as_global,
             // Fabric commands
             core::fabric::get_fabric_loaders,
             core::fabric::install_fabric_instance,

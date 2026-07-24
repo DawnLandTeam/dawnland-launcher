@@ -69,6 +69,8 @@ pub struct LauncherSettings {
     pub global_max_memory: Option<u32>,
     #[serde(default)]
     pub ai_config: AiConfig,
+    #[serde(default)]
+    pub enable_global_game_settings: bool,
 }
 
 fn default_max_concurrent_downloads() -> u32 {
@@ -84,6 +86,7 @@ impl Default for LauncherSettings {
             enable_telemetry: None,
             global_max_memory: None,
             ai_config: AiConfig::default(),
+            enable_global_game_settings: false,
         }
     }
 }
