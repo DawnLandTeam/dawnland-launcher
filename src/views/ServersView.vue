@@ -189,22 +189,30 @@ async function fetchServers() {
   isLoading.value = true;
   error.value = null;
   try {
-    const response = await invoke<ServerListResponse>("get_servers", {
-      page: currentPage.value,
-      pageSize: 30,
-      search: searchQuery.value,
-      version: filterMcVersion.value,
-      serverType: filterServerType.value,
-      authType: filterAuthType.value
-    });
-    
-    if (currentPage.value === 1) {
-      servers.value = response.data;
+    const isDefaultState = !searchQuery.value && !filterMcVersion.value && !filterServerType.value && !filterAuthType.value;
+
+    if (isDefaultState && currentPage.value === 1) {
+      const data = await invoke<ServerInfo[]>("get_recommended_servers");
+      servers.value = data;
+      totalPages.value = 1;
     } else {
-      servers.value = [...servers.value, ...response.data];
+      const response = await invoke<ServerListResponse>("get_servers", {
+        page: currentPage.value,
+        pageSize: 30,
+        search: searchQuery.value,
+        version: filterMcVersion.value,
+        serverType: filterServerType.value,
+        authType: filterAuthType.value
+      });
+      
+      if (currentPage.value === 1) {
+        servers.value = response.data;
+      } else {
+        servers.value = [...servers.value, ...response.data];
+      }
+      
+      totalPages.value = response.totalPages;
     }
-    
-    totalPages.value = response.totalPages;
     
     // Check deep link after loading
     if (route.query.view_id && typeof route.query.view_id === 'string') {
@@ -594,7 +602,7 @@ async function openPublishUrl() {
     </div>
 
     <!-- Filters - always visible, even while loading more -->
-    <div class="flex flex-wrap gap-3 mb-6 p-4 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md rounded-lg border border-white/20 shadow-sm">
+    <div class="relative z-10 flex flex-wrap gap-3 mb-6 p-4 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md rounded-lg border border-white/20 shadow-sm">
       <!-- Search -->
       <div class="relative flex-1 min-w-[200px]">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
