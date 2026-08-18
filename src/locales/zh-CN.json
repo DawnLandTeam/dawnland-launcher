@@ -1,15 +1,16 @@
 {
-  "common": {
-    "delete": "删除",
-    "search": "搜索",
-    "searchPlaceholder": "搜索...",
-    "cancel": "取消",
-    "confirm": "确认",
-    "select": "请选择...",
-    "back": "返回",
-    "saveSuccess": "保存成功",
-    "save": "保存"
-  },
+    "common": {
+      "delete": "删除",
+      "search": "搜索",
+      "searchPlaceholder": "搜索...",
+      "cancel": "取消",
+      "confirm": "确认",
+      "select": "请选择...",
+      "back": "返回",
+      "saveSuccess": "保存成功",
+      "save": "保存",
+      "operationFailed": "操作失败"
+    },
   "sidebar": {
     "home": "主页",
     "instances": "实例",
@@ -129,7 +130,6 @@
     "presetEmpty": "该预设目前为空",
     "editPresetTitle": "编辑预设: {name}",
     "edit": "编辑",
-    "delete": "删除",
     "cancel": "取消",
     "enable": "启用",
     "disable": "禁用",
@@ -137,8 +137,15 @@
     "settingsDialog": {
       "title": "实例设置",
       "javaVersion": "Java 版本",
-      "defaultAuto": "默认 (自动检测)",
-      "javaWarning": "MC 1.20.5+ 需要 Java 21。保留“默认”将使用系统默认或推荐的 Java 版本。如果列表中没有您想要的 Java，可以在“设置 > Java 管理”中添加。",
+      "defaultAuto": "默认 (自动寻找)",
+      "openFolders": "打开资源文件夹",
+      "openFoldersDesc": "快速定位到该实例的相关资源目录",
+      "folderInstance": "实例本体",
+      "folderMods": "Mods",
+      "folderResourcepacks": "资源包",
+      "folderShaderpacks": "光影包",
+      "folderSaves": "世界",
+      "javaWarning": "MC 1.20.5+ 需要 Java 21。默认使用系统默认或推荐。如 Java 版本列表中没有需要的，请在全局设置 > Java 中添加。",
       "maxMemory": "最大内存 (MB)",
       "useGlobalMemory": "使用全局默认内存",
       "globalMemoryCurrently": "当前全局分配内存:",

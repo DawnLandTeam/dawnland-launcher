@@ -566,23 +566,50 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
     })
 }
 
+/// Compute the base directory for a specific instance/version.
+///
+/// Centralizes the instance layout so commands stay in sync if the structure changes.
+fn get_instance_dir(version_id: &str) -> std::path::PathBuf {
+    get_minecraft_base().join("versions").join(version_id)
+}
+
 /// Open the instance folder in the system file manager.
 #[tauri::command]
 pub async fn open_instance_folder(version_id: String) -> Result<(), String> {
-    let base_dir = get_minecraft_base();
-    let instance_dir = base_dir.join("versions").join(&version_id);
+    let instance_dir = get_instance_dir(&version_id);
 
     // Ensure directory exists — create it if missing so the user sees an empty folder
-    if !instance_dir.exists() {
-        tokio::fs::create_dir_all(&instance_dir)
-            .await
-            .map_err(|e| format!("Failed to create instance directory: {}", e))?;
-    }
+    tokio::fs::create_dir_all(&instance_dir)
+        .await
+        .map_err(|e| format!("Failed to create instance directory: {}", e))?;
 
     // Open in system file manager (Explorer / Finder / xdg-open)
     open::that(&instance_dir).map_err(|e| format!("Failed to open folder: {}", e))?;
 
     tracing::info!("Opened instance folder: {}", instance_dir.display());
+    Ok(())
+}
+
+/// Open a specific subfolder of an instance in the system file manager.
+#[tauri::command]
+pub async fn open_instance_subfolder(version_id: String, subfolder: String) -> Result<(), String> {
+    let mut target_dir = get_instance_dir(&version_id);
+
+    // Prevent path traversal
+    if subfolder.contains("..") || subfolder.contains("/") || subfolder.contains("\\") {
+        return Err("Invalid subfolder name".to_string());
+    }
+
+    target_dir = target_dir.join(subfolder);
+
+    // Ensure directory exists (async, idempotent)
+    tokio::fs::create_dir_all(&target_dir)
+        .await
+        .map_err(|e| format!("Failed to create directory: {}", e))?;
+
+    open::that(&target_dir).map_err(|e| format!("Failed to open folder: {}", e))?;
+
+    tracing::info!("Opened instance subfolder: {}", target_dir.display());
     Ok(())
 }
 
