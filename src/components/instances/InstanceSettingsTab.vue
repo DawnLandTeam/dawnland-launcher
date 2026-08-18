@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
-import { Save } from '@lucide/vue';
+import { Save, FolderOpen, Puzzle, Box, Sparkles, Globe } from '@lucide/vue';
 import DSelect from '../ui/DSelect.vue';
 import { getErrorMessage } from '../../utils/error';
 import { launchingInstances, runningInstances, repairingInstances } from '../../composables/useLaunchState';
@@ -27,6 +27,14 @@ interface SystemMemoryInfo {
   totalMb: number;
   recommendedMaxMb: number;
 }
+
+const quickFolders = [
+  { id: '', labelKey: 'folderInstance', fallback: 'Instance Root', icon: FolderOpen },
+  { id: 'mods', labelKey: 'folderMods', fallback: 'Mods', icon: Puzzle },
+  { id: 'resourcepacks', labelKey: 'folderResourcepacks', fallback: 'Resourcepacks', icon: Box },
+  { id: 'shaderpacks', labelKey: 'folderShaderpacks', fallback: 'Shaderpacks', icon: Sparkles },
+  { id: 'saves', labelKey: 'folderSaves', fallback: 'Worlds', icon: Globe },
+];
 
 interface JavaInfo {
   path: string;
@@ -165,6 +173,20 @@ async function setAsGlobalPreset() {
     isSettingGlobalPreset.value = false;
   }
 }
+
+async function openInstanceSubfolder(subfolder: string) {
+  if (!props.instanceId) return;
+  try {
+    if (subfolder === '') {
+      await invoke('open_instance_folder', { versionId: props.instanceId });
+    } else {
+      await invoke('open_instance_subfolder', { versionId: props.instanceId, subfolder });
+    }
+  } catch (e) {
+    console.error('Failed to open folder:', e);
+    toast.error(t('common.operationFailed', 'Operation failed'), getErrorMessage(e));
+  }
+}
 </script>
 
 <template>
@@ -182,10 +204,29 @@ async function setAsGlobalPreset() {
     </div>
 
     <div class="flex-1 overflow-y-auto p-6">
-      <div class="max-w-3xl space-y-8">
+      <div class="max-w-3xl space-y-6">
         <div v-if="isSettingsInstanceRunning" class="p-3 bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 rounded-md text-sm flex items-center gap-2">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
           {{ t('instances.cannotEditRunning', '游戏正在运行中，无法修改配置') }}
+        </div>
+
+        <!-- Quick Folders -->
+        <div class="space-y-4">
+          <div>
+            <h4 class="text-sm font-medium mb-1">{{ t('instances.settingsDialog.openFolders') || 'Open Resource Folders' }}</h4>
+            <p class="text-xs text-muted-foreground">{{ t('instances.settingsDialog.openFoldersDesc') || 'Quickly open relevant resource folders for this instance' }}</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <button
+              v-for="folder in quickFolders"
+              :key="folder.id"
+              @click="openInstanceSubfolder(folder.id)"
+              class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium border border-neutral-300 dark:border-zinc-700 rounded-md hover:bg-neutral-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <component :is="folder.icon" class="h-4 w-4 text-primary" />
+              {{ t(`instances.settingsDialog.${folder.labelKey}`) || folder.fallback }}
+            </button>
+          </div>
         </div>
 
         <!-- Java Path -->
