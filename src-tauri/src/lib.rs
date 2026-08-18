@@ -342,6 +342,7 @@ pub fn run() {
             core::manager::delete_instance,
             core::manager::check_instance_data,
             core::manager::open_instance_folder,
+            core::manager::open_instance_subfolder,
             core::manager::get_instance_saves,
             core::manager::get_instance_datapack_dir,
             // Local mod management commands
