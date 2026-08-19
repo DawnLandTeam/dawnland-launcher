@@ -35,8 +35,8 @@
       
       <div v-else-if="filteredAssets.length === 0" class="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
         <Sparkles class="w-16 h-16 mb-4 opacity-20" />
-        <p class="text-lg font-medium">{{ $t('instances.noCustomAssets', 'No global custom assets found.') }}</p>
-        <p class="text-sm mt-2 max-w-md">{{ $t('instances.customAssetsHint', 'You can place your favorite files in the global_assets folder to quickly apply them to any instance.') }}</p>
+        <p class="text-lg font-medium">{{ $t('instances.noCustomShaders', 'No global custom shaderpacks found.') }}</p>
+        <p class="text-sm mt-2 max-w-md">{{ $t('instances.customShadersHint', 'You can place your favorite shaderpacks in the global_assets folder to quickly apply them to any instance.') }}</p>
       </div>
       
       <div v-else class="grid gap-3">
