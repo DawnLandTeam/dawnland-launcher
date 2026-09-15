@@ -10,9 +10,9 @@ import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { Settings, Puzzle, Package, Box, Globe, Sparkles, FolderArchive, ArrowLeft, RefreshCw, Share2, AlertTriangle } from "@lucide/vue";
 import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
-import DButton from "../components/ui/DButton.vue";
 
-import { invoke } from "@tauri-apps/api/core";
+
+
 import { getErrorMessage } from "../utils/error";
 
 import { useInstances } from "../composables/useInstances";
