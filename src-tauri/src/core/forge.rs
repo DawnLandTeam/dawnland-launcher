@@ -1306,21 +1306,7 @@ impl ExecutableTask for InstallForgeTask {
                 .unwrap_or_else(|_| "{}".to_string());
             serde_json::from_str(&content).unwrap_or_default()
         } else {
-            crate::core::launcher::InstanceConfig {
-                java_path: None,
-                max_memory: None,
-                jvm_args_extra: None,
-                window_behavior: "keep".to_string(),
-                show_game_log: false,
-                hidden: false,
-                server_id: None,
-                pack_version_id: None,
-                pack_file_name: None,
-                is_installing: false,
-                is_updating: false,
-                installed_mods: std::collections::HashMap::new(),
-                extra: std::collections::HashMap::new(),
-            }
+            crate::core::launcher::InstanceConfig::default()
         };
 
         config.hidden = is_dependency.unwrap_or(false);

@@ -44,6 +44,8 @@
           <div class="flex-1 min-w-0">
             <div class="font-medium text-sm truncate" :title="asset.filename">{{ asset.filename }}</div>
             <div class="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+              <span v-if="asset.managedByModpack" class="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] border border-primary/20">{{ $t('instances.modpack', 'Modpack') }}</span>
+              <span v-else class="bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded text-[10px] border">{{ $t('instances.manual', 'Manual') }}</span>
               <span v-if="asset.isDir" :title="$t('instances.folderSizeSkipped')" class="cursor-help underline decoration-dotted decoration-muted-foreground underline-offset-2">{{ $t('instances.folder') }}</span>
               <span v-else>{{ formatSize(asset.size) }}</span>
             </div>
@@ -201,3 +203,4 @@ function formatSize(bytes: number) {
   background: rgba(255, 255, 255, 0.2);
 }
 </style>
+

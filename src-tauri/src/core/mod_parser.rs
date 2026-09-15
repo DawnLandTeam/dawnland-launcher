@@ -13,6 +13,8 @@ pub struct ModMetadata {
     pub has_icon: bool,
     /// Declared dependencies (mod ids). Used by prelaunch checks.
     pub depends: Vec<String>,
+    /// Mod IDs provided by this mod (e.g. submodules in fabric API).
+    pub provides: Vec<String>,
 }
 
 pub struct ModParser {
@@ -108,6 +110,7 @@ impl ModParser {
                                     version: row.get(3).ok(),
                                     has_icon: row.get::<_, i32>(4).unwrap_or(0) == 1,
                                     depends: Vec::new(),
+                                    provides: Vec::new(),
                                 },
                             );
                         }
@@ -144,6 +147,7 @@ impl ModParser {
             version: None,
             has_icon: false,
             depends: Vec::new(),
+            provides: Vec::new(),
         };
 
         let file = match File::open(file_path) {
@@ -196,6 +200,71 @@ impl ModParser {
                 // Extract dependencies (fabric.mod.json "depends" is an object keyed by mod id)
                 if let Some(depends) = json.get("depends").and_then(|v| v.as_object()) {
                     meta.depends = depends.keys().cloned().collect();
+                }
+                
+                // Extract provided mods
+                if let Some(provides) = json.get("provides").and_then(|v| v.as_array()) {
+                    meta.provides = provides.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                }
+
+                // Parse nested jars (Jar-in-Jar) for Fabric API submodules
+                if let Some(jars) = json.get("jars").and_then(|v| v.as_array()) {
+                    for j in jars {
+                        if let Some(file_path) = j.get("file").and_then(|v| v.as_str()) {
+                            let mut buf = Vec::new();
+                            if let Ok(mut nested_f) = archive.by_name(file_path) {
+                                let _ = std::io::Read::read_to_end(&mut nested_f, &mut buf);
+                            }
+                            if !buf.is_empty() {
+                                if let Ok(mut nested_archive) = zip::ZipArchive::new(std::io::Cursor::new(buf)) {
+                                    if let Ok(mut inner_f) = nested_archive.by_name("fabric.mod.json") {
+                                        let mut inner_s = String::new();
+                                        if std::io::Read::read_to_string(&mut inner_f, &mut inner_s).is_ok() {
+                                            if let Ok(inner_json) = serde_json::from_str::<serde_json::Value>(&inner_s) {
+                                                if let Some(id) = inner_json.get("id").and_then(|v| v.as_str()) {
+                                                    meta.provides.push(id.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Fallback for quilt.mod.json
+                if meta.mod_id.is_none() {
+                    if let Some(ql) = json.get("quilt_loader").and_then(|v| v.as_object()) {
+                        meta.mod_id = ql.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        
+                        // Quilt depends is an array of objects/strings
+                        if let Some(depends) = ql.get("depends").and_then(|v| v.as_array()) {
+                            for d in depends {
+                                if let Some(id) = d.as_object().and_then(|o| o.get("id")).and_then(|v| v.as_str()) {
+                                    meta.depends.push(id.to_string());
+                                } else if let Some(s) = d.as_str() {
+                                    meta.depends.push(s.to_string());
+                                }
+                            }
+                        }
+                        
+                        // Quilt provides is an array of objects/strings
+                        if let Some(provides) = ql.get("provides").and_then(|v| v.as_array()) {
+                            for p in provides {
+                                if let Some(id) = p.as_object().and_then(|o| o.get("id")).and_then(|v| v.as_str()) {
+                                    meta.provides.push(id.to_string());
+                                } else if let Some(s) = p.as_str() {
+                                    meta.provides.push(s.to_string());
+                                }
+                            }
+                        }
+                        
+                        if let Some(metadata) = ql.get("metadata").and_then(|v| v.as_object()) {
+                            meta.name = metadata.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            meta.version = ql.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        }
+                    }
                 }
 
                 if let Some(icon_path) = json.get("icon").and_then(|v| v.as_str()) {
@@ -316,6 +385,7 @@ mod tests {
             version: Some("1.0.0".to_string()),
             has_icon: true,
             depends: vec![],
+            provides: vec![],
         };
 
         parser.set_cache_entry("hash123", &meta);

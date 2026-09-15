@@ -75,6 +75,7 @@ pub struct CfSearchResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CfModProject {
     pub id: i64,
+    pub slug: String,
     pub name: String,
     pub summary: String,
     pub logo: Option<CfLogo>,
@@ -445,7 +446,8 @@ async fn search_curseforge_internal(
             UnifiedModProject {
                 source: "curseforge".to_string(),
                 project_id: m.id.to_string(),
-                title: m.name,
+                slug: m.slug.clone(),
+                title: m.name.clone(),
                 description: m.summary,
                 icon_url: m.logo.and_then(|l| l.thumbnail_url),
                 downloads: m.download_count as u64,
@@ -743,7 +745,8 @@ pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject,
     Ok(UnifiedModProject {
         source: "curseforge".to_string(),
         project_id: m.id.to_string(),
-        title: m.name,
+        slug: m.slug.clone(),
+        title: m.name.clone(),
         description: m.summary,
         icon_url: m.logo.and_then(|l| l.thumbnail_url),
         downloads: m.download_count as u64,
@@ -822,7 +825,8 @@ pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModP
             UnifiedModProject {
                 source: "curseforge".to_string(),
                 project_id: m.id.to_string(),
-                title: m.name,
+                slug: m.slug.clone(),
+                title: m.name.clone(),
                 description: m.summary,
                 icon_url: m.logo.and_then(|l| l.thumbnail_url),
                 downloads: m.download_count as u64,

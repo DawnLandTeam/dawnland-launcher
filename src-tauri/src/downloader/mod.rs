@@ -20,6 +20,10 @@ pub struct DownloadTask {
     pub hash: Option<String>,
     /// Optional expected file size in bytes.
     pub expected_size: Option<u64>,
+    #[serde(skip)]
+    pub asset_record: Option<(String, crate::models::instance::AssetRecord)>,
+    #[serde(skip)]
+    pub instance_id: Option<String>,
 }
 
 impl DownloadTask {
@@ -35,6 +39,8 @@ impl DownloadTask {
             dest_path,
             hash,
             expected_size,
+            asset_record: None,
+            instance_id: None,
         }
     }
 
@@ -98,5 +104,13 @@ impl DownloadProgress {
             error: Some(error),
             file_name: None,
         }
+    }
+}
+
+impl DownloadTask {
+    pub fn with_asset_record(mut self, instance_id: String, path_key: String, record: crate::models::instance::AssetRecord) -> Self {
+        self.instance_id = Some(instance_id);
+        self.asset_record = Some((path_key, record));
+        self
     }
 }

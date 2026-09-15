@@ -19,6 +19,7 @@ pub struct UnifiedModProject {
     pub source: String,
     /// Project ID (modId on CurseForge, project_id on Modrinth)
     pub project_id: String,
+    pub slug: String,
     /// Project title/name
     pub title: String,
     /// Project description
@@ -88,6 +89,7 @@ struct ModrinthSearchResult {
 struct ModrinthProject {
     #[serde(rename = "project_id")]
     project_id: String,
+    slug: String,
     title: String,
     description: String,
     #[serde(rename = "icon_url")]
@@ -106,6 +108,7 @@ struct ModrinthProject {
 struct ModrinthProjectDetails {
     #[serde(alias = "id", alias = "project_id")]
     project_id: String,
+    slug: String,
     title: String,
     description: String,
     #[serde(rename = "icon_url")]
@@ -343,8 +346,9 @@ async fn search_modrinth_internal(
         .into_iter()
         .map(|p| UnifiedModProject {
             source: "modrinth".to_string(),
-            project_id: p.project_id,
-            title: p.title,
+            project_id: p.project_id.clone(),
+            slug: p.slug.clone(),
+            title: p.title.clone(),
             description: p.description,
             icon_url: p.icon_url,
             downloads: p.downloads,
@@ -493,6 +497,7 @@ pub async fn get_modrinth_mod_details(project_id: String) -> Result<UnifiedModPr
     Ok(UnifiedModProject {
         source: "modrinth".to_string(),
         project_id: details.project_id,
+        slug: details.slug,
         title: details.title,
         description: details.description,
         icon_url: details.icon_url,
@@ -588,8 +593,9 @@ pub async fn search_modrinth_modpacks(query: String) -> Result<Vec<UnifiedModPro
         .into_iter()
         .map(|p| UnifiedModProject {
             source: "modrinth".to_string(),
-            project_id: p.project_id,
-            title: p.title,
+            project_id: p.project_id.clone(),
+            slug: p.slug.clone(),
+            title: p.title.clone(),
             description: p.description,
             icon_url: p.icon_url,
             downloads: p.downloads,

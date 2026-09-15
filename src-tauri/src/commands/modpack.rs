@@ -217,11 +217,40 @@ impl ExecutableTask for InstallModpackTask {
                                 dest = disabled_dest;
                             }
 
+                            let download_url_clone = file.download_url.clone();
+                            let hash_clone = file.hash.clone();
+                            let project_id_clone = project_id.clone();
+                            let file_id_str = file.id.to_string();
                             tasks.push(DownloadTask::new(
                                 file.download_url,
                                 dest.to_string_lossy().to_string(),
                                 file.hash,
                                 file.file_size,
+                            ).with_asset_record(
+                                instance_name.clone(),
+                                dest.strip_prefix(&instance_dir).unwrap_or(&dest).to_string_lossy().replace("\\", "/"),
+                                crate::models::instance::AssetRecord {
+                                    category: if dest.to_string_lossy().contains("resourcepacks") {
+                                        crate::models::instance::AssetCategory::ResourcePack
+                                    } else if dest.to_string_lossy().contains("shaderpacks") {
+                                        crate::models::instance::AssetCategory::ShaderPack
+                                    } else if dest.to_string_lossy().contains("saves") {
+                                        crate::models::instance::AssetCategory::Save
+                                    } else if dest.to_string_lossy().contains("datapacks") {
+                                        crate::models::instance::AssetCategory::Datapack
+                                    } else {
+                                        crate::models::instance::AssetCategory::Mod
+                                    },
+                                    source_type: crate::models::instance::AssetSourceType::CurseForge,
+                                    project_id: project_id_clone,
+                                    version_id: Some(file_id_str),
+                                    download_url: Some(download_url_clone),
+                                    hash_sha1: hash_clone,
+                                    hash_sha512: None,
+                                    size: file.file_size,
+                                    enabled: !dest.to_string_lossy().ends_with(".disable"),
+                                    managed_by_modpack: true,
+                                }
                             ));
                         }
 
@@ -252,11 +281,38 @@ impl ExecutableTask for InstallModpackTask {
                                 }
 
                                 let hash = file.hashes.get("sha1").cloned();
+                                let hash_clone = hash.clone();
+                                let url_clone = url.clone();
                                 tasks.push(DownloadTask::new(
                                     url.clone(),
                                     dest.to_string_lossy().to_string(),
                                     hash,
                                     Some(file.file_size),
+                                ).with_asset_record(
+                                    instance_name.clone(),
+                                    file.path.clone(),
+                                    crate::models::instance::AssetRecord {
+                                        category: if dest.to_string_lossy().contains("resourcepacks") {
+                                            crate::models::instance::AssetCategory::ResourcePack
+                                        } else if dest.to_string_lossy().contains("shaderpacks") {
+                                            crate::models::instance::AssetCategory::ShaderPack
+                                        } else if dest.to_string_lossy().contains("saves") {
+                                            crate::models::instance::AssetCategory::Save
+                                        } else if dest.to_string_lossy().contains("datapacks") {
+                                            crate::models::instance::AssetCategory::Datapack
+                                        } else {
+                                            crate::models::instance::AssetCategory::Mod
+                                        },
+                                        source_type: crate::models::instance::AssetSourceType::Modrinth,
+                                        project_id: None,
+                                        version_id: None,
+                                        download_url: Some(url_clone),
+                                        hash_sha1: hash_clone,
+                                        hash_sha512: file.hashes.get("sha512").cloned(),
+                                        size: Some(file.file_size),
+                                        enabled: !dest.to_string_lossy().ends_with(".disable"),
+                                        managed_by_modpack: true,
+                                    }
                                 ));
                             }
                         }
@@ -295,6 +351,32 @@ impl ExecutableTask for InstallModpackTask {
                 )
             };
 
+        // Early save to dlml.json so UI shows correct info while downloading
+        let config_path = instance_dir.join("dlml.json");
+        if let Ok(config_content) = tokio::fs::read_to_string(&config_path).await {
+            if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&config_content) {
+                config.mc_version = Some(mc_version.clone());
+                let loader_enum = if loader.to_lowercase().contains("forge") && !loader.to_lowercase().contains("neoforge") {
+                    Some(crate::models::instance::LoaderType::Forge)
+                } else if loader.to_lowercase().contains("fabric") {
+                    Some(crate::models::instance::LoaderType::Fabric)
+                } else if loader.to_lowercase().contains("neoforge") {
+                    Some(crate::models::instance::LoaderType::NeoForge)
+                } else if loader.to_lowercase().contains("quilt") {
+                    Some(crate::models::instance::LoaderType::Quilt)
+                } else {
+                    Some(crate::models::instance::LoaderType::Vanilla)
+                };
+                config.loader_type = loader_enum;
+                config.modpack_project_id = project_id.clone();
+                config.modpack_type = Some(modpack_type_str.to_string());
+                config.modpack_version = Some(modpack_version.clone());
+                if let Ok(json) = serde_json::to_string_pretty(&config) {
+                    let _ = tokio::fs::write(&config_path, json).await;
+                }
+            }
+        }
+
         // 3. Setup Instance
         let ctx_vanilla_forge = ctx.clone();
         let mc_version_clone = mc_version.clone();
@@ -311,36 +393,55 @@ impl ExecutableTask for InstallModpackTask {
             .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
         // Smart Cleanup if is_update is true
-        let modpack_files_path = instance_dir.join("modpack_files.json");
+        // Read existing assets.json (or create new)
+        let assets_path = instance_dir.join("assets.json");
+        let mut manifest: crate::models::instance::AssetManifest = if assets_path.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+                serde_json::from_str(&content).unwrap_or_default()
+            } else {
+                crate::models::instance::AssetManifest::default()
+            }
+        } else {
+            crate::models::instance::AssetManifest::default()
+        };
 
-        let mut expected_mod_filenames = std::collections::HashSet::new();
+        let mut expected_mod_paths = std::collections::HashSet::new();
         for task in &tasks {
-            if let Some(filename) = std::path::Path::new(&task.dest_path).file_name() {
-                let name = filename.to_string_lossy().to_string();
-                let base_name = name.trim_end_matches(".disable").to_string();
-                expected_mod_filenames.insert(base_name);
+            if let Some((path_key, record)) = &task.asset_record {
+                expected_mod_paths.insert(path_key.clone());
+                // Pre-register all assets sequentially to avoid race conditions during concurrent downloads
+                manifest.assets.insert(path_key.clone(), record.clone());
             }
         }
 
-        if is_update
-            && modpack_files_path.exists() {
-                if let Ok(content) = tokio::fs::read_to_string(&modpack_files_path).await {
+        if is_update {
+            // First, migrate from legacy modpack_files.json if it exists
+            let legacy_modpack_files_path = instance_dir.join("modpack_files.json");
+            if legacy_modpack_files_path.exists() {
+                if let Ok(content) = tokio::fs::read_to_string(&legacy_modpack_files_path).await {
                     if let Ok(old_files) = serde_json::from_str::<Vec<String>>(&content) {
                         for old_file in old_files {
                             let file_path = instance_dir.join(&old_file);
                             if let Some(filename) = file_path.file_name() {
                                 let name_str = filename.to_string_lossy().to_string();
                                 let base_name = name_str.trim_end_matches(".disable").to_string();
-
-                                if !expected_mod_filenames.contains(&base_name) {
-                                    tracing::info!("Removing old modpack file: {}", old_file);
+                                
+                                let mut found = false;
+                                for task in &tasks {
+                                    if let Some((path_key, _)) = &task.asset_record {
+                                        let expected_name = std::path::Path::new(path_key).file_name().unwrap_or_default().to_string_lossy().to_string();
+                                        if expected_name.trim_end_matches(".disable") == base_name {
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                if !found {
+                                    tracing::info!("Update legacy cleanup: Deleting outdated modpack mod {}", old_file);
                                     let _ = tokio::fs::remove_file(&file_path).await;
-
-                                    // Also try removing variants
-                                    let disabled_path =
-                                        file_path.with_file_name(format!("{}.disable", base_name));
+                                    let disabled_path = file_path.with_file_name(format!("{}.disable", base_name));
                                     let _ = tokio::fs::remove_file(&disabled_path).await;
-
                                     let enabled_path = file_path.with_file_name(&base_name);
                                     let _ = tokio::fs::remove_file(&enabled_path).await;
                                 }
@@ -348,24 +449,40 @@ impl ExecutableTask for InstallModpackTask {
                         }
                     }
                 }
+                let _ = tokio::fs::remove_file(&legacy_modpack_files_path).await;
             }
 
-        // Save list of expected mod files for future updates
-        let mut new_modpack_files = Vec::new();
-        for task in &tasks {
-            if let Ok(rel_path) = std::path::Path::new(&task.dest_path).strip_prefix(&instance_dir)
-            {
-                let rel_str = rel_path.to_string_lossy().to_string().replace("\\\\", "/");
-                let base_rel_str = rel_str.trim_end_matches(".disable").to_string();
-                new_modpack_files.push(base_rel_str);
+            // Smart cleanup for existing managed_by_modpack records
+            let mut to_remove = Vec::new();
+            for (path_key, record) in &manifest.assets {
+                if record.managed_by_modpack {
+                    let mut found = false;
+                    for expected in &expected_mod_paths {
+                        let normalized_expected = expected.trim_end_matches(".disable");
+                        let normalized_path_key = path_key.trim_end_matches(".disable");
+                        if normalized_expected == normalized_path_key {
+                            found = true;
+                            break;
+                        }
+                    }
+                    
+                    if !found {
+                        to_remove.push(path_key.clone());
+                    }
+                }
+            }
+            for path_key in to_remove {
+                tracing::info!("Removing old modpack file from assets: {}", path_key);
+                let _ = tokio::fs::remove_file(instance_dir.join(&path_key)).await;
+                let _ = tokio::fs::remove_file(instance_dir.join(format!("{}.disable", path_key))).await;
+                manifest.assets.remove(&path_key);
             }
         }
-        let _ = tokio::fs::write(
-            &modpack_files_path,
-            serde_json::to_string_pretty(&new_modpack_files)
-                .map_err(|e| TaskError::ExecutionError(e.to_string()))?,
-        )
-        .await;
+        
+        // Write the fully updated assets.json ONCE to disk
+        if let Ok(json_str) = serde_json::to_string_pretty(&manifest) {
+            let _ = tokio::fs::write(&assets_path, json_str).await;
+        }
 
         // 4. Batch Download Mods
         check_cancel!();
@@ -407,18 +524,7 @@ impl ExecutableTask for InstallModpackTask {
         let mut version_json_map = serde_json::Map::new();
         version_json_map.insert("id".to_string(), serde_json::json!(instance_name));
         version_json_map.insert("type".to_string(), serde_json::json!("release"));
-        version_json_map.insert(
-            "modpackVersion".to_string(),
-            serde_json::json!(modpack_version),
-        );
-        version_json_map.insert(
-            "modpackType".to_string(),
-            serde_json::json!(modpack_type_str),
-        );
-        version_json_map.insert(
-            "modpackProjectId".to_string(),
-            serde_json::json!(project_id),
-        );
+
 
         let settings = crate::core::settings::get_launcher_settings_sync();
         if !settings.enable_instance_inheritance {

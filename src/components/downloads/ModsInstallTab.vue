@@ -37,6 +37,7 @@ interface UnifiedCategory {
 interface UnifiedModProject {
   source: string;
   project_id: string;
+  slug: string;
   title: string;
   description: string;
   icon_url?: string;
@@ -48,6 +49,7 @@ interface UnifiedModProject {
 
 interface UnifiedDependency {
   project_id: string;
+  slug: string;
   version_id?: string;
   required: boolean;
 }
@@ -527,25 +529,40 @@ async function checkDependenciesForSelectedFile() {
         missingDeps = requiredDeps;
       }
     }
-    pendingDependencies.value = missingDeps;
-    
-    // Resolve titles asynchronously
-    missingDeps.forEach(async (dep) => {
+    // Resolve titles asynchronously and filter out already installed ones
+    await Promise.all(missingDeps.map(async (dep) => {
       try {
         let title = "";
+        let slug = "";
         if (pendingMod.value?.source === "modrinth") {
           const mod = await invoke<UnifiedModProject>("get_modrinth_mod_details", { projectId: dep.project_id });
           title = mod.title;
+          slug = mod.slug;
         } else {
           const mod = await invoke<UnifiedModProject>("get_cf_mod_details", { projectId: dep.project_id });
           title = mod.title;
+          slug = mod.slug;
         }
+        
+        if (selectedInstanceId.value && slug) {
+          const mapping = await invoke<{ [key: string]: string }>("get_instance_mod_mapping", {
+            versionId: selectedInstanceId.value
+          });
+          if (mapping[`modid_${slug}`]) {
+            // Already installed by mod_id (e.g., provided by another mod or installed manually)
+            (dep as any)._installed = true;
+            return;
+          }
+        }
+        
         pendingDependencyTitles.value[dep.project_id] = title;
         (dep as any).name = title;
       } catch (err) {
         console.error("Failed to resolve dependency title", dep.project_id, err);
       }
-    });
+    }));
+
+    pendingDependencies.value = missingDeps.filter(dep => !(dep as any)._installed);
   } catch(err) {
     console.error("Failed to check deps", err);
     pendingDependencies.value = [];
