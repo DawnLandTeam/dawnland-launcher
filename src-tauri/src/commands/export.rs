@@ -70,6 +70,7 @@ pub struct MrVersionFileResponse {
 pub struct MrFile {
     pub hashes: HashMap<String, String>,
     pub url: String,
+    pub filename: String,
     pub size: u64,
 }
 
@@ -415,8 +416,26 @@ async fn analyze_modrinth(
                     if let Ok(resp) = client_clone.get(&fallback_url).send().await {
                         if resp.status().is_success() {
                             if let Ok(versions) = resp.json::<Vec<MrFallbackVersion>>().await {
-                                if let Some(latest) = versions.first() {
-                                    if let Some(target_file) = latest.files.first() {
+                                let mut matched_version = None;
+                                for v in &versions {
+                                    let mut is_match = false;
+                                    // Filter by local metadata (version string or filename)
+                                    if let (Some(m_v), Some(v_num)) = (&m_version, &v.version_number) {
+                                        if m_v == v_num {
+                                            is_match = true;
+                                        }
+                                    }
+                                    if !is_match && v.files.iter().any(|f| f.filename == m_filename) {
+                                        is_match = true;
+                                    }
+                                    if is_match {
+                                        matched_version = Some(v);
+                                        break;
+                                    }
+                                }
+                                
+                                if let Some(matched_v) = matched_version {
+                                    if let Some(target_file) = matched_v.files.first() {
                                         let mr_sha1 = target_file.hashes.get("sha1").cloned().unwrap_or_default();
                                         let mr_sha512 = target_file.hashes.get("sha512").cloned().unwrap_or_default();
                                         if !mr_sha1.is_empty() {
