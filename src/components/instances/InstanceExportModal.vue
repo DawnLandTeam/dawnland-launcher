@@ -16,11 +16,30 @@ const props = defineProps<{
 const emit = defineEmits(['update:open']);
 
 const form = ref({
-  name: 'Exported Modpack',
-  version: '1.0.0',
-  author: 'Dawnland Player',
+  name: '',
+  version: '',
+  author: '',
   format: 'modrinth', // 'modrinth' | 'curseforge'
   includeSaves: false,
+});
+
+watch(() => props.open, async (newVal) => {
+  if (newVal) {
+    currentState.value = 'IDLE';
+    exportError.value = '';
+    matchedMods.value = [];
+    unmatchedMods.value = [];
+    isAutoResolvingAll.value = false;
+    
+    try {
+      const details = await invoke<any>('get_instance_details', { versionId: props.instanceId });
+      form.value.name = details.name || '';
+      form.value.version = details.modpackVersion || '';
+      form.value.author = '';
+    } catch (e) {
+      console.warn("Failed to load instance details for export defaults:", e);
+    }
+  }
 });
 
 type StepState = 'IDLE' | 'ANALYZING' | 'REVIEW' | 'EXPORTING' | 'SUCCESS';
@@ -421,7 +440,7 @@ function formatBytes(bytes: number, decimals = 2) {
         {{ $t('common.cancel', 'Cancel') }}
       </DButton>
       
-      <DButton v-if="currentState === 'IDLE'" variant="primary" @click="startAnalysis">
+      <DButton v-if="currentState === 'IDLE'" variant="primary" :disabled="!form.name || !form.version || !form.author" @click="startAnalysis">
         {{ $t('common.next', 'Next') }}
         <ArrowRight class="w-4 h-4 ml-2" />
       </DButton>
