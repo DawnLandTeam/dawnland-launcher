@@ -58,17 +58,15 @@ fn murmur2(data: &[u8]) -> u32 {
     let r = 24;
     let mut h = 1 ^ (data.len() as u32);
     
-    let mut iter = data.chunks_exact(4);
-    for chunk in &mut iter {
-        let mut k = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    let (chunks, rem) = data.as_chunks::<4>();
+    for chunk in chunks {
+        let mut k = u32::from_le_bytes(*chunk);
         k = k.wrapping_mul(m);
         k ^= k >> r;
         k = k.wrapping_mul(m);
         h = h.wrapping_mul(m);
         h ^= k;
     }
-    
-    let rem = iter.remainder();
     match rem.len() {
         3 => {
             h ^= (rem[2] as u32) << 16;
