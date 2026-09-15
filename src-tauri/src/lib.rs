@@ -284,6 +284,9 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            commands::export::analyze_export_instance,
+            commands::export::build_export_instance,
+            commands::export::resolve_manual_match,
             greet,
             core::cache::clean_dawnland_cache,
             core::security::generate_api_signature,

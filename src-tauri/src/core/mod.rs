@@ -24,3 +24,4 @@ pub use crate::core::modrinth::{OnlineModpackVersion, UnifiedModFile, UnifiedMod
 pub mod security;
 pub mod settings;
 pub mod ai;
+pub mod hash;

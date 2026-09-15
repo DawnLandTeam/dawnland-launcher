@@ -872,8 +872,9 @@ function loaderBadgeClass(loaderType: string): string {
               <div v-for="w in prelaunchWarnings" :key="w.dependencyId + w.requiredBy"
                 class="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800/50">
                 <span class="text-sm text-amber-700 dark:text-amber-400">
+                  <strong>{{ w.requiredBy }}</strong>
+                  <span class="text-amber-600/70 dark:text-amber-500/70">{{ $t('home.missingDependency') }}</span>
                   <strong>{{ w.dependencyId }}</strong>
-                  <span class="text-amber-600/70 dark:text-amber-500/70"> - {{ $t('home.requiredBy') }} {{ w.requiredBy }}</span>
                 </span>
               </div>
             </div>

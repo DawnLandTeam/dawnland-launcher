@@ -1,16 +1,18 @@
 {
-    "common": {
-      "delete": "Delete",
-      "search": "Search",
-      "searchPlaceholder": "Search...",
-      "cancel": "Cancel",
-      "confirm": "Confirm",
-      "select": "Please select...",
-      "back": "Back",
-      "saveSuccess": "Save successful",
-      "save": "Save",
-      "operationFailed": "Operation failed"
-    },
+  "common": {
+    "delete": "Delete",
+    "search": "Search",
+    "searchPlaceholder": "Search...",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "select": "Please select...",
+    "back": "Back",
+    "saveSuccess": "Save successful",
+    "save": "Save",
+    "operationFailed": "Operation failed",
+    "close": "Close",
+    "link": "Link"
+  },
   "sidebar": {
     "home": "Home",
     "instances": "Instances",
@@ -21,7 +23,6 @@
   "home": {
     "prelaunchWarningTitle": "Pre-launch Warning",
     "prelaunchWarningDesc": "The following mods may be missing dependencies. Launching anyway may cause a crash.",
-    "requiredBy": "Required by",
     "launchAnyway": "Launch Anyway",
     "welcome": "Welcome to Dawnland",
     "noInstances": "Install your first Minecraft instance to get started.",
@@ -52,7 +53,8 @@
     "repairFound": "Detected {total} missing or corrupted resources/libraries, re-downloading automatically.",
     "repairingDependency": "Automatically repairing and downloading missing dependency: {version} ...",
     "repairingDepTitle": "Repairing Dependency...",
-    "repairProgress": "{completed} / {total} files"
+    "repairProgress": "{completed} / {total} files",
+    "missingDependency": " requires: "
   },
   "instances": {
     "title": "Instances",
@@ -174,7 +176,43 @@
       "deleteUndone": "This action cannot be undone.",
       "deleteWarning": "This instance contains game data which will be permanently lost upon deletion!"
     },
-    "crashHistory": "Crash History"
+    "crashHistory": "Crash History",
+    "export": {
+      "title": "Export Modpack",
+      "description": "Package this instance into a standard format for sharing.",
+      "name": "Modpack Name",
+      "version": "Version",
+      "author": "Author",
+      "format": "Format",
+      "includeSaves": "Include Save Worlds (saves folder)",
+      "success": "Export Successful",
+      "successDesc": "The modpack has been saved locally.",
+      "start": "Export",
+      "progress": {
+        "starting": "Starting export...",
+        "gathering": "Gathering mods",
+        "hashing": "Hashing mod {current}/{total}",
+        "querying": "Querying CurseForge...",
+        "zipping": "Zipping archive",
+        "finished": "Finished"
+      },
+      "reviewModsDesc": "mods could not be matched automatically. You can manually link them or continue directly.",
+      "allMatched": "All mods matched successfully!",
+      "slugPlaceholder": "Project Slug (e.g. sodium)",
+      "idPlaceholder": "Project ID (e.g. 394468)",
+      "error": {
+        "mr404": "Modrinth project not found (404). Check the slug/name.",
+        "mrNoVersions": "No versions found for this project on Modrinth.",
+        "mrNoCompatibleVersions": "No versions found compatible with current MC version and loader.",
+        "mrApiError": "Modrinth API request failed.",
+        "networkError": "Network connection failed. Please try again.",
+        "cfRequiresNumeric": "CurseForge requires a numeric Project ID.",
+        "cf404": "CurseForge project not found (404). Check the ID.",
+        "cfNoFiles": "No files found for this project on CurseForge.",
+        "invalidJson": "Failed to parse response data."
+      },
+      "autoResolve": "Auto-Search All"
+    }
   },
   "servers": {
     "title": "Servers",
@@ -749,9 +787,6 @@
     "noSubTasks": "No detailed sub-tasks",
     "installing": "Installing...",
     "cancel": "Cancel",
-    "actions": {
-      "retryTask": "Retry Task"
-    },
     "sub": {
       "resolve_loader": "Fetch installer",
       "download_loader_libs": "Download loader libraries",
