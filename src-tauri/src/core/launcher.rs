@@ -188,40 +188,55 @@ pub struct LaunchConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceConfig {
-    /// Custom Java executable path. If None, falls back to system default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mc_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loader_type: Option<crate::models::instance::LoaderType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loader_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modpack_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modpack_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modpack_project_id: Option<String>,
+
     pub java_path: Option<String>,
-    /// Maximum heap memory in MB (e.g., 4096 for 4GB). If None, uses default.
     pub max_memory: Option<u32>,
-    /// JVM arguments to append (advanced)
     pub jvm_args_extra: Option<Vec<String>>,
-    /// Window behavior when game starts: "hide" | "minimize" | "keep"
     #[serde(default = "default_window_behavior")]
     pub window_behavior: String,
-    /// Whether to show the game log window automatically on launch
-    #[serde(default = "default_show_game_log")]
+    #[serde(default)]
     pub show_game_log: bool,
-    /// Whether this instance is a dependency and should be hidden from the UI
     #[serde(default)]
     pub hidden: bool,
-    /// ID of the server this instance is bound to (optional)
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_id: Option<String>,
-    /// Modpack Version ID (e.g. from CurseForge/Modrinth) (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pack_version_id: Option<String>,
-    /// Modpack File Name for local zips (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pack_file_name: Option<String>,
-    /// Whether this instance is currently being installed
+
     #[serde(default)]
     pub is_installing: bool,
-    /// Whether this instance is currently being updated
     #[serde(default)]
     pub is_updating: bool,
-    /// Map of installed mod keys to filenames
     #[serde(default)]
-    pub installed_mods: std::collections::HashMap<String, String>,
-    /// Preserve any unknown fields when modifying settings so we don't accidentally clear server bindings
+    pub play_time: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_played_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+
+    // Deprecated. Moved to assets.json
+
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }

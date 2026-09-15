@@ -49,6 +49,8 @@
           <div class="flex-1 min-w-0">
             <div class="font-medium text-sm truncate" :title="mod.name || mod.filename">{{ mod.name || mod.filename }}</div>
             <div class="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+              <span v-if="mod.managedByModpack" class="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] border border-primary/20">{{ $t('instances.modpack', 'Modpack') }}</span>
+              <span v-else class="bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded text-[10px] border">{{ $t('instances.manual', 'Manual') }}</span>
               <span v-if="mod.version && !mod.version.includes('${')" class="bg-secondary px-1.5 py-0.5 rounded">{{ mod.version }}</span>
               <span class="truncate">{{ mod.filename }}</span>
             </div>
@@ -251,3 +253,4 @@ function handleDownloadMore() {
   background: rgba(255, 255, 255, 0.2);
 }
 </style>
+

@@ -75,6 +75,7 @@ where
     C: Fn() -> bool + Send + Sync + 'static + Clone,
     G: Fn(u64) + Send + Sync + 'static + Clone,
 {
+
     tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
 
     let dest_path = task.dest_path_buf();
@@ -290,6 +291,7 @@ where
 
             let is_cancelled_clone = is_cancelled.clone();
 
+            
             let h = tokio::spawn(async move {
                 let _permit = inner_sem.acquire().await.unwrap();
                 if is_cancelled_clone() { return Err("Cancelled".to_string()); }
@@ -482,6 +484,7 @@ where
         return Err(format!("Failed to finalize file: {}", e));
     }
     tracing::debug!("Download completed: {}", task.dest_path);
+    
     Ok(())
 }
 

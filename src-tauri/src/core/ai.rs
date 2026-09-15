@@ -101,7 +101,7 @@ pub async fn download_model(targets: Vec<ModelDownloadTarget>, main_filename: St
             url: target.url.clone(),
             dest_path: dest_path_str,
             hash: None,
-            expected_size: None,
+            expected_size: None, asset_record: None, instance_id: None,
         });
     }
     
@@ -156,7 +156,7 @@ pub async fn download_engine(app: AppHandle) -> Result<(), AppError> {
         url,
         dest_path: zip_path.to_string_lossy().into_owned(),
         hash: None,
-        expected_size: None,
+        expected_size: None, asset_record: None, instance_id: None,
     };
     
     tokio::spawn(async move {

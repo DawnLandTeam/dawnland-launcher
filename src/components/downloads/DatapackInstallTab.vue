@@ -36,6 +36,7 @@ interface UnifiedCategory {
 interface UnifiedModProject {
   source: string;
   project_id: string;
+  slug: string;
   title: string;
   description: string;
   icon_url?: string;
@@ -47,6 +48,7 @@ interface UnifiedModProject {
 
 interface UnifiedDependency {
   project_id: string;
+  slug: string;
   version_id?: string;
   required: boolean;
 }

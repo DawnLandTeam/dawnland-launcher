@@ -7,6 +7,10 @@
 use crate::core::mojang::get_minecraft_base;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
+
+static MANIFEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Represents a scanned installed instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,11 +215,33 @@ pub async fn scan_installed_instances(
                         // Parse basic info from JSON
                         let (
                             mut mc_version,
-                            loader_type,
-                            modpack_version,
-                            modpack_type,
-                            modpack_project_id,
+                            mut loader_type,
+                            mut modpack_version,
+                            mut modpack_type,
+                            mut modpack_project_id,
                         ) = parse_version_json(&content, &id);
+
+                        if config_path.exists() {
+                            if let Ok(config_content) = tokio::fs::read_to_string(&config_path).await {
+                                if let Ok(config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&config_content) {
+                                    if let Some(mc) = config.mc_version {
+                                        if !mc.is_empty() { mc_version = mc; }
+                                    }
+                                    if let Some(ld) = config.loader_type {
+                                        loader_type = format!("{:?}", ld);
+                                    }
+                                    if config.modpack_version.is_some() {
+                                        modpack_version = config.modpack_version.clone();
+                                    }
+                                    if config.modpack_type.is_some() {
+                                        modpack_type = config.modpack_type.clone();
+                                    }
+                                    if config.modpack_project_id.is_some() {
+                                        modpack_project_id = config.modpack_project_id.clone();
+                                    }
+                                }
+                            }
+                        }
 
                         // Resolve actual MC version if it's pointing to a loader instance
                         if !mc_version.starts_with("1.") {
@@ -494,10 +520,50 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         .await
         .map_err(|e| format!("Failed to read version JSON: {}", e))?;
 
-    let (mut mc_version, loader_type, modpack_version, modpack_type, modpack_project_id) =
+    let (mut mc_version, mut loader_type, mut modpack_version, mut modpack_type, mut modpack_project_id) =
         parse_version_json(&content, &version_id);
 
-    // Resolve actual MC version
+    // Read dlml.json for core metadata and bindings
+    let config_path = base_dir
+        .join("versions")
+        .join(&version_id)
+        .join("dlml.json");
+    let mut server_id = None;
+    let mut pack_version_id = None;
+    let mut pack_file_name = None;
+    let mut is_installing = false;
+
+    if config_path.exists() {
+        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+            if let Ok(config) =
+                serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
+            {
+                server_id = config.server_id;
+                pack_version_id = config.pack_version_id;
+                pack_file_name = config.pack_file_name;
+                is_installing = config.is_installing;
+                
+                // Override metadata with dlml.json if available
+                if let Some(mc) = &config.mc_version {
+                    if !mc.is_empty() { mc_version = mc.clone(); }
+                }
+                if let Some(ld) = &config.loader_type {
+                    loader_type = format!("{:?}", ld);
+                }
+                if config.modpack_version.is_some() {
+                    modpack_version = config.modpack_version.clone();
+                }
+                if config.modpack_type.is_some() {
+                    modpack_type = config.modpack_type.clone();
+                }
+                if config.modpack_project_id.is_some() {
+                    modpack_project_id = config.modpack_project_id.clone();
+                }
+            }
+        }
+    }
+
+    // Resolve actual MC version if still missing or invalid
     if !mc_version.starts_with("1.") {
         let mut current_version = mc_version.clone();
         let mut depth = 0;
@@ -524,29 +590,6 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
             mc_version = extracted;
         } else if let Some(extracted) = extract_mc_version_from_id(&mc_version) {
             mc_version = extracted;
-        }
-    }
-
-    // Read dlml.json for bindings
-    let config_path = base_dir
-        .join("versions")
-        .join(&version_id)
-        .join("dlml.json");
-    let mut server_id = None;
-    let mut pack_version_id = None;
-    let mut pack_file_name = None;
-    let mut is_installing = false;
-
-    if config_path.exists() {
-        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-            if let Ok(config) =
-                serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
-            {
-                server_id = config.server_id;
-                pack_version_id = config.pack_version_id;
-                pack_file_name = config.pack_file_name;
-                is_installing = config.is_installing;
-            }
         }
     }
 
@@ -719,6 +762,8 @@ pub struct LocalModItem {
     pub name: Option<String>,
     pub version: Option<String>,
     pub icon_url: Option<String>,
+    pub managed_by_modpack: bool,
+    pub provides: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -726,6 +771,7 @@ pub struct LocalDatapackItem {
     pub filename: String,
     pub is_dir: bool,
     pub size: u64,
+    pub managed_by_modpack: bool,
 }
 
 #[tauri::command]
@@ -735,6 +781,22 @@ pub async fn get_installed_datapacks(version_id: String, world_name: String) -> 
 
     if !tokio::fs::try_exists(&datapacks_dir).await.unwrap_or(false) {
         return Ok(Vec::new());
+    }
+    
+    let mut managed_files = std::collections::HashMap::new();
+    let assets_path = base_dir.join("versions").join(&version_id).join("assets.json");
+    let prefix = format!("saves/{}/datapacks/", world_name);
+    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+        if let Ok(manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+            for (path_key, record) in manifest.assets {
+                if path_key.starts_with(&prefix) {
+                    if let Some(filename) = std::path::Path::new(&path_key).file_name() {
+                        let base_name = filename.to_string_lossy().to_string();
+                        managed_files.insert(base_name, record.managed_by_modpack);
+                    }
+                }
+            }
+        }
     }
 
     let mut datapacks = Vec::new();
@@ -760,10 +822,13 @@ pub async fn get_installed_datapacks(version_id: String, world_name: String) -> 
             continue;
         }
 
+        let managed = managed_files.get(&filename).copied().unwrap_or(false);
+
         datapacks.push(LocalDatapackItem {
             filename,
             is_dir,
             size: metadata.len(),
+            managed_by_modpack: managed,
         });
     }
 
@@ -789,6 +854,10 @@ pub async fn delete_local_datapack(version_id: String, world_name: String, filen
         }
     }
     
+    delete_asset_from_manifest(&version_id, &format!("saves/{}/datapacks/{}", world_name, filename)).await;
+    // Fallback for ghost records created with backslashes due to a path serialization bug
+    delete_asset_from_manifest(&version_id, &format!("saves\\{}\\datapacks\\{}", world_name, filename)).await;
+    
     Ok(())
 }
 
@@ -798,12 +867,30 @@ pub struct LocalAssetItem {
     pub filename: String,
     pub is_dir: bool,
     pub size: u64,
+    pub managed_by_modpack: bool,
 }
 
-async fn get_assets_in_dir(dir: std::path::PathBuf) -> Result<Vec<LocalAssetItem>, String> {
+async fn get_assets_in_dir(dir: std::path::PathBuf, version_id: &str, prefix: &str) -> Result<Vec<LocalAssetItem>, String> {
     if !tokio::fs::try_exists(&dir).await.unwrap_or(false) {
         return Ok(Vec::new());
     }
+
+    let mut managed_files = std::collections::HashMap::new();
+    let base_dir = get_minecraft_base();
+    let assets_path = base_dir.join("versions").join(version_id).join("assets.json");
+    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+        if let Ok(manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+            for (path_key, record) in manifest.assets {
+                if path_key.starts_with(prefix) {
+                    if let Some(filename) = std::path::Path::new(&path_key).file_name() {
+                        let base_name = filename.to_string_lossy().to_string();
+                        managed_files.insert(base_name, record.managed_by_modpack);
+                    }
+                }
+            }
+        }
+    }
+
     let mut assets = Vec::new();
     let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
     while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
@@ -818,10 +905,13 @@ async fn get_assets_in_dir(dir: std::path::PathBuf) -> Result<Vec<LocalAssetItem
             size = 0;
         }
 
+        let managed = managed_files.get(&filename).copied().unwrap_or(false);
+
         assets.push(LocalAssetItem {
             filename,
             is_dir: metadata.is_dir(),
             size,
+            managed_by_modpack: managed,
         });
     }
     Ok(assets)
@@ -846,37 +936,45 @@ async fn delete_asset_in_dir(dir: std::path::PathBuf, filename: String) -> Resul
 #[tauri::command]
 pub async fn get_installed_resourcepacks(version_id: String) -> Result<Vec<LocalAssetItem>, String> {
     let dir = get_minecraft_base().join("versions").join(&version_id).join("resourcepacks");
-    get_assets_in_dir(dir).await
+    get_assets_in_dir(dir, &version_id, "resourcepacks/").await
 }
 
 #[tauri::command]
 pub async fn delete_local_resourcepack(version_id: String, filename: String) -> Result<(), String> {
     let dir = get_minecraft_base().join("versions").join(&version_id).join("resourcepacks");
-    delete_asset_in_dir(dir, filename).await
+    delete_asset_in_dir(dir, filename.clone()).await?;
+    delete_asset_from_manifest(&version_id, &format!("resourcepacks/{}", filename)).await;
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn get_installed_shaders(version_id: String) -> Result<Vec<LocalAssetItem>, String> {
     let dir = get_minecraft_base().join("versions").join(&version_id).join("shaderpacks");
-    get_assets_in_dir(dir).await
+    get_assets_in_dir(dir, &version_id, "shaderpacks/").await
 }
 
 #[tauri::command]
 pub async fn delete_local_shader(version_id: String, filename: String) -> Result<(), String> {
     let dir = get_minecraft_base().join("versions").join(&version_id).join("shaderpacks");
-    delete_asset_in_dir(dir, filename).await
+    delete_asset_in_dir(dir, filename.clone()).await?;
+    delete_asset_from_manifest(&version_id, &format!("shaderpacks/{}", filename)).await;
+    // Fallback cleanup for the previous bug where shaders were incorrectly registered as resourcepacks
+    delete_asset_from_manifest(&version_id, &format!("resourcepacks/{}", filename)).await;
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn get_installed_worlds(version_id: String) -> Result<Vec<LocalAssetItem>, String> {
     let dir = get_minecraft_base().join("versions").join(&version_id).join("saves");
-    get_assets_in_dir(dir).await
+    get_assets_in_dir(dir, &version_id, "saves/").await
 }
 
 #[tauri::command]
 pub async fn delete_local_world(version_id: String, world_name: String) -> Result<(), String> {
     let dir = get_minecraft_base().join("versions").join(&version_id).join("saves");
-    delete_asset_in_dir(dir, world_name).await
+    delete_asset_in_dir(dir, world_name.clone()).await?;
+    delete_asset_from_manifest(&version_id, &format!("saves/{}", world_name)).await;
+    Ok(())
 }
 
 // Global custom assets logic
@@ -939,6 +1037,7 @@ pub async fn get_custom_assets(asset_type: String) -> Result<Vec<LocalAssetItem>
                 filename,
                 is_dir: false,
                 size: size_bytes,
+                managed_by_modpack: false,
             });
         }
     }
@@ -968,6 +1067,7 @@ pub async fn get_asset_presets(asset_type: String) -> Result<Vec<LocalAssetItem>
                 filename,
                 is_dir: false,
                 size: size_bytes,
+                managed_by_modpack: false,
             });
         }
     }
@@ -1209,6 +1309,18 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
     }
 
     let mut mods = Vec::new();
+    let mut managed_files = std::collections::HashMap::new();
+    let assets_path = base_dir.join("versions").join(&version_id).join("assets.json");
+    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+        if let Ok(manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+            for (path_key, record) in manifest.assets {
+                if let Some(filename) = std::path::Path::new(&path_key).file_name() {
+                    let base_name = filename.to_string_lossy().to_string().trim_end_matches(".disable").to_string();
+                    managed_files.insert(base_name, record.managed_by_modpack);
+                }
+            }
+        }
+    }
 
     let mut entries = tokio::fs::read_dir(&mods_dir)
         .await
@@ -1250,6 +1362,8 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
         let meta = resolve_mod_metadata(&path, &cache_key, &mut cache_entries, &parser, base_dir, skip_parsing.unwrap_or(false)).await;
         let icon_url = get_mod_icon_url(&meta, &parser, &cache_key);
 
+        let is_managed = managed_files.get(&actual_filename).copied().unwrap_or(false);
+
         mods.push(LocalModItem {
             filename: actual_filename,
             enabled,
@@ -1258,6 +1372,8 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
             name: meta.name,
             version: meta.version,
             icon_url,
+            managed_by_modpack: is_managed,
+            provides: meta.provides,
         });
     }
 
@@ -1428,6 +1544,9 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
         if let Some(ref id) = meta.mod_id {
             installed_ids.insert(id.to_lowercase());
         }
+        for provided in &meta.provides {
+            installed_ids.insert(provided.to_lowercase());
+        }
     }
 
     // Platform-level dependencies that are always present
@@ -1502,14 +1621,9 @@ pub async fn delete_local_mod(
         ));
     }
 
-    // Only remove from dlml.json if both the enabled and disabled variants are gone
+    // Only remove from assets.json if both the enabled and disabled variants are gone
     if !mod_file.exists() && !disabled_file.exists() {
-        let mut installed_map = load_installed_mods_json(&version_id).await;
-        let initial_len = installed_map.len();
-        installed_map.retain(|_, v| v != &filename);
-        if installed_map.len() != initial_len {
-            save_installed_mods_json(&version_id, &installed_map).await;
-        }
+        delete_asset_from_manifest(&version_id, &format!("mods/{}", filename)).await;
     }
 
     tracing::info!("Deleted mod {} from instance {}", filename, version_id);
@@ -1625,50 +1739,207 @@ fn extract_filename_from_url(url: &str, project_id: &str) -> String {
     }
 }
 
-/// Helper function to load and save installed mods directly into `dlml.json`
-async fn load_installed_mods_json(instance_id: &str) -> std::collections::HashMap<String, String> {
+
+pub async fn register_manual_asset_with_metadata(
+    instance_id: &str,
+    path_key: &str,
+    category: crate::models::instance::AssetCategory,
+    source_str: &str,
+    project_id: &str,
+    download_url: &str,
+) {
+    let base_dir = crate::core::mojang::get_minecraft_base();
+    let full_path = base_dir.join("versions").join(instance_id).join(path_key);
+    
+    let size = tokio::fs::metadata(&full_path).await.map(|m| m.len()).ok();
+    let hash_sha1 = if full_path.exists() {
+        let p = full_path.clone();
+        tokio::task::spawn_blocking(move || crate::downloader::download::compute_sha1_sync(&p))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+    } else {
+        None
+    };
+
+    let source_type = match source_str {
+        "modrinth" => crate::models::instance::AssetSourceType::Modrinth,
+        "curseforge" => crate::models::instance::AssetSourceType::CurseForge,
+        _ => crate::models::instance::AssetSourceType::CustomUrl,
+    };
+    
+    let filename = std::path::Path::new(path_key).file_name().unwrap_or_default().to_string_lossy().to_string();
+
+    save_asset_to_manifest(instance_id, path_key.to_string(), crate::models::instance::AssetRecord {
+        category,
+        source_type,
+        project_id: Some(project_id.to_string()),
+        version_id: None,
+        download_url: Some(download_url.to_string()),
+        hash_sha1,
+        hash_sha512: None,
+        size,
+        enabled: !filename.ends_with(".disable"),
+        managed_by_modpack: false,
+    }).await;
+}
+
+pub async fn save_asset_to_manifest(instance_id: &str, path_key: String, record: crate::models::instance::AssetRecord) {
+    let _lock = MANIFEST_LOCK.lock().await;
     let base_dir = get_minecraft_base();
-    let config_path = base_dir
-        .join("versions")
-        .join(instance_id)
-        .join("dlml.json");
-    if config_path.exists() {
-        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-            if let Ok(config) =
-                serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
-            {
-                return config.installed_mods;
+    let assets_path = base_dir.join("versions").join(instance_id).join("assets.json");
+    let mut manifest = if assets_path.exists() {
+        if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+            serde_json::from_str::<crate::models::instance::AssetManifest>(&content).unwrap_or_default()
+        } else {
+            crate::models::instance::AssetManifest::default()
+        }
+    } else {
+        crate::models::instance::AssetManifest::default()
+    };
+    manifest.assets.insert(path_key, record);
+    if let Ok(json) = serde_json::to_string_pretty(&manifest) {
+        let _ = tokio::fs::write(&assets_path, json).await;
+    }
+}
+
+pub async fn delete_asset_from_manifest(instance_id: &str, path_key: &str) {
+    let _lock = MANIFEST_LOCK.lock().await;
+    let base_dir = get_minecraft_base();
+    let assets_path = base_dir.join("versions").join(instance_id).join("assets.json");
+    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+        if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+            if manifest.assets.remove(path_key).is_some() {
+                if let Ok(json) = serde_json::to_string_pretty(&manifest) {
+                    let _ = tokio::fs::write(&assets_path, json).await;
+                }
             }
         }
     }
-    std::collections::HashMap::new()
+}
+
+/// Helper function to load installed mods mapping from `assets.json`
+async fn load_installed_mods_json(instance_id: &str) -> std::collections::HashMap<String, (String, Option<String>)> {
+    let base_dir = get_minecraft_base();
+    let assets_path = base_dir.join("versions").join(instance_id).join("assets.json");
+    let mut map = std::collections::HashMap::new();
+    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+        if let Ok(manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+            for (path_key, record) in manifest.assets {
+                if let Some(pid) = record.project_id {
+                    let source_prefix = match record.source_type {
+                        crate::models::instance::AssetSourceType::Modrinth => "modrinth",
+                        crate::models::instance::AssetSourceType::CurseForge => "curseforge",
+                        _ => "unknown"
+                    };
+                    let mod_key = format!("{}_{}", source_prefix, pid);
+                    if let Some(filename) = std::path::Path::new(&path_key).file_name() {
+                        let name_str = filename.to_string_lossy().to_string();
+                        map.insert(mod_key, (name_str.trim_end_matches(".disable").to_string(), record.download_url));
+                    }
+                }
+            }
+        }
+    }
+    map
 }
 
 async fn save_installed_mods_json(
     instance_id: &str,
-    map: &std::collections::HashMap<String, String>,
+    map: &std::collections::HashMap<String, (String, Option<String>)>,
 ) {
+    let _lock = MANIFEST_LOCK.lock().await;
     let base_dir = get_minecraft_base();
-    let config_path = base_dir
-        .join("versions")
-        .join(instance_id)
-        .join("dlml.json");
-
-    // Read existing config first to preserve other fields
-    let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
-        tokio::fs::read_to_string(&config_path)
-            .await
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+    let assets_path = base_dir.join("versions").join(instance_id).join("assets.json");
+    let mut manifest = if assets_path.exists() {
+        if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+            serde_json::from_str::<crate::models::instance::AssetManifest>(&content).unwrap_or_default()
+        } else {
+            crate::models::instance::AssetManifest::default()
+        }
     } else {
-        crate::core::launcher::InstanceConfig::default()
+        crate::models::instance::AssetManifest::default()
     };
 
-    config.installed_mods = map.clone();
+    // Remove old versions or uninstalled mods that were tracked by project_id
+    let mut to_remove = Vec::new();
+    for (path_key, record) in &manifest.assets {
+        if record.category == crate::models::instance::AssetCategory::Mod && !record.managed_by_modpack {
+            if let Some(pid) = &record.project_id {
+                let source_str = match record.source_type {
+                    crate::models::instance::AssetSourceType::Modrinth => "modrinth",
+                    crate::models::instance::AssetSourceType::CurseForge => "curseforge",
+                    _ => "unknown"
+                };
+                let expected_mod_key = format!("{}_{}", source_str, pid);
+            
+            if let Some((expected_filename, _)) = map.get(&expected_mod_key) {
+                let expected_path_key = format!("mods/{}", expected_filename);
+                if path_key != &expected_path_key {
+                    to_remove.push(path_key.clone());
+                }
+            } else {
+                to_remove.push(path_key.clone());
+            }
+            }
+        }
+    }
+    for k in to_remove {
+        manifest.assets.remove(&k);
+    }
 
-    if let Ok(content) = serde_json::to_string_pretty(&config) {
-        let _ = tokio::fs::write(&config_path, content).await;
+    // Insert or update entries from the map
+    for (mod_key, (filename, download_url)) in map {
+        let parts: Vec<&str> = mod_key.splitn(2, '_').collect();
+        if parts.len() == 2 {
+            let source_str = parts[0];
+            let pid = parts[1];
+            let source_type = match source_str {
+                "modrinth" => crate::models::instance::AssetSourceType::Modrinth,
+                "curseforge" => crate::models::instance::AssetSourceType::CurseForge,
+                _ => crate::models::instance::AssetSourceType::CustomUrl,
+            };
+            
+            let path_key = format!("mods/{}", filename);
+            
+            let full_path = base_dir.join("versions").join(instance_id).join(&path_key);
+            let size = tokio::fs::metadata(&full_path).await.map(|m| m.len()).ok();
+            let hash_sha1 = if full_path.exists() {
+                let p = full_path.clone();
+                tokio::task::spawn_blocking(move || crate::downloader::download::compute_sha1_sync(&p))
+                    .await
+                    .ok()
+                    .and_then(|r| r.ok())
+            } else {
+                None
+            };
+
+            if let Some(existing) = manifest.assets.get_mut(&path_key) {
+                existing.project_id = Some(pid.to_string());
+                existing.source_type = source_type;
+                existing.managed_by_modpack = false;
+                if size.is_some() { existing.size = size; }
+                if download_url.is_some() { existing.download_url = download_url.clone(); }
+                if hash_sha1.is_some() { existing.hash_sha1 = hash_sha1; }
+            } else {
+                manifest.assets.insert(path_key.clone(), crate::models::instance::AssetRecord {
+                    category: crate::models::instance::AssetCategory::Mod,
+                    source_type,
+                    project_id: Some(pid.to_string()),
+                    version_id: None,
+                    download_url: download_url.clone(),
+                    hash_sha1,
+                    hash_sha512: None,
+                    size,
+                    enabled: !filename.ends_with(".disable"),
+                    managed_by_modpack: false,
+                });
+            }
+        }
+    }
+    
+    if let Ok(json) = serde_json::to_string_pretty(&manifest) {
+        let _ = tokio::fs::write(&assets_path, json).await;
     }
 }
 
@@ -1722,7 +1993,7 @@ pub async fn install_mod_to_instance(
     // Remove old version if it exists and filename differs
     let keep_old = keep_both.unwrap_or(false);
     if !keep_old {
-        if let Some(old_filename) = installed_map.get(&mod_key) {
+        if let Some((old_filename, _)) = installed_map.get(&mod_key) {
             if old_filename != &filename {
                 let old_path = mods_dir.join(old_filename);
                 if old_path.exists() {
@@ -1752,8 +2023,8 @@ pub async fn install_mod_to_instance(
     );
 
     // Enforce 1-to-1 mapping: Remove any existing keys that map to this exact filename
-    installed_map.retain(|_, v| v != &filename);
-    installed_map.insert(mod_key, filename.clone());
+    installed_map.retain(|_, (v, _)| v != &filename);
+    installed_map.insert(mod_key, (filename.clone(), Some(download_url.clone())));
     save_installed_mods_json(&version_id, &installed_map).await;
 
     // Await dependency resolution and downloading sequentially
@@ -1783,7 +2054,7 @@ pub async fn install_mod_to_instance(
                                             primary.get("url").and_then(|u| u.as_str()),
                                             primary.get("filename").and_then(|f| f.as_str()),
                                         ) {
-                                            if let Some(old_fname) = installed_map.get(&dep_key) {
+                                            if let Some((old_fname, _)) = installed_map.get(&dep_key) {
                                                 if old_fname != fname {
                                                     let _ = tokio::fs::remove_file(
                                                         mods_dir.join(old_fname),
@@ -1807,8 +2078,8 @@ pub async fn install_mod_to_instance(
                                                 }
                                             }
                                             // Enforce 1-to-1 mapping
-                                            installed_map.retain(|_, v| v != fname);
-                                            installed_map.insert(dep_key, fname.to_string());
+                                            installed_map.retain(|_, (v, _)| v != fname);
+                                            installed_map.insert(dep_key, (fname.to_string(), Some(url.to_string())));
                                             save_installed_mods_json(&version_id, &installed_map)
                                                 .await;
                                         }
@@ -1833,7 +2104,7 @@ pub async fn install_mod_to_instance(
                                 let fname = &primary.filename;
                                 let url = &primary.download_url;
 
-                                if let Some(old_fname) = installed_map.get(&dep_key) {
+                                if let Some((old_fname, _)) = installed_map.get(&dep_key) {
                                     if old_fname != fname {
                                         let _ =
                                             tokio::fs::remove_file(mods_dir.join(old_fname)).await;
@@ -1855,8 +2126,8 @@ pub async fn install_mod_to_instance(
                                     }
                                 }
                                 // Enforce 1-to-1 mapping
-                                installed_map.retain(|_, v| v != fname);
-                                installed_map.insert(dep_key, fname.to_string());
+                                installed_map.retain(|_, (v, _)| v != fname);
+                                installed_map.insert(dep_key, (fname.to_string(), Some(url.to_string())));
                                 save_installed_mods_json(&version_id, &installed_map).await;
                             }
                         }
@@ -1874,7 +2145,7 @@ pub async fn install_mod_to_instance(
                             let fname = &primary.filename;
                             let url = &primary.download_url;
 
-                            if let Some(old_fname) = installed_map.get(&dep_key) {
+                            if let Some((old_fname, _)) = installed_map.get(&dep_key) {
                                 if old_fname != fname {
                                     let _ = tokio::fs::remove_file(mods_dir.join(old_fname)).await;
                                 }
@@ -1890,8 +2161,8 @@ pub async fn install_mod_to_instance(
                                         .await;
                             }
                             // Enforce 1-to-1 mapping
-                            installed_map.retain(|_, v| v != fname);
-                            installed_map.insert(dep_key, fname.to_string());
+                            installed_map.retain(|_, (v, _)| v != fname);
+                            installed_map.insert(dep_key, (fname.to_string(), Some(url.to_string())));
                             save_installed_mods_json(&version_id, &installed_map).await;
                         }
                     }
@@ -2306,7 +2577,7 @@ impl InstallModTask {
 
         if let Some(vid) = version_id_opt {
             if !options.keep_both.unwrap_or(false) {
-                if let Some(old_filename) = installed_map.get(&mod_key) {
+                if let Some((old_filename, _)) = installed_map.get(&mod_key) {
                     if old_filename != &filename {
                         let _ = tokio::fs::remove_file(target_dir_path.join(old_filename)).await;
                         let _ = tokio::fs::remove_file(target_dir_path.join(format!("{}.disable", old_filename))).await;
@@ -2322,8 +2593,8 @@ impl InstallModTask {
         }
 
         if let Some(vid) = version_id_opt {
-            installed_map.retain(|_, v| v != &filename);
-            installed_map.insert(mod_key, filename);
+            installed_map.retain(|_, (v, _)| v != &filename);
+            installed_map.insert(mod_key, (filename, Some(options.download_url.clone())));
             save_installed_mods_json(vid, &installed_map).await;
         }
         Ok(())
@@ -2370,7 +2641,7 @@ impl InstallModTask {
     async fn download_single_dependency(
         &self,
         ctx: DownloadDependencyContext<'_>,
-        installed_map: &mut std::collections::HashMap<String, String>,
+        installed_map: &mut std::collections::HashMap<String, (String, Option<String>)>,
     ) -> Result<(), crate::core::task::TaskError> {
         let dep_key = format!("{}_{}", self.options.source, ctx.dep.project_id);
         let has_instance = ctx.version_id_opt.is_some();
@@ -2384,7 +2655,7 @@ impl InstallModTask {
         };
 
         if let Some(v_id) = ctx.version_id_opt {
-            if let Some(old_fname) = installed_map.get(&dep_key) {
+            if let Some((old_fname, _)) = installed_map.get(&dep_key) {
                 if old_fname != &fname {
                     let _ = tokio::fs::remove_file(ctx.target_dir_path.join(old_fname)).await;
                     let _ = tokio::fs::remove_file(ctx.target_dir_path.join(format!("{}.disable", old_fname))).await;
@@ -2400,8 +2671,8 @@ impl InstallModTask {
         }
 
         if let Some(v_id) = ctx.version_id_opt {
-            installed_map.retain(|_, v| v != &fname);
-            installed_map.insert(dep_key, fname);
+            installed_map.retain(|_, (v, _)| v != &fname);
+            installed_map.insert(dep_key, (fname, Some(url.to_string())));
             save_installed_mods_json(v_id, installed_map).await;
         }
         Ok(())
@@ -2562,6 +2833,26 @@ impl crate::core::task::ExecutableTask for InstallDatapackTask {
             .await
             .map_err(crate::core::task::TaskError::ExecutionError)?;
 
+        let mut components = target_dir_path.components();
+        let mut found_versions = false;
+        let mut instance_id_opt = None;
+        
+        while let Some(comp) = components.next() {
+            if !found_versions && comp.as_os_str() == "versions" {
+                found_versions = true;
+                if let Some(std::path::Component::Normal(vid_os)) = components.next() {
+                    instance_id_opt = Some(vid_os.to_string_lossy().to_string());
+                    break;
+                }
+            }
+        }
+        
+        if let Some(vid) = instance_id_opt {
+            let rest: std::path::PathBuf = components.collect();
+            let path_key = rest.join(&filename).to_string_lossy().replace("\\", "/");
+            register_manual_asset_with_metadata(&vid, &path_key, crate::models::instance::AssetCategory::Datapack, &options.source, &options.project_id, &options.download_url).await;
+        }
+
         Ok(())
     }
 }
@@ -2621,6 +2912,10 @@ impl crate::core::task::ExecutableTask for InstallResourcepackTask {
             ctx.update_progress(100, 100, "File already exists").await;
         }
 
+        if let Some(vid) = &options.instance_id {
+            register_manual_asset_with_metadata(vid, &format!("resourcepacks/{}", filename), crate::models::instance::AssetCategory::ResourcePack, &options.source, &options.project_id, &options.download_url).await;
+        }
+
         Ok(())
     }
 }
@@ -2678,6 +2973,10 @@ impl crate::core::task::ExecutableTask for InstallShaderpackTask {
                 .map_err(crate::core::task::TaskError::ExecutionError)?;
         } else {
             ctx.update_progress(100, 100, "File already exists").await;
+        }
+
+        if let Some(vid) = &options.instance_id {
+            register_manual_asset_with_metadata(vid, &format!("shaderpacks/{}", filename), crate::models::instance::AssetCategory::ShaderPack, &options.source, &options.project_id, &options.download_url).await;
         }
 
         Ok(())
@@ -2780,6 +3079,11 @@ impl crate::core::task::ExecutableTask for InstallWorldTask {
 
         tokio::fs::remove_dir_all(temp_dir).await.ok();
         extract_ctx.update_progress(100, 100, "World extracted").await;
+
+        if let Some(vid) = &options.instance_id {
+            let folder_name = filename.trim_end_matches(".zip");
+            register_manual_asset_with_metadata(vid, &format!("saves/{}", folder_name), crate::models::instance::AssetCategory::Save, &options.source, &options.project_id, &options.download_url).await;
+        }
         ctx.update_progress(100, 100, "World installed successfully").await;
 
         Ok(())
@@ -2790,7 +3094,26 @@ impl crate::core::task::ExecutableTask for InstallWorldTask {
 pub async fn get_instance_mod_mapping(
     version_id: String,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    Ok(std::collections::HashMap::new())
+    let map = load_installed_mods_json(&version_id).await;
+    let mut result = std::collections::HashMap::new();
+    for (k, v) in map {
+        result.insert(k, v.0);
+    }
+    
+    if let Ok(mods) = get_installed_mods(version_id, Some(false)).await {
+        for m in mods {
+            if m.enabled {
+                if let Some(id) = &m.mod_id {
+                    result.insert(format!("modid_{}", id), m.filename.clone());
+                }
+                for pid in &m.provides {
+                    result.insert(format!("modid_{}", pid), m.filename.clone());
+                }
+            }
+        }
+    }
+    
+    Ok(result)
 }
 
 #[tauri::command]

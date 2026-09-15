@@ -2,3 +2,5 @@
 
 pub mod server;
 pub use server::{FilterOptionsResponse, Server};
+
+pub mod instance;
