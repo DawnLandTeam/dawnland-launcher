@@ -673,6 +673,85 @@ pub async fn build_export_instance(
         }
     }
 
+    // Load manifest to find non-mod assets with download_url
+    let mut manifest = crate::models::instance::AssetManifest::default();
+    let assets_path = instance_dir.join("assets.json");
+    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+        if let Ok(m) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+            manifest = m;
+        }
+    }
+
+    let mut extra_mr_files = Vec::new();
+    let mut extra_cf_files = Vec::new();
+
+    for (path_key, record) in &manifest.assets {
+        if path_key.starts_with("mods/") || !record.enabled {
+            continue;
+        }
+
+        let src_path = instance_dir.join(path_key);
+        if !src_path.exists() {
+            continue;
+        }
+
+        let mut packaged_online = false;
+
+        if request.format == "modrinth" {
+            if let Some(download_url) = &record.download_url {
+                let sha1 = if let Some(h) = &record.hash_sha1 {
+                    h.clone()
+                } else {
+                    let (s1, _) = crate::core::hash::calculate_file_hashes(&src_path).await.unwrap_or_default();
+                    s1
+                };
+                let sha512 = if let Some(h) = &record.hash_sha512 {
+                    h.clone()
+                } else {
+                    let (_, s512) = crate::core::hash::calculate_file_hashes(&src_path).await.unwrap_or_default();
+                    s512
+                };
+                let size = if let Some(s) = record.size {
+                    s
+                } else {
+                    tokio::fs::metadata(&src_path).await.map(|m| m.len()).unwrap_or(0)
+                };
+
+                if !sha1.is_empty() && !sha512.is_empty() {
+                    extra_mr_files.push(serde_json::json!({
+                        "path": path_key,
+                        "hashes": {
+                            "sha1": sha1,
+                            "sha512": sha512
+                        },
+                        "env": {
+                            "client": "required",
+                            "server": "required"
+                        },
+                        "downloads": [download_url],
+                        "fileSize": size
+                    }));
+                    packaged_online = true;
+                }
+            }
+        } else if request.format == "curseforge" && record.source_type == crate::models::instance::AssetSourceType::CurseForge {
+            if let (Some(pid_str), Some(vid_str)) = (&record.project_id, &record.version_id) {
+                if let (Ok(pid), Ok(vid)) = (pid_str.parse::<u32>(), vid_str.parse::<u32>()) {
+                    extra_cf_files.push(serde_json::json!({
+                        "projectID": pid,
+                        "fileID": vid,
+                        "required": true
+                    }));
+                    packaged_online = true;
+                }
+            }
+        }
+
+        if packaged_online {
+            let _ = tokio::fs::remove_file(overrides_dir.join(path_key)).await;
+        }
+    }
+
     let mods_dir = instance_dir.join("mods");
     let dst_mod_dir = overrides_dir.join("mods");
     if !analysis_result.unmatched_mods.is_empty() {
@@ -695,6 +774,7 @@ pub async fn build_export_instance(
                 mr_files.push(json);
             }
         }
+        mr_files.extend(extra_mr_files);
         
         let mr_loader_key = match loader_name.as_str() {
             "fabric" => "fabric-loader",
@@ -728,6 +808,7 @@ pub async fn build_export_instance(
                 }));
             }
         }
+        cf_files.extend(extra_cf_files);
         
         let forge_version_str = format!("{}-{}", loader_name, loader_version);
     
