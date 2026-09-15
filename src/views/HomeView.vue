@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, onActivated, watch, onUnmounted } from "vue";
+import { useStorage } from '@vueuse/core';
 import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -78,7 +79,7 @@ const installedInstances = ref<InstanceItem[]>([]);
 const { t } = useI18n();
 const accounts = ref<Account[]>([]);
 const selectedInstanceId = ref<string>("");
-const selectedAccountId = ref<string>("");
+const selectedAccountId = useStorage<string>('selectedAccountId', '');
 
 import { launchingInstances, jvmSpawnedInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';
 

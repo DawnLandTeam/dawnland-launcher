@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
+import { useStorage } from '@vueuse/core';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Check, X, FileArchive, Package, Save, Link2, Search, ArrowRight } from '@lucide/vue';
@@ -35,7 +36,21 @@ watch(() => props.open, async (newVal) => {
       const details = await invoke<any>('get_instance_details', { versionId: props.instanceId });
       form.value.name = details.name || '';
       form.value.version = details.modpackVersion || '';
-      form.value.author = '';
+      
+      const accounts = await invoke<any[]>('get_accounts');
+      const selectedId = useStorage<string>('selectedAccountId', '').value;
+      let defaultAuthor = '';
+      if (selectedId) {
+        const acc = accounts.find(a => a.id === selectedId);
+        if (acc) {
+          defaultAuthor = acc.username;
+        }
+      }
+      if (!defaultAuthor && accounts.length > 0) {
+        defaultAuthor = accounts[0].username;
+      }
+      form.value.author = defaultAuthor;
+      
     } catch (e) {
       console.warn("Failed to load instance details for export defaults:", e);
     }
