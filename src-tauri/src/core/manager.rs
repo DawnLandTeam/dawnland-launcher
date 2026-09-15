@@ -1432,14 +1432,19 @@ pub async fn toggle_mod_status(
     let assets_path = base_dir.join("versions").join(&version_id).join("assets.json");
     if assets_path.exists() {
         let _lock = MANIFEST_LOCK.lock().await;
-        if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
-            if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
-                let path_key = format!("mods/{}", filename);
-                if let Some(record) = manifest.assets.get_mut(&path_key) {
-                    record.enabled = enable;
-                    let _ = tokio::fs::write(&assets_path, serde_json::to_string_pretty(&manifest).unwrap_or_default()).await;
-                }
-            }
+        let content = tokio::fs::read_to_string(&assets_path)
+            .await
+            .map_err(|e| format!("Failed to read assets.json: {}", e))?;
+        let mut manifest = serde_json::from_str::<crate::models::instance::AssetManifest>(&content)
+            .map_err(|e| format!("Failed to parse assets.json: {}", e))?;
+        let path_key = format!("mods/{}", filename);
+        if let Some(record) = manifest.assets.get_mut(&path_key) {
+            record.enabled = enable;
+            let json = serde_json::to_string_pretty(&manifest)
+                .map_err(|e| format!("Failed to serialize assets.json: {}", e))?;
+            tokio::fs::write(&assets_path, json)
+                .await
+                .map_err(|e| format!("Failed to write assets.json: {}", e))?;
         }
     }
 

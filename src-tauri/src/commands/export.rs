@@ -180,10 +180,21 @@ async fn get_instance_env(instance_dir: &std::path::Path, version_id: &str) -> R
                 // 3. Fallback to extracting from inherited IDs
                 if loader_version == "latest" {
                     let lower = current_id.to_lowercase();
-                    if lower.contains("fabric-loader") || lower.contains("forge") || lower.contains("neoforge") {
+                    if lower.starts_with("fabric-loader-") {
                         let parts: Vec<&str> = current_id.split('-').collect();
-                        if parts.len() >= 3 { 
-                            loader_version = parts[2].to_string(); 
+                        if parts.len() >= 3 {
+                            loader_version = parts[2].to_string();
+                        }
+                    } else if lower.starts_with("forge-") || lower.starts_with("neoforge-") {
+                        let parts: Vec<&str> = current_id.split('-').collect();
+                        if parts.len() >= 2 {
+                            // Some IDs are forge-<loader>-<mc>, some are forge-<mc>-<loader>.
+                            // We can check if parts[1] looks like MC version (e.g. starts with "1.")
+                            if parts[1].starts_with("1.") && parts.len() >= 3 {
+                                loader_version = parts[2].to_string();
+                            } else {
+                                loader_version = parts[1].to_string();
+                            }
                         }
                     }
                 }
@@ -619,6 +630,14 @@ pub async fn build_export_instance(
     fs::create_dir_all(&temp_dir)
         .await
         .map_err(|e| e.to_string())?;
+        
+    struct TempGuard(std::path::PathBuf);
+    impl Drop for TempGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _guard = TempGuard(temp_dir.clone());
 
     let overrides_dir = temp_dir.join("overrides");
     fs::create_dir_all(&overrides_dir)
@@ -641,7 +660,7 @@ pub async fn build_export_instance(
         if src.exists() {
             let dst = overrides_dir.join(folder);
             if let Err(e) = copy_dir_all(&src, &dst).await {
-                tracing::warn!("Failed to copy {}: {}", folder, e);
+                return Err(format!("Failed to copy {}: {}", folder, e));
             }
         }
     }
@@ -650,7 +669,7 @@ pub async fn build_export_instance(
         let src = instance_dir.join("saves");
         if src.exists() {
             let dst = overrides_dir.join("saves");
-            let _ = copy_dir_all(&src, &dst).await;
+            copy_dir_all(&src, &dst).await.map_err(|e| format!("Failed to copy saves: {}", e))?;
         }
     }
 
@@ -771,9 +790,6 @@ pub async fn build_export_instance(
 
     zip.finish().map_err(|e| e.to_string())?;
 
-    // Cleanup temp
-    let _ = fs::remove_dir_all(&temp_dir).await;
-
     let _ = window.emit("export-progress", ExportProgress {
         step: "Finished".to_string(),
         translation_key: "instances.export.progress.finished".to_string(),
@@ -890,40 +906,9 @@ pub async fn resolve_manual_match(
             return Err("instances.export.error.mrNoVersions".into());
         }
         
-        // If it was a strict match and we got exactly 1 (or we just take the first strict match)
-        // Wait, if it's strict, we can just return Matched. But to be safe, if we have multiple versions,
-        // we can return them all as Choices, and if there's only 1, return Matched.
-        if versions.len() == 1 {
-            let latest = &versions[0];
-            if let Some(target_file) = latest.files.first() {
-                let mr_sha1 = target_file.hashes.get("sha1").cloned().unwrap_or_default();
-                let mr_sha512 = target_file.hashes.get("sha512").cloned().unwrap_or_default();
-                if !mr_sha1.is_empty() {
-                    let mr_json = serde_json::json!({
-                        "path": format!("mods/{}", filename),
-                        "hashes": {
-                            "sha1": mr_sha1,
-                            "sha512": mr_sha512
-                        },
-                        "env": {
-                            "client": "required",
-                            "server": "required"
-                        },
-                        "downloads": [target_file.url.clone()],
-                        "fileSize": target_file.size
-                    });
-                    return Ok(ResolveResponse::Matched {
-                        matched_mod: MatchedMod {
-                            filename,
-                            mod_id: Some(project_id),
-                            mr_json: Some(mr_json),
-                            cf_project_id: None,
-                            cf_file_id: None,
-                        }
-                    });
-                }
-            }
-        }
+        // We could not find a hash match on Modrinth.
+        // We will return all compatible versions as choices so the user can manually pick the closest match,
+        // rather than silently assuming the first version is correct.
         
         // Build choices
         let mut choices = Vec::new();

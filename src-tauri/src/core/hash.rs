@@ -4,7 +4,7 @@ use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
-/// Calculate SHA-1 and SHA-512 hashes for a file concurrently
+/// Calculate SHA-1 and SHA-512 hashes for a file in a shared sequential pass
 pub async fn calculate_file_hashes<P: AsRef<Path>>(
     path: P,
 ) -> std::io::Result<(String, String)> {
