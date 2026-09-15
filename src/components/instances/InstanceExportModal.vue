@@ -267,18 +267,24 @@ function formatBytes(bytes: number, decimals = 2) {
     <!-- IDLE (Config) State -->
     <div v-if="currentState === 'IDLE'" class="grid gap-4 py-4">
       <div class="grid gap-2">
-        <label class="text-sm font-medium">{{ $t('instances.export.name', 'Modpack Name') }}</label>
-        <DInput v-model="form.name" />
+        <label class="text-sm font-medium" :class="{ 'text-red-500': !form.name }">
+          {{ $t('instances.export.name', 'Modpack Name') }} <span v-if="!form.name">*</span>
+        </label>
+        <DInput v-model="form.name" :class="{ '!border-red-500 !ring-red-500': !form.name }" />
       </div>
       
       <div class="grid grid-cols-2 gap-4">
         <div class="grid gap-2">
-          <label class="text-sm font-medium">{{ $t('instances.export.version', 'Version') }}</label>
-          <DInput v-model="form.version" />
+          <label class="text-sm font-medium" :class="{ 'text-red-500': !form.version }">
+            {{ $t('instances.export.version', 'Version') }} <span v-if="!form.version">*</span>
+          </label>
+          <DInput v-model="form.version" :class="{ '!border-red-500 !ring-red-500': !form.version }" />
         </div>
         <div class="grid gap-2">
-          <label class="text-sm font-medium">{{ $t('instances.export.author', 'Author') }}</label>
-          <DInput v-model="form.author" />
+          <label class="text-sm font-medium" :class="{ 'text-red-500': !form.author }">
+            {{ $t('instances.export.author', 'Author') }} <span v-if="!form.author">*</span>
+          </label>
+          <DInput v-model="form.author" :class="{ '!border-red-500 !ring-red-500': !form.author }" />
         </div>
       </div>
 
