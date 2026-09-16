@@ -29,6 +29,18 @@ pub enum AccountType {
     Authlib,
 }
 
+/// Account textures
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountTextures {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skin_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cape_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+}
+
 /// A player account stored in the launcher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,9 +57,9 @@ pub struct Account {
     /// Optional refresh token for Microsoft accounts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
-    /// Player's texture URL (cape, skin).
+    /// Player's textures (skin, cape).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub textures: Option<String>,
+    pub textures: Option<AccountTextures>,
     /// Optional Yggdrasil API URL for Authlib accounts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authlib_url: Option<String>,

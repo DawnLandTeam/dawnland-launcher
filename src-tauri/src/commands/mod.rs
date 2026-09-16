@@ -141,6 +141,154 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     auth::login_microsoft_oauth().await
 }
 
+/// Fetch latest account textures (skin/cape).
+#[tauri::command]
+pub async fn fetch_account_textures(account_id: String) -> Result<auth::AccountTextures, AppError> {
+    tracing::info!("Fetching textures for account: {}", account_id);
+    let accounts = auth::get_accounts().await?;
+    let mut account = accounts
+        .into_iter()
+        .find(|a| a.id == account_id)
+        .ok_or_else(|| DawnlandError::Unknown("Account not found".to_string()))?;
+
+    match account.account_type {
+        auth::AccountType::Microsoft => {
+            let token = account.access_token.as_ref().ok_or_else(|| {
+                DawnlandError::Unknown("No access token found for Microsoft account".to_string())
+            })?;
+            
+            // Try fetching with current token first
+            if let Ok((_, _, textures)) = auth::microsoft::get_minecraft_profile(token).await {
+                if let Some(t) = textures.clone() {
+                    let mut all_accounts = auth::get_accounts().await?;
+                    if let Some(a) = all_accounts.iter_mut().find(|a| a.id == account_id) {
+                        a.textures = textures.clone();
+                    }
+                    let _ = auth::save_accounts(&all_accounts).await;
+                    return Ok(t);
+                }
+            }
+
+            // Token might be expired, fallback to refresh
+            let updated_account = auth::refresh_microsoft_token(&account_id).await?;
+            if let Some(textures) = updated_account.textures {
+                return Ok(textures);
+            }
+        }
+        auth::AccountType::Authlib => {
+            let authlib_url = account.authlib_url.as_ref().ok_or_else(|| {
+                DawnlandError::Unknown("No Authlib URL found".to_string())
+            })?;
+            // Call sessionserver profile API
+            let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+            let url = format!("{}/sessionserver/session/minecraft/profile/{}?unsigned=false&t={}", authlib_url.trim_end_matches('/'), account.id.replace("-", ""), timestamp);
+            let client = reqwest::Client::new();
+            let res = client.get(&url).send().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+            if res.status().is_success() {
+                #[derive(serde::Deserialize)]
+                struct AuthlibProperty {
+                    name: String,
+                    value: String,
+                }
+                #[derive(serde::Deserialize)]
+                struct AuthlibProfile {
+                    properties: Option<Vec<AuthlibProperty>>,
+                }
+                
+                let profile: AuthlibProfile = res.json().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+                if let Some(props) = profile.properties {
+                    if let Some(prop) = props.into_iter().find(|p| p.name == "textures") {
+                        use base64::{Engine as _, engine::general_purpose};
+                        let decoded = general_purpose::STANDARD.decode(prop.value).unwrap_or_default();
+                        if let Ok(json_str) = String::from_utf8(decoded) {
+                            #[derive(serde::Deserialize)]
+                            struct TextureData { url: String }
+                            #[derive(serde::Deserialize)]
+                            struct TexturesPayload { SKIN: Option<TextureData>, CAPE: Option<TextureData> }
+                            #[derive(serde::Deserialize)]
+                            struct DecodedPayload { textures: Option<TexturesPayload> }
+
+                            if let Ok(payload) = serde_json::from_str::<DecodedPayload>(&json_str) {
+                                let mut textures = auth::AccountTextures { skin_url: None, cape_url: None, variant: None };
+                                if let Some(tex) = payload.textures {
+                                    if let Some(skin) = tex.SKIN { textures.skin_url = Some(skin.url); }
+                                    if let Some(cape) = tex.CAPE { textures.cape_url = Some(cape.url); }
+                                }
+                                account.textures = Some(textures.clone());
+                                // save it
+                                let mut all_accounts = auth::get_accounts().await?;
+                                if let Some(a) = all_accounts.iter_mut().find(|a| a.id == account_id) {
+                                    a.textures = account.textures.clone();
+                                }
+                                auth::save_accounts(&all_accounts).await?;
+                                return Ok(textures);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    
+    // Return empty textures by default
+    Ok(auth::AccountTextures {
+        skin_url: None,
+        cape_url: None,
+        variant: None,
+    })
+}
+
+/// Upload a new skin for a Microsoft account.
+#[tauri::command]
+pub async fn upload_microsoft_skin(account_id: String, skin_path: String, variant: String) -> Result<(), AppError> {
+    tracing::info!("Uploading skin for account: {} from {} with variant {}", account_id, skin_path, variant);
+    let accounts = auth::get_accounts().await?;
+    let account = accounts
+        .into_iter()
+        .find(|a| a.id == account_id)
+        .ok_or_else(|| DawnlandError::Unknown("Account not found".to_string()))?;
+
+    if account.account_type != auth::AccountType::Microsoft {
+        return Err(DawnlandError::Unknown("Only Microsoft accounts can upload skins directly via this API".to_string()).into());
+    }
+
+    // Refresh token first to ensure valid access
+    let account = auth::refresh_microsoft_token(&account_id).await?;
+    let token = account.access_token.as_ref().unwrap();
+
+    let skin_data = tokio::fs::read(&skin_path).await.map_err(|e| DawnlandError::Unknown(format!("Failed to read skin file: {}", e)))?;
+
+    let client = reqwest::Client::new();
+    
+    let file_part = reqwest::multipart::Part::bytes(skin_data)
+        .file_name("skin.png")
+        .mime_str("image/png")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new()
+        .text("variant", variant)
+        .part("file", file_part);
+
+    let res = client
+        .post("https://api.minecraftservices.com/minecraft/profile/skins")
+        .header("Authorization", format!("Bearer {}", token))
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| DawnlandError::Unknown(format!("Skin upload failed: {}", e)))?;
+
+    if !res.status().is_success() {
+        let err_text = res.text().await.unwrap_or_default();
+        return Err(DawnlandError::Unknown(format!("Failed to upload skin: {}", err_text)).into());
+    }
+
+    // Update textures by fetching again
+    let _ = fetch_account_textures(account_id).await;
+
+    Ok(())
+}
+
 // ============ Custom Updater Commands ============
 
 #[derive(Clone, serde::Serialize)]
@@ -311,4 +459,15 @@ pub async fn app_track_event(
     // Removed app.flush_events_blocking() to prevent blocking the async runtime
     Ok(())
 }
+
+#[tauri::command]
+pub async fn proxy_image_base64(url: String) -> Result<String, AppError> {
+    use base64::{Engine as _, engine::general_purpose};
+    let client = reqwest::Client::new();
+    let res = client.get(&url).send().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    let bytes = res.bytes().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    let base64_str = general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:image/png;base64,{}", base64_str))
+}
+
 pub mod export;

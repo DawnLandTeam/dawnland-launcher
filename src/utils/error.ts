@@ -9,6 +9,9 @@ export function getErrorMessage(err: unknown): string {
     if (anyErr.code === "MD5_MISMATCH") {
       return (i18n.global.t as any)('errors.md5Mismatch');
     }
+    if (anyErr.code === "MICROSOFT_REAUTH_REQUIRED") {
+      return (i18n.global.t as any)('errors.microsoftReauthRequired', '微软账号已过期，请重新登录。');
+    }
     if (typeof anyErr.message === "string" && anyErr.message) {
       msg = anyErr.message;
     } else if (typeof anyErr.data === "string" && anyErr.data) {
@@ -18,6 +21,10 @@ export function getErrorMessage(err: unknown): string {
     msg = err;
   } else {
     msg = String(err);
+  }
+
+  if (msg === "MICROSOFT_REAUTH_REQUIRED") {
+    return (i18n.global.t as any)('errors.microsoftReauthRequired', '微软账号身份已过期，请重新登录。');
   }
 
   if (msg.startsWith("Database error: CONFLICTING_TASK:")) {
