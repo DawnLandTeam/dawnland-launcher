@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { invoke } from '@tauri-apps/api/core';
 import { ref, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useToast } from "../composables/useToast";
@@ -31,7 +32,7 @@ const expandedId = ref<number | null>(null);
 async function loadHistory() {
   loading.value = true;
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
+    
     history.value = await invoke<CrashHistoryEntry[]>('get_crash_history', {
       instanceId: props.instanceId || null,
     });
@@ -44,7 +45,7 @@ async function loadHistory() {
 
 async function deleteEntry(id: number) {
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
+    
     await invoke('delete_crash_history', { id });
     history.value = history.value.filter(e => e.id !== id);
     if (expandedId.value === id) expandedId.value = null;
@@ -56,7 +57,7 @@ async function deleteEntry(id: number) {
 
 async function clearAll() {
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
+    
     await invoke('clear_crash_history', { instanceId: props.instanceId || null });
     history.value = [];
     expandedId.value = null;
