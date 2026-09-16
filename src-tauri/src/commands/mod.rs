@@ -466,26 +466,73 @@ pub async fn app_track_event(
 #[tauri::command]
 pub async fn proxy_image_base64(url: String) -> Result<String, AppError> {
     use base64::{Engine as _, engine::general_purpose};
+    use std::net::IpAddr;
     
-    // SSRF Protection: Parse URL and validate host
+    // SSRF Protection: Parse URL and validate host via DNS resolution
     let parsed = reqwest::Url::parse(&url).map_err(|e| DawnlandError::Unknown(format!("Invalid URL: {e}")))?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err(DawnlandError::Unknown("Only HTTP/HTTPS allowed".to_string()).into());
     }
     
-    if let Some(host) = parsed.host_str() {
-        if host == "localhost" || host.starts_with("127.") || host.starts_with("192.168.") || host.starts_with("10.") || host.starts_with("172.") || host.contains("::1") {
-            return Err(DawnlandError::Unknown("Local/Private IP blocked".to_string()).into());
+    let host = parsed.host_str().ok_or_else(|| DawnlandError::Unknown("Invalid host".to_string()))?;
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    
+    // Resolve DNS
+    let addrs = tokio::net::lookup_host(format!("{}:{}", host, port))
+        .await
+        .map_err(|e| DawnlandError::Unknown(format!("DNS resolution failed: {e}")))?;
+        
+    let mut safe_addr = None;
+    for addr in addrs {
+        let ip = addr.ip();
+        let mut is_private = false;
+        
+        if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+            is_private = true;
+        } else {
+            match ip {
+                IpAddr::V4(ipv4) => {
+                    if ipv4.is_private() || ipv4.is_link_local() {
+                        is_private = true;
+                    }
+                }
+                IpAddr::V6(ipv6) => {
+                    let segments = ipv6.segments();
+                    if (segments[0] & 0xfe00) == 0xfc00 { // Unique local fc00::/7
+                        is_private = true;
+                    }
+                    if (segments[0] & 0xffc0) == 0xfe80 { // Link local fe80::/10
+                        is_private = true;
+                    }
+                }
+            }
         }
-    } else {
-        return Err(DawnlandError::Unknown("Invalid host".to_string()).into());
+        
+        if !is_private {
+            safe_addr = Some(addr);
+            break;
+        }
     }
+    
+    let safe_addr = safe_addr.ok_or_else(|| DawnlandError::Unknown("Host resolves to private IP".to_string()))?;
 
-    let client = reqwest::Client::new();
-    let res = client.get(&url).send().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    // Create client that forces the resolved safe IP to prevent DNS rebinding
+    let client = reqwest::Client::builder()
+        .resolve(host, safe_addr)
+        .build()
+        .map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+        
+    let res = client.get(parsed).send().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    
+    // Detect MIME type
+    let content_type = res.headers().get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/png")
+        .to_string();
+        
     let bytes = res.bytes().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
     let base64_str = general_purpose::STANDARD.encode(bytes);
-    Ok(format!("data:image/png;base64,{}", base64_str))
+    Ok(format!("data:{};base64,{}", content_type, base64_str))
 }
 
 pub mod export;

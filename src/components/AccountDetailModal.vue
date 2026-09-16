@@ -8,6 +8,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { SkinViewer, WalkingAnimation } from 'skinview3d';
 import type { Account, AccountTextures } from '../types';
 import DButton from './ui/DButton.vue';
+import DToggleGroup from './ui/DToggleGroup.vue';
 import { useI18n } from 'vue-i18n';
 import { getErrorMessage } from '../utils/error';
 import { STEVE_SKIN_BASE64, getProxiedImageBase64 } from '../utils/steve';
@@ -23,6 +24,7 @@ const { t } = useI18n();
 const skinContainer = ref<HTMLElement | null>(null);
 const isLoading = ref(false);
 const isUploading = ref(false);
+const skinVariant = ref('classic');
 const isReauthRequired = ref(false);
 let viewer: SkinViewer | null = null;
 const errorMsg = ref('');
@@ -150,7 +152,7 @@ async function uploadSkin() {
         await invoke('upload_microsoft_skin', {
           accountId: props.account.id,
           skinPath: selected,
-          variant: 'classic' // hardcode variant as classic for now
+          variant: skinVariant.value
         });
         await fetchTextures();
       } catch (e: any) {
@@ -204,6 +206,16 @@ watch(() => props.show, (newVal) => {
       >
         <Loader2 v-if="!viewer" class="animate-spin text-neutral-400" />
       </div>
+
+      <DToggleGroup
+        v-if="account?.accountType === 'microsoft'"
+        v-model="skinVariant"
+        :options="[
+          { label: 'Steve (经典)', value: 'classic' },
+          { label: 'Alex (纤细)', value: 'slim' }
+        ]"
+        class="w-full justify-center"
+      />
 
       <div class="flex gap-3 w-full mt-2">
         <DButton
