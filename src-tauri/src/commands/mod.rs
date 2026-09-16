@@ -519,6 +519,7 @@ pub async fn proxy_image_base64(url: String) -> Result<String, AppError> {
     // Create client that forces the resolved safe IP to prevent DNS rebinding
     let client = reqwest::Client::builder()
         .resolve(host, safe_addr)
+        .redirect(reqwest::redirect::Policy::none()) // SSRF Protection: Disable redirects
         .build()
         .map_err(|e| DawnlandError::Unknown(e.to_string()))?;
         
@@ -527,10 +528,25 @@ pub async fn proxy_image_base64(url: String) -> Result<String, AppError> {
     // Detect MIME type
     let content_type = res.headers().get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("image/png")
+        .unwrap_or("")
         .to_string();
         
-    let bytes = res.bytes().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    if !content_type.starts_with("image/") {
+        return Err(DawnlandError::Unknown("URL does not return an image".to_string()).into());
+    }
+        
+    // Prevent OOM by enforcing a max size (e.g., 5MB)
+    use futures_util::StreamExt;
+    let mut stream = res.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() > 5 * 1024 * 1024 {
+            return Err(DawnlandError::Unknown("Image too large (exceeds 5MB)".to_string()).into());
+        }
+    }
+    
     let base64_str = general_purpose::STANDARD.encode(bytes);
     Ok(format!("data:{};base64,{}", content_type, base64_str))
 }
