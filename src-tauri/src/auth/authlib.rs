@@ -331,6 +331,7 @@ pub async fn ensure_authlib_token_valid(account_id: &str) -> Result<Account, App
             account.client_token = Some(refreshed.client_token.clone());
 
             // Save updated account
+            let _lock = crate::auth::ACCOUNTS_LOCK.lock().await;
             let mut all_accounts = get_accounts().await?;
             if let Some(a) = all_accounts.iter_mut().find(|a| a.id == account_id) {
                 a.access_token = account.access_token.clone();
@@ -380,6 +381,7 @@ pub async fn save_authlib_accounts(
         return Err(DawnlandError::Unknown("No profiles selected".to_string()).into());
     }
 
+    let _lock = crate::auth::ACCOUNTS_LOCK.lock().await;
     let mut accounts = get_accounts().await?;
     let mut added_accounts = Vec::new();
 

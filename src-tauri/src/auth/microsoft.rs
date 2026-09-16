@@ -637,6 +637,7 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, AppError
         authlib_email: None,
     };
 
+    let _lock = crate::auth::ACCOUNTS_LOCK.lock().await;
     // Load existing accounts and add new one.
     let mut accounts = get_accounts().await?;
 
@@ -660,6 +661,7 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, AppError
 pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppError> {
     tracing::info!("Refreshing Microsoft token for account: {}", account_id);
 
+    let _lock = crate::auth::ACCOUNTS_LOCK.lock().await;
     // Load all accounts to find the Microsoft account
     let mut accounts = get_accounts().await?;
 
@@ -770,13 +772,14 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppErr
     tracing::info!("Minecraft access token refreshed");
 
     // Step 5: Fetch profile to get updated textures and username
-    let (_, _, textures) = get_minecraft_profile(&mc_token).await?;
+    let (_, new_username, textures) = get_minecraft_profile(&mc_token).await?;
 
     // Update account with new tokens and collect the updated account
     let updated_account = {
         let account = &mut accounts[account_pos];
         account.access_token = Some(mc_token.clone());
         account.refresh_token = Some(new_refresh_token.clone());
+        account.username = new_username;
         account.textures = textures;
         account.clone()
     };

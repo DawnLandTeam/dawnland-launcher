@@ -20,6 +20,8 @@ pub use microsoft::{
 #[cfg(test)]
 pub(crate) static TEST_MUTEX: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+pub static ACCOUNTS_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// Account types supported by the launcher.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -133,6 +135,7 @@ pub async fn add_offline_account(username: &str) -> Result<Account, DawnlandErro
         ));
     }
 
+    let _lock = ACCOUNTS_LOCK.lock().await;
     let mut accounts = load_accounts().await?;
 
     // Check if account already exists.
@@ -171,6 +174,7 @@ pub async fn get_accounts() -> Result<Vec<Account>, DawnlandError> {
 
 /// Remove an account by ID.
 pub async fn remove_account(id: &str) -> Result<(), DawnlandError> {
+    let _lock = ACCOUNTS_LOCK.lock().await;
     let mut accounts = load_accounts().await?;
     let original_len = accounts.len();
     accounts.retain(|a| a.id != id);
@@ -184,6 +188,7 @@ pub async fn remove_account(id: &str) -> Result<(), DawnlandError> {
 
 /// Update an existing account.
 pub async fn update_account(account: Account) -> Result<(), DawnlandError> {
+    let _lock = ACCOUNTS_LOCK.lock().await;
     let mut accounts = load_accounts().await?;
 
     if let Some(existing) = accounts.iter_mut().find(|a| a.id == account.id) {

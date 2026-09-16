@@ -160,6 +160,7 @@ pub async fn fetch_account_textures(account_id: String) -> Result<auth::AccountT
             // Try fetching with current token first
             if let Ok((_, _, textures)) = auth::microsoft::get_minecraft_profile(token).await {
                 if let Some(t) = textures.clone() {
+                    let _lock = crate::auth::ACCOUNTS_LOCK.lock().await;
                     let mut all_accounts = auth::get_accounts().await?;
                     if let Some(a) = all_accounts.iter_mut().find(|a| a.id == account_id) {
                         a.textures = textures.clone();
@@ -217,6 +218,7 @@ pub async fn fetch_account_textures(account_id: String) -> Result<auth::AccountT
                                 }
                                 account.textures = Some(textures.clone());
                                 // save it
+                                let _lock = crate::auth::ACCOUNTS_LOCK.lock().await;
                                 let mut all_accounts = auth::get_accounts().await?;
                                 if let Some(a) = all_accounts.iter_mut().find(|a| a.id == account_id) {
                                     a.textures = account.textures.clone();
@@ -464,6 +466,21 @@ pub async fn app_track_event(
 #[tauri::command]
 pub async fn proxy_image_base64(url: String) -> Result<String, AppError> {
     use base64::{Engine as _, engine::general_purpose};
+    
+    // SSRF Protection: Parse URL and validate host
+    let parsed = reqwest::Url::parse(&url).map_err(|e| DawnlandError::Unknown(format!("Invalid URL: {e}")))?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(DawnlandError::Unknown("Only HTTP/HTTPS allowed".to_string()).into());
+    }
+    
+    if let Some(host) = parsed.host_str() {
+        if host == "localhost" || host.starts_with("127.") || host.starts_with("192.168.") || host.starts_with("10.") || host.starts_with("172.") || host.contains("::1") {
+            return Err(DawnlandError::Unknown("Local/Private IP blocked".to_string()).into());
+        }
+    } else {
+        return Err(DawnlandError::Unknown("Invalid host".to_string()).into());
+    }
+
     let client = reqwest::Client::new();
     let res = client.get(&url).send().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
     let bytes = res.bytes().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
