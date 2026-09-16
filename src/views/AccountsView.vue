@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, onUnmounted } from "vue";
+import { ref, reactive, computed, onMounted, watch, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { 
@@ -12,7 +12,9 @@ import QrcodeVue from 'qrcode.vue';
 import { getErrorType, trackEvent, sanitizeTrackingUrl } from "../utils/analytics";
 import DInput from "../components/ui/DInput.vue";
 import DSelect from "../components/ui/DSelect.vue";
+import MinecraftAvatar from "../components/MinecraftAvatar.vue";
 import { getErrorMessage } from "../utils/error";
+import AccountDetailModal from "../components/AccountDetailModal.vue";
 
 import { Account, LoginInitResponse } from "../types";
 
@@ -96,6 +98,21 @@ const showDeleteDialog = ref(false);
 const deletingAccountId = ref("");
 const deletingAccountName = ref("");
 
+const showAccountDetailModal = ref(false);
+const selectedAccount = ref<Account | null>(null);
+
+function openAccountDetail(account: Account) {
+  selectedAccount.value = account;
+  showAccountDetailModal.value = true;
+}
+
+function handleTexturesUpdated(updatedAccount: Account) {
+  const index = accounts.value.findIndex(a => a.id === updatedAccount.id);
+  if (index !== -1) {
+    accounts.value[index] = updatedAccount;
+  }
+}
+
 // Load accounts on mount
 async function loadAccounts(): Promise<void> {
   try {
@@ -125,6 +142,22 @@ function openAddAccountModal(type?: AccountType): void {
   selectedAuthlibProfiles.value = [];
   tempAuthData.value = null;
   loadAuthlibServers();
+}
+
+const faviconErrors = reactive<Record<string, boolean>>({});
+
+function getFaviconUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    const urlObj = new URL(url);
+    return `${urlObj.protocol}//${urlObj.host}/favicon.ico`;
+  } catch (e) {
+    return null;
+  }
+}
+
+function handleFaviconError(accountId: string) {
+  faviconErrors[accountId] = true;
 }
 
 // Close add account modal
@@ -458,46 +491,48 @@ watch(
         <p class="text-sm text-neutral-600 dark:text-neutral-400 font-medium">{{ $t('accounts.noAccountsDesc') }}</p>
       </div>
 
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div v-else class="flex flex-wrap gap-4">
         <div
           v-for="account in accounts"
           :key="account.id"
-          class="relative rounded-xl border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 transition-all hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 shadow-sm"
+          class="w-[140px] relative rounded-2xl border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 pb-5 transition-all hover:border-primary/50 hover:-translate-y-1 hover:bg-white/80 dark:hover:bg-zinc-900/80 shadow-sm hover:shadow-md cursor-pointer group flex flex-col items-center text-center gap-3"
+          @click="openAccountDetail(account)"
         >
-          <!-- Account Info -->
-          <div class="flex items-start gap-3">
-            <div
-              class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-lg font-bold"
-              :class="{
-                'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400': isMsaAccount(account),
-                'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400': isAuthlibAccount(account),
-                'bg-neutral-100 text-neutral-600 dark:bg-zinc-800 dark:text-zinc-400': !isMsaAccount(account) && !isAuthlibAccount(account)
-              }"
-            >
-              {{ account.username.charAt(0).toUpperCase() }}
-            </div>
-            <div class="flex-1 min-w-0">
-              <p class="font-medium truncate">{{ account.username }}</p>
-              <div class="flex items-center gap-1.5 mt-1">
-                <MonitorCheck v-if="isMsaAccount(account)" :size="14" class="text-green-500" />
-                <Globe v-else-if="isAuthlibAccount(account)" :size="14" class="text-purple-500" />
-                <WifiOff v-else :size="14" class="text-neutral-400 dark:text-neutral-500" />
-                <span class="text-xs text-neutral-500 dark:text-neutral-400 truncate">
-                  {{ isMsaAccount(account) ? $t('accounts.microsoft') : (isAuthlibAccount(account) ? ($t('accounts.authlib') + (account.authlibServerName ? ` - ${account.authlibServerName}` : '')) : $t('accounts.offline')) }}
-                </span>
-              </div>
-            </div>
+          <!-- Delete Button -->
+          <button
+            class="absolute top-2 right-2 flex items-center justify-center h-7 w-7 rounded-lg border border-red-200/0 bg-red-50/50 text-red-600/70 hover:bg-red-100 hover:text-red-600 hover:border-red-200 dark:bg-red-900/10 dark:text-red-400/70 dark:hover:bg-red-900/30 dark:hover:text-red-400 dark:hover:border-red-900/30 transition-all opacity-0 group-hover:opacity-100 z-10"
+            :title="$t('accounts.delete')"
+            @click.stop="confirmDeleteAccount(account)"
+          >
+            <Trash2 :size="12" />
+          </button>
+
+          <!-- Avatar -->
+          <div
+            class="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-xl font-bold mt-1 bg-neutral-200/50 dark:bg-zinc-800/50"
+          >
+            <MinecraftAvatar :skinUrl="account.textures?.skinUrl" :fallbackUsername="account.username" :size="44" class="w-11 h-11 rounded-sm" />
           </div>
 
-          <!-- Action Buttons -->
-          <div class="flex gap-2 mt-4">
-            <button
-              class="w-full flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-600 hover:bg-red-100 dark:border-red-900/30 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 transition-colors"
-              @click="confirmDeleteAccount(account)"
-            >
-              <Trash2 :size="14" />
-              {{ $t('accounts.delete') }}
-            </button>
+          <!-- Text Info -->
+          <div class="w-full flex flex-col items-center min-w-0 px-1">
+            <p class="font-semibold truncate w-full text-[15px] text-neutral-900 dark:text-white">{{ account.username }}</p>
+            <div class="flex items-start justify-center gap-1 mt-1.5 w-full text-neutral-500 dark:text-neutral-400">
+              <MonitorCheck v-if="isMsaAccount(account)" :size="12" class="text-green-500 shrink-0 mt-[2px]" />
+              <template v-else-if="isAuthlibAccount(account)">
+                <img 
+                  v-if="!faviconErrors[account.id] && getFaviconUrl(account.authlibUrl)" 
+                  :src="getFaviconUrl(account.authlibUrl)!" 
+                  class="w-3 h-3 shrink-0 mt-[2px] rounded-sm object-cover" 
+                  @error="handleFaviconError(account.id)" 
+                />
+                <Globe v-else :size="12" class="text-purple-500 shrink-0 mt-[2px]" />
+              </template>
+              <WifiOff v-else :size="12" class="shrink-0 mt-[2px]" />
+              <span class="text-[11px] line-clamp-2 max-w-full text-left leading-tight break-words">
+                {{ isMsaAccount(account) ? $t('accounts.microsoft') : (isAuthlibAccount(account) ? ($t('accounts.authlib') + (account.authlibServerName ? ` - ${account.authlibServerName}` : '')) : $t('accounts.offline')) }}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -806,5 +841,11 @@ watch(
             </button>
           </div>
     </AlertDialog>
+
+    <AccountDetailModal 
+      v-model:show="showAccountDetailModal" 
+      :account="selectedAccount"
+      @textures-updated="handleTexturesUpdated"
+    />
   </div>
 </template>

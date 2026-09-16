@@ -506,8 +506,8 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, AppE
     Ok(token)
 }
 
-/// Get Minecraft profile (UUID and username).
-async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), AppError> {
+/// Get Minecraft profile (UUID, username, and textures).
+pub async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String, Option<crate::auth::AccountTextures>), AppError> {
     let client = http_client();
 
     let response = client
@@ -542,11 +542,26 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), AppEr
     }
 
     #[derive(Deserialize)]
+    struct MCSkin {
+        url: Option<String>,
+        variant: Option<String>,
+        state: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct MCCape {
+        url: Option<String>,
+        state: Option<String>,
+    }
+
+    #[derive(Deserialize)]
     struct MCProfileResponse {
         #[serde(rename = "id")]
         id: Option<String>,
         #[serde(rename = "name")]
         name: Option<String>,
+        skins: Option<Vec<MCSkin>>,
+        capes: Option<Vec<MCCape>>,
     }
 
     let profile: MCProfileResponse = serde_json::from_str(&raw_text)
@@ -559,8 +574,29 @@ async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String), AppEr
         .name
         .ok_or_else(|| "No name in profile response".to_string())?;
 
+    let mut textures = crate::auth::AccountTextures {
+        skin_url: None,
+        cape_url: None,
+        variant: None,
+    };
+
+    if let Some(skins) = profile.skins {
+        let active_skin = skins.iter().find(|s| s.state.as_deref() == Some("ACTIVE")).or_else(|| skins.first());
+        if let Some(skin) = active_skin {
+            textures.skin_url = skin.url.clone();
+            textures.variant = skin.variant.clone();
+        }
+    }
+
+    if let Some(capes) = profile.capes {
+        let active_cape = capes.iter().find(|c| c.state.as_deref() == Some("ACTIVE")).or_else(|| capes.first());
+        if let Some(cape) = active_cape {
+            textures.cape_url = cape.url.clone();
+        }
+    }
+
     tracing::info!("Received Minecraft profile: {} ({})", username, uuid);
-    Ok((uuid, username))
+    Ok((uuid, username, Some(textures)))
 }
 
 /// Poll for Microsoft login and complete the full authentication chain.
@@ -584,7 +620,7 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, AppError
     tracing::info!("Received Minecraft access token");
 
     // Step 5: Get Minecraft profile.
-    let (uuid, username) = get_minecraft_profile(&mc_token).await?;
+    let (uuid, username, textures) = get_minecraft_profile(&mc_token).await?;
     tracing::info!("Received Minecraft profile: {} ({})", username, uuid);
 
     // Create account.
@@ -594,7 +630,7 @@ pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, AppError
         account_type: AccountType::Microsoft,
         access_token: Some(mc_token.clone()),
         refresh_token: Some(refresh_token.clone()),
-        textures: None,
+        textures,
         authlib_url: None,
         authlib_server_name: None,
         client_token: None,
@@ -733,11 +769,15 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppErr
     let mc_token = get_minecraft_token(&xsts_token, &uhs).await?;
     tracing::info!("Minecraft access token refreshed");
 
+    // Step 5: Fetch profile to get updated textures and username
+    let (_, _, textures) = get_minecraft_profile(&mc_token).await?;
+
     // Update account with new tokens and collect the updated account
     let updated_account = {
         let account = &mut accounts[account_pos];
         account.access_token = Some(mc_token.clone());
         account.refresh_token = Some(new_refresh_token.clone());
+        account.textures = textures;
         account.clone()
     };
 
@@ -909,7 +949,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     let xbl_token = get_xbox_live_token(&ms_token).await?;
     let (xsts_token, uhs) = get_xsts_token(&xbl_token).await?;
     let mc_token = get_minecraft_token(&xsts_token, &uhs).await?;
-    let (uuid, username) = get_minecraft_profile(&mc_token).await?;
+    let (uuid, username, textures) = get_minecraft_profile(&mc_token).await?;
 
     // Create account
     let account = Account {
@@ -918,7 +958,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
         account_type: AccountType::Microsoft,
         access_token: Some(mc_token.clone()),
         refresh_token: Some(refresh_token.clone()),
-        textures: None,
+        textures,
         authlib_url: None,
         authlib_server_name: None,
         client_token: None,

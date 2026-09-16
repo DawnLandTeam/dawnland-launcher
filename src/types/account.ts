@@ -4,10 +4,16 @@ export interface Account {
   accountType: "offline" | "microsoft" | "authlib";
   accessToken?: string;
   refreshToken?: string;
-  textures?: string;
+  textures?: AccountTextures;
   authlibUrl?: string;
   authlibServerName?: string;
   authlibEmail?: string;
+}
+
+export interface AccountTextures {
+  skinUrl?: string;
+  capeUrl?: string;
+  variant?: string;
 }
 
 export interface AuthlibAuthResult {
