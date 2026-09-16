@@ -110,6 +110,7 @@ interface LocalAssetItem {
   filename: string;
   isDir: boolean;
   size: number;
+  managedByModpack?: boolean;
 }
 
 const assets = ref<LocalAssetItem[]>([]);
@@ -203,4 +204,5 @@ function formatSize(bytes: number) {
   background: rgba(255, 255, 255, 0.2);
 }
 </style>
+
 

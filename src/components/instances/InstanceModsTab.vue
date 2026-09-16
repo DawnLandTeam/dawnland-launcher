@@ -137,6 +137,7 @@ interface LocalMod {
   version?: string;
   iconUrl?: string;
   isToggling?: boolean;
+  managedByModpack?: boolean;
 }
 
 const mods = ref<LocalMod[]>([]);
