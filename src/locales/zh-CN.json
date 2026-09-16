@@ -1,16 +1,18 @@
 {
-    "common": {
-      "delete": "删除",
-      "search": "搜索",
-      "searchPlaceholder": "搜索...",
-      "cancel": "取消",
-      "confirm": "确认",
-      "select": "请选择...",
-      "back": "返回",
-      "saveSuccess": "保存成功",
-      "save": "保存",
-      "operationFailed": "操作失败"
-    },
+  "common": {
+    "delete": "删除",
+    "search": "搜索",
+    "searchPlaceholder": "搜索...",
+    "cancel": "取消",
+    "confirm": "确认",
+    "select": "请选择...",
+    "back": "返回",
+    "saveSuccess": "保存成功",
+    "save": "保存",
+    "operationFailed": "操作失败",
+    "close": "关闭",
+    "link": "绑定"
+  },
   "sidebar": {
     "home": "主页",
     "instances": "实例",
@@ -21,7 +23,6 @@
   "home": {
     "prelaunchWarningTitle": "启动前检测到问题",
     "prelaunchWarningDesc": "以下模组可能缺少前置依赖，继续启动可能导致崩溃。",
-    "requiredBy": "需要于",
     "launchAnyway": "仍要启动",
     "welcome": "欢迎来到 Dawnland",
     "noInstances": "安装你的第一个 Minecraft 实例以开始游戏。",
@@ -52,7 +53,8 @@
     "repairFound": "发现 {total} 个核心库或原版资源文件缺失/损坏，正在自动重下。",
     "repairingDependency": "正在自动修复缺失的底层依赖: {version} ...",
     "repairingDepTitle": "正在修复依赖实例...",
-    "repairProgress": "{completed} / {total} 文件"
+    "repairProgress": "{completed} / {total} 文件",
+    "missingDependency": " 缺少前置："
   },
   "instances": {
     "title": "实例",
@@ -174,7 +176,43 @@
       "deleteUndone": "此操作不可撤销。",
       "deleteWarning": "该实例存在游戏数据，删除后将彻底丢失！"
     },
-    "crashHistory": "崩溃历史"
+    "crashHistory": "崩溃历史",
+    "export": {
+      "title": "导出整合包",
+      "description": "将此实例打包成标准格式以便分享。",
+      "name": "整合包名称",
+      "version": "版本号",
+      "author": "作者",
+      "format": "导出格式",
+      "includeSaves": "包含游戏存档 (saves 文件夹)",
+      "success": "导出成功",
+      "successDesc": "整合包已成功保存到本地。",
+      "start": "开始导出",
+      "progress": {
+        "starting": "开始导出...",
+        "gathering": "正在收集模组信息",
+        "hashing": "正在计算模组哈希 {current}/{total}",
+        "querying": "正在查询 CurseForge...",
+        "zipping": "正在压缩包体",
+        "finished": "导出完成"
+      },
+      "reviewModsDesc": "个模组未自动匹配成功，你可以手动搜索绑定，或忽略它们直接打包。",
+      "allMatched": "所有模组已自动匹配成功！",
+      "slugPlaceholder": "项目简称 (如 sodium)",
+      "idPlaceholder": "项目 ID (如 394468)",
+      "error": {
+        "mr404": "找不到该 Modrinth 项目，请检查名称是否正确。",
+        "mrNoVersions": "该 Modrinth 项目没有任何版本。",
+        "mrNoCompatibleVersions": "该项目没有与当前游戏版本或加载器兼容的版本。",
+        "mrApiError": "Modrinth 接口请求失败。",
+        "networkError": "网络连接失败，请重试。",
+        "cfRequiresNumeric": "CurseForge 项目 ID 必须是纯数字。",
+        "cf404": "找不到该 CurseForge 项目，请检查 ID 是否正确。",
+        "cfNoFiles": "该 CurseForge 项目没有任何文件。",
+        "invalidJson": "解析返回数据失败。"
+      },
+      "autoResolve": "一键自动检索"
+    }
   },
   "servers": {
     "title": "服务器",
@@ -481,17 +519,6 @@
       "visitRepo": "访问仓库",
       "submitIssue": "提交问题",
       "suggestFeature": "建议功能"
-    },
-    "authlib": {
-      "tab": "外置登录",
-      "title": "认证服务器管理",
-      "addServer": "添加认证服务器 (API URL)",
-      "addServerPlaceholder": "例如: https://skin.dawnland.cn/api/yggdrasil",
-      "addBtn": "添加",
-      "addedServers": "已添加的服务器",
-      "noServers": "暂无已添加的认证服务器。",
-      "addSuccess": "成功添加认证服务器：{url}",
-      "addFailed": "添加认证服务器失败：{error}"
     }
   },
   "install": {
@@ -736,7 +763,7 @@
   },
   "task": {
     "actions": {
-      "retryTask": "重试任务 (Retry Task)"
+      "retryTask": "重试任务"
     },
     "installVanilla": "安装原版 {version}",
     "installLoader": "安装 {loader} (适用于 {version})",
@@ -759,9 +786,6 @@
     "noSubTasks": "暂无详细子任务",
     "installing": "正在安装...",
     "cancel": "取消任务",
-    "actions": {
-      "retryTask": "重试任务"
-    },
     "sub": {
       "resolve_loader": "获取安装程序",
       "download_loader_libs": "下载依赖库",

@@ -1411,22 +1411,42 @@ pub async fn toggle_mod_status(
 
     if !src_file.exists() {
         if dst_file.exists() {
-            // Already in desired state
-            return Ok(());
+            // Already in desired state, but we should still ensure assets.json is updated below
+        } else {
+            return Err(format!("Mod file not found: {}", src_file.display()));
         }
-        return Err(format!("Mod file not found: {}", src_file.display()));
+    } else {
+        if dst_file.exists() {
+            return Err(format!(
+                "Mod already exists in target location: {}",
+                dst_file.display()
+            ));
+        }
+
+        tokio::fs::rename(&src_file, &dst_file)
+            .await
+            .map_err(|e| format!("Failed to move mod file: {}", e))?;
     }
 
-    if dst_file.exists() {
-        return Err(format!(
-            "Mod already exists in target location: {}",
-            dst_file.display()
-        ));
+    // Also update the enabled status in assets.json
+    let assets_path = base_dir.join("versions").join(&version_id).join("assets.json");
+    if assets_path.exists() {
+        let _lock = MANIFEST_LOCK.lock().await;
+        let content = tokio::fs::read_to_string(&assets_path)
+            .await
+            .map_err(|e| format!("Failed to read assets.json: {}", e))?;
+        let mut manifest = serde_json::from_str::<crate::models::instance::AssetManifest>(&content)
+            .map_err(|e| format!("Failed to parse assets.json: {}", e))?;
+        let path_key = format!("mods/{}", filename);
+        if let Some(record) = manifest.assets.get_mut(&path_key) {
+            record.enabled = enable;
+            let json = serde_json::to_string_pretty(&manifest)
+                .map_err(|e| format!("Failed to serialize assets.json: {}", e))?;
+            tokio::fs::write(&assets_path, json)
+                .await
+                .map_err(|e| format!("Failed to write assets.json: {}", e))?;
+        }
     }
-
-    tokio::fs::rename(&src_file, &dst_file)
-        .await
-        .map_err(|e| format!("Failed to move mod file: {}", e))?;
 
     tracing::info!(
         "Toggled mod {} to enabled={} for instance {}",

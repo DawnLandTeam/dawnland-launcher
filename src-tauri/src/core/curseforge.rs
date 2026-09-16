@@ -928,6 +928,7 @@ mod tests {
             "data": [
                 {
                     "id": 238222,
+                    "slug": "jei",
                     "name": "Just Enough Items (JEI)",
                     "summary": "JEI is an item and recipe viewing mod for Minecraft",
                     "downloadCount": 265000000.0,

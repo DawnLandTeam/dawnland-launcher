@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, onActivated, watch, onUnmounted } from "vue";
+import { useStorage } from '@vueuse/core';
 import { useRouter, useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -78,7 +79,7 @@ const installedInstances = ref<InstanceItem[]>([]);
 const { t } = useI18n();
 const accounts = ref<Account[]>([]);
 const selectedInstanceId = ref<string>("");
-const selectedAccountId = ref<string>("");
+const selectedAccountId = useStorage<string>('selectedAccountId', '');
 
 import { launchingInstances, jvmSpawnedInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';
 
@@ -872,8 +873,9 @@ function loaderBadgeClass(loaderType: string): string {
               <div v-for="w in prelaunchWarnings" :key="w.dependencyId + w.requiredBy"
                 class="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800/50">
                 <span class="text-sm text-amber-700 dark:text-amber-400">
+                  <strong>{{ w.requiredBy }}</strong>
+                  <span class="text-amber-600/70 dark:text-amber-500/70">{{ $t('home.missingDependency') }}</span>
                   <strong>{{ w.dependencyId }}</strong>
-                  <span class="text-amber-600/70 dark:text-amber-500/70"> - {{ $t('home.requiredBy') }} {{ w.requiredBy }}</span>
                 </span>
               </div>
             </div>
