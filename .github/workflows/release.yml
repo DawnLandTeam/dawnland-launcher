@@ -15,6 +15,7 @@ jobs:
       contents: write
     environment: release
     env:
+      NODE_OPTIONS: "--use-system-ca"
       RELEASE_FILES: |
         src-tauri/target/release/DLML.exe
         src-tauri/target/release/DLML.exe.md5
