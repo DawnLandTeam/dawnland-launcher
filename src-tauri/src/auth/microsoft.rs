@@ -1184,6 +1184,14 @@ mod tests {
             .with_body(r#"{ "access_token": "new_mc_access_token" }"#)
             .create_async()
             .await;
+            
+        let mock_profile = server
+            .mock("GET", "/minecraft/profile")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{ "id": "test-uuid-refresh", "name": "test_username" }"#)
+            .create_async()
+            .await;
 
         let result = refresh_microsoft_token("test-uuid-refresh").await;
         assert!(result.is_ok(), "Refresh failed: {:?}", result.as_ref().err());

@@ -204,15 +204,16 @@ pub async fn fetch_account_textures(account_id: String) -> Result<auth::AccountT
                             #[derive(serde::Deserialize)]
                             struct TextureData { url: String }
                             #[derive(serde::Deserialize)]
-                            struct TexturesPayload { SKIN: Option<TextureData>, CAPE: Option<TextureData> }
+                            #[serde(rename_all = "UPPERCASE")]
+                            struct TexturesPayload { skin: Option<TextureData>, cape: Option<TextureData> }
                             #[derive(serde::Deserialize)]
                             struct DecodedPayload { textures: Option<TexturesPayload> }
 
                             if let Ok(payload) = serde_json::from_str::<DecodedPayload>(&json_str) {
                                 let mut textures = auth::AccountTextures { skin_url: None, cape_url: None, variant: None };
                                 if let Some(tex) = payload.textures {
-                                    if let Some(skin) = tex.SKIN { textures.skin_url = Some(skin.url); }
-                                    if let Some(cape) = tex.CAPE { textures.cape_url = Some(cape.url); }
+                                    if let Some(skin) = tex.skin { textures.skin_url = Some(skin.url); }
+                                    if let Some(cape) = tex.cape { textures.cape_url = Some(cape.url); }
                                 }
                                 account.textures = Some(textures.clone());
                                 // save it
