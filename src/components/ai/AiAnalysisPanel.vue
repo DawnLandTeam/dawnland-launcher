@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { Zap } from "@lucide/vue";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { marked } from "marked";
@@ -114,7 +115,7 @@ async function executeAction(action: { type: string, payload: string }) {
       return;
     }
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
+      
       const disabled = await invoke<string[]>('disable_mod_by_name', {
         versionId: props.versionId,
         modName: action.payload
@@ -170,7 +171,7 @@ async function analyzeWithAi() {
   });
 
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
+    
     // The command streams progress via events and returns the full text on completion.
     const result = await invoke<string>("analyze_crash", {
       crashLog: props.logContext,
@@ -230,7 +231,7 @@ async function saveCrashHistory(aiResult: string) {
     aiCause = aiResult.substring(0, 500);
   }
 
-  const { invoke } = await import("@tauri-apps/api/core");
+  
   await invoke('save_crash_history', {
     input: {
       instanceId: props.versionId,
@@ -249,7 +250,7 @@ async function downloadEngine() {
   isDownloadingEngine.value = true;
   engineDownloadStatus.value = '正在下载... (0%)';
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
+    
     await invoke('download_engine');
   } catch(e: any) {
     aiError.value = typeof e === 'object' && e !== null && 'message' in e ? e.message : String(e);

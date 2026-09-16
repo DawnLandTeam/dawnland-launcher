@@ -141,6 +141,7 @@ interface LocalDatapackItem {
   filename: string;
   is_dir: boolean;
   size: number;
+  managedByModpack?: boolean;
 }
 
 const loadingWorlds = ref(false);
@@ -281,4 +282,5 @@ function formatSize(bytes: number) {
   background: rgba(255, 255, 255, 0.2);
 }
 </style>
+
 
