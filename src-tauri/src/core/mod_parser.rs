@@ -58,8 +58,16 @@ impl ModParser {
             [],
         )?;
         
-        let _ = conn.execute("ALTER TABLE mod_cache ADD COLUMN depends TEXT DEFAULT '[]'", []);
-        let _ = conn.execute("ALTER TABLE mod_cache ADD COLUMN provides TEXT DEFAULT '[]'", []);
+        if let Err(e) = conn.execute("ALTER TABLE mod_cache ADD COLUMN depends TEXT DEFAULT '[]'", []) {
+            if !e.to_string().contains("duplicate column name") {
+                tracing::warn!("Migration error adding 'depends' column: {}", e);
+            }
+        }
+        if let Err(e) = conn.execute("ALTER TABLE mod_cache ADD COLUMN provides TEXT DEFAULT '[]'", []) {
+            if !e.to_string().contains("duplicate column name") {
+                tracing::warn!("Migration error adding 'provides' column: {}", e);
+            }
+        }
 
         // Migration from old cache.json
         let json_path = self.cache_dir.join("cache.json");
@@ -130,7 +138,7 @@ impl ModParser {
         if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
             let depends_str = serde_json::to_string(&meta.depends).unwrap_or_else(|_| "[]".to_string());
             let provides_str = serde_json::to_string(&meta.provides).unwrap_or_else(|_| "[]".to_string());
-            let _ = conn.execute(
+            if let Err(e) = conn.execute(
                 "INSERT OR REPLACE INTO mod_cache (cache_key, mod_id, name, version, has_icon, depends, provides) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     key,
@@ -141,7 +149,21 @@ impl ModParser {
                     depends_str,
                     provides_str
                 ],
-            );
+            ) {
+                tracing::warn!("Failed to insert cache entry for {}: {}", key, e);
+                
+                // Fallback for missing columns if migration failed
+                let _ = conn.execute(
+                    "INSERT OR REPLACE INTO mod_cache (cache_key, mod_id, name, version, has_icon) VALUES (?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        key,
+                        meta.mod_id,
+                        meta.name,
+                        meta.version,
+                        if meta.has_icon { 1 } else { 0 }
+                    ],
+                );
+            }
         }
     }
 

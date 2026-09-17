@@ -1257,6 +1257,7 @@ async fn resolve_mod_metadata(
     parser: &crate::core::mod_parser::ModParser,
     base_dir: &std::path::Path,
     skip_parsing: bool,
+    loader_type: Option<String>
 ) -> crate::core::mod_parser::ModMetadata {
     if let Some(m) = cache_entries.get(cache_key) {
         return m.clone();
@@ -1267,9 +1268,10 @@ async fn resolve_mod_metadata(
     let path_clone = path.to_path_buf();
     let key_clone = cache_key.to_string();
     let base_dir_clone = base_dir.to_path_buf();
+    let loader_type_clone = loader_type.clone();
     let m = tokio::task::spawn_blocking(move || {
         let p = crate::core::mod_parser::ModParser::new(&base_dir_clone);
-        p.parse_mod(&path_clone, &key_clone, None)
+        p.parse_mod(&path_clone, &key_clone, loader_type_clone.as_deref())
     })
     .await
     .unwrap_or_default();
@@ -1307,6 +1309,12 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
         tracing::info!("Mods directory does not exist for {}", version_id);
         return Ok(Vec::new());
     }
+
+    let instance = match crate::core::manager::get_instance_details(version_id.clone()).await {
+        Ok(i) => i,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let loader_type = instance.loader_type.clone();
 
     let mut mods = Vec::new();
     let mut managed_files = std::collections::HashMap::new();
@@ -1357,9 +1365,9 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let cache_key = format!("{}_{}_{}", actual_filename, metadata.len(), mtime);
+        let cache_key = format!("{}_{}_{}_{}", actual_filename, metadata.len(), mtime, loader_type);
 
-        let meta = resolve_mod_metadata(&path, &cache_key, &mut cache_entries, &parser, base_dir, skip_parsing.unwrap_or(false)).await;
+        let meta = resolve_mod_metadata(&path, &cache_key, &mut cache_entries, &parser, base_dir, skip_parsing.unwrap_or(false), Some(loader_type.clone())).await;
         let icon_url = get_mod_icon_url(&meta, &parser, &cache_key);
 
         let is_managed = managed_files.get(&actual_filename).copied().unwrap_or(false);
@@ -1558,12 +1566,16 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
         let parser = crate::core::mod_parser::ModParser::new(&base_dir_for_parser);
         let mut cache = parser.load_all_cache();
         jar_entries.iter().map(|(filename, path)| {
-            let metadata = std::fs::metadata(path).unwrap_or_else(|_| std::fs::metadata(path).unwrap());
-            let mtime = metadata.modified().ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let cache_key = format!("{}_{}_{}_{}", filename, metadata.len(), mtime, loader_type);
+            let (size, mtime) = if let Ok(metadata) = std::fs::metadata(path) {
+                let mt = metadata.modified().ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                (metadata.len(), mt)
+            } else {
+                (0, 0)
+            };
+            let cache_key = format!("{}_{}_{}_{}", filename, size, mtime, loader_type);
 
             if let Some(cached_meta) = cache.get(&cache_key) {
                 cached_meta.clone()
