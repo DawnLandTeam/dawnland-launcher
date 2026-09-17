@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
+use tauri::Manager;
 
 static MANIFEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -687,6 +688,7 @@ async fn check_instance_busy(
 #[tauri::command]
 pub async fn delete_instance(
     version_id: String,
+    app: tauri::AppHandle,
     task_manager: tauri::State<'_, crate::core::task::TaskManager>,
     running_instances: tauri::State<'_, crate::core::launcher::RunningInstances>,
 ) -> Result<(), String> {
@@ -708,6 +710,7 @@ pub async fn delete_instance(
         return Err(format!("Cannot delete instance {} while it is installing or updating", version_id));
     }
 
+    let version_id_clone = version_id.clone();
     // Use blocking remove_dir_all since the recursive directory removal
     // doesn't work well with async
     tokio::task::spawn_blocking(move || {
@@ -717,7 +720,13 @@ pub async fn delete_instance(
     .await
     .map_err(|e| format!("Task join error: {}", e))??;
 
-    tracing::info!("Deleted instance: {}", version_id);
+    if let Some(stats_db) = app.try_state::<crate::core::statistics::StatisticsDb>() {
+        if let Err(e) = stats_db.delete_stats(version_id_clone.clone()).await {
+            tracing::warn!("Failed to delete statistics for instance {}: {}", version_id_clone, e);
+        }
+    }
+
+    tracing::info!("Deleted instance: {}", version_id_clone);
     Ok(())
 }
 

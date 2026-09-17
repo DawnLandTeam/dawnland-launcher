@@ -63,14 +63,20 @@ impl StatisticsDb {
     }
 
     pub async fn add_playtime(&self, instance_id: String, seconds: i64) -> Result<(), String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
         self.conn
             .call(move |conn| -> rusqlite::Result<()> {
                 conn.execute(
                     "INSERT INTO instance_stats (instance_id, launch_count, play_time_seconds, last_played_at)
-                     VALUES (?1, 0, ?2, NULL)
+                     VALUES (?1, 0, ?2, ?3)
                      ON CONFLICT(instance_id) DO UPDATE SET
-                        play_time_seconds = play_time_seconds + ?2",
-                    rusqlite::params![instance_id, seconds],
+                        play_time_seconds = play_time_seconds + ?2,
+                        last_played_at = ?3",
+                    rusqlite::params![instance_id, seconds, now],
                 )?;
                 Ok(())
             })
@@ -98,6 +104,21 @@ impl StatisticsDb {
             .await
             .map_err(|e| e.to_string())
     }
+
+    pub async fn delete_stats(&self, instance_id: String) -> Result<(), String> {
+        self.conn
+            .call(move |conn| -> rusqlite::Result<()> {
+                conn.execute(
+                    "DELETE FROM instance_stats WHERE instance_id = ?1",
+                    rusqlite::params![instance_id],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+
 
     pub async fn get_all_stats(&self) -> Result<Vec<InstanceStats>, String> {
         self.conn

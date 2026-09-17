@@ -34,7 +34,7 @@ useI18n();
 
 // State
 const { instances: installedInstances, fetchInstances: loadInstances } = useInstances();
-const { fetchAllStats, getInstanceStats, formatPlayTime } = useStatistics();
+const { fetchAllStats, getInstanceStats, formatPlayTime, error: statsError } = useStatistics();
 const copiedShareInstanceId = ref<string | null>(null);
 
 // Delete confirmation state
@@ -351,7 +351,11 @@ function normalizedModpackVersion(version: string): string {
           </div>
 
           <!-- Bottom stats footer -->
-          <div class="px-4 py-2 border-t border-black/5 dark:border-white/10 flex items-center justify-between text-[11px] text-muted-foreground shrink-0 mt-auto">
+          <div v-if="statsError" class="px-4 py-2 border-t border-black/5 dark:border-white/10 flex items-center justify-center text-[11px] text-red-500 shrink-0 mt-auto gap-1">
+            <AlertTriangle class="w-3.5 h-3.5" />
+            <span>{{ $t('instances.statisticsError', 'Failed to load statistics') }}</span>
+          </div>
+          <div v-else class="px-4 py-2 border-t border-black/5 dark:border-white/10 flex items-center justify-between text-[11px] text-muted-foreground shrink-0 mt-auto">
             <div class="flex items-center gap-1.5 font-medium">
               <Clock class="w-3.5 h-3.5 opacity-70" />
               <span>{{ $t('home.playTime', { hours: formatPlayTime(getInstanceStats(instance.id)?.playTimeSeconds || 0) }) }}</span>

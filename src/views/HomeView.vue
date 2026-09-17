@@ -176,7 +176,7 @@ const handleTaskAdded = () => {
   loadInstances();
 };
 
-const { fetchAllStats, getInstanceStats, formatPlayTime } = useStatistics();
+const { fetchAllStats, getInstanceStats, formatPlayTime, error: statsError } = useStatistics();
 
 useTaskStatusReload(async () => {
   await loadInstances();
@@ -747,7 +747,10 @@ function loaderBadgeClass(loaderType: string): string {
                       <Package class="h-5 w-5 text-primary shrink-0" />
                       <div class="flex flex-col text-left truncate flex-1">
                         <span class="font-medium truncate">{{ selectedInstance.name }}</span>
-                        <span v-if="getInstanceStats(selectedInstance.id)" class="text-[10px] text-muted-foreground truncate">
+                        <span v-if="statsError" class="text-[10px] text-red-500 truncate flex items-center gap-1">
+                          <AlertTriangle class="w-3 h-3" /> {{ $t('instances.statisticsError', 'Failed to load statistics') }}
+                        </span>
+                        <span v-else-if="getInstanceStats(selectedInstance.id)" class="text-[10px] text-muted-foreground truncate">
                           {{ $t('home.playTime', { hours: formatPlayTime(getInstanceStats(selectedInstance.id)?.playTimeSeconds || 0) }) }} · 
                           {{ $t('home.launchCount', { count: getInstanceStats(selectedInstance.id)?.launchCount || 0 }) }}
                         </span>
