@@ -21,6 +21,14 @@
     "settings": "Settings"
   },
   "home": {
+    "playTime": "{hours}h played",
+    "launchCount": "{count} launches",
+    "authlibReauthTitle": "Authlib Session Expired",
+    "authlibReauthDesc1": "Session for account",
+    "authlibReauthDesc2": "has expired. Please enter your email and password to re-authenticate and launch:",
+    "authlibEmailPlaceholder": "Enter email or username",
+    "authlibPasswordPlaceholder": "Enter password",
+    "authlibReauthSubmit": "Re-login and Launch",
     "prelaunchWarningTitle": "Pre-launch Warning",
     "prelaunchWarningDesc": "The following mods may be missing dependencies. Launching anyway may cause a crash.",
     "launchAnyway": "Launch Anyway",
@@ -177,6 +185,15 @@
       "deleteWarning": "This instance contains game data which will be permanently lost upon deletion!"
     },
     "crashHistory": "Crash History",
+    "statistics": "Statistics",
+    "statisticsDesc": "View play time and launch count for this instance.",
+    "noData": "No Data",
+    "noDataDesc": "No play time data recorded yet. Go ahead and start the game!",
+    "totalPlayTime": "Total Play Time",
+    "launchCount": "Launch Count",
+    "lastPlayed": "Last Played",
+    "unknown": "Unknown",
+    "times": "times",
     "export": {
       "title": "Export Modpack",
       "description": "Package this instance into a standard format for sharing.",

@@ -21,6 +21,14 @@
     "settings": "设置"
   },
   "home": {
+    "playTime": "游玩 {hours} 小时",
+    "launchCount": "启动 {count} 次",
+    "authlibReauthTitle": "外置登录会话已过期",
+    "authlibReauthDesc1": "账号",
+    "authlibReauthDesc2": "的会话已过期，请输入您的账号（邮箱）和密码以重新登录并继续启动：",
+    "authlibEmailPlaceholder": "请输入邮箱或账号",
+    "authlibPasswordPlaceholder": "请输入密码",
+    "authlibReauthSubmit": "重新登录并启动",
     "prelaunchWarningTitle": "启动前检测到问题",
     "prelaunchWarningDesc": "以下模组可能缺少前置依赖，继续启动可能导致崩溃。",
     "launchAnyway": "仍要启动",
@@ -177,6 +185,15 @@
       "deleteWarning": "该实例存在游戏数据，删除后将彻底丢失！"
     },
     "crashHistory": "崩溃历史",
+    "statistics": "数据统计",
+    "statisticsDesc": "查看该实例的游玩时长与启动次数。",
+    "noData": "暂无数据",
+    "noDataDesc": "该实例尚未记录游玩数据，赶快去启动游戏吧！",
+    "totalPlayTime": "累计游玩时长",
+    "launchCount": "启动次数",
+    "lastPlayed": "最后游玩",
+    "unknown": "未知",
+    "times": "次",
     "export": {
       "title": "导出整合包",
       "description": "将此实例打包成标准格式以便分享。",
