@@ -1269,7 +1269,7 @@ async fn resolve_mod_metadata(
     let base_dir_clone = base_dir.to_path_buf();
     let m = tokio::task::spawn_blocking(move || {
         let p = crate::core::mod_parser::ModParser::new(&base_dir_clone);
-        p.parse_mod(&path_clone, &key_clone)
+        p.parse_mod(&path_clone, &key_clone, None)
     })
     .await
     .unwrap_or_default();
@@ -1546,13 +1546,33 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
         return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: 0 });
     }
 
+    let instance = match get_instance_details(version_id.clone()).await {
+        Ok(i) => i,
+        Err(_) => return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: 0 }),
+    };
+    let loader_type = instance.loader_type.clone();
+
     // Parse all mod metadata in a blocking thread (parse_mod uses sync IO)
     let base_dir_for_parser = base_dir.clone();
     let metas = tokio::task::spawn_blocking(move || {
         let parser = crate::core::mod_parser::ModParser::new(&base_dir_for_parser);
+        let mut cache = parser.load_all_cache();
         jar_entries.iter().map(|(filename, path)| {
-            let cache_key = format!("{}_prelaunch", filename);
-            parser.parse_mod(path, &cache_key)
+            let metadata = std::fs::metadata(path).unwrap_or_else(|_| std::fs::metadata(path).unwrap());
+            let mtime = metadata.modified().ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let cache_key = format!("{}_{}_{}_{}", filename, metadata.len(), mtime, loader_type);
+
+            if let Some(cached_meta) = cache.get(&cache_key) {
+                cached_meta.clone()
+            } else {
+                let parsed_meta = parser.parse_mod(path, &cache_key, Some(&loader_type));
+                parser.set_cache_entry(&cache_key, &parsed_meta);
+                cache.insert(cache_key, parsed_meta.clone());
+                parsed_meta
+            }
         }).collect::<Vec<_>>()
     })
     .await
