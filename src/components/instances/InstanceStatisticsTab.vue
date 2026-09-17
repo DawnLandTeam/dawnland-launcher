@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { Play, Clock, Hash, BarChart } from '@lucide/vue';
 import { useStatistics } from '../../composables/useStatistics';
 
@@ -7,14 +7,18 @@ const props = defineProps<{
   instanceId: string;
 }>();
 
-const { getInstanceStats } = useStatistics();
+const { fetchInstanceStats } = useStatistics();
 const stats = ref<any>(null);
 const loading = ref(true);
 
-onMounted(async () => {
-  stats.value = await getInstanceStats(props.instanceId);
+const loadStats = async (id: string) => {
+  loading.value = true;
+  stats.value = await fetchInstanceStats(id);
   loading.value = false;
-});
+};
+
+onMounted(() => loadStats(props.instanceId));
+watch(() => props.instanceId, (newId) => loadStats(newId));
 
 const formatTime = (seconds: number) => {
   const h = Math.floor(seconds / 3600);

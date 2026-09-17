@@ -2385,7 +2385,9 @@ pub async fn launch_instance(
 
     // Record launch count and time
     if let Some(stats_db) = app.try_state::<crate::core::statistics::StatisticsDb>() {
-        let _ = stats_db.record_launch(version_id.clone()).await;
+        if let Err(e) = stats_db.record_launch(version_id.clone()).await {
+            tracing::warn!("Failed to record instance launch statistics: {}", e);
+        }
     }
 
     // Emit "running" state to frontend
@@ -2453,7 +2455,9 @@ pub async fn launch_instance(
                 // Record playtime
                 let elapsed = start_time.elapsed().unwrap_or_default().as_secs();
                 if let Some(stats_db) = app_handle_clone.try_state::<crate::core::statistics::StatisticsDb>() {
-                    let _ = stats_db.add_playtime(version_id_clone.clone(), elapsed as i64).await;
+                    if let Err(e) = stats_db.add_playtime(version_id_clone.clone(), elapsed as i64).await {
+                        tracing::warn!("Failed to add playtime statistics: {}", e);
+                    }
                 }
 
                 // Restore window visibility when game exits

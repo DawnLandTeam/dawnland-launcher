@@ -26,7 +26,7 @@ export function useStatistics() {
     }
   };
 
-  const getInstanceStats = async (instanceId: string): Promise<InstanceStats | null> => {
+  const fetchInstanceStats = async (instanceId: string): Promise<InstanceStats | null> => {
     try {
       return await invoke<InstanceStats | null>('get_instance_stats', { instanceId });
     } catch (e) {
@@ -35,11 +35,23 @@ export function useStatistics() {
     }
   };
 
+  const getInstanceStats = (instanceId: string): InstanceStats | undefined => {
+    return allStats.value.find((s) => s.instanceId === instanceId);
+  };
+
+  const formatPlayTime = (seconds: number): string => {
+    if (!seconds) return '0';
+    const hours = seconds / 3600;
+    return hours >= 10 ? Math.floor(hours).toString() : hours.toFixed(1);
+  };
+
   return {
     allStats,
     loading,
     error,
     fetchAllStats,
+    fetchInstanceStats,
     getInstanceStats,
+    formatPlayTime,
   };
 }

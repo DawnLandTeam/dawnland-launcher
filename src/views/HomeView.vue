@@ -176,15 +176,7 @@ const handleTaskAdded = () => {
   loadInstances();
 };
 
-const { allStats, fetchAllStats } = useStatistics();
-
-// Removed duplicate function
-
-function formatPlayTime(seconds: number): string {
-  if (!seconds) return '0';
-  const hours = seconds / 3600;
-  return hours >= 10 ? Math.floor(hours).toString() : hours.toFixed(1);
-}
+const { fetchAllStats, getInstanceStats, formatPlayTime } = useStatistics();
 
 useTaskStatusReload(async () => {
   await loadInstances();
@@ -687,9 +679,7 @@ function loaderBadgeClass(loaderType: string): string {
   }
 }
 
-function getInstanceStats(id: string) {
-  return allStats.value.find(s => s.instanceId === id);
-}
+// Removed duplicate getInstanceStats
 </script>
 
 <template>

@@ -34,7 +34,7 @@ useI18n();
 
 // State
 const { instances: installedInstances, fetchInstances: loadInstances } = useInstances();
-const { allStats, fetchAllStats } = useStatistics();
+const { fetchAllStats, getInstanceStats, formatPlayTime } = useStatistics();
 const copiedShareInstanceId = ref<string | null>(null);
 
 // Delete confirmation state
@@ -57,16 +57,6 @@ const openSettingsForInstance = async (instanceId: string) => {
   }
   router.push('/instances/' + instance.id);
 };
-
-function getInstanceStats(id: string) {
-  return allStats.value.find((s: any) => s.instanceId === id);
-}
-
-function formatPlayTime(seconds: number): string {
-  if (!seconds) return '0';
-  const hours = seconds / 3600;
-  return hours >= 10 ? Math.floor(hours).toString() : hours.toFixed(1);
-}
 
 watch(
   () => route.query.manage,
