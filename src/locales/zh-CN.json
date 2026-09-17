@@ -187,6 +187,7 @@
     "crashHistory": "崩溃历史",
     "statistics": "数据统计",
     "statisticsDesc": "查看该实例的游玩时长与启动次数。",
+    "statisticsError": "加载统计数据失败",
     "noData": "暂无数据",
     "noDataDesc": "该实例尚未记录游玩数据，赶快去启动游戏吧！",
     "totalPlayTime": "累计游玩时长",

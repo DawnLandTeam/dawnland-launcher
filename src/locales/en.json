@@ -187,6 +187,7 @@
     "crashHistory": "Crash History",
     "statistics": "Statistics",
     "statisticsDesc": "View play time and launch count for this instance.",
+    "statisticsError": "Failed to load statistics",
     "noData": "No Data",
     "noDataDesc": "No play time data recorded yet. Go ahead and start the game!",
     "totalPlayTime": "Total Play Time",

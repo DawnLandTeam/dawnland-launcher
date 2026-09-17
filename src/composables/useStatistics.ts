@@ -8,12 +8,13 @@ export interface InstanceStats {
   lastPlayedAt: number | null;
 }
 
-export function useStatistics() {
-  const allStats = ref<InstanceStats[]>([]);
-  const loading = ref(false);
-  const error = ref<string | null>(null);
+const allStats = ref<InstanceStats[]>([]);
+const loading = ref(false);
+const error = ref<string | null>(null);
 
+export function useStatistics() {
   const fetchAllStats = async () => {
+    if (loading.value) return;
     loading.value = true;
     error.value = null;
     try {
@@ -29,9 +30,9 @@ export function useStatistics() {
   const fetchInstanceStats = async (instanceId: string): Promise<InstanceStats | null> => {
     try {
       return await invoke<InstanceStats | null>('get_instance_stats', { instanceId });
-    } catch (e) {
+    } catch (e: any) {
       console.error(`Failed to fetch stats for ${instanceId}:`, e);
-      return null;
+      throw new Error(e.message || String(e));
     }
   };
 

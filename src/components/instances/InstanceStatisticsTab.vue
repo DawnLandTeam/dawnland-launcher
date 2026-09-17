@@ -1,20 +1,27 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue';
 import { Play, Clock, Hash, BarChart } from '@lucide/vue';
-import { useStatistics } from '../../composables/useStatistics';
+import { useStatistics, type InstanceStats } from '../../composables/useStatistics';
 
 const props = defineProps<{
   instanceId: string;
 }>();
 
 const { fetchInstanceStats } = useStatistics();
-const stats = ref<any>(null);
+const stats = ref<InstanceStats | null>(null);
 const loading = ref(true);
+const errorMsg = ref<string | null>(null);
 
 const loadStats = async (id: string) => {
   loading.value = true;
-  stats.value = await fetchInstanceStats(id);
-  loading.value = false;
+  errorMsg.value = null;
+  try {
+    stats.value = await fetchInstanceStats(id);
+  } catch (err: any) {
+    errorMsg.value = err.message || String(err);
+  } finally {
+    loading.value = false;
+  }
 };
 
 onMounted(() => loadStats(props.instanceId));
@@ -39,6 +46,12 @@ const formatTime = (seconds: number) => {
     <div class="flex-1 overflow-y-auto overflow-x-hidden p-6 flex flex-col gap-4 minimal-scrollbar">
       <div v-if="loading" class="flex justify-center items-center py-12">
         <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+      </div>
+      
+      <div v-else-if="errorMsg" class="flex flex-col items-center justify-center p-12 bg-red-50/50 dark:bg-red-950/20 backdrop-blur-xl border border-red-200/50 dark:border-red-900/50 rounded-2xl shadow-sm">
+        <svg xmlns="http://www.w3.org/2007/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-12 w-12 text-red-500 mb-4 lucide lucide-triangle-alert"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <h3 class="text-lg font-medium text-red-600 dark:text-red-400 mb-2">{{ $t('instances.statisticsError', 'Failed to load statistics') }}</h3>
+        <p class="text-sm text-red-500/80 text-center max-w-md">{{ errorMsg }}</p>
       </div>
       
       <div v-else-if="!stats" class="flex flex-col items-center justify-center p-12 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-xl border border-white/20 dark:border-zinc-800/50 rounded-2xl shadow-sm">
