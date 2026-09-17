@@ -3,7 +3,7 @@ import { ref, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
-import { Package, Plus, Gamepad2, Loader2, Check, Share2, Trash2, Clock, Play } from "@lucide/vue";
+import { Package, Plus, Gamepad2, Loader2, Check, Share2, Trash2, Clock, Play, AlertTriangle } from "@lucide/vue";
 
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 

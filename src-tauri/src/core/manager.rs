@@ -710,7 +710,6 @@ pub async fn delete_instance(
         return Err(format!("Cannot delete instance {} while it is installing or updating", version_id));
     }
 
-    let version_id_clone = version_id.clone();
     // Use blocking remove_dir_all since the recursive directory removal
     // doesn't work well with async
     tokio::task::spawn_blocking(move || {
@@ -721,12 +720,12 @@ pub async fn delete_instance(
     .map_err(|e| format!("Task join error: {}", e))??;
 
     if let Some(stats_db) = app.try_state::<crate::core::statistics::StatisticsDb>() {
-        if let Err(e) = stats_db.delete_stats(version_id_clone.clone()).await {
-            tracing::warn!("Failed to delete statistics for instance {}: {}", version_id_clone, e);
+        if let Err(e) = stats_db.delete_stats(version_id.clone()).await {
+            tracing::warn!("Failed to delete statistics for instance {}: {}", version_id, e);
         }
     }
 
-    tracing::info!("Deleted instance: {}", version_id_clone);
+    tracing::info!("Deleted instance: {}", version_id);
     Ok(())
 }
 
