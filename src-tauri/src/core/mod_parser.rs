@@ -57,6 +57,17 @@ impl ModParser {
             )",
             [],
         )?;
+        
+        if let Err(e) = conn.execute("ALTER TABLE mod_cache ADD COLUMN depends TEXT DEFAULT '[]'", []) {
+            if !e.to_string().contains("duplicate column name") {
+                tracing::warn!("Migration error adding 'depends' column: {}", e);
+            }
+        }
+        if let Err(e) = conn.execute("ALTER TABLE mod_cache ADD COLUMN provides TEXT DEFAULT '[]'", []) {
+            if !e.to_string().contains("duplicate column name") {
+                tracing::warn!("Migration error adding 'provides' column: {}", e);
+            }
+        }
 
         // Migration from old cache.json
         let json_path = self.cache_dir.join("cache.json");
@@ -97,11 +108,13 @@ impl ModParser {
         let mut map = HashMap::new();
         if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
             if let Ok(mut stmt) =
-                conn.prepare("SELECT cache_key, mod_id, name, version, has_icon FROM mod_cache")
+                conn.prepare("SELECT cache_key, mod_id, name, version, has_icon, depends, provides FROM mod_cache")
             {
                 if let Ok(mut rows) = stmt.query([]) {
                     while let Ok(Some(row)) = rows.next() {
                         if let Ok(key) = row.get::<_, String>(0) {
+                            let depends_str: String = row.get(5).unwrap_or_else(|_| "[]".to_string());
+                            let provides_str: String = row.get(6).unwrap_or_else(|_| "[]".to_string());
                             map.insert(
                                 key,
                                 ModMetadata {
@@ -109,8 +122,8 @@ impl ModParser {
                                     name: row.get(2).ok(),
                                     version: row.get(3).ok(),
                                     has_icon: row.get::<_, i32>(4).unwrap_or(0) == 1,
-                                    depends: Vec::new(),
-                                    provides: Vec::new(),
+                                    depends: serde_json::from_str(&depends_str).unwrap_or_default(),
+                                    provides: serde_json::from_str(&provides_str).unwrap_or_default(),
                                 },
                             );
                         }
@@ -123,16 +136,34 @@ impl ModParser {
 
     pub fn set_cache_entry(&self, key: &str, meta: &ModMetadata) {
         if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
-            let _ = conn.execute(
-                "INSERT OR REPLACE INTO mod_cache (cache_key, mod_id, name, version, has_icon) VALUES (?, ?, ?, ?, ?)",
+            let depends_str = serde_json::to_string(&meta.depends).unwrap_or_else(|_| "[]".to_string());
+            let provides_str = serde_json::to_string(&meta.provides).unwrap_or_else(|_| "[]".to_string());
+            if let Err(e) = conn.execute(
+                "INSERT OR REPLACE INTO mod_cache (cache_key, mod_id, name, version, has_icon, depends, provides) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     key,
                     meta.mod_id,
                     meta.name,
                     meta.version,
-                    if meta.has_icon { 1 } else { 0 }
+                    if meta.has_icon { 1 } else { 0 },
+                    depends_str,
+                    provides_str
                 ],
-            );
+            ) {
+                tracing::warn!("Failed to insert cache entry for {}: {}", key, e);
+                
+                // Fallback for missing columns if migration failed
+                let _ = conn.execute(
+                    "INSERT OR REPLACE INTO mod_cache (cache_key, mod_id, name, version, has_icon) VALUES (?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        key,
+                        meta.mod_id,
+                        meta.name,
+                        meta.version,
+                        if meta.has_icon { 1 } else { 0 }
+                    ],
+                );
+            }
         }
     }
 
@@ -140,7 +171,7 @@ impl ModParser {
         self.icons_dir.join(format!("{}.png", cache_key))
     }
 
-    pub fn parse_mod(&self, file_path: &Path, cache_key: &str) -> ModMetadata {
+    pub fn parse_mod(&self, file_path: &Path, cache_key: &str, loader_type: Option<&str>) -> ModMetadata {
         let mut meta = ModMetadata {
             mod_id: None,
             name: None,
@@ -166,48 +197,156 @@ impl ModParser {
             }
         };
 
-        let mut has_fabric = false;
-        let mut content = String::new();
 
-        let mut found = false;
-        if let Ok(mut f) = archive.by_name("fabric.mod.json") {
-            let _ = f.read_to_string(&mut content);
-            found = true;
-        }
-        if !found {
-            if let Ok(mut f) = archive.by_name("quilt.mod.json") {
+        let is_forge = loader_type.is_some_and(|l| l == "Forge" || l == "NeoForge");
+        
+        let mut parsed_forge = false;
+        let mut parsed_fabric = false;
+
+        // Function-like closure to parse forge
+        let mut parse_forge_meta = |archive: &mut zip::ZipArchive<std::fs::File>, meta: &mut ModMetadata, cache_key: &str| -> bool {
+            let mut content = String::new();
+            let mut found = false;
+            if let Ok(mut f) = archive.by_name("META-INF/neoforge.mods.toml") {
                 let _ = f.read_to_string(&mut content);
                 found = true;
             }
-        }
-        has_fabric = found;
+            if !found {
+                if let Ok(mut f) = archive.by_name("META-INF/mods.toml") {
+                    let _ = f.read_to_string(&mut content);
+                    found = true;
+                }
+            }
+            let mut has_any_forge_meta = found;
 
-        if has_fabric && !content.is_empty() {
+            if found && !content.is_empty() {
+            if let Ok(toml_val) = content.parse::<toml::Value>() {
+                if let Some(mods_arr) = toml_val.get("mods").and_then(|m| m.as_array()) {
+                    if let Some(mods) = mods_arr.first() {
+                        meta.mod_id = mods.get("modId").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        meta.name = mods.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        meta.version = mods.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                        if let Some(logo_path) = mods.get("logoFile").and_then(|v| v.as_str()) {
+                            let logo_path = logo_path.trim_start_matches('/');
+                            let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
+                            let dest_path = self.get_icon_path(icon_name);
+                            if dest_path.exists() {
+                                meta.has_icon = true;
+                            } else if let Ok(mut icon_file) = archive.by_name(logo_path) {
+                                let mut buffer = Vec::new();
+                                if std::io::Read::read_to_end(&mut icon_file, &mut buffer).is_ok() && fs::write(dest_path, &buffer).is_ok() {
+                                    meta.has_icon = true;
+                                }
+                            }
+                        }
+                    }
+
+                    for (i, m) in mods_arr.iter().enumerate() {
+                        if i == 0 { continue; }
+                        if let Some(id) = m.get("modId").and_then(|v| v.as_str()) {
+                            meta.provides.push(id.to_string());
+                        }
+                    }
+                }
+
+                if let Some(deps) = toml_val.get("dependencies").and_then(|d| d.as_table()) {
+                    for (_, dep_list) in deps {
+                        if let Some(arr) = dep_list.as_array() {
+                            for dep in arr {
+                                let is_required = dep.get("mandatory")
+                                    .and_then(|m| m.as_bool())
+                                    .unwrap_or_else(|| {
+                                        dep.get("type").and_then(|t| t.as_str()).is_none_or(|t| t == "required")
+                                    });
+                                if is_required {
+                                    if let Some(dep_id) = dep.get("modId").and_then(|m| m.as_str()) {
+                                        meta.depends.push(dep_id.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // JiJ parsing for Forge/NeoForge
+            }
+            let mut jar_paths = Vec::new();
+            for i in 0..archive.len() {
+                if let Ok(file) = archive.by_index(i) {
+                    let name = file.name();
+                    if name.starts_with("META-INF/jarjar/") && name.ends_with(".jar") {
+                        jar_paths.push(name.to_string());
+                    }
+                }
+            }
+            for path in &jar_paths {
+                let mut buf = Vec::new();
+                if let Ok(mut nested_f) = archive.by_name(path) {
+                    let _ = std::io::Read::read_to_end(&mut nested_f, &mut buf);
+                }
+                if !buf.is_empty() {
+                    if let Ok(mut nested_archive) = zip::ZipArchive::new(std::io::Cursor::new(buf)) {
+                        let mut inner_s = String::new();
+                        let mut found_toml = false;
+                        let has_neoforge = nested_archive.by_name("META-INF/neoforge.mods.toml").is_ok();
+                        if has_neoforge {
+                            if let Ok(mut inner_f) = nested_archive.by_name("META-INF/neoforge.mods.toml") {
+                                let _ = std::io::Read::read_to_string(&mut inner_f, &mut inner_s);
+                                found_toml = true;
+                            }
+                        } else {
+                            if let Ok(mut inner_f) = nested_archive.by_name("META-INF/mods.toml") {
+                                let _ = std::io::Read::read_to_string(&mut inner_f, &mut inner_s);
+                                found_toml = true;
+                            }
+                        }
+                        if found_toml && !inner_s.is_empty() {
+                            if let Ok(inner_toml) = inner_s.parse::<toml::Value>() {
+                                if let Some(inner_mods) = inner_toml.get("mods").and_then(|m| m.as_array()) {
+                                    for inner_mod in inner_mods {
+                                        if let Some(id) = inner_mod.get("modId").and_then(|v| v.as_str()) {
+                                            meta.provides.push(id.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let has_jij = !jar_paths.is_empty();
+            has_any_forge_meta || has_jij
+        };
+        let mut parse_fabric_meta = |archive: &mut zip::ZipArchive<std::fs::File>, meta: &mut ModMetadata, cache_key: &str| -> bool {
+            let mut content = String::new();
+            let mut found = false;
+            if let Ok(mut f) = archive.by_name("fabric.mod.json") {
+                let _ = f.read_to_string(&mut content);
+                found = true;
+            }
+            if !found {
+                if let Ok(mut f) = archive.by_name("quilt.mod.json") {
+                    let _ = f.read_to_string(&mut content);
+                    found = true;
+                }
+            }
+            if !found || content.is_empty() { return false; }
+
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                meta.mod_id = json
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                meta.name = json
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                meta.version = json
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                meta.mod_id = json.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                meta.name = json.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                meta.version = json.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-                // Extract dependencies (fabric.mod.json "depends" is an object keyed by mod id)
                 if let Some(depends) = json.get("depends").and_then(|v| v.as_object()) {
                     meta.depends = depends.keys().cloned().collect();
                 }
                 
-                // Extract provided mods
                 if let Some(provides) = json.get("provides").and_then(|v| v.as_array()) {
                     meta.provides = provides.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
                 }
 
-                // Parse nested jars (Jar-in-Jar) for Fabric API submodules
                 if let Some(jars) = json.get("jars").and_then(|v| v.as_array()) {
                     for j in jars {
                         if let Some(file_path) = j.get("file").and_then(|v| v.as_str()) {
@@ -233,12 +372,10 @@ impl ModParser {
                     }
                 }
                 
-                // Fallback for quilt.mod.json
                 if meta.mod_id.is_none() {
                     if let Some(ql) = json.get("quilt_loader").and_then(|v| v.as_object()) {
                         meta.mod_id = ql.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
                         
-                        // Quilt depends is an array of objects/strings
                         if let Some(depends) = ql.get("depends").and_then(|v| v.as_array()) {
                             for d in depends {
                                 if let Some(id) = d.as_object().and_then(|o| o.get("id")).and_then(|v| v.as_str()) {
@@ -249,7 +386,6 @@ impl ModParser {
                             }
                         }
                         
-                        // Quilt provides is an array of objects/strings
                         if let Some(provides) = ql.get("provides").and_then(|v| v.as_array()) {
                             for p in provides {
                                 if let Some(id) = p.as_object().and_then(|o| o.get("id")).and_then(|v| v.as_str()) {
@@ -276,95 +412,27 @@ impl ModParser {
                         meta.has_icon = true;
                     } else if let Ok(mut icon_file) = archive.by_name(icon_path) {
                         let mut buffer = Vec::new();
-                        if icon_file.read_to_end(&mut buffer).is_ok()
-                            && fs::write(dest_path, &buffer).is_ok() {
-                                meta.has_icon = true;
-                            }
-                    }
-                }
-            }
-            return meta;
-        }
-
-        let mut has_forge = false;
-        let mut content = String::new();
-
-        let mut found = false;
-        if let Ok(mut f) = archive.by_name("META-INF/mods.toml") {
-            let _ = f.read_to_string(&mut content);
-            found = true;
-        }
-        if !found {
-            if let Ok(mut f) = archive.by_name("META-INF/neoforge.mods.toml") {
-                let _ = f.read_to_string(&mut content);
-                found = true;
-            }
-        }
-        has_forge = found;
-
-        if has_forge && !content.is_empty() {
-            if let Ok(toml_val) = content.parse::<toml::Value>() {
-                if let Some(mods) = toml_val
-                    .get("mods")
-                    .and_then(|m| m.as_array())
-                    .and_then(|arr| arr.first())
-                {
-                    meta.mod_id = mods
-                        .get("modId")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    meta.name = mods
-                        .get("displayName")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    meta.version = mods
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-
-                    // Extract dependencies from [[dependencies.<modid>]] entries.
-                    // Forge uses mandatory=true; NeoForge uses type="required".
-                    if let Some(deps) = toml_val.get("dependencies").and_then(|d| d.as_table()) {
-                        for (_, dep_list) in deps {
-                            if let Some(arr) = dep_list.as_array() {
-                                for dep in arr {
-                                    let is_required = dep.get("mandatory")
-                                        .and_then(|m| m.as_bool())
-                                        .unwrap_or_else(|| {
-                                            dep.get("type")
-                                                .and_then(|t| t.as_str())
-                                                .is_none_or(|t| t == "required")
-                                        });
-                                    if is_required {
-                                        if let Some(dep_id) = dep.get("modId").and_then(|m| m.as_str()) {
-                                            meta.depends.push(dep_id.to_string());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(logo_path) = mods.get("logoFile").and_then(|v| v.as_str()) {
-                        let logo_path = logo_path.trim_start_matches('/');
-                        let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
-                        let dest_path = self.get_icon_path(icon_name);
-
-                        if dest_path.exists() {
+                        if std::io::Read::read_to_end(&mut icon_file, &mut buffer).is_ok() && fs::write(dest_path, &buffer).is_ok() {
                             meta.has_icon = true;
-                        } else if let Ok(mut icon_file) = archive.by_name(logo_path) {
-                            let mut buffer = Vec::new();
-                            if icon_file.read_to_end(&mut buffer).is_ok()
-                                && fs::write(dest_path, &buffer).is_ok() {
-                                    meta.has_icon = true;
-                                }
                         }
                     }
                 }
+            }
+            true
+        };
+
+        if is_forge {
+            if !parse_forge_meta(&mut archive, &mut meta, cache_key) {
+                parse_fabric_meta(&mut archive, &mut meta, cache_key);
+            }
+        } else {
+            if !parse_fabric_meta(&mut archive, &mut meta, cache_key) {
+                parse_forge_meta(&mut archive, &mut meta, cache_key);
             }
         }
 
         meta
+
     }
 }
 

@@ -488,6 +488,9 @@ async function handlePrimaryAction() {
     return;
   }
 
+  // Add to launching set immediately for UI feedback during prelaunch check
+  launchingInstances.value.add(selectedInstanceId.value);
+
   // Prelaunch mod dependency check
   try {
     const result = await invoke<PrelaunchCheckResult>("prelaunch_check", {
@@ -496,6 +499,8 @@ async function handlePrimaryAction() {
     if (result.warnings.length > 0) {
       prelaunchWarnings.value = result.warnings;
       showPrelaunchWarning.value = true;
+      // Remove launching state because we are pausing to ask the user
+      launchingInstances.value.delete(selectedInstanceId.value);
       return;
     }
   } catch (e) {
