@@ -94,24 +94,31 @@ useTaskStatusReload(async () => {
   await fetchAllStats();
 });
 
+const handleManageQuery = async () => {
+  if (route.query.manage) {
+    const instanceId = route.query.manage as string;
+    
+    // Clear the query parameter to prevent redundant triggers
+    const query = { ...route.query };
+    delete query.manage;
+    router.replace({ query });
+    
+    await openSettingsForInstance(instanceId);
+  }
+};
+
 onMounted(async () => {
   trackEvent("Instances Viewed");
   window.addEventListener('task-added', handleTaskAdded);
   await loadInstances();
   await fetchAllStats();
-  if (route.query.manage) {
-    const instanceId = route.query.manage as string;
-    await openSettingsForInstance(instanceId);
-  }
+  await handleManageQuery();
 });
 
 onActivated(async () => {
   await loadInstances();
   await fetchAllStats();
-  if (route.query.manage) {
-    const instanceId = route.query.manage as string;
-    await openSettingsForInstance(instanceId);
-  }
+  await handleManageQuery();
 });
 
 onUnmounted(() => {
