@@ -9,16 +9,24 @@ export interface InstanceStats {
 }
 
 const allStats = ref<InstanceStats[]>([]);
-const loading = ref(false);
-const error = ref<string | null>(null);
+let globalFetchPromise: Promise<InstanceStats[]> | null = null;
 
 export function useStatistics() {
+  const loading = ref(false);
+  const error = ref<string | null>(null);
+
   const fetchAllStats = async () => {
-    if (loading.value) return;
     loading.value = true;
     error.value = null;
+    
+    if (!globalFetchPromise) {
+      globalFetchPromise = invoke<InstanceStats[]>('get_all_stats').finally(() => {
+        globalFetchPromise = null;
+      });
+    }
+
     try {
-      allStats.value = await invoke<InstanceStats[]>('get_all_stats');
+      allStats.value = await globalFetchPromise;
     } catch (e: any) {
       console.error('Failed to fetch statistics:', e);
       error.value = e.message || String(e);
