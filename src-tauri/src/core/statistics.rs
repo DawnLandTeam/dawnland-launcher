@@ -74,8 +74,7 @@ impl StatisticsDb {
                     "INSERT INTO instance_stats (instance_id, launch_count, play_time_seconds, last_played_at)
                      VALUES (?1, 0, ?2, ?3)
                      ON CONFLICT(instance_id) DO UPDATE SET
-                        play_time_seconds = play_time_seconds + ?2,
-                        last_played_at = ?3",
+                        play_time_seconds = play_time_seconds + ?2",
                     rusqlite::params![instance_id, seconds, now],
                 )?;
                 Ok(())
