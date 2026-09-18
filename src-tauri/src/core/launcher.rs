@@ -2383,6 +2383,13 @@ pub async fn launch_instance(
         map.insert(version_id.clone(), pid);
     }
 
+    // Record launch count and time
+    if let Some(stats_db) = app.try_state::<crate::core::statistics::StatisticsDb>() {
+        if let Err(e) = stats_db.record_launch(version_id.clone()).await {
+            tracing::warn!("Failed to record instance launch statistics: {}", e);
+        }
+    }
+
     // Emit "running" state to frontend
     let _ = app.emit(
         "instance-state-changed",
@@ -2444,6 +2451,14 @@ pub async fn launch_instance(
             Ok(status) => {
                 let exit_code = status.code().unwrap_or(-1);
                 tracing::info!("Game exited with code: {}", exit_code);
+
+                // Record playtime
+                let elapsed = start_time.elapsed().unwrap_or_default().as_secs();
+                if let Some(stats_db) = app_handle_clone.try_state::<crate::core::statistics::StatisticsDb>() {
+                    if let Err(e) = stats_db.add_playtime(version_id_clone.clone(), elapsed as i64).await {
+                        tracing::warn!("Failed to add playtime statistics: {}", e);
+                    }
+                }
 
                 // Restore window visibility when game exits
                 let _ = window_clone.show();

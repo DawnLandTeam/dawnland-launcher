@@ -7,6 +7,7 @@ use tauri::AppHandle;
 
 pub mod modpack;
 pub mod task;
+pub mod statistics;
 
 /// Returns a human-readable OS identifier string.
 #[tauri::command]

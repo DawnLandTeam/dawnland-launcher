@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
+use tauri::Manager;
 
 static MANIFEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -687,6 +688,7 @@ async fn check_instance_busy(
 #[tauri::command]
 pub async fn delete_instance(
     version_id: String,
+    app: tauri::AppHandle,
     task_manager: tauri::State<'_, crate::core::task::TaskManager>,
     running_instances: tauri::State<'_, crate::core::launcher::RunningInstances>,
 ) -> Result<(), String> {
@@ -716,6 +718,12 @@ pub async fn delete_instance(
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))??;
+
+    if let Some(stats_db) = app.try_state::<crate::core::statistics::StatisticsDb>() {
+        if let Err(e) = stats_db.delete_stats(version_id.clone()).await {
+            tracing::warn!("Failed to delete statistics for instance {}: {}", version_id, e);
+        }
+    }
 
     tracing::info!("Deleted instance: {}", version_id);
     Ok(())

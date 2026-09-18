@@ -218,6 +218,16 @@ pub fn run() {
                         tracing::error!("Failed to initialize crash history database: {}", e);
                     }
                 }
+
+                let stats_db_path = app_dir.join("statistics.db");
+                match core::statistics::StatisticsDb::new(stats_db_path).await {
+                    Ok(stats_db) => {
+                        app_handle.manage(stats_db);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to initialize statistics database: {}", e);
+                    }
+                }
             });
 
             tauri::async_runtime::spawn(async move {
@@ -287,6 +297,8 @@ pub fn run() {
             commands::export::analyze_export_instance,
             commands::export::build_export_instance,
             commands::export::resolve_manual_match,
+            commands::statistics::get_all_stats,
+            commands::statistics::get_instance_stats,
             greet,
             core::cache::clean_dawnland_cache,
             core::security::generate_api_signature,

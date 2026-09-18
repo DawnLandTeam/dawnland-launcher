@@ -27,6 +27,7 @@ import CrashReportModal from "../components/CrashReportModal.vue";
 import { useI18n } from "vue-i18n";
 import { fetchApi } from "../utils/api";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
+import { useStatistics } from "../composables/useStatistics";
 // Types
 interface InstanceItem {
   id: string;
@@ -175,13 +176,19 @@ const handleTaskAdded = () => {
   loadInstances();
 };
 
-useTaskStatusReload(loadInstances);
+const { fetchAllStats, getInstanceStats, formatPlayTime, error: statsError } = useStatistics();
+
+useTaskStatusReload(async () => {
+  await loadInstances();
+  await fetchAllStats();
+});
 
 onMounted(async () => {
   window.addEventListener('task-added', handleTaskAdded);
 
   await loadInstances();
   await loadAccounts();
+  await fetchAllStats();
 
 // Fetch announcement
   try {
@@ -671,6 +678,8 @@ function loaderBadgeClass(loaderType: string): string {
       return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300";
   }
 }
+
+// Removed duplicate getInstanceStats
 </script>
 
 <template>
@@ -734,9 +743,18 @@ function loaderBadgeClass(loaderType: string): string {
               <DropdownMenu class="flex-1 min-w-0">
                 <template #trigger>
                   <button class="w-full flex items-center justify-between px-3 py-2.5 bg-white/40 dark:bg-zinc-800/40 border border-white/20 rounded-xl hover:border-primary/50 transition-colors">
-                    <div v-if="selectedInstance" class="flex items-center gap-2 overflow-hidden">
+                    <div v-if="selectedInstance" class="flex items-center gap-2 overflow-hidden flex-1">
                       <Package class="h-5 w-5 text-primary shrink-0" />
-                      <span class="font-medium truncate">{{ selectedInstance.name }}</span>
+                      <div class="flex flex-col text-left truncate flex-1">
+                        <span class="font-medium truncate">{{ selectedInstance.name }}</span>
+                        <span v-if="statsError" class="text-[10px] text-red-500 truncate flex items-center gap-1">
+                          <AlertTriangle class="w-3 h-3" /> {{ $t('instances.statisticsError', 'Failed to load statistics') }}
+                        </span>
+                        <span v-else-if="getInstanceStats(selectedInstance.id)" class="text-[10px] text-muted-foreground truncate">
+                          {{ $t('home.playTime', { hours: formatPlayTime(getInstanceStats(selectedInstance.id)?.playTimeSeconds || 0) }) }} · 
+                          {{ $t('home.launchCount', { count: getInstanceStats(selectedInstance.id)?.launchCount || 0 }) }}
+                        </span>
+                      </div>
                     </div>
                     <span v-else class="text-muted-foreground">{{ $t('home.selectInstancePlaceholder') }}</span>
                     <ChevronDown class="h-5 w-5 text-muted-foreground shrink-0 ml-2" />
@@ -950,22 +968,22 @@ function loaderBadgeClass(loaderType: string): string {
         <div v-if="showAuthlibReauth" class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showAuthlibReauth = false" />
           <div class="relative z-10 w-full max-w-sm bg-white dark:bg-zinc-900 border rounded-2xl shadow-2xl p-6">
-            <h3 class="text-xl font-bold mb-4">外置登录会话已过期</h3>
+            <h3 class="text-xl font-bold mb-4">{{ $t('home.authlibReauthTitle', 'Authlib Session Expired') }}</h3>
             <p class="text-sm text-muted-foreground mb-4">
-              账号 <strong>{{ selectedAccount?.username }}</strong> 的会话已过期，请输入您的账号（邮箱）和密码以重新登录并继续启动：
+              {{ $t('home.authlibReauthDesc1', 'Session for account') }} <strong>{{ selectedAccount?.username }}</strong> {{ $t('home.authlibReauthDesc2', 'has expired. Please enter your email and password to re-authenticate and launch:') }}
             </p>
             
             <div class="space-y-4">
               <input 
                 type="text" 
                 v-model="authlibReauthUsername" 
-                placeholder="请输入邮箱或账号"
+                :placeholder="$t('home.authlibEmailPlaceholder', 'Enter email or username')"
                 class="w-full flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
               <input 
                 type="password" 
                 v-model="authlibReauthPassword" 
-                placeholder="请输入密码"
+                :placeholder="$t('home.authlibPasswordPlaceholder', 'Enter password')"
                 class="w-full flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 @keyup.enter="submitAuthlibReauth"
               />
@@ -976,7 +994,7 @@ function loaderBadgeClass(loaderType: string): string {
                   class="h-9 px-4 py-2 inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground"
                   @click="showAuthlibReauth = false"
                 >
-                  取消
+                  {{ $t('common.cancel', 'Cancel') }}
                 </button>
                 <button 
                   class="h-9 px-4 py-2 inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90"
@@ -984,7 +1002,7 @@ function loaderBadgeClass(loaderType: string): string {
                   @click="submitAuthlibReauth"
                 >
                   <Loader2 v-if="isReauthingAuthlib" class="h-4 w-4 mr-2 animate-spin" />
-                  重新登录并启动
+                  {{ $t('home.authlibReauthSubmit', 'Re-login and Launch') }}
                 </button>
               </div>
             </div>

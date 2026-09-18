@@ -3,13 +3,16 @@ import { ref, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
-import { Gamepad2, Plus, Package, Trash2, Share2, Check, Loader2 } from "@lucide/vue";
+import { Package, Plus, Gamepad2, Loader2, Check, Share2, Trash2, Clock, Play, AlertTriangle } from "@lucide/vue";
+
+import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
+
 import { getErrorMessage } from "../utils/error";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { useInstances } from "../composables/useInstances";
-
-import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
+import { useStatistics } from "../composables/useStatistics";
 import { trackEvent } from "../utils/analytics";
+import { toast } from '../composables/useToast';
 
 // Types
 interface InstanceItem {
@@ -25,15 +28,13 @@ interface InstanceItem {
 }
 
 // Router — deep-link support
-
-import { toast } from '../composables/useToast';
-
 const route = useRoute();
 const router = useRouter();
 useI18n();
 
 // State
 const { instances: installedInstances, fetchInstances: loadInstances } = useInstances();
+const { fetchAllStats, getInstanceStats, formatPlayTime, error: statsError } = useStatistics();
 const copiedShareInstanceId = ref<string | null>(null);
 
 // Delete confirmation state
@@ -88,16 +89,36 @@ const handleTaskAdded = () => {
   loadInstances();
 };
 
-useTaskStatusReload(loadInstances);
+useTaskStatusReload(async () => {
+  await loadInstances();
+  await fetchAllStats();
+});
+
+const handleManageQuery = async () => {
+  if (route.query.manage) {
+    const instanceId = route.query.manage as string;
+    
+    // Clear the query parameter to prevent redundant triggers
+    const query = { ...route.query };
+    delete query.manage;
+    router.replace({ query });
+    
+    await openSettingsForInstance(instanceId);
+  }
+};
 
 onMounted(async () => {
   trackEvent("Instances Viewed");
   window.addEventListener('task-added', handleTaskAdded);
   await loadInstances();
+  await fetchAllStats();
+  await handleManageQuery();
 });
 
 onActivated(async () => {
   await loadInstances();
+  await fetchAllStats();
+  await handleManageQuery();
 });
 
 onUnmounted(() => {
@@ -267,51 +288,54 @@ function normalizedModpackVersion(version: string): string {
           v-for="instance in installedInstances"
           :key="instance.id"
           @click="openSettings(instance)"
-          class="group flex flex-col h-32 rounded-lg border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md p-4 hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-all shadow-sm relative hover:z-50 focus-within:z-50 cursor-pointer"
+          class="group flex flex-col h-[136px] rounded-2xl border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-all shadow-sm relative hover:z-50 focus-within:z-50 cursor-pointer overflow-hidden"
           :class="openDropdownId === instance.id ? 'z-50' : ''"
         >
           <!-- Installing/Updating Overlay -->
-          <div v-if="instance.isInstalling || instance.isUpdating" class="absolute inset-0 z-10 bg-white/50 dark:bg-black/50 backdrop-blur-[1px] flex items-center justify-center rounded-lg">
+          <div v-if="instance.isInstalling || instance.isUpdating" class="absolute inset-0 z-10 bg-white/50 dark:bg-black/50 backdrop-blur-[1px] flex items-center justify-center rounded-2xl">
             <div class="bg-background/90 px-3 py-1.5 rounded-full flex items-center gap-2 shadow-sm border border-border">
               <Loader2 class="h-4 w-4 animate-spin text-primary" />
               <span class="text-xs font-medium">
-                {{ instance.isUpdating ? $t('instances.updating', '更新中...') : $t('instances.installing', '正在安装...') }}
+                {{ instance.isUpdating ? $t('instances.updating', 'Updating...') : $t('instances.installing', 'Installing...') }}
               </span>
             </div>
           </div>
 
-          <!-- Instance info — primary visual focus -->
-          <div class="flex items-start justify-between">
-            <div class="min-w-0 flex items-center gap-3 flex-1">
-              <Package class="h-5 w-5 shrink-0 text-muted-foreground" />
-              <div class="min-w-0 flex-1 overflow-hidden">
-                <h3 class="font-semibold line-clamp-2 break-words" :title="instance.name">{{ instance.name }}</h3>
-                <div class="flex items-center gap-2 mt-2 flex-wrap overflow-hidden max-h-[40px]">
-                    <span class="text-xs text-muted-foreground font-mono shrink-0">
-                      {{ instance.mcVersion }}
-                    </span>
-                    <span
-                      class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none shrink-0"
-                      :class="loaderBadgeClass(instance.loaderType)"
-                    >
-                      {{ instance.loaderType }}
-                    </span>
-                    <span
-                      v-if="instance.modpackType"
-                      class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 shrink-0"
-                    >
-                      {{ instance.modpackType }}
-                    </span>
-                    <span
-                      v-if="instance.modpackVersion"
-                      class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 shrink-0"
-                    >
-                      {{ normalizedModpackVersion(instance.modpackVersion) }}
-                    </span>
-                  </div>
+          <!-- Top section -->
+          <div class="flex-1 p-4 flex items-start justify-between gap-2 min-h-0">
+            <div class="min-w-0 flex items-start gap-3 flex-1">
+              <div class="mt-0.5 w-10 h-10 shrink-0 bg-primary/10 flex items-center justify-center rounded-xl text-primary">
+                <Package class="h-5 w-5" />
+              </div>
+              <div class="min-w-0 flex-1 flex flex-col">
+                <h3 class="font-bold truncate text-[15px]" :title="instance.name">{{ instance.name }}</h3>
+                <div class="flex items-center gap-1.5 mt-1.5 flex-wrap overflow-hidden max-h-[40px]">
+                  <span class="text-[10px] text-muted-foreground font-mono shrink-0 bg-neutral-200/50 dark:bg-zinc-800/50 px-1.5 py-0.5 rounded-md">
+                    {{ instance.mcVersion }}
+                  </span>
+                  <span
+                    class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold leading-none shrink-0"
+                    :class="loaderBadgeClass(instance.loaderType)"
+                  >
+                    {{ instance.loaderType }}
+                  </span>
+                  <span
+                    v-if="instance.modpackType"
+                    class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold leading-none bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 shrink-0"
+                  >
+                    {{ instance.modpackType }}
+                  </span>
+                  <span
+                    v-if="instance.modpackVersion"
+                    class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold leading-none bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 shrink-0"
+                  >
+                    {{ normalizedModpackVersion(instance.modpackVersion) }}
+                  </span>
                 </div>
+              </div>
             </div>
-            <div class="flex items-center gap-1 shrink-0 ml-2 relative z-20">
+            
+            <div class="shrink-0 flex items-center -mr-1 -mt-1 relative z-20">
               <button 
                 v-if="instance.modpackType && instance.modpackProjectId && instance.modpackVersion"
                 @click.stop="shareModpack(instance)"
@@ -330,6 +354,22 @@ function normalizedModpackVersion(version: string): string {
               >
                 <Trash2 class="h-4 w-4" />
               </button>
+            </div>
+          </div>
+
+          <!-- Bottom stats footer -->
+          <div v-if="statsError" class="px-4 py-2 border-t border-black/5 dark:border-white/10 flex items-center justify-center text-[11px] text-red-500 shrink-0 mt-auto gap-1">
+            <AlertTriangle class="w-3.5 h-3.5" />
+            <span>{{ $t('instances.statisticsError', 'Failed to load statistics') }}</span>
+          </div>
+          <div v-else class="px-4 py-2 border-t border-black/5 dark:border-white/10 flex items-center justify-between text-[11px] text-muted-foreground shrink-0 mt-auto">
+            <div class="flex items-center gap-1.5 font-medium">
+              <Clock class="w-3.5 h-3.5 opacity-70" />
+              <span>{{ $t('home.playTime', { hours: formatPlayTime(getInstanceStats(instance.id)?.playTimeSeconds || 0) }) }}</span>
+            </div>
+            <div class="flex items-center gap-1.5 font-medium">
+              <Play class="w-3.5 h-3.5 opacity-70" />
+              <span>{{ $t('home.launchCount', { count: getInstanceStats(instance.id)?.launchCount || 0 }) }}</span>
             </div>
           </div>
         </div>

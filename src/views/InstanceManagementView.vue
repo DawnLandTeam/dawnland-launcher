@@ -8,7 +8,7 @@ export default {
 import { ref, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { Settings, Puzzle, Package, Box, Globe, Sparkles, FolderArchive, ArrowLeft, RefreshCw, Share2, AlertTriangle } from "@lucide/vue";
+import { Settings, Puzzle, Package, Box, Globe, Sparkles, FolderArchive, ArrowLeft, RefreshCw, Share2, AlertTriangle, BarChart } from "@lucide/vue";
 import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
 
 
@@ -27,6 +27,7 @@ import InstanceShadersTab from "../components/instances/InstanceShadersTab.vue";
 import InstanceModGroupTab from "../components/instances/InstanceModGroupTab.vue";
 import InstanceCustomShadersTab from "../components/instances/InstanceCustomShadersTab.vue";
 import InstanceCustomResourcepacksTab from "../components/instances/InstanceCustomResourcepacksTab.vue";
+import InstanceStatisticsTab from "../components/instances/InstanceStatisticsTab.vue";
 import ModpackInstallTab from "../components/downloads/ModpackInstallTab.vue";
 import CrashHistoryPanel from "../components/CrashHistoryPanel.vue";
 
@@ -50,6 +51,7 @@ const tabs = [
   { id: 'custom_shaders', name: 'instances.customShaders', icon: Sparkles, group: 'downloadsCenter.groups.custom' },
   { id: 'custom_resourcepacks', name: 'instances.customResourcepacks', icon: Box, group: 'downloadsCenter.groups.custom' },
   { id: 'crash_history', name: 'instances.crashHistory', icon: AlertTriangle },
+  { id: 'statistics', name: 'instances.statistics', icon: BarChart },
 ];
 
 const showExportModal = ref(false);
@@ -151,6 +153,7 @@ watch(instanceId, async (newId) => {
           <InstanceCustomShadersTab v-else-if="activeTab === 'custom_shaders'" :instance-id="instanceId" />
           <InstanceCustomResourcepacksTab v-else-if="activeTab === 'custom_resourcepacks'" :instance-id="instanceId" />
           <CrashHistoryPanel v-else-if="activeTab === 'crash_history'" :instance-id="instanceId" />
+          <InstanceStatisticsTab v-else-if="activeTab === 'statistics'" :instance-id="instanceId" />
           <ModpackInstallTab 
             v-else-if="activeTab === 'update_modpack'"
             :is-modal-update="true"
