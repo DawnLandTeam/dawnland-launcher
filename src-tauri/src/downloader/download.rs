@@ -12,6 +12,20 @@ use tokio::time::Duration;
 
 const PROGRESS_THROTTLE_MS: u64 = 500;
 
+static CACHE_LOCKS: std::sync::OnceLock<tokio::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = std::sync::OnceLock::new();
+
+pub async fn get_download_lock(hash: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let locks = CACHE_LOCKS.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut map = locks.lock().await;
+    
+    // Prune unused locks to prevent memory leaks over time.
+    // If strong_count == 1, the map is the only owner, meaning no active tasks are holding it.
+    map.retain(|_, v| Arc::strong_count(v) > 1);
+    
+    map.entry(hash.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
 /// Compute SHA-1 hash of a file
 pub fn compute_sha1_sync(path: &std::path::Path) -> Result<String, String> {
     use std::io::Read;
@@ -112,6 +126,86 @@ where
         }
     }
 
+    let settings = crate::core::settings::get_launcher_settings_sync();
+    let mut cache_path = None;
+    let mut _cache_lock = None;
+    
+    let instances_dir = crate::core::mojang::get_minecraft_base().join("versions");
+    let is_cachable = if let Ok(rel_path) = dest_path.strip_prefix(&instances_dir) {
+        let mut components = rel_path.components();
+        let _instance_name = components.next();
+        if let Some(category_comp) = components.next() {
+            let name = category_comp.as_os_str().to_string_lossy().to_lowercase();
+            name == "mods" || name == "resourcepacks" || name == "shaderpacks" || name == "datapacks"
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if settings.enable_global_mod_cache && is_cachable {
+        if let Some(expected_hash) = &task.hash {
+            let hash_lower = expected_hash.to_lowercase();
+            _cache_lock = Some(get_download_lock(&hash_lower).await.lock_owned().await);
+            
+            let prefix = if hash_lower.len() >= 2 { &hash_lower[0..2] } else { "00" };
+            let cache_dir = crate::core::mojang::get_dawnland_dir().join("pools").join("objects").join(prefix);
+            let _ = tokio::fs::create_dir_all(&cache_dir).await;
+            cache_path = Some(cache_dir.join(&hash_lower));
+            
+            let c_path = cache_path.as_ref().unwrap();
+            
+            if c_path.exists() {
+                let mut size_ok = true;
+                if let Some(expected_size) = task.expected_size {
+                    size_ok = tokio::fs::metadata(&c_path)
+                        .await
+                        .map(|m| m.len() == expected_size)
+                        .unwrap_or(false);
+                }
+                
+                let mut hash_ok = true;
+                if size_ok {
+                    let c_path_clone = c_path.clone();
+                    if let Ok(actual_hash) = tokio::task::spawn_blocking(move || compute_sha1_sync(&c_path_clone))
+                        .await
+                        .unwrap_or_else(|_| Err("Panic".to_string()))
+                    {
+                        if !actual_hash.eq_ignore_ascii_case(expected_hash) {
+                            tracing::warn!("Global cache hash mismatch for {}. Deleting corrupted cache.", c_path.display());
+                            let _ = tokio::fs::remove_file(&c_path).await;
+                            hash_ok = false;
+                        }
+                    } else {
+                        hash_ok = false;
+                    }
+                }
+
+                if size_ok && hash_ok {
+                    let _ = tokio::fs::remove_file(&dest_path).await;
+                    if let Err(e) = tokio::fs::hard_link(&c_path, &dest_path).await {
+                        tracing::warn!("Global cache hard link failed (Error: {}). Falling back to copy: {} -> {}", e, c_path.display(), dest_path.display());
+                        if let Err(copy_err) = tokio::fs::copy(&c_path, &dest_path).await {
+                            tracing::warn!("Global cache copy failed: {}", copy_err);
+                            let _ = tokio::fs::remove_file(&dest_path).await;
+                            size_ok = false; // Fallthrough to download
+                        }
+                    } else {
+                        tracing::debug!("Global cache hit (hard link): {} -> {}", c_path.display(), dest_path.display());
+                    }
+                    
+                    if size_ok {
+                        if let Some(expected_size) = task.expected_size {
+                            add_global_downloaded(expected_size);
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
     if is_cancelled() {
         return Err("Cancelled".to_string());
     }
@@ -189,7 +283,9 @@ where
     };
 
     let file_name = dest_path.file_name().unwrap_or_default().to_string_lossy();
-    let tmp_path = dest_path.with_file_name(format!("{}.tmp", file_name));
+    let target_path = if let Some(c_path) = cache_path.as_ref() { c_path.clone() } else { dest_path.clone() };
+    let target_file_name = target_path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp_path = target_path.with_file_name(format!("{}.tmp", target_file_name));
 
     // Support small file resume
     let mut initial_downloaded = 0;
@@ -243,7 +339,7 @@ where
         for i in 0..chunk_count {
             let start = i * chunk_size;
             let end = if i == chunk_count - 1 { total_size - 1 } else { (i + 1) * chunk_size - 1 };
-            parts.push(dest_path.with_file_name(format!("{}.tmp.part{}", file_name, i)));
+            parts.push(target_path.with_file_name(format!("{}.tmp.part{}", target_file_name, i)));
             ranges.push((start, end));
         }
 
@@ -409,9 +505,38 @@ where
             let _ = tokio::fs::remove_file(&part).await;
         }
 
-        if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
+        if let Some(expected_hash) = &task.hash {
+            let tmp_path_clone = tmp_path.clone();
+            if let Ok(actual_hash) = tokio::task::spawn_blocking(move || compute_sha1_sync(&tmp_path_clone))
+                .await
+                .unwrap_or_else(|_| Err("Panic".to_string()))
+            {
+                if !actual_hash.eq_ignore_ascii_case(expected_hash) {
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                    return Err(format!(
+                        "downloaded hash mismatch: expected {}, got {}",
+                        expected_hash, actual_hash
+                    ));
+                }
+            } else {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                return Err("Failed to compute hash for downloaded file".to_string());
+            }
+        }
+
+        if let Err(e) = tokio::fs::rename(&tmp_path, &target_path).await {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err(format!("Failed to finalize file: {}", e));
+        }
+
+        if target_path != dest_path {
+            let _ = tokio::fs::remove_file(&dest_path).await;
+            if let Err(e) = tokio::fs::hard_link(&target_path, &dest_path).await {
+                tracing::warn!("Failed to hard link from cache (Error: {}). Falling back to copy.", e);
+                if let Err(copy_err) = tokio::fs::copy(&target_path, &dest_path).await {
+                    return Err(format!("Failed to copy from cache: {}", copy_err));
+                }
+            }
         }
 
         tracing::debug!("Chunked download completed: {}", task.dest_path);
@@ -479,10 +604,41 @@ where
             ));
         }
     }
-    if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
+
+    if let Some(expected_hash) = &task.hash {
+        let tmp_path_clone = tmp_path.clone();
+        if let Ok(actual_hash) = tokio::task::spawn_blocking(move || compute_sha1_sync(&tmp_path_clone))
+            .await
+            .unwrap_or_else(|_| Err("Panic".to_string()))
+        {
+            if !actual_hash.eq_ignore_ascii_case(expected_hash) {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                return Err(format!(
+                    "downloaded hash mismatch: expected {}, got {}",
+                    expected_hash, actual_hash
+                ));
+            }
+        } else {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err("Failed to compute hash for downloaded file".to_string());
+        }
+    }
+
+    if let Err(e) = tokio::fs::rename(&tmp_path, &target_path).await {
         let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(format!("Failed to finalize file: {}", e));
     }
+
+    if target_path != dest_path {
+        let _ = tokio::fs::remove_file(&dest_path).await;
+        if let Err(e) = tokio::fs::hard_link(&target_path, &dest_path).await {
+            tracing::warn!("Failed to hard link from cache (Error: {}). Falling back to copy.", e);
+            if let Err(copy_err) = tokio::fs::copy(&target_path, &dest_path).await {
+                return Err(format!("Failed to copy from cache: {}", copy_err));
+            }
+        }
+    }
+
     tracing::debug!("Download completed: {}", task.dest_path);
     
     Ok(())

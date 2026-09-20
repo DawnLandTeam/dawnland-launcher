@@ -36,6 +36,47 @@ pub struct InstallModpackOptions {
     pub project_id: Option<String>,
 }
 
+async fn protect_existing_instance(instance_dir: &std::path::Path) {
+    let config_path = instance_dir.join("dlml.json");
+    if !config_path.exists() {
+        return;
+    }
+    
+    match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => {
+            match serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
+                Ok(mut config) => {
+                    config.is_updating = true;
+                    match serde_json::to_string_pretty(&config) {
+                        Ok(json) => {
+                            if let Err(e) = tokio::fs::write(&config_path, json).await {
+                                tracing::warn!("Failed to write dlml.json while protecting instance: {}", e);
+                            }
+                        }
+                        Err(e) => tracing::warn!("Failed to serialize dlml.json while protecting instance: {}", e),
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to parse dlml.json while protecting instance: {}", e),
+            }
+        }
+        Err(e) => tracing::warn!("Failed to read dlml.json while protecting instance: {}", e),
+    }
+}
+
+fn determine_asset_category(rel_path_str: &str) -> crate::models::instance::AssetCategory {
+    if rel_path_str.starts_with("resourcepacks/") {
+        crate::models::instance::AssetCategory::ResourcePack
+    } else if rel_path_str.starts_with("shaderpacks/") {
+        crate::models::instance::AssetCategory::ShaderPack
+    } else if rel_path_str.starts_with("saves/") {
+        crate::models::instance::AssetCategory::Save
+    } else if rel_path_str.starts_with("datapacks/") {
+        crate::models::instance::AssetCategory::Datapack
+    } else {
+        crate::models::instance::AssetCategory::Mod
+    }
+}
+
 pub struct InstallModpackTask {
     pub options: InstallModpackOptions,
 }
@@ -101,10 +142,14 @@ impl ExecutableTask for InstallModpackTask {
             .join("temp")
             .join(&ctx.id);
         let instance_dir = base_dir.join("versions").join(instance_name);
+        let has_assets_json = instance_dir.join("assets.json").exists();
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
         if !is_update {
             crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+            if has_assets_json {
+                protect_existing_instance(&instance_dir).await;
+            }
         }
 
         macro_rules! check_cancel {
@@ -112,7 +157,7 @@ impl ExecutableTask for InstallModpackTask {
                 if ctx.is_cancelled() {
                     tracing::warn!("Modpack installation cancelled, cleaning up...");
                     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-                    if !is_update {
+                    if !is_update && !has_assets_json {
                         let _ = tokio::fs::remove_dir_all(&instance_dir).await;
                     }
                     return Err(TaskError::ExecutionError(
@@ -130,6 +175,12 @@ impl ExecutableTask for InstallModpackTask {
             ctx.init_sub_tasks(Self::get_sub_tasks()).await;
             ctx.set_context_data(&SubTasksInitialized).await;
         }
+
+        // We no longer unconditionally wipe mods/ and resourcepacks/ here.
+        // Doing so based merely on !has_assets_json risks deleting user data 
+        // if they install over an existing manual instance or if assets.json is corrupted.
+        // Safe overlays are preferred over catastrophic data loss.
+
         let (mc_version, loader, tasks, overrides_folder, modpack_version, modpack_type_str) =
             if let Some(context) = ctx.get_context_data::<ModpackResumeContext>().await {
                 tracing::info!(
@@ -221,6 +272,9 @@ impl ExecutableTask for InstallModpackTask {
                             let hash_clone = file.hash.clone();
                             let project_id_clone = project_id.clone();
                             let file_id_str = file.id.to_string();
+                            let rel_path_str = dest.strip_prefix(&instance_dir).unwrap_or(&dest).to_string_lossy().replace("\\", "/");
+                            let category = determine_asset_category(&rel_path_str);
+                            
                             tasks.push(DownloadTask::new(
                                 file.download_url,
                                 dest.to_string_lossy().to_string(),
@@ -228,19 +282,9 @@ impl ExecutableTask for InstallModpackTask {
                                 file.file_size,
                             ).with_asset_record(
                                 instance_name.clone(),
-                                dest.strip_prefix(&instance_dir).unwrap_or(&dest).to_string_lossy().replace("\\", "/"),
+                                rel_path_str,
                                 crate::models::instance::AssetRecord {
-                                    category: if dest.to_string_lossy().contains("resourcepacks") {
-                                        crate::models::instance::AssetCategory::ResourcePack
-                                    } else if dest.to_string_lossy().contains("shaderpacks") {
-                                        crate::models::instance::AssetCategory::ShaderPack
-                                    } else if dest.to_string_lossy().contains("saves") {
-                                        crate::models::instance::AssetCategory::Save
-                                    } else if dest.to_string_lossy().contains("datapacks") {
-                                        crate::models::instance::AssetCategory::Datapack
-                                    } else {
-                                        crate::models::instance::AssetCategory::Mod
-                                    },
+                                    category,
                                     source_type: crate::models::instance::AssetSourceType::CurseForge,
                                     project_id: project_id_clone,
                                     version_id: Some(file_id_str),
@@ -283,6 +327,9 @@ impl ExecutableTask for InstallModpackTask {
                                 let hash = file.hashes.get("sha1").cloned();
                                 let hash_clone = hash.clone();
                                 let url_clone = url.clone();
+                                let rel_path_str = file.path.clone().replace("\\", "/");
+                                let category = determine_asset_category(&rel_path_str);
+                                
                                 tasks.push(DownloadTask::new(
                                     url.clone(),
                                     dest.to_string_lossy().to_string(),
@@ -290,19 +337,9 @@ impl ExecutableTask for InstallModpackTask {
                                     Some(file.file_size),
                                 ).with_asset_record(
                                     instance_name.clone(),
-                                    file.path.clone(),
+                                    rel_path_str,
                                     crate::models::instance::AssetRecord {
-                                        category: if dest.to_string_lossy().contains("resourcepacks") {
-                                            crate::models::instance::AssetCategory::ResourcePack
-                                        } else if dest.to_string_lossy().contains("shaderpacks") {
-                                            crate::models::instance::AssetCategory::ShaderPack
-                                        } else if dest.to_string_lossy().contains("saves") {
-                                            crate::models::instance::AssetCategory::Save
-                                        } else if dest.to_string_lossy().contains("datapacks") {
-                                            crate::models::instance::AssetCategory::Datapack
-                                        } else {
-                                            crate::models::instance::AssetCategory::Mod
-                                        },
+                                        category,
                                         source_type: crate::models::instance::AssetSourceType::Modrinth,
                                         project_id: None,
                                         version_id: None,
@@ -650,8 +687,12 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let instance_dir = base_dir.join("versions").join(instance_name);
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
+        let has_assets_json = instance_dir.join("assets.json").exists();
         if !is_update {
             crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+            if has_assets_json {
+                protect_existing_instance(&instance_dir).await;
+            }
         }
 
         let temp_dir = base_dir
@@ -745,10 +786,11 @@ impl ExecutableTask for InstallOnlineModpackTask {
                 }
             });
 
+            let has_assets_json = instance_dir.join("assets.json").exists();
             if let Err(e) = crate::downloader::download::download_file_task(task, client, &ctx_zip, &global_downloaded).await {
                 monitor.abort();
                 let _ = tokio::fs::remove_file(&temp_zip_path).await;
-                if !is_update {
+                if !is_update && !has_assets_json {
                     let _ = tokio::fs::remove_dir_all(&instance_dir).await;
                 }
                 return Err(TaskError::ExecutionError(e));
@@ -991,12 +1033,7 @@ pub async fn install_modpack(
         };
         let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
     } else {
-        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-            if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
-                config.is_updating = true;
-                let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&config)?).await;
-            }
-        }
+        protect_existing_instance(&instance_dir).await;
     }
 
     let task = InstallModpackTask {
@@ -1046,12 +1083,7 @@ pub async fn download_and_install_online_modpack(
         };
         let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
     } else {
-        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-            if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
-                config.is_updating = true;
-                let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&config)?).await;
-            }
-        }
+        protect_existing_instance(&instance_dir).await;
     }
 
     let task = InstallOnlineModpackTask {
