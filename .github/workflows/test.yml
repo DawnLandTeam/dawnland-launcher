@@ -76,7 +76,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: 'pnpm'
+          # cache: 'pnpm'
 
       - name: Ensure pnpm is on PATH
         run: echo "$PNPM_HOME" >> $GITHUB_PATH
@@ -84,13 +84,13 @@ jobs:
       - name: Ensure pnpm store dir
         run: pnpm config set store-dir ~/.pnpm-store
 
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
+      # - name: Cache pnpm store
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ~/.pnpm-store
+      #     key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-pnpm-
 
       - name: Install dependencies
         run: pnpm install
