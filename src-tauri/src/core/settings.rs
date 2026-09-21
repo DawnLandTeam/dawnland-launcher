@@ -71,10 +71,16 @@ pub struct LauncherSettings {
     pub ai_config: AiConfig,
     #[serde(default)]
     pub enable_global_game_settings: bool,
+    #[serde(default = "default_enable_global_mod_cache")]
+    pub enable_global_mod_cache: bool,
 }
 
 fn default_max_concurrent_downloads() -> u32 {
     32
+}
+
+fn default_enable_global_mod_cache() -> bool {
+    true
 }
 
 impl Default for LauncherSettings {
@@ -87,6 +93,7 @@ impl Default for LauncherSettings {
             global_max_memory: None,
             ai_config: AiConfig::default(),
             enable_global_game_settings: false,
+            enable_global_mod_cache: true,
         }
     }
 }

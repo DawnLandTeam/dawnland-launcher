@@ -726,6 +726,10 @@ pub async fn delete_instance(
     }
 
     tracing::info!("Deleted instance: {}", version_id);
+
+    // Automatically trigger debounced garbage collection of the global mod cache
+    crate::core::cache::trigger_auto_gc(app);
+
     Ok(())
 }
 

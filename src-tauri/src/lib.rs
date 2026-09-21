@@ -301,6 +301,7 @@ pub fn run() {
             commands::statistics::get_instance_stats,
             greet,
             core::cache::clean_dawnland_cache,
+            core::cache::clean_global_mod_cache,
             core::security::generate_api_signature,
             commands::get_system_info,
             commands::get_system_locale,
