@@ -28,3 +28,4 @@ jobs:
           pr_code_suggestions.extra_instructions: ${{ secrets.PR_AGENT_PROMPT }}
           pr_reviewer.require_score_review: "true"
           pr_reviewer.require_tests_review: "true"
+          pr_reviewer.remove_previous_review_comment: "true"
