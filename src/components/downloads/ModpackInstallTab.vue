@@ -67,6 +67,16 @@ const modpackVersions = shallowRef<any[]>([]);
 const instanceNameInput = ref('');
 const localNameError = ref<string | null>(null);
 const onlineNameError = ref<string | null>(null);
+const isInstanceNameDirty = ref(false);
+
+const onLocalNameInput = (val: string) => {
+  localNameError.value = null;
+  if (val.trim() === '') {
+    isInstanceNameDirty.value = false;
+  } else {
+    isInstanceNameDirty.value = true;
+  }
+};
 
 // --- Install Progress State ---
 const currentPhase = ref("");
@@ -430,7 +440,7 @@ const selectZip = async () => {
       zipPath.value = selected;
       
       // Auto-extract name if not set
-      if (!instanceName.value) {
+      if (!isInstanceNameDirty.value) {
         try {
           const manifestName = await invoke('read_modpack_name', { zipPath: selected });
           if (manifestName && typeof manifestName === 'string') {
@@ -739,7 +749,7 @@ const formatDate = (dateString: string) => {
             </label>
             <DInput 
               v-model="instanceName"
-              @update:model-value="localNameError = null"
+              @update:model-value="onLocalNameInput"
               :class="{ '!border-red-500 !ring-red-500 focus:!ring-red-500': localNameError }"
               :disabled="isUpdate"
               :placeholder="t('modpacks.defaultInstanceName')"
