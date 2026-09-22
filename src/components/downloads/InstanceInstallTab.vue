@@ -599,6 +599,8 @@ function resetToInitialState() {
 
 // Install selected version
 async function installVersion(): Promise<void> {
+  customInstanceName.value = customInstanceName.value.trim();
+  
   if (!selectedVersion.value) {
     error.value = "Please select a Minecraft version";
     return;

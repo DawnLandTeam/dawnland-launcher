@@ -464,6 +464,12 @@ const installModpack = async () => {
   if (isInstalling.value) return;
   if (!zipPath.value && !onlineUrl.value) return;
   
+  if (installMode.value === 'online') {
+    instanceNameInput.value = instanceNameInput.value.trim();
+  } else {
+    instanceName.value = instanceName.value.trim();
+  }
+  
   const finalInstanceName = installMode.value === 'online' ? instanceNameInput.value : instanceName.value;
   if (!finalInstanceName) return;
 
