@@ -120,6 +120,7 @@ const initializeView = async () => {
 
   if (props.updateId) {
     instanceName.value = props.updateId;
+    instanceNameInput.value = props.updateId;
     installMode.value = 'online';
     searchQuery.value = props.updateId;
     source.value = props.updateSource || 'curseforge';
@@ -144,6 +145,7 @@ const initializeView = async () => {
 
   if (route.query.update_id) {
     instanceName.value = route.query.update_id as string;
+    instanceNameInput.value = route.query.update_id as string;
     
     if (route.query.zip) {
       installMode.value = 'local';
@@ -411,7 +413,6 @@ const selectOnlineVersion = (version: any) => {
   // Set installation parameters
   onlineUrl.value = version.download_url;
   installMode.value = 'online';
-  instanceName.value = instanceNameInput.value;
   selectedVersionName.value = version.name;
   
   // Start installation automatically
@@ -452,12 +453,14 @@ const selectZip = async () => {
 const installModpack = async () => {
   if (isInstalling.value) return;
   if (!zipPath.value && !onlineUrl.value) return;
-  if (!instanceName.value) return;
+  
+  const finalInstanceName = installMode.value === 'online' ? instanceNameInput.value : instanceName.value;
+  if (!finalInstanceName) return;
 
   if (!isUpdate.value) {
     try {
       const installedInstances = await invoke<any[]>("scan_installed_instances");
-      const exists = installedInstances.some((i: any) => i.id.toLowerCase() === instanceName.value.trim().toLowerCase());
+      const exists = installedInstances.some((i: any) => i.id.toLowerCase() === finalInstanceName.trim().toLowerCase());
         if (exists) {
           if (installMode.value === 'online') {
             if (!showVersionsModal.value) {
@@ -492,7 +495,7 @@ const installModpack = async () => {
       console.log("Invoking download_and_install_online_modpack...");
       currentTaskId.value = await invoke<string>("download_and_install_online_modpack", {
         url: onlineUrl.value,
-        instanceName: instanceName.value,
+        instanceName: finalInstanceName,
         projectId: selectedModpack.value?.project_id || route.query.project_id || null,
         isUpdate: isUpdate.value,
       });
@@ -500,7 +503,7 @@ const installModpack = async () => {
       console.log("Invoking install_modpack...");
       currentTaskId.value = await invoke<string>("install_modpack", {
         zipPath: zipPath.value,
-        instanceName: instanceName.value,
+        instanceName: finalInstanceName,
         isUpdate: isUpdate.value,
         projectId: null,
       });
@@ -511,7 +514,7 @@ const installModpack = async () => {
     if (route.query.server_id) {
       console.log("Binding instance to server...");
       await invoke("bind_instance_to_server", {
-        instanceId: instanceName.value,
+        instanceId: finalInstanceName,
         serverId: String(route.query.server_id),
         packVersionId: route.query.version_id ? String(route.query.version_id) : null,
         packFileName: route.query.pack_file_name ? String(route.query.pack_file_name) : null,
