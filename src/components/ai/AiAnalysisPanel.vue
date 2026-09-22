@@ -80,7 +80,10 @@ const parsedAiResult = computed<AiResponse | null>(() => {
 const renderedAiResult = computed(() => {
   if (!aiAnalysisResult.value) return '';
   const rawHtml = marked.parse(aiAnalysisResult.value) as string;
-  return DOMPurify.sanitize(rawHtml);
+  return DOMPurify.sanitize(rawHtml, {
+    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'del', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span', 'div'],
+    ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel']
+  });
 });
 
 function handleAiResultClick(e: MouseEvent) {
