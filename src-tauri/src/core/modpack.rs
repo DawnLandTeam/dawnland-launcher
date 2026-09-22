@@ -230,13 +230,34 @@ pub async fn copy_overrides(
                 let dest_path = instance_dir_clone.join(relative_path);
 
                 if let Some(parent) = dest_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        DawnlandError::Unknown(format!(
+                            "Failed to create parent directory for override file {:?}: {}",
+                            dest_path, e
+                        ))
+                    })?;
+                }
+
+                if dest_path.exists() {
+                    if dest_path.is_dir() {
+                        let _ = std::fs::remove_dir_all(&dest_path);
+                    } else {
+                        if let Ok(metadata) = std::fs::metadata(&dest_path) {
+                            let mut perms = metadata.permissions();
+                            if perms.readonly() {
+                                #[allow(clippy::permissions_set_readonly_false)]
+                                perms.set_readonly(false);
+                                let _ = std::fs::set_permissions(&dest_path, perms);
+                            }
+                        }
+                        let _ = std::fs::remove_file(&dest_path);
+                    }
                 }
 
                 std::fs::copy(path, &dest_path).map_err(|e| {
                     DawnlandError::Unknown(format!(
-                        "Failed to copy override file {:?}: {}",
-                        path, e
+                        "Failed to copy override file {:?} to {:?}: {}",
+                        path, dest_path, e
                     ))
                 })?;
             }

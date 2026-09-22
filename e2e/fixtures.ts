@@ -9,7 +9,9 @@ function resolveSafePath(baseDir: string, ...segments: string[]): string {
     throw new Error('Invalid path segment');
   }
   const resolvedPath = path.resolve(baseDir, input);
-  if (!resolvedPath.startsWith(baseDir)) {
+  
+  const baseDirWithSep = baseDir.endsWith(path.sep) ? baseDir : baseDir + path.sep;
+  if (resolvedPath !== baseDir && !resolvedPath.startsWith(baseDirWithSep)) {
     throw new Error('Path traversal detected');
   }
   return resolvedPath;
