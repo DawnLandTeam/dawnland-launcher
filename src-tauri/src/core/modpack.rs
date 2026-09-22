@@ -268,8 +268,8 @@ pub async fn copy_overrides(
                     })?;
                 }
 
-                if dest_path.exists() {
-                    if dest_path.is_dir() {
+                if let Ok(dest_metadata) = std::fs::symlink_metadata(&dest_path) {
+                    if dest_metadata.file_type().is_dir() {
                         force_remove_dir_all(&dest_path).map_err(|e| {
                             DawnlandError::Unknown(format!(
                                 "Failed to remove existing directory {:?}: {}",
@@ -277,19 +277,17 @@ pub async fn copy_overrides(
                             ))
                         })?;
                     } else {
-                        if let Ok(metadata) = std::fs::symlink_metadata(&dest_path) {
-                            if !metadata.file_type().is_symlink() {
-                                let mut perms = metadata.permissions();
-                                if perms.readonly() {
-                                    #[allow(clippy::permissions_set_readonly_false)]
-                                    perms.set_readonly(false);
-                                    std::fs::set_permissions(&dest_path, perms).map_err(|e| {
-                                        DawnlandError::Unknown(format!(
-                                            "Failed to update permissions for {:?}: {}",
-                                            dest_path, e
-                                        ))
-                                    })?;
-                                }
+                        if !dest_metadata.file_type().is_symlink() {
+                            let mut perms = dest_metadata.permissions();
+                            if perms.readonly() {
+                                #[allow(clippy::permissions_set_readonly_false)]
+                                perms.set_readonly(false);
+                                std::fs::set_permissions(&dest_path, perms).map_err(|e| {
+                                    DawnlandError::Unknown(format!(
+                                        "Failed to update permissions for {:?}: {}",
+                                        dest_path, e
+                                    ))
+                                })?;
                             }
                         }
                         std::fs::remove_file(&dest_path).map_err(|e| {
