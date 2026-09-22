@@ -490,6 +490,7 @@ const installModpack = async () => {
 
 
   isInstalling.value = true;
+  instanceName.value = finalInstanceName;
   showVersionsModal.value = false;
   localNameError.value = null;
   onlineNameError.value = null;
