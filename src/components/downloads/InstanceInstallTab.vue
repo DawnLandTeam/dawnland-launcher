@@ -157,6 +157,7 @@ const isInstalling = ref(false);
 const installProgress = ref<InstallProgress | null>(null);
 const downloadProgress = ref<Map<string, DownloadProgress>>(new Map());
 const error = ref<string | null>(null);
+const nameError = ref<string | null>(null);
 
 const CONFLICT_MATRIX: Record<string, string[]> = {
   'Forge': ['Fabric', 'NeoForge', 'Quilt', 'Fabric API', 'QSL/QFAPI'],
@@ -607,6 +608,18 @@ async function installVersion(): Promise<void> {
     return;
   }
 
+  const finalInstanceName = customInstanceName.value.trim() !== "" ? customInstanceName.value.trim() : selectedVersion.value;
+  try {
+    const installedInstances = await invoke<any[]>("scan_installed_instances");
+    const exists = installedInstances.some((i: any) => i.id.toLowerCase() === finalInstanceName.toLowerCase());
+    if (exists) {
+      nameError.value = t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name.");
+      return;
+    }
+  } catch (e) {
+    console.error("Failed to check instance existence:", e);
+  }
+
   isInstalling.value = true;
   error.value = null;
   installProgress.value = { phase: "resolving_version" };
@@ -954,12 +967,17 @@ onUnmounted(() => {
         </div>
 
         <div class="space-y-3">
-          <div>
+          <div class="mb-4">
             <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">{{ $t('install.instanceName') }}</label>
             <DInput
               v-model="customInstanceName"
+              @update:model-value="nameError = null"
+              :class="{ '!border-red-500 !ring-red-500 focus:!ring-red-500': nameError }"
               :placeholder="(currentTask as any)?.metadata?.versionId || $t('install.defaultName')"
             />
+            <p v-if="nameError" class="text-xs text-red-500 mt-1">
+              {{ nameError }}
+            </p>
           </div>
           <p class="text-xs text-muted-foreground">
             {{ t("install.instanceNameDesc") }}
