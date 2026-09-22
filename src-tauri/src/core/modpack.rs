@@ -199,7 +199,10 @@ pub async fn parse_modpack_manifest(extract_dir: &std::path::Path) -> Result<Mod
 fn force_remove_dir_all(dir: &std::path::Path) -> std::io::Result<()> {
     for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
-        if let Ok(metadata) = std::fs::metadata(path) {
+        if let Ok(metadata) = std::fs::symlink_metadata(path) {
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
             let mut perms = metadata.permissions();
             if perms.readonly() {
                 #[allow(clippy::permissions_set_readonly_false)]
@@ -263,17 +266,19 @@ pub async fn copy_overrides(
                             ))
                         })?;
                     } else {
-                        if let Ok(metadata) = std::fs::metadata(&dest_path) {
-                            let mut perms = metadata.permissions();
-                            if perms.readonly() {
-                                #[allow(clippy::permissions_set_readonly_false)]
-                                perms.set_readonly(false);
-                                std::fs::set_permissions(&dest_path, perms).map_err(|e| {
-                                    DawnlandError::Unknown(format!(
-                                        "Failed to update permissions for {:?}: {}",
-                                        dest_path, e
-                                    ))
-                                })?;
+                        if let Ok(metadata) = std::fs::symlink_metadata(&dest_path) {
+                            if !metadata.file_type().is_symlink() {
+                                let mut perms = metadata.permissions();
+                                if perms.readonly() {
+                                    #[allow(clippy::permissions_set_readonly_false)]
+                                    perms.set_readonly(false);
+                                    std::fs::set_permissions(&dest_path, perms).map_err(|e| {
+                                        DawnlandError::Unknown(format!(
+                                            "Failed to update permissions for {:?}: {}",
+                                            dest_path, e
+                                        ))
+                                    })?;
+                                }
                             }
                         }
                         std::fs::remove_file(&dest_path).map_err(|e| {
