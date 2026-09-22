@@ -476,6 +476,8 @@ const installModpack = async () => {
 
   isInstalling.value = true;
   showVersionsModal.value = false;
+  localNameError.value = null;
+  onlineNameError.value = null;
   completedMods.value.clear();
   forgeLogs.value = [];
   totalMods.value = 0;

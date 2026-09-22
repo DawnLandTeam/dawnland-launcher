@@ -622,6 +622,7 @@ async function installVersion(): Promise<void> {
 
   isInstalling.value = true;
   error.value = null;
+  nameError.value = null;
   installProgress.value = { phase: "resolving_version" };
   downloadProgress.value.clear();
 
