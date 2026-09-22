@@ -195,6 +195,22 @@ pub async fn parse_modpack_manifest(extract_dir: &std::path::Path) -> Result<Mod
     Err(DawnlandError::Unknown("Unknown modpack format: None of manifest.json, mcbbs.pack.json, or modrinth.index.json found.".into()))
 }
 
+/// Recursively removes read-only attributes from all files and directories, then removes the directory.
+fn force_remove_dir_all(dir: &std::path::Path) -> std::io::Result<()> {
+    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if let Ok(metadata) = std::fs::metadata(path) {
+            let mut perms = metadata.permissions();
+            if perms.readonly() {
+                #[allow(clippy::permissions_set_readonly_false)]
+                perms.set_readonly(false);
+                let _ = std::fs::set_permissions(path, perms);
+            }
+        }
+    }
+    std::fs::remove_dir_all(dir)
+}
+
 /// Copies the overrides folder from the extracted modpack to the instance root.
 pub async fn copy_overrides(
     extract_dir: &std::path::Path,
@@ -240,7 +256,7 @@ pub async fn copy_overrides(
 
                 if dest_path.exists() {
                     if dest_path.is_dir() {
-                        std::fs::remove_dir_all(&dest_path).map_err(|e| {
+                        force_remove_dir_all(&dest_path).map_err(|e| {
                             DawnlandError::Unknown(format!(
                                 "Failed to remove existing directory {:?}: {}",
                                 dest_path, e
