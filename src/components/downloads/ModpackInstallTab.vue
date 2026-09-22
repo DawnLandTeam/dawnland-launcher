@@ -65,6 +65,18 @@ const showVersionsModal = ref(false);
 const isFetchingVersions = ref(false);
 const modpackVersions = shallowRef<any[]>([]);
 const instanceNameInput = ref('');
+const localNameError = ref<string | null>(null);
+const onlineNameError = ref<string | null>(null);
+const isInstanceNameDirty = ref(false);
+
+const onLocalNameInput = (val: string) => {
+  localNameError.value = null;
+  if (val.trim() === '') {
+    isInstanceNameDirty.value = false;
+  } else {
+    isInstanceNameDirty.value = true;
+  }
+};
 
 // --- Install Progress State ---
 const currentPhase = ref("");
@@ -118,6 +130,7 @@ const initializeView = async () => {
 
   if (props.updateId) {
     instanceName.value = props.updateId;
+    instanceNameInput.value = props.updateId;
     installMode.value = 'online';
     searchQuery.value = props.updateId;
     source.value = props.updateSource || 'curseforge';
@@ -142,6 +155,7 @@ const initializeView = async () => {
 
   if (route.query.update_id) {
     instanceName.value = route.query.update_id as string;
+    instanceNameInput.value = route.query.update_id as string;
     
     if (route.query.zip) {
       installMode.value = 'local';
@@ -329,6 +343,7 @@ const searchModpacks = async () => {
 
 const openVersionsModal = async (modpack: any) => {
   selectedModpack.value = modpack;
+  onlineNameError.value = null;
   if (isUpdate.value) {
     instanceNameInput.value = instanceName.value;
   } else {
@@ -408,15 +423,14 @@ const selectOnlineVersion = (version: any) => {
   // Set installation parameters
   onlineUrl.value = version.download_url;
   installMode.value = 'online';
-  instanceName.value = instanceNameInput.value;
   selectedVersionName.value = version.name;
-  showVersionsModal.value = false;
   
   // Start installation automatically
   installModpack();
 };
 
 const selectZip = async () => {
+  localNameError.value = null;
   try {
     const selected = await open({
       filters: [{ name: "Modpack Archives", extensions: ["zip", "mrpack"] }],
@@ -426,7 +440,7 @@ const selectZip = async () => {
       zipPath.value = selected;
       
       // Auto-extract name if not set
-      if (!instanceName.value) {
+      if (!isInstanceNameDirty.value) {
         try {
           const manifestName = await invoke('read_modpack_name', { zipPath: selected });
           if (manifestName && typeof manifestName === 'string') {
@@ -449,9 +463,43 @@ const selectZip = async () => {
 const installModpack = async () => {
   if (isInstalling.value) return;
   if (!zipPath.value && !onlineUrl.value) return;
-  if (!instanceName.value) return;
+  
+  if (installMode.value === 'online') {
+    instanceNameInput.value = instanceNameInput.value.trim();
+  } else {
+    instanceName.value = instanceName.value.trim();
+  }
+  
+  const finalInstanceName = installMode.value === 'online' ? instanceNameInput.value : instanceName.value;
+  if (!finalInstanceName) return;
+
+  if (!isUpdate.value) {
+    try {
+      const installedInstances = await invoke<any[]>("scan_installed_instances");
+      const exists = installedInstances.some((i: any) => i.id.toLowerCase() === finalInstanceName.trim().toLowerCase());
+        if (exists) {
+          if (installMode.value === 'online') {
+            if (!showVersionsModal.value) {
+              toast.error(t('common.error', 'Error'), t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name."));
+            } else {
+              onlineNameError.value = t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name.");
+            }
+          } else {
+            localNameError.value = t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name.");
+          }
+          return;
+        }
+    } catch (e) {
+      console.error("Failed to check instance existence:", e);
+    }
+  }
+
 
   isInstalling.value = true;
+  instanceName.value = finalInstanceName;
+  showVersionsModal.value = false;
+  localNameError.value = null;
+  onlineNameError.value = null;
   completedMods.value.clear();
   forgeLogs.value = [];
   totalMods.value = 0;
@@ -464,7 +512,7 @@ const installModpack = async () => {
       console.log("Invoking download_and_install_online_modpack...");
       currentTaskId.value = await invoke<string>("download_and_install_online_modpack", {
         url: onlineUrl.value,
-        instanceName: instanceName.value,
+        instanceName: finalInstanceName,
         projectId: selectedModpack.value?.project_id || route.query.project_id || null,
         isUpdate: isUpdate.value,
       });
@@ -472,7 +520,7 @@ const installModpack = async () => {
       console.log("Invoking install_modpack...");
       currentTaskId.value = await invoke<string>("install_modpack", {
         zipPath: zipPath.value,
-        instanceName: instanceName.value,
+        instanceName: finalInstanceName,
         isUpdate: isUpdate.value,
         projectId: null,
       });
@@ -483,7 +531,7 @@ const installModpack = async () => {
     if (route.query.server_id) {
       console.log("Binding instance to server...");
       await invoke("bind_instance_to_server", {
-        instanceId: instanceName.value,
+        instanceId: finalInstanceName,
         serverId: String(route.query.server_id),
         packVersionId: route.query.version_id ? String(route.query.version_id) : null,
         packFileName: route.query.pack_file_name ? String(route.query.pack_file_name) : null,
@@ -706,11 +754,16 @@ const formatDate = (dateString: string) => {
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               {{ t('install.instanceName', 'Instance Name') }}
             </label>
-            <DInput
+            <DInput 
               v-model="instanceName"
+              @update:model-value="onLocalNameInput"
+              :class="{ '!border-red-500 !ring-red-500 focus:!ring-red-500': localNameError }"
               :disabled="isUpdate"
               :placeholder="t('modpacks.defaultInstanceName')"
             />
+            <p v-if="localNameError" class="text-xs text-red-500 mt-1">
+              {{ localNameError }}
+            </p>
           </div>
 
           <div v-if="isUpdate" class="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/50 rounded-lg flex items-start gap-3">
@@ -767,9 +820,14 @@ const formatDate = (dateString: string) => {
               </label>
               <DInput 
                 v-model="instanceNameInput" 
+                @update:model-value="onlineNameError = null"
+                :class="{ '!border-red-500 !ring-red-500 focus:!ring-red-500': onlineNameError }"
                 :disabled="isUpdate"
                 :placeholder="t('install.instanceNamePlaceholder', '输入安装后的游戏实例名称...')" 
               />
+              <p v-if="onlineNameError" class="text-xs text-red-500 mt-1">
+                {{ onlineNameError }}
+              </p>
             </div>
           </div>
 
