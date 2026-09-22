@@ -3,6 +3,20 @@ import { spawn, execSync, type ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 
+function resolveSafePath(baseDir: string, ...segments: string[]): string {
+  const input = path.join(...segments);
+  if (path.isAbsolute(input) || /[<>:"|?*]/.test(input)) {
+    throw new Error('Invalid path segment');
+  }
+  const resolvedPath = path.resolve(baseDir, input);
+  
+  const baseDirWithSep = baseDir.endsWith(path.sep) ? baseDir : baseDir + path.sep;
+  if (resolvedPath !== baseDir && !resolvedPath.startsWith(baseDirWithSep)) {
+    throw new Error('Path traversal detected');
+  }
+  return resolvedPath;
+}
+
 async function forceKillChildProcess(childProcess: ChildProcess) {
   if (!childProcess.pid) return;
   if (process.platform === 'win32') {
@@ -42,7 +56,7 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       const port = 9222 + safeWorkerIndex; // Ensure unique port per worker
       
       // 1. Create a unique sandbox directory for this worker (persists across tests in the same worker)
-      const e2eTempDir = path.resolve(process.cwd(), 'e2e', '.temp', `worker-${safeWorkerIndex}`);
+      const e2eTempDir = resolveSafePath(process.cwd(), 'e2e', '.temp', `worker-${safeWorkerIndex}`);
       // Clean up previous runs if any
       if (fs.existsSync(e2eTempDir)) {
         fs.rmSync(e2eTempDir, { recursive: true, force: true });
@@ -50,12 +64,12 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       fs.mkdirSync(e2eTempDir, { recursive: true });
 
       // 2. Copy the executable to the sandbox directory to isolate data
-      const originalExePath = path.resolve(process.cwd(), 'src-tauri', 'target', 'release', 'DLML.exe');
+      const originalExePath = resolveSafePath(process.cwd(), 'src-tauri', 'target', 'release', 'DLML.exe');
       if (!fs.existsSync(originalExePath)) {
         throw new Error(`Executable not found at ${originalExePath}. Did you run 'pnpm run build:e2e'?`);
       }
       
-      const sandboxExePath = path.join(e2eTempDir, 'DLML.exe');
+      const sandboxExePath = resolveSafePath(e2eTempDir, 'DLML.exe');
       fs.copyFileSync(originalExePath, sandboxExePath);
 
       // 3. Set environment variable to open WebView2 debugging port
@@ -66,7 +80,7 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       
       // 4. Start the copied executable with sandbox as CWD
       // (Security Note: sandboxExePath is locally constructed and isolated from user input)
-      const tauriLogPath = path.join(e2eTempDir, `tauri-worker-${safeWorkerIndex}.log`);
+      const tauriLogPath = resolveSafePath(e2eTempDir, `tauri-worker-${safeWorkerIndex}.log`);
       const tauriLogStream = fs.createWriteStream(tauriLogPath, { flags: 'a' });
 
       // nosemgrep: javascript.lang.security.detect-child-process
