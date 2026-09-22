@@ -65,7 +65,8 @@ const showVersionsModal = ref(false);
 const isFetchingVersions = ref(false);
 const modpackVersions = shallowRef<any[]>([]);
 const instanceNameInput = ref('');
-const nameError = ref<string | null>(null);
+const localNameError = ref<string | null>(null);
+const onlineNameError = ref<string | null>(null);
 
 // --- Install Progress State ---
 const currentPhase = ref("");
@@ -456,10 +457,14 @@ const installModpack = async () => {
       const installedInstances = await invoke<any[]>("scan_installed_instances");
       const exists = installedInstances.some((i: any) => i.id.toLowerCase() === instanceName.value.trim().toLowerCase());
         if (exists) {
-          if (installMode.value === 'online' && !showVersionsModal.value) {
-            toast.error(t('common.error', 'Error'), t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name."));
+          if (installMode.value === 'online') {
+            if (!showVersionsModal.value) {
+              toast.error(t('common.error', 'Error'), t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name."));
+            } else {
+              onlineNameError.value = t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name.");
+            }
           } else {
-            nameError.value = t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name.");
+            localNameError.value = t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name.");
           }
           return;
         }
@@ -727,13 +732,13 @@ const formatDate = (dateString: string) => {
             </label>
             <DInput 
               v-model="instanceName"
-              @update:model-value="nameError = null"
-              :class="{ '!border-red-500 !ring-red-500 focus:!ring-red-500': nameError }"
+              @update:model-value="localNameError = null"
+              :class="{ '!border-red-500 !ring-red-500 focus:!ring-red-500': localNameError }"
               :disabled="isUpdate"
               :placeholder="t('modpacks.defaultInstanceName')"
             />
-            <p v-if="nameError" class="text-xs text-red-500 mt-1">
-              {{ nameError }}
+            <p v-if="localNameError" class="text-xs text-red-500 mt-1">
+              {{ localNameError }}
             </p>
           </div>
 
@@ -791,13 +796,13 @@ const formatDate = (dateString: string) => {
               </label>
               <DInput 
                 v-model="instanceNameInput" 
-                @update:model-value="nameError = null"
-                :class="{ '!border-red-500 !ring-red-500 focus:!ring-red-500': nameError }"
+                @update:model-value="onlineNameError = null"
+                :class="{ '!border-red-500 !ring-red-500 focus:!ring-red-500': onlineNameError }"
                 :disabled="isUpdate"
                 :placeholder="t('install.instanceNamePlaceholder', '输入安装后的游戏实例名称...')" 
               />
-              <p v-if="nameError" class="text-xs text-red-500 mt-1">
-                {{ nameError }}
+              <p v-if="onlineNameError" class="text-xs text-red-500 mt-1">
+                {{ onlineNameError }}
               </p>
             </div>
           </div>
