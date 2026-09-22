@@ -197,7 +197,14 @@ pub async fn parse_modpack_manifest(extract_dir: &std::path::Path) -> Result<Mod
 
 /// Recursively removes read-only attributes from all files and directories, then removes the directory.
 fn force_remove_dir_all(dir: &std::path::Path) -> std::io::Result<()> {
-    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+    for entry_result in WalkDir::new(dir) {
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(err) => {
+                tracing::warn!("Failed to read directory entry during permission reset: {}", err);
+                continue;
+            }
+        };
         let path = entry.path();
         if let Ok(metadata) = std::fs::symlink_metadata(path) {
             if metadata.file_type().is_symlink() {
@@ -238,10 +245,14 @@ pub async fn copy_overrides(
     let overrides_path_clone = overrides_path.to_path_buf();
     let instance_dir_clone = instance_dir.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        for entry in WalkDir::new(&overrides_path_clone)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry_result in WalkDir::new(&overrides_path_clone) {
+            let entry = match entry_result {
+                Ok(e) => e,
+                Err(err) => {
+                    tracing::warn!("Failed to read directory entry while traversing overrides: {}", err);
+                    continue;
+                }
+            };
             let path = entry.path();
 
             if path.is_file() {
