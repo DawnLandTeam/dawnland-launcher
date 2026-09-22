@@ -5,7 +5,7 @@ import fs from 'fs';
 
 function resolveSafePath(baseDir: string, ...segments: string[]): string {
   const input = path.join(...segments);
-  if (path.isAbsolute(input) || input.includes('..') || /[<>:"|?*]/.test(input)) {
+  if (path.isAbsolute(input) || /[<>:"|?*]/.test(input)) {
     throw new Error('Invalid path segment');
   }
   const resolvedPath = path.resolve(baseDir, input);
