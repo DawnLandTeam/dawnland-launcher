@@ -240,17 +240,32 @@ pub async fn copy_overrides(
 
                 if dest_path.exists() {
                     if dest_path.is_dir() {
-                        let _ = std::fs::remove_dir_all(&dest_path);
+                        std::fs::remove_dir_all(&dest_path).map_err(|e| {
+                            DawnlandError::Unknown(format!(
+                                "Failed to remove existing directory {:?}: {}",
+                                dest_path, e
+                            ))
+                        })?;
                     } else {
                         if let Ok(metadata) = std::fs::metadata(&dest_path) {
                             let mut perms = metadata.permissions();
                             if perms.readonly() {
                                 #[allow(clippy::permissions_set_readonly_false)]
                                 perms.set_readonly(false);
-                                let _ = std::fs::set_permissions(&dest_path, perms);
+                                std::fs::set_permissions(&dest_path, perms).map_err(|e| {
+                                    DawnlandError::Unknown(format!(
+                                        "Failed to update permissions for {:?}: {}",
+                                        dest_path, e
+                                    ))
+                                })?;
                             }
                         }
-                        let _ = std::fs::remove_file(&dest_path);
+                        std::fs::remove_file(&dest_path).map_err(|e| {
+                            DawnlandError::Unknown(format!(
+                                "Failed to remove existing file {:?}: {}",
+                                dest_path, e
+                            ))
+                        })?;
                     }
                 }
 
