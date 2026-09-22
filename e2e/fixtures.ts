@@ -4,6 +4,9 @@ import path from 'path';
 import fs from 'fs';
 
 function resolveSafePath(baseDir: string, ...segments: string[]): string {
+  if (segments.some(segment => segment.split(/[\\/]/).some(part => part === '..'))) {
+    throw new Error('Path traversal (...) is not allowed');
+  }
   const input = path.join(...segments);
   if (path.isAbsolute(input) || /[<>:"|?*]/.test(input)) {
     throw new Error('Invalid path segment');
