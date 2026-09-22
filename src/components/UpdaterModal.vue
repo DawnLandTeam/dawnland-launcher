@@ -43,7 +43,10 @@ function close() {
 const parsedReleaseNotes = computed(() => {
   if (!props.updateInfo?.body) return '';
   const rawHtml = marked.parse(props.updateInfo.body) as string;
-  return DOMPurify.sanitize(rawHtml);
+  return DOMPurify.sanitize(rawHtml, {
+    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'del', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span', 'div', 'input'],
+    ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel', 'type', 'checked', 'disabled']
+  });
 });
 
 // Intercept link clicks in markdown to open in external browser
