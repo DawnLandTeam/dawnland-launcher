@@ -559,6 +559,7 @@ function goToStep3() {
     currentStep.value = 3;
     if (!customInstanceName.value) customInstanceName.value = generateInstanceName();
     error.value = null;
+    nameError.value = null;
   }
 }
 
@@ -570,6 +571,7 @@ function goBackToStep1() {
 function goBackToStep2() {
   currentStep.value = 2;
   error.value = null;
+  nameError.value = null;
 }
 
 

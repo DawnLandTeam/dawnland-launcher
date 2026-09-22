@@ -331,6 +331,7 @@ const searchModpacks = async () => {
 
 const openVersionsModal = async (modpack: any) => {
   selectedModpack.value = modpack;
+  onlineNameError.value = null;
   if (isUpdate.value) {
     instanceNameInput.value = instanceName.value;
   } else {
@@ -418,6 +419,7 @@ const selectOnlineVersion = (version: any) => {
 };
 
 const selectZip = async () => {
+  localNameError.value = null;
   try {
     const selected = await open({
       filters: [{ name: "Modpack Archives", extensions: ["zip", "mrpack"] }],
