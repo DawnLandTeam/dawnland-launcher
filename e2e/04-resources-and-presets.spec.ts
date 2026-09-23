@@ -1,6 +1,5 @@
 import { test, expect, resolveSafePath } from './fixtures';
 import fs from 'fs';
-import path from 'path';
 
 test.describe.serial('Resources and Presets Workflow (E2E)', () => {
   

@@ -1,6 +1,5 @@
 import { test, expect, resolveSafePath } from './fixtures';
 import fs from 'fs';
-import path from 'path';
 
 //1. Install a Fabric 26.2 instance
 //2. Install independent mod: JEI
