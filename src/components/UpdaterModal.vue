@@ -9,6 +9,7 @@ import type { CustomUpdate } from "../composables/useUpdate";
 import { getErrorMessage } from "../utils/error";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { sanitizeOptions } from "../utils/sanitize";
 
 interface UpdateProgressPayload {
   event: string;
@@ -40,13 +41,11 @@ function close() {
 }
 
 // Parse markdown to HTML securely
+
 const parsedReleaseNotes = computed(() => {
   if (!props.updateInfo?.body) return '';
   const rawHtml = marked.parse(props.updateInfo.body) as string;
-  return DOMPurify.sanitize(rawHtml, {
-    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'del', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span', 'div', 'input'],
-    ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel', 'type', 'checked', 'disabled']
-  });
+  return DOMPurify.sanitize(rawHtml, sanitizeOptions);
 });
 
 // Intercept link clicks in markdown to open in external browser
