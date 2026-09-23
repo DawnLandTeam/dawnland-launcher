@@ -3,8 +3,8 @@ import { spawn, execSync, type ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 
-function resolveSafePath(baseDir: string, ...segments: string[]): string {
-  if (segments.some(segment => segment.split(/[\\/]/).some(part => part === '..'))) {
+export function resolveSafePath(baseDir: string, ...segments: string[]): string {
+  if (segments.some(segment => segment.split(/[\\/]/).some(part => /^\.\.[\s.]*$/.test(part)))) {
     throw new Error('Path traversal (...) is not allowed');
   }
   const input = path.join(...segments);
