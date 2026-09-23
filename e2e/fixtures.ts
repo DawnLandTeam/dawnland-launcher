@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 
 export function resolveSafePath(baseDir: string, ...segments: string[]): string {
-  if (segments.some(segment => segment.split(/[\\/]/).some(part => part === '..'))) {
+  if (segments.some(segment => segment.split(/[\\/]/).some(part => path.win32.normalize(part).replace(/[ .]+$/, '') === '..'))) {
     throw new Error('Path traversal (...) is not allowed');
   }
   const input = path.join(...segments);
