@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, resolveSafePath } from './fixtures';
 import fs from 'fs';
 import path from 'path';
 
@@ -12,12 +12,12 @@ test.describe.serial('Fabric Mod Workflow (E2E)', () => {
   test('1. Setup mock instance', async ({ page }, testInfo) => {
     // Explicitly parse and sanitize the worker index
     const safeWorkerIndex = parseInt(String(testInfo.workerIndex), 10);
-    const e2eTempDir = path.resolve(process.cwd(), 'e2e', '.temp', `worker-${safeWorkerIndex}`);
-    const mockInstanceDir = path.join(e2eTempDir, '.minecraft', 'versions', 'E2E_Fabric_Test');
+    const e2eTempDir = resolveSafePath(process.cwd(), 'e2e', '.temp', `worker-${safeWorkerIndex}`);
+    const mockInstanceDir = resolveSafePath(e2eTempDir, '.minecraft', 'versions', 'E2E_Fabric_Test');
     
     // Create the mock directory and configuration
     fs.mkdirSync(mockInstanceDir, { recursive: true });
-    fs.writeFileSync(path.join(mockInstanceDir, 'E2E_Fabric_Test.json'), JSON.stringify({
+    fs.writeFileSync(resolveSafePath(mockInstanceDir, 'E2E_Fabric_Test.json'), JSON.stringify({
       id: "E2E_Fabric_Test",
       inheritsFrom: "26.2",
       libraries: [{ name: "net.fabricmc:fabric-loader:0.15.0" }]

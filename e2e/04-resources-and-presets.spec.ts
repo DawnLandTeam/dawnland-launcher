@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, resolveSafePath } from './fixtures';
 import fs from 'fs';
 import path from 'path';
 
@@ -6,11 +6,11 @@ test.describe.serial('Resources and Presets Workflow (E2E)', () => {
   
   test('1. Setup mock neoforge instance', async ({ page }, testInfo) => {
     const safeWorkerIndex = parseInt(String(testInfo.workerIndex), 10);
-    const e2eTempDir = path.resolve(process.cwd(), 'e2e', '.temp', `worker-${safeWorkerIndex}`);
-    const mockInstanceDir = path.join(e2eTempDir, '.minecraft', 'versions', 'E2E_NeoForge_Preset');
+    const e2eTempDir = resolveSafePath(process.cwd(), 'e2e', '.temp', `worker-${safeWorkerIndex}`);
+    const mockInstanceDir = resolveSafePath(e2eTempDir, '.minecraft', 'versions', 'E2E_NeoForge_Preset');
     
     fs.mkdirSync(mockInstanceDir, { recursive: true });
-    fs.writeFileSync(path.join(mockInstanceDir, 'E2E_NeoForge_Preset.json'), JSON.stringify({
+    fs.writeFileSync(resolveSafePath(mockInstanceDir, 'E2E_NeoForge_Preset.json'), JSON.stringify({
       id: "E2E_NeoForge_Preset",
       inheritsFrom: "1.21.1",
       libraries: [{ name: "net.neoforged:neoforge:21.1.0-beta" }]
