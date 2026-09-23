@@ -40,13 +40,14 @@ function close() {
 }
 
 // Parse markdown to HTML securely
-const parsedReleaseNotes = computed(() => {
+const sanitizeOptions = {
+  ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'del', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span', 'div', 'input'],
+  ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel', 'type', 'checked', 'disabled']
+};
+
+const rawReleaseNotesHtml = computed(() => {
   if (!props.updateInfo?.body) return '';
-  const rawHtml = marked.parse(props.updateInfo.body) as string;
-  return DOMPurify.sanitize(rawHtml, {
-    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'del', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span', 'div', 'input'],
-    ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel', 'type', 'checked', 'disabled']
-  });
+  return marked.parse(props.updateInfo.body) as string;
 });
 
 // Intercept link clicks in markdown to open in external browser
@@ -161,9 +162,9 @@ async function startUpdate() {
                 {{ $t('updater.releaseNotes') }}
               </h3>
               <div 
-                v-if="parsedReleaseNotes"
+                v-if="rawReleaseNotesHtml"
                 class="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-a:text-primary hover:prose-a:text-primary/80 prose-li:my-0 prose-ul:my-2 prose-ol:my-2"
-                v-html="parsedReleaseNotes"
+                v-html="DOMPurify.sanitize(rawReleaseNotesHtml, sanitizeOptions)"
                 @click="handleLinkClick"
               ></div>
               <div v-else class="text-sm text-neutral-500 italic">{{ $t('updater.noNotes') }}</div>

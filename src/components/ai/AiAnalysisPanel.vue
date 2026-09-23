@@ -77,13 +77,14 @@ const parsedAiResult = computed<AiResponse | null>(() => {
   return null;
 });
 
-const renderedAiResult = computed(() => {
+const sanitizeOptions = {
+  ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'del', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span', 'div', 'input'],
+  ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel', 'type', 'checked', 'disabled']
+};
+
+const rawAiHtml = computed(() => {
   if (!aiAnalysisResult.value) return '';
-  const rawHtml = marked.parse(aiAnalysisResult.value) as string;
-  return DOMPurify.sanitize(rawHtml, {
-    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'del', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span', 'div', 'input'],
-    ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel', 'type', 'checked', 'disabled']
-  });
+  return marked.parse(aiAnalysisResult.value) as string;
 });
 
 function handleAiResultClick(e: MouseEvent) {
@@ -328,7 +329,7 @@ onUnmounted(() => {
           </button>
         </div>
       </div>
-      <div v-else class="prose prose-sm dark:prose-invert prose-blue max-w-none text-blue-900 dark:text-blue-100" v-html="renderedAiResult" @click="handleAiResultClick"></div>
+      <div v-else class="prose prose-sm dark:prose-invert prose-blue max-w-none text-blue-900 dark:text-blue-100" v-html="DOMPurify.sanitize(rawAiHtml, sanitizeOptions)" @click="handleAiResultClick"></div>
     </div>
 
     <div v-else-if="analysisPhase === 'streaming'" class="p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700/50 rounded-xl shadow-inner">
