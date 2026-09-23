@@ -9,6 +9,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useTaskStore } from "../../composables/useTaskStore";
 import { toast } from "../../composables/useToast";
+import { sanitizeOptions } from "../../utils/sanitize";
 
 const { locale, t } = useI18n();
 const router = useRouter();
@@ -77,10 +78,7 @@ const parsedAiResult = computed<AiResponse | null>(() => {
   return null;
 });
 
-const sanitizeOptions = {
-  ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'del', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span', 'div', 'input'],
-  ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel', 'type', 'checked', 'disabled']
-};
+
 
 const renderedAiResult = computed(() => {
   if (!aiAnalysisResult.value) return '';
