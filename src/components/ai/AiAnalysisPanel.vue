@@ -82,9 +82,10 @@ const sanitizeOptions = {
   ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel', 'type', 'checked', 'disabled']
 };
 
-const rawAiHtml = computed(() => {
+const renderedAiResult = computed(() => {
   if (!aiAnalysisResult.value) return '';
-  return marked.parse(aiAnalysisResult.value) as string;
+  const rawHtml = marked.parse(aiAnalysisResult.value) as string;
+  return DOMPurify.sanitize(rawHtml, sanitizeOptions);
 });
 
 function handleAiResultClick(e: MouseEvent) {
@@ -329,7 +330,7 @@ onUnmounted(() => {
           </button>
         </div>
       </div>
-      <div v-else class="prose prose-sm dark:prose-invert prose-blue max-w-none text-blue-900 dark:text-blue-100" v-html="DOMPurify.sanitize(rawAiHtml, sanitizeOptions)" @click="handleAiResultClick"></div>
+      <div v-else class="prose prose-sm dark:prose-invert prose-blue max-w-none text-blue-900 dark:text-blue-100" v-html="renderedAiResult" @click="handleAiResultClick"></div>
     </div>
 
     <div v-else-if="analysisPhase === 'streaming'" class="p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700/50 rounded-xl shadow-inner">

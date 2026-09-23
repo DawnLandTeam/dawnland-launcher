@@ -45,9 +45,10 @@ const sanitizeOptions = {
   ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'target', 'rel', 'type', 'checked', 'disabled']
 };
 
-const rawReleaseNotesHtml = computed(() => {
+const parsedReleaseNotes = computed(() => {
   if (!props.updateInfo?.body) return '';
-  return marked.parse(props.updateInfo.body) as string;
+  const rawHtml = marked.parse(props.updateInfo.body) as string;
+  return DOMPurify.sanitize(rawHtml, sanitizeOptions);
 });
 
 // Intercept link clicks in markdown to open in external browser
@@ -162,9 +163,9 @@ async function startUpdate() {
                 {{ $t('updater.releaseNotes') }}
               </h3>
               <div 
-                v-if="rawReleaseNotesHtml"
+                v-if="parsedReleaseNotes"
                 class="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-a:text-primary hover:prose-a:text-primary/80 prose-li:my-0 prose-ul:my-2 prose-ol:my-2"
-                v-html="DOMPurify.sanitize(rawReleaseNotesHtml, sanitizeOptions)"
+                v-html="parsedReleaseNotes"
                 @click="handleLinkClick"
               ></div>
               <div v-else class="text-sm text-neutral-500 italic">{{ $t('updater.noNotes') }}</div>
