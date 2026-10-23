@@ -101,7 +101,7 @@ fn parallel_gc_threads(cpu_cores: u32) -> u32 {
     if cpu_cores < 4 {
         cpu_cores.max(1)
     } else {
-        (cpu_cores / 2).max(4).min(16)
+        (cpu_cores / 2).clamp(4, 16)
     }
 }
 
@@ -227,12 +227,9 @@ fn flag_key(arg: &str) -> Option<&str> {
             return Some(key);
         }
     }
-    for prefix in ["-Xmx", "-Xms", "-Xmn", "-Xss"] {
-        if arg.starts_with(prefix) && arg.len() > prefix.len() {
-            return Some(prefix);
-        }
-    }
-    None
+    ["-Xmx", "-Xms", "-Xmn", "-Xss"]
+        .into_iter()
+        .find(|&prefix| arg.starts_with(prefix) && arg.len() > prefix.len())
 }
 
 const GC_SELECTOR_KEYS: &[&str] = &[
@@ -332,7 +329,7 @@ fn expanded_group_keys<'a>(keys: &HashSet<&'a str>) -> HashSet<&'a str> {
             MUTEX_FLAG_GROUPS
                 .iter()
                 .find(|g| g.contains(k))
-                .map(|g| g.iter().copied().collect::<Vec<&str>>())
+                .map(|g| g.to_vec())
                 .unwrap_or_default()
         })
         .collect()

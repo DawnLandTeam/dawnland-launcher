@@ -501,7 +501,7 @@ pub async fn get_jvm_tuning_preview(
         }
     } else {
         let recommended_major =
-            resolve_instance_recommended_java(&base_dir, &version_id, &instance_config).await;
+            resolve_instance_recommended_java(base_dir, &version_id, &instance_config).await;
         let matched_java = local_javas
             .iter()
             .find(|j| j.major_version == recommended_major)
