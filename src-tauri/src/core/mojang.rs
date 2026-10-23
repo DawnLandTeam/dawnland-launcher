@@ -824,23 +824,11 @@ impl ExecutableTask for InstallVanillaTask {
         } else {
             base_dir.join("versions").join(&instance_id)
         };
-        let config_path = version_dir.join("dlml.json");
-        let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
-            let content = tokio::fs::read_to_string(&config_path)
-                .await
-                .unwrap_or_else(|_| "{}".to_string());
-            serde_json::from_str(&content).unwrap_or_default()
-        } else {
-            Default::default()
-        };
-
-        config.hidden = is_dependency.unwrap_or(false);
-        config.is_installing = false;
-
-        let config_json = serde_json::to_string_pretty(&config).map_err(|e| {
-            TaskError::ExecutionError(format!("Failed to serialize dlml.json: {e}"))
-        })?;
-        let _ = tokio::fs::write(&config_path, config_json).await;
+        let _ = crate::core::launcher::update_instance_config(&version_dir, |config| {
+            config.hidden = is_dependency.unwrap_or(false);
+            config.is_installing = false;
+        })
+        .await;
 
         if !is_dependency.unwrap_or(false) {
             crate::core::launcher::apply_global_game_settings(&version_dir).await;

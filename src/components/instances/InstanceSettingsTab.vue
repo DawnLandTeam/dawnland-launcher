@@ -113,19 +113,120 @@ function jvmTunerProfileLabel(profile: string): string {
   return key ? t(key) : profile;
 }
 
+function parseJvmArgs(input: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let hasToken = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === '\\' && i + 1 < input.length) {
+      const next = input[i + 1];
+      if (
+        (!inSingle && !inDouble && /\s/.test(next)) ||
+        (!inSingle && next === '"') ||
+        (!inDouble && next === "'") ||
+        next === '\\'
+      ) {
+        current += next;
+        hasToken = true;
+        i++;
+        continue;
+      }
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      hasToken = true;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      hasToken = true;
+      continue;
+    }
+    if (!inSingle && !inDouble && /\s/.test(ch)) {
+      if (hasToken) {
+        args.push(current);
+        current = '';
+        hasToken = false;
+      }
+      continue;
+    }
+    current += ch;
+    hasToken = true;
+  }
+
+  if (hasToken) {
+    args.push(current);
+  }
+  return args;
+}
+
+function formatJvmArgs(args: string[]): string {
+  return args
+    .map((arg) => {
+      if (/[\s"']/.test(arg)) {
+        return `"${arg.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+      }
+      return arg;
+    })
+    .join('\n');
+}
+
+let previewRequestSeq = 0;
+
 async function loadTuningPreview() {
   if (!props.instanceId) return;
+  const requestId = ++previewRequestSeq;
+  const requestedInstanceId = props.instanceId;
+  const requestedMode = settingsConfig.value.jvmTunerMode || 'followGlobal';
+  const requestedJavaPath = settingsConfig.value.javaPath || '';
+  const requestedUseGlobalMemory = useGlobalMemory.value;
+  const requestedMaxMemory = requestedUseGlobalMemory
+    ? null
+    : (settingsConfig.value.maxMemory || null);
+  const requestedExtraArgs = parseJvmArgs(jvmArgsExtraText.value);
+
   try {
-    jvmTuningPreview.value = await invoke<JvmTuningPreview>('get_jvm_tuning_preview', {
-      versionId: props.instanceId,
+    const preview = await invoke<JvmTuningPreview>('get_jvm_tuning_preview', {
+      versionId: requestedInstanceId,
+      javaPath: requestedJavaPath,
+      maxMemory: requestedMaxMemory,
+      useGlobalMemory: requestedUseGlobalMemory,
+      jvmTunerMode: requestedMode,
+      jvmArgsExtra: requestedExtraArgs,
     });
+    if (
+      requestId !== previewRequestSeq ||
+      props.instanceId !== requestedInstanceId ||
+      (settingsConfig.value.jvmTunerMode || 'followGlobal') !== requestedMode
+    ) {
+      return;
+    }
+    jvmTuningPreview.value = preview;
   } catch (e) {
+    if (requestId !== previewRequestSeq || props.instanceId !== requestedInstanceId) {
+      return;
+    }
     console.error('Failed to load JVM tuning preview:', e);
     jvmTuningPreview.value = null;
   }
 }
 
-watch(() => settingsConfig.value.jvmTunerMode, loadTuningPreview);
+watch(
+  [
+    () => settingsConfig.value.jvmTunerMode,
+    () => settingsConfig.value.javaPath,
+    () => settingsConfig.value.maxMemory,
+    useGlobalMemory,
+    jvmArgsExtraText,
+  ],
+  () => {
+    loadTuningPreview();
+  }
+);
 
 async function loadData() {
   if (!props.instanceId) return;
@@ -155,7 +256,7 @@ async function loadData() {
     });
     useGlobalMemory.value = !config.maxMemory;
     const extraArgs = Array.isArray(config.jvmArgsExtra) ? config.jvmArgsExtra : [];
-    jvmArgsExtraText.value = extraArgs.join('\n');
+    jvmArgsExtraText.value = formatJvmArgs(extraArgs);
     settingsConfig.value = {
       javaPath: config.javaPath || '',
       maxMemory: config.maxMemory || globalMaxMemory.value,
@@ -185,10 +286,7 @@ watch(() => props.instanceId, loadData, { immediate: true });
 async function saveSettings() {
   isSavingConfig.value = true;
   try {
-    const parsedJvmArgs = jvmArgsExtraText.value
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
+    const parsedJvmArgs = parseJvmArgs(jvmArgsExtraText.value);
     settingsConfig.value.jvmArgsExtra = parsedJvmArgs;
 
     const config = {

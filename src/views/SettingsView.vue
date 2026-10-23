@@ -253,32 +253,49 @@ async function loadLauncherSettings() {
   }
 }
 
+let isSavingLauncherSettings = false;
+let hasPendingLauncherSettingsSave = false;
+
+function buildLauncherSettingsSnapshot() {
+  return {
+    enableInstanceInheritance: enableInstanceInheritance.value,
+    downloadSource: downloadSource.value,
+    maxConcurrentDownloads: maxConcurrentDownloads.value,
+    enableTelemetry: enableTelemetry.value,
+    enableGlobalGameSettings: enableGlobalGameSettings.value,
+    enableGlobalModCache: enableGlobalModCache.value,
+    enableJvmTuner: enableJvmTuner.value,
+    globalMaxMemory: defaultMaxMemory.value,
+    aiConfig: {
+      providerType: aiProviderType.value,
+      remoteApiKey: aiRemoteApiKey.value,
+      remoteBaseUrl: aiRemoteBaseUrl.value,
+      remoteModel: aiRemoteModel.value,
+      activeEmbeddedModel: aiActiveEmbeddedModel.value,
+      maxRamUsage: aiMaxRamUsage.value,
+      unlockContextSize: aiUnlockContextSize.value,
+    },
+  };
+}
+
 async function saveLauncherSettings() {
+  if (isSavingLauncherSettings) {
+    hasPendingLauncherSettingsSave = true;
+    return;
+  }
+  isSavingLauncherSettings = true;
   try {
-    await invoke('save_launcher_settings', {
-      settings: {
-        enableInstanceInheritance: enableInstanceInheritance.value,
-        downloadSource: downloadSource.value,
-        maxConcurrentDownloads: maxConcurrentDownloads.value,
-        enableTelemetry: enableTelemetry.value,
-        enableGlobalGameSettings: enableGlobalGameSettings.value,
-        enableGlobalModCache: enableGlobalModCache.value,
-        enableJvmTuner: enableJvmTuner.value,
-        globalMaxMemory: defaultMaxMemory.value,
-        aiConfig: {
-          providerType: aiProviderType.value,
-          remoteApiKey: aiRemoteApiKey.value,
-          remoteBaseUrl: aiRemoteBaseUrl.value,
-          remoteModel: aiRemoteModel.value,
-          activeEmbeddedModel: aiActiveEmbeddedModel.value,
-          maxRamUsage: aiMaxRamUsage.value,
-          unlockContextSize: aiUnlockContextSize.value,
-        }
-      }
-    });
+    do {
+      hasPendingLauncherSettingsSave = false;
+      await invoke('save_launcher_settings', {
+        settings: buildLauncherSettingsSnapshot(),
+      });
+    } while (hasPendingLauncherSettingsSave);
   } catch (e) {
     console.error('Failed to save launcher settings:', e);
     toast.error(t('settings.saveFailed'), getErrorMessage(e));
+  } finally {
+    isSavingLauncherSettings = false;
   }
 }
 

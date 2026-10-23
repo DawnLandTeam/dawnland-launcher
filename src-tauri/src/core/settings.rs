@@ -110,6 +110,9 @@ pub fn get_launcher_settings_path() -> PathBuf {
 }
 
 static SETTINGS_CACHE: RwLock<Option<LauncherSettings>> = RwLock::new(None);
+static SETTINGS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SETTINGS_SAVE_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 pub fn get_launcher_settings_sync() -> LauncherSettings {
     if let Ok(cache) = SETTINGS_CACHE.read() {
@@ -118,6 +121,7 @@ pub fn get_launcher_settings_sync() -> LauncherSettings {
         }
     }
 
+    let gen_before = SETTINGS_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
     let config_path = get_launcher_settings_path();
     let mut settings = LauncherSettings::default();
     if config_path.exists() {
@@ -129,19 +133,34 @@ pub fn get_launcher_settings_sync() -> LauncherSettings {
     }
 
     if let Ok(mut cache) = SETTINGS_CACHE.write() {
-        *cache = Some(settings.clone());
+        if let Some(existing) = cache.as_ref() {
+            return existing.clone();
+        }
+        if SETTINGS_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == gen_before {
+            *cache = Some(settings.clone());
+        } else if let Some(existing) = cache.as_ref() {
+            return existing.clone();
+        }
     }
 
     settings
 }
 
+pub async fn get_launcher_settings() -> LauncherSettings {
+    let _guard = SETTINGS_SAVE_LOCK.lock().await;
+    get_launcher_settings_sync()
+}
+
 #[tauri::command]
 pub async fn load_launcher_settings() -> Result<LauncherSettings, String> {
-    Ok(get_launcher_settings_sync())
+    Ok(get_launcher_settings().await)
 }
 
 #[tauri::command]
 pub async fn save_launcher_settings(settings: LauncherSettings) -> Result<(), String> {
+    let _guard = SETTINGS_SAVE_LOCK.lock().await;
+    SETTINGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
     let config_path = get_launcher_settings_path();
     let content = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize launcher settings: {}", e))?;
@@ -155,9 +174,10 @@ pub async fn save_launcher_settings(settings: LauncherSettings) -> Result<(), St
         .map_err(|e| format!("Failed to write launcher settings: {}", e))?;
 
     if let Ok(mut cache) = SETTINGS_CACHE.write() {
+        SETTINGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *cache = Some(settings);
     }
-    
+
     Ok(())
 }
 

@@ -147,6 +147,7 @@ pub fn generate_tuned_args(input: &TuningInput) -> TuningResult {
             "-XX:+ExplicitGCInvokesConcurrent".to_string(),
         ];
         if input.java_major >= MIN_JAVA_MAJOR_FOR_ADVANCED_G1_FLAGS {
+            args.push("-XX:+UnlockExperimentalVMOptions".to_string());
             args.push("-XX:G1NewSizePercent=28".to_string());
             args.push("-XX:G1MaxNewSizePercent=40".to_string());
             args.push("-XX:+UseStringDeduplication".to_string());
@@ -171,8 +172,45 @@ pub fn generate_tuned_args(input: &TuningInput) -> TuningResult {
     }
 }
 
-/// Extracts a normalized flag key from a JVM argument so user overrides can
-/// shadow matching base/tuned flags:
+/// Parses a `-Xmx` argument (e.g. `-Xmx4G`, `-Xmx4096M`, `-Xmx4194304K`) into megabytes.
+pub fn parse_xmx_mb(arg: &str) -> Option<u32> {
+    let rest = arg.trim().strip_prefix("-Xmx")?;
+    if rest.is_empty() {
+        return None;
+    }
+    let (num_str, unit) = match rest.chars().last()? {
+        'g' | 'G' => (&rest[..rest.len() - 1], 'g'),
+        'm' | 'M' => (&rest[..rest.len() - 1], 'm'),
+        'k' | 'K' => (&rest[..rest.len() - 1], 'k'),
+        c if c.is_ascii_digit() => (rest, 'b'),
+        _ => return None,
+    };
+    let value: u64 = num_str.parse().ok()?;
+    let mb = match unit {
+        'g' => value.saturating_mul(1024),
+        'm' => value,
+        'k' => value / 1024,
+        'b' => value / (1024 * 1024),
+        _ => return None,
+    };
+    if mb == 0 {
+        return None;
+    }
+    Some((mb.min(u32::MAX as u64)) as u32)
+}
+
+/// Resolves the effective max heap size in MB, giving the last valid `-Xmx`
+/// in `user_extra` precedence over `configured_mb`.
+pub fn resolve_effective_max_memory_mb(configured_mb: u32, user_extra: &[String]) -> u32 {
+    user_extra
+        .iter()
+        .rev()
+        .find_map(|arg| parse_xmx_mb(arg))
+        .unwrap_or(configured_mb)
+}
+
+/// Extracts a normalized flag key from a JVM argument so higher-precedence
+/// layers can shadow matching base/tuned flags:
 /// - `-XX:+UseZGC` / `-XX:-UseG1GC` / `-XX:MaxGCPauseMillis=37` -> `UseZGC` / `UseG1GC` / `MaxGCPauseMillis`
 /// - `-Dfoo.bar=baz` -> `foo.bar`
 /// - `-Xmx4G` / `-Xms1G` / `-Xmn512M` / `-Xss1M` -> `-Xmx` / `-Xms` / `-Xmn` / `-Xss`
@@ -197,19 +235,51 @@ fn flag_key(arg: &str) -> Option<&str> {
     None
 }
 
-/// Groups of mutually exclusive flag keys. When the user picks any member of a
-/// group, all other members (from base or tuned args) must yield.
+const GC_SELECTOR_KEYS: &[&str] = &[
+    "UseZGC",
+    "UseG1GC",
+    "UseParallelGC",
+    "UseParallelOldGC",
+    "UseConcMarkSweepGC",
+    "UseSerialGC",
+    "UseShenandoahGC",
+    "UseEpsilonGC",
+];
+
+const ZGC_SPECIFIC_KEYS: &[&str] = &[
+    "ZGenerational",
+    "SoftMaxHeapSize",
+    "ZAllocationSpikeTolerance",
+    "ZCollectionInterval",
+    "ZProactive",
+    "ZUncommit",
+    "ZUncommitDelay",
+];
+
+const G1_SPECIFIC_KEYS: &[&str] = &[
+    "G1NewSizePercent",
+    "G1MaxNewSizePercent",
+    "G1HeapRegionSize",
+    "G1ReservePercent",
+    "G1MixedGCCountTarget",
+    "G1MixedGCLiveThresholdPercent",
+    "G1RSetUpdatingPauseTimePercent",
+    "G1SummarizingRSetStatsPeriod",
+    "InitiatingHeapOccupancyPercent",
+    "UseStringDeduplication",
+];
+
+const CMS_SPECIFIC_KEYS: &[&str] = &[
+    "CMSIncrementalMode",
+    "CMSInitiatingOccupancyFraction",
+    "UseCMSInitiatingOccupancyOnly",
+    "CMSClassUnloadingEnabled",
+    "CMSParallelRemarkEnabled",
+];
+
+/// Groups of mutually exclusive flag keys.
 const MUTEX_FLAG_GROUPS: &[&[&str]] = &[
-    &[
-        "UseZGC",
-        "UseG1GC",
-        "UseParallelGC",
-        "UseParallelOldGC",
-        "UseConcMarkSweepGC",
-        "UseSerialGC",
-        "UseShenandoahGC",
-        "UseEpsilonGC",
-    ],
+    GC_SELECTOR_KEYS,
     &[
         "DisableExplicitGC",
         "ExplicitGCInvokesConcurrent",
@@ -220,11 +290,44 @@ const MUTEX_FLAG_GROUPS: &[&[&str]] = &[
     ],
 ];
 
-/// Keys of all groups touched by `user_keys` (the user's choice plus every
-/// key it excludes).
-fn expanded_group_keys<'a>(user_keys: &HashSet<&'a str>) -> HashSet<&'a str> {
-    user_keys
-        .iter()
+fn positive_gc_selector(arg: &str) -> Option<&str> {
+    let key = arg.strip_prefix("-XX:+")?;
+    if GC_SELECTOR_KEYS.contains(&key) {
+        Some(key)
+    } else {
+        None
+    }
+}
+
+fn is_tuned_collector_specific_key(key: &str) -> bool {
+    GC_SELECTOR_KEYS.contains(&key)
+        || ZGC_SPECIFIC_KEYS.contains(&key)
+        || G1_SPECIFIC_KEYS.contains(&key)
+        || CMS_SPECIFIC_KEYS.contains(&key)
+        || key == "MaxGCPauseMillis"
+        || key == "UnlockExperimentalVMOptions"
+}
+
+fn is_incompatible_with_collector(key: &str, collector: &str) -> bool {
+    match collector {
+        "UseZGC" => {
+            G1_SPECIFIC_KEYS.contains(&key)
+                || CMS_SPECIFIC_KEYS.contains(&key)
+                || key == "MaxGCPauseMillis"
+        }
+        "UseG1GC" => ZGC_SPECIFIC_KEYS.contains(&key) || CMS_SPECIFIC_KEYS.contains(&key),
+        "UseConcMarkSweepGC" => ZGC_SPECIFIC_KEYS.contains(&key) || G1_SPECIFIC_KEYS.contains(&key),
+        _ => {
+            ZGC_SPECIFIC_KEYS.contains(&key)
+                || G1_SPECIFIC_KEYS.contains(&key)
+                || CMS_SPECIFIC_KEYS.contains(&key)
+        }
+    }
+}
+
+/// Keys of all groups touched by `keys` (the choice plus every key it excludes).
+fn expanded_group_keys<'a>(keys: &HashSet<&'a str>) -> HashSet<&'a str> {
+    keys.iter()
         .flat_map(|k| {
             MUTEX_FLAG_GROUPS
                 .iter()
@@ -237,35 +340,104 @@ fn expanded_group_keys<'a>(user_keys: &HashSet<&'a str>) -> HashSet<&'a str> {
 
 /// Merges base (version JSON + memory) args, tuned args and user extras.
 ///
-/// Precedence (highest wins): user extras > tuned args > base args. A user
-/// `-XX`, `-D`, or `-Xm*`/`-Xss` flag replaces every base/tuned flag carrying
-/// the same key, and any mutually-exclusive group the user touches is cleared
-/// entirely so the JVM never receives conflicting flags.
+/// Precedence (highest wins): user extras > tuned args > base args.
 pub fn merge_args(base: Vec<String>, tuned: &[String], user_extra: &[String]) -> Vec<String> {
     let user_keys: HashSet<&str> = user_extra.iter().filter_map(|a| flag_key(a)).collect();
     let user_literals: HashSet<&String> = user_extra.iter().collect();
-    let group_keys = expanded_group_keys(&user_keys);
-    let is_shadowed = |key: Option<&str>| {
-        key.is_some_and(|k| user_keys.contains(k) || group_keys.contains(k))
+    let user_group_keys = expanded_group_keys(&user_keys);
+
+    let tuned_collector = tuned.iter().find_map(|a| positive_gc_selector(a));
+    let user_positive_collector = user_extra
+        .iter()
+        .rev()
+        .find_map(|a| positive_gc_selector(a));
+    let user_touches_collector = user_keys.iter().any(|k| GC_SELECTOR_KEYS.contains(k));
+    let user_overrides_tuned_collector = match (tuned_collector, user_positive_collector) {
+        (Some(tc), Some(uc)) => tc != uc,
+        (Some(_), None) => user_touches_collector,
+        (None, Some(_)) => true,
+        (None, None) => false,
     };
+
+    let user_disables_experimental = user_extra
+        .iter()
+        .any(|a| a == "-XX:-UnlockExperimentalVMOptions");
+
+    // Filter tuned args first so collector-specific tuned flags are dropped if
+    // the user overrides the collector, and individual flags shadowed by the
+    // user are removed.
+    let effective_tuned: Vec<&String> = tuned
+        .iter()
+        .filter(|arg| {
+            if user_literals.contains(arg) {
+                return false;
+            }
+            let key = flag_key(arg);
+            if key.is_some_and(|k| user_keys.contains(k) || user_group_keys.contains(k)) {
+                return false;
+            }
+            if user_overrides_tuned_collector && key.is_some_and(is_tuned_collector_specific_key) {
+                return false;
+            }
+            if user_disables_experimental
+                && key.is_some_and(|k| k == "G1NewSizePercent" || k == "G1MaxNewSizePercent")
+            {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    let active_collector = user_positive_collector.or(if user_overrides_tuned_collector {
+        None
+    } else {
+        tuned_collector
+    });
+
+    let effective_keys: HashSet<&str> = effective_tuned
+        .iter()
+        .filter_map(|a| flag_key(a))
+        .chain(user_keys.iter().copied())
+        .collect();
+    let effective_group_keys = expanded_group_keys(&effective_keys);
+    let effective_tuned_literals: HashSet<&str> =
+        effective_tuned.iter().map(|s| s.as_str()).collect();
 
     let mut merged: Vec<String> = Vec::with_capacity(base.len() + tuned.len() + user_extra.len());
 
     for arg in base {
-        if is_shadowed(flag_key(&arg)) {
-            continue;
+        let key = flag_key(&arg);
+        if let Some(k) = key {
+            if user_keys.contains(k) || user_group_keys.contains(k) {
+                continue;
+            }
+            if let Some(collector) = active_collector {
+                if is_incompatible_with_collector(k, collector) {
+                    continue;
+                }
+            }
+            if user_disables_experimental && (k == "G1NewSizePercent" || k == "G1MaxNewSizePercent")
+            {
+                continue;
+            }
+            // Shadow base flag if effective_tuned touches the same key or mutex
+            // group, unless base has the exact same literal flag (such as
+            // `-XX:+UnlockExperimentalVMOptions`), in which case keeping it in
+            // place preserves ordering for earlier flags and `effective_tuned`
+            // deduplicates it below.
+            if (effective_keys.contains(k) || effective_group_keys.contains(k))
+                && !effective_tuned_literals.contains(arg.as_str())
+            {
+                continue;
+            }
         }
         merged.push(arg);
     }
 
-    for arg in tuned {
-        if user_literals.contains(arg) || is_shadowed(flag_key(arg)) {
-            continue;
+    for arg in effective_tuned {
+        if !merged.contains(arg) {
+            merged.push(arg.clone());
         }
-        if merged.contains(arg) {
-            continue;
-        }
-        merged.push(arg.clone());
     }
 
     for arg in user_extra {
@@ -338,9 +510,21 @@ mod tests {
         let r = generate_tuned_args(&input(6144, 17));
         assert_eq!(r.profile, GcProfile::G1Large);
         assert!(r.args.contains(&"-XX:MaxGCPauseMillis=37".to_string()));
+        assert!(r.args.contains(&"-XX:+UnlockExperimentalVMOptions".to_string()));
         assert!(r.args.contains(&"-XX:G1NewSizePercent=28".to_string()));
         assert!(r.args.contains(&"-XX:G1HeapRegionSize=16M".to_string()));
         assert!(r.args.contains(&"-XX:ParallelGCThreads=4".to_string())); // 8 cores / 2
+        let unlock_pos = r
+            .args
+            .iter()
+            .position(|a| a == "-XX:+UnlockExperimentalVMOptions")
+            .unwrap();
+        let new_size_pos = r
+            .args
+            .iter()
+            .position(|a| a == "-XX:G1NewSizePercent=28")
+            .unwrap();
+        assert!(unlock_pos < new_size_pos);
     }
 
     #[test]
@@ -434,19 +618,56 @@ mod tests {
     #[test]
     fn user_gc_selector_clears_the_whole_selector_group() {
         // UseZGC and UseG1GC are different keys but mutually exclusive: once
-        // the user picks one, the engine's selector must be dropped entirely.
+        // the user picks one, the engine's selector and collector-specific
+        // tuned flags must be dropped entirely.
         let tuned = vec![
             "-XX:+UseZGC".to_string(),
+            "-XX:+ZGenerational".to_string(),
             "-XX:SoftMaxHeapSize=6144M".to_string(),
+            "-XX:+ExplicitGCInvokesConcurrent".to_string(),
         ];
         let user = vec!["-XX:+UseG1GC".to_string()];
         let merged = merge_args(Vec::new(), &tuned, &user);
         assert_eq!(
             merged,
             vec![
-                "-XX:SoftMaxHeapSize=6144M".to_string(),
+                "-XX:+ExplicitGCInvokesConcurrent".to_string(),
                 "-XX:+UseG1GC".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn tuned_zgc_shadows_base_g1_selector_and_flags() {
+        let base = vec![
+            "-XX:+UseG1GC".to_string(),
+            "-XX:+UnlockExperimentalVMOptions".to_string(),
+            "-XX:G1NewSizePercent=20".to_string(),
+            "-XX:G1ReservePercent=20".to_string(),
+            "-XX:MaxGCPauseMillis=50".to_string(),
+            "-XX:G1HeapRegionSize=32M".to_string(),
+        ];
+        let tuned = generate_tuned_args(&input(12288, 21)).args;
+        let merged = merge_args(base, &tuned, &[]);
+        assert!(merged.contains(&"-XX:+UseZGC".to_string()));
+        assert!(!merged.contains(&"-XX:+UseG1GC".to_string()));
+        assert!(merged.iter().all(|a| !a.contains("G1")));
+        assert!(merged.iter().all(|a| !a.contains("MaxGCPauseMillis")));
+    }
+
+    #[test]
+    fn resolve_effective_max_memory_parses_user_xmx() {
+        assert_eq!(resolve_effective_max_memory_mb(4096, &[]), 4096);
+        assert_eq!(
+            resolve_effective_max_memory_mb(4096, &["-Xmx12G".to_string()]),
+            12288
+        );
+        assert_eq!(
+            resolve_effective_max_memory_mb(
+                4096,
+                &["-Xmx8G".to_string(), "-Xmx10240m".to_string()]
+            ),
+            10240
         );
     }
 
