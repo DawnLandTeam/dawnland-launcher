@@ -210,6 +210,9 @@ pub struct InstanceConfig {
     pub java_path: Option<String>,
     pub max_memory: Option<u32>,
     pub jvm_args_extra: Option<Vec<String>>,
+    /// Per-instance JVM tuner override (follow_global / on / off).
+    #[serde(default)]
+    pub jvm_tuner_mode: crate::core::jvm_tuner::JvmTunerMode,
     #[serde(default = "default_window_behavior")]
     pub window_behavior: String,
     #[serde(default)]
@@ -334,6 +337,7 @@ pub async fn save_instance_config(
     final_config.java_path = config.java_path;
     final_config.max_memory = config.max_memory;
     final_config.jvm_args_extra = config.jvm_args_extra;
+    final_config.jvm_tuner_mode = config.jvm_tuner_mode;
     final_config.window_behavior = config.window_behavior;
     final_config.show_game_log = config.show_game_log;
     // We intentionally do NOT copy hidden, server_id, pack_version_id, pack_file_name, or is_installing here!
@@ -347,6 +351,94 @@ pub async fn save_instance_config(
 
     tracing::info!("Saved config for {}: {:?}", version_id, final_config);
     Ok(())
+}
+
+/// Preview payload consumed by the JVM tuner UI.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JvmTuningPreview {
+    pub mode: crate::core::jvm_tuner::JvmTunerMode,
+    pub enabled: bool,
+    pub global_enabled: bool,
+    pub profile: crate::core::jvm_tuner::GcProfile,
+    /// GC flags the tuner would inject for this instance (empty when skipped).
+    pub args: Vec<String>,
+    /// Resolved Java major version; `0` means "unknown / not scanned yet".
+    pub java_major: u32,
+}
+
+/// Preview the JVM tuning decision for an instance without launching the game.
+///
+/// The Java version is resolved best-effort from the cached Java scan; when
+/// the instance's Java is not in the cache the preview falls back to the
+/// conservative profile (mirroring the unknown-version path at launch time,
+/// where the version is probed from the actual binary). The launch-time
+/// decision therefore always wins over this preview.
+#[tauri::command]
+pub async fn get_jvm_tuning_preview(version_id: String) -> Result<JvmTuningPreview, AppError> {
+    let base_dir = get_minecraft_base();
+    let config_path = base_dir
+        .join("versions")
+        .join(&version_id)
+        .join(CONFIG_FILENAME);
+
+    let instance_config: InstanceConfig = if config_path.exists() {
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .map_err(|e| format!("Failed to read config: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?
+    } else {
+        InstanceConfig::default()
+    };
+
+    let launcher_settings = crate::core::settings::get_launcher_settings_sync();
+    let global_enabled = launcher_settings.enable_jvm_tuner;
+    let mode = instance_config.jvm_tuner_mode;
+    let enabled = mode.resolves_to(global_enabled);
+
+    // Best-effort Java resolution from the cache - never triggers a scan.
+    let mut java_major: u32 = 0;
+    let mut is_openj9 = false;
+    if let Some(java_path) = &instance_config.java_path {
+        if let Some(javas) = crate::core::java::get_cached_javas().await {
+            let wanted = java_path.to_lowercase();
+            if let Some(info) = javas.iter().find(|j| j.path.to_lowercase() == wanted) {
+                java_major = info.major_version;
+                is_openj9 = info.is_openj9;
+            }
+        }
+    }
+
+    let tuning_input = crate::core::jvm_tuner::TuningInput {
+        max_memory_mb: instance_config
+            .max_memory
+            .or(launcher_settings.global_max_memory)
+            .map(|m| m.max(512))
+            .unwrap_or_else(get_recommended_max_memory),
+        java_major,
+        is_openj9,
+        cpu_cores: std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(4),
+    };
+
+    let result = if enabled {
+        crate::core::jvm_tuner::generate_tuned_args(&tuning_input)
+    } else {
+        crate::core::jvm_tuner::TuningResult {
+            profile: crate::core::jvm_tuner::GcProfile::Skipped,
+            args: Vec::new(),
+        }
+    };
+
+    Ok(JvmTuningPreview {
+        mode,
+        enabled,
+        global_enabled,
+        profile: result.profile,
+        args: result.args,
+        java_major,
+    })
 }
 
 // ============ Natives Extraction ============
@@ -1088,11 +1180,6 @@ pub fn parse_jvm_arguments(
         args.push("-Xms512M".to_string()); // Default 512MB initial
     }
 
-    // Add Djava.net.preferIPv4Stack=true for better compatibility
-    if !args.iter().any(|a| a.contains("preferIPv4Stack")) {
-        args.push("-Djava.net.preferIPv4Stack=true".to_string());
-    }
-
     tracing::debug!("Parsed JVM args: {:?}", args);
     Ok(args)
 }
@@ -1164,21 +1251,35 @@ pub fn parse_game_arguments(
 
     // Inject direct connection arguments if provided
     if let (Some(ip), Some(port)) = (&config.server_ip, config.server_port) {
+        let formatted_host = if ip.contains(':') && !ip.starts_with('[') {
+            format!("[{}]", ip)
+        } else {
+            ip.clone()
+        };
+        let supports_quick_play = version_meta
+            .arguments
+            .as_ref()
+            .and_then(|a| a.game.as_ref())
+            .is_some_and(|g| g.to_string().contains("quickPlayMultiplayer"));
+
         tracing::info!(
-            "Injecting direct connection arguments: --server {} --port {}",
-            ip,
-            port
+            "Injecting direct connection arguments for {}:{} (quickPlay={})",
+            formatted_host,
+            port,
+            supports_quick_play
         );
 
-        // For older versions (pre-1.20)
-        args.push("--server".to_string());
-        args.push(ip.clone());
-        args.push("--port".to_string());
-        args.push(port.to_string());
-
-        // For newer versions (1.20+) which removed --server and --port
-        args.push("--quickPlayMultiplayer".to_string());
-        args.push(format!("{}:{}", ip, port));
+        if supports_quick_play {
+            // Newer versions (1.20+) use --quickPlayMultiplayer
+            args.push("--quickPlayMultiplayer".to_string());
+            args.push(format!("{}:{}", formatted_host, port));
+        } else {
+            // Older versions (pre-1.20) use --server and --port
+            args.push("--server".to_string());
+            args.push(ip.clone());
+            args.push("--port".to_string());
+            args.push(port.to_string());
+        }
     }
 
     tracing::debug!("Parsed game args: {:?}", args);
@@ -2302,12 +2403,14 @@ pub async fn launch_instance(
         }
     }
 
-    // Apply custom max memory if configured, otherwise use recommended default
+    // Apply custom max memory if configured, otherwise use global setting or recommended default
+    let launcher_settings = crate::core::settings::get_launcher_settings_sync();
     let max_mem = instance_config
         .max_memory
+        .or(launcher_settings.global_max_memory)
         .map(|m| m.max(512)) // At least 512MB
         .unwrap_or_else(get_recommended_max_memory);
-    let min_mem = max_mem / 2;
+    let min_mem = (max_mem / 4).clamp(512, 2048).min(max_mem);
 
     // Remove any existing -Xmx/-Xms flags and insert our custom ones at the front
     jvm_args.retain(|arg| !arg.starts_with("-Xmx") && !arg.starts_with("-Xms"));
@@ -2321,14 +2424,43 @@ pub async fn launch_instance(
         get_recommended_max_memory()
     );
 
-    // Apply extra JVM arguments if configured
-    if let Some(extra_args) = &instance_config.jvm_args_extra {
-        for arg in extra_args {
-            if !jvm_args.contains(arg) {
-                jvm_args.push(arg.clone());
-            }
-        }
-    }
+    // ========== Smart JVM Tuning ==========
+    // The strategy (see core::jvm_tuner) only depends on the resolved heap
+    // size, the runtime-detected Java major version, the CPU core count and
+    // the JVM vendor - all of which are already available here.
+    let global_tuner_enabled = launcher_settings.enable_jvm_tuner;
+    let tuner_enabled = instance_config
+        .jvm_tuner_mode
+        .resolves_to(global_tuner_enabled);
+
+    let tuned_args = if tuner_enabled {
+        let tuning_input = crate::core::jvm_tuner::TuningInput {
+            max_memory_mb: max_mem,
+            java_major: java_major_version,
+            is_openj9,
+            cpu_cores: std::thread::available_parallelism()
+                .map(|n| n.get() as u32)
+                .unwrap_or(4),
+        };
+        let result = crate::core::jvm_tuner::generate_tuned_args(&tuning_input);
+        tracing::info!(
+            "JVM tuner active: profile={:?}, generated {} flags",
+            result.profile,
+            result.args.len()
+        );
+        result.args
+    } else {
+        Vec::new()
+    };
+
+    // merge_args keeps the legacy ordering / dedup semantics while giving
+    // user extras the highest precedence: a user -XX flag shadows every
+    // engine flag with the same key so the JVM never sees conflicting flags.
+    jvm_args = crate::core::jvm_tuner::merge_args(
+        jvm_args,
+        &tuned_args,
+        instance_config.jvm_args_extra.as_deref().unwrap_or(&[]),
+    );
 
     // Parse game args
     let game_args = parse_game_arguments(&version_meta, &config)?;

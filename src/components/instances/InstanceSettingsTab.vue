@@ -19,8 +19,18 @@ interface InstanceConfig {
   javaPath?: string;
   maxMemory?: number;
   jvmArgsExtra?: string[];
+  jvmTunerMode?: string;
   windowBehavior?: string;
   showGameLog?: boolean;
+}
+
+interface JvmTuningPreview {
+  mode: string;
+  enabled: boolean;
+  globalEnabled: boolean;
+  profile: string;
+  args: string[];
+  javaMajor: number;
 }
 
 interface SystemMemoryInfo {
@@ -50,6 +60,7 @@ const settingsConfig = ref<InstanceConfig>({
   javaPath: '',
   maxMemory: 4096,
   jvmArgsExtra: [],
+  jvmTunerMode: 'followGlobal',
   windowBehavior: 'keep',
   showGameLog: false,
 });
@@ -62,6 +73,8 @@ const systemMemory = ref<SystemMemoryInfo>({
 });
 const installedJavas = ref<JavaInfo[]>([]);
 const isSavingConfig = ref(false);
+const jvmTuningPreview = ref<JvmTuningPreview | null>(null);
+const jvmArgsExtraText = ref('');
 
 const isSettingsInstanceRunning = computed(() => {
   return launchingInstances.value.has(props.instanceId) ||
@@ -82,6 +95,37 @@ const javaPathOptions = computed(() => [
     value: java.path
   }))
 ]);
+
+const jvmTunerModeOptions = computed(() => [
+  { label: t('instances.settingsDialog.jvmTunerFollowGlobal', 'Follow global setting'), value: 'followGlobal' },
+  { label: t('instances.settingsDialog.jvmTunerOn', 'Force enabled'), value: 'on' },
+  { label: t('instances.settingsDialog.jvmTunerOff', 'Force disabled'), value: 'off' },
+]);
+
+function jvmTunerProfileLabel(profile: string): string {
+  const keyByProfile: Record<string, string> = {
+    generationalZgc: 'instances.settingsDialog.jvmTunerProfileGenerationalZgc',
+    g1Large: 'instances.settingsDialog.jvmTunerProfileG1Large',
+    g1Small: 'instances.settingsDialog.jvmTunerProfileG1Small',
+    skipped: 'instances.settingsDialog.jvmTunerProfileSkipped',
+  };
+  const key = keyByProfile[profile];
+  return key ? t(key) : profile;
+}
+
+async function loadTuningPreview() {
+  if (!props.instanceId) return;
+  try {
+    jvmTuningPreview.value = await invoke<JvmTuningPreview>('get_jvm_tuning_preview', {
+      versionId: props.instanceId,
+    });
+  } catch (e) {
+    console.error('Failed to load JVM tuning preview:', e);
+    jvmTuningPreview.value = null;
+  }
+}
+
+watch(() => settingsConfig.value.jvmTunerMode, loadTuningPreview);
 
 async function loadData() {
   if (!props.instanceId) return;
@@ -110,20 +154,26 @@ async function loadData() {
       versionId: props.instanceId,
     });
     useGlobalMemory.value = !config.maxMemory;
+    const extraArgs = Array.isArray(config.jvmArgsExtra) ? config.jvmArgsExtra : [];
+    jvmArgsExtraText.value = extraArgs.join('\n');
     settingsConfig.value = {
       javaPath: config.javaPath || '',
       maxMemory: config.maxMemory || globalMaxMemory.value,
-      jvmArgsExtra: config.jvmArgsExtra || [],
+      jvmArgsExtra: extraArgs,
+      jvmTunerMode: config.jvmTunerMode || 'followGlobal',
       windowBehavior: config.windowBehavior || 'keep',
       showGameLog: config.showGameLog === true,
     };
+    await loadTuningPreview();
   } catch (e) {
     console.error('Failed to load instance config:', e);
     useGlobalMemory.value = true;
+    jvmArgsExtraText.value = '';
     settingsConfig.value = {
       javaPath: '',
       maxMemory: globalMaxMemory.value,
       jvmArgsExtra: [],
+      jvmTunerMode: 'followGlobal',
       windowBehavior: 'keep',
       showGameLog: false,
     };
@@ -135,12 +185,17 @@ watch(() => props.instanceId, loadData, { immediate: true });
 async function saveSettings() {
   isSavingConfig.value = true;
   try {
+    const parsedJvmArgs = jvmArgsExtraText.value
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    settingsConfig.value.jvmArgsExtra = parsedJvmArgs;
+
     const config = {
       javaPath: settingsConfig.value.javaPath || null,
       maxMemory: useGlobalMemory.value ? null : (settingsConfig.value.maxMemory || null),
-      jvmArgsExtra: settingsConfig.value.jvmArgsExtra?.length
-        ? settingsConfig.value.jvmArgsExtra
-        : null,
+      jvmArgsExtra: parsedJvmArgs.length > 0 ? parsedJvmArgs : null,
+      jvmTunerMode: settingsConfig.value.jvmTunerMode || 'followGlobal',
       windowBehavior: settingsConfig.value.windowBehavior || 'keep',
       showGameLog: settingsConfig.value.showGameLog,
     };
@@ -282,10 +337,46 @@ async function openInstanceSubfolder(subfolder: string) {
         <div class="space-y-2">
           <label class="text-sm font-medium">{{ t('instances.settingsDialog.jvmArgs') }}</label>
           <textarea
-            v-model="settingsConfig.jvmArgsExtra"
+            v-model="jvmArgsExtraText"
             placeholder="-XX:+UseG1GC&#10;-XX:+ParallelGCThreads=4"
             class="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-neutral-300 dark:border-zinc-700 rounded-md text-sm font-mono text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 h-24 resize-none"
           />
+        </div>
+
+        <!-- Smart JVM Tuning -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium">{{ t('instances.settingsDialog.jvmTuner') }}</label>
+          <DSelect
+            v-model="settingsConfig.jvmTunerMode"
+            :options="jvmTunerModeOptions"
+            class="w-full"
+          />
+          <p class="text-xs text-muted-foreground">
+            {{ t('instances.settingsDialog.jvmTunerDesc') }}
+          </p>
+          <div
+            v-if="jvmTuningPreview && jvmTuningPreview.enabled"
+            class="mt-1 p-3 rounded-lg bg-muted/50 border border-neutral-200 dark:border-zinc-800 space-y-2"
+          >
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-muted-foreground">{{ t('instances.settingsDialog.jvmTunerProfileTitle') }}</span>
+              <span class="font-medium text-primary">{{ jvmTunerProfileLabel(jvmTuningPreview.profile) }}</span>
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-muted-foreground">{{ t('instances.settingsDialog.jvmTunerJavaDetected') }}</span>
+              <span class="font-mono">{{ jvmTuningPreview.javaMajor > 0 ? `Java ${jvmTuningPreview.javaMajor}` : t('instances.settingsDialog.jvmTunerJavaUnknown') }}</span>
+            </div>
+            <div v-if="jvmTuningPreview.args.length">
+              <span class="text-xs text-muted-foreground">{{ t('instances.settingsDialog.jvmTunerArgsTitle') }}</span>
+              <div class="mt-1 space-y-0.5">
+                <code
+                  v-for="arg in jvmTuningPreview.args"
+                  :key="arg"
+                  class="block text-xs font-mono text-neutral-600 dark:text-zinc-400 break-all"
+                >{{ arg }}</code>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Window Behavior -->

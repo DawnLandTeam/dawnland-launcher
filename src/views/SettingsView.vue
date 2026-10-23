@@ -6,7 +6,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
 import DCombobox from "../components/ui/DCombobox.vue";
 import DSidebarTabs, { type SidebarTab } from '../components/ui/DSidebarTabs.vue';
-import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText, Edit, X, RefreshCw } from "@lucide/vue";
+import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText, Edit, X, RefreshCw, Gauge } from "@lucide/vue";
 import { useI18n } from 'vue-i18n';
 import DSelect from '../components/ui/DSelect.vue';
 import DButton from '../components/ui/DButton.vue';
@@ -169,6 +169,7 @@ const maxConcurrentDownloads = ref(32);
 const enableTelemetry = ref(false);
 const enableGlobalGameSettings = ref(false);
 const enableGlobalModCache = ref(true);
+const enableJvmTuner = ref(true);
 
 const showGlobalGameSettingsModal = ref(false);
 const globalGameSettingsContent = ref('');
@@ -234,6 +235,7 @@ async function loadLauncherSettings() {
     enableTelemetry.value = settings.enableTelemetry === true;
     enableGlobalGameSettings.value = settings.enableGlobalGameSettings === true;
     enableGlobalModCache.value = settings.enableGlobalModCache ?? true;
+    enableJvmTuner.value = settings.enableJvmTuner ?? true;
     if (settings.globalMaxMemory) {
       defaultMaxMemory.value = settings.globalMaxMemory;
     }
@@ -261,6 +263,7 @@ async function saveLauncherSettings() {
         enableTelemetry: enableTelemetry.value,
         enableGlobalGameSettings: enableGlobalGameSettings.value,
         enableGlobalModCache: enableGlobalModCache.value,
+        enableJvmTuner: enableJvmTuner.value,
         globalMaxMemory: defaultMaxMemory.value,
         aiConfig: {
           providerType: aiProviderType.value,
@@ -849,6 +852,21 @@ const clearLogs = () => {
             {{ $t('settings.general.cleanGlobalModCache') }}
           </DButton>
         </div>
+      </div>
+
+      <!-- Smart JVM Tuning -->
+      <div class="relative z-23 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div>
+          <h2 class="text-lg font-semibold flex items-center gap-2">
+            <Gauge :size="20" class="text-primary" />
+            {{ $t('settings.general.jvmTunerTitle') }}
+          </h2>
+          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.jvmTunerDesc') }}</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" v-model="enableJvmTuner" @change="saveLauncherSettings" class="sr-only peer">
+          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+        </label>
       </div>
 
       <!-- Download Source Settings -->

@@ -73,6 +73,8 @@ pub struct LauncherSettings {
     pub enable_global_game_settings: bool,
     #[serde(default = "default_enable_global_mod_cache")]
     pub enable_global_mod_cache: bool,
+    #[serde(default = "default_enable_jvm_tuner")]
+    pub enable_jvm_tuner: bool,
 }
 
 fn default_max_concurrent_downloads() -> u32 {
@@ -80,6 +82,10 @@ fn default_max_concurrent_downloads() -> u32 {
 }
 
 fn default_enable_global_mod_cache() -> bool {
+    true
+}
+
+fn default_enable_jvm_tuner() -> bool {
     true
 }
 
@@ -94,6 +100,7 @@ impl Default for LauncherSettings {
             ai_config: AiConfig::default(),
             enable_global_game_settings: false,
             enable_global_mod_cache: true,
+            enable_jvm_tuner: true,
         }
     }
 }
