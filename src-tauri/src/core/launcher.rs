@@ -210,6 +210,9 @@ pub struct InstanceConfig {
     pub java_path: Option<String>,
     pub max_memory: Option<u32>,
     pub jvm_args_extra: Option<Vec<String>>,
+    /// Per-instance JVM tuner override (follow_global / on / off).
+    #[serde(default)]
+    pub jvm_tuner_mode: crate::core::jvm_tuner::JvmTunerMode,
     #[serde(default = "default_window_behavior")]
     pub window_behavior: String,
     #[serde(default)]
@@ -241,28 +244,59 @@ pub struct InstanceConfig {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-impl InstanceConfig {
-    pub async fn ensure_installing(instance_dir: &std::path::Path, is_dependency: bool) -> Result<(), String> {
-        let config_path = instance_dir.join("dlml.json");
-        let mut config: Self = if config_path.exists() {
-            tokio::fs::read_to_string(&config_path)
-                .await
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default()
-        } else {
-            Self::default()
-        };
-        config.is_installing = true;
-        if is_dependency {
-            config.hidden = true;
-        }
-        let json = serde_json::to_string_pretty(&config)
-            .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
-        tokio::fs::write(&config_path, json)
+static INSTANCE_CONFIG_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// Atomically reads, mutates, and writes `dlml.json` in `instance_dir` under a
+/// process-wide lock so concurrent settings saves and installer completion
+/// steps never clobber each other.
+pub async fn update_instance_config<F>(
+    instance_dir: &Path,
+    mutate: F,
+) -> Result<InstanceConfig, String>
+where
+    F: FnOnce(&mut InstanceConfig),
+{
+    let _guard = INSTANCE_CONFIG_LOCK.lock().await;
+    if !instance_dir.exists() {
+        tokio::fs::create_dir_all(instance_dir)
             .await
-            .map_err(|e| format!("Failed to write instance config: {}", e))?;
-        Ok(())
+            .map_err(|e| format!("Failed to create instance directory: {}", e))?;
+    }
+    let config_path = instance_dir.join(CONFIG_FILENAME);
+    let mut config: InstanceConfig = if config_path.exists() {
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .unwrap_or_else(|_| "{}".to_string());
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        InstanceConfig::default()
+    };
+
+    mutate(&mut config);
+
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
+    tokio::fs::write(&config_path, json)
+        .await
+        .map_err(|e| format!("Failed to write instance config: {}", e))?;
+
+    Ok(config)
+}
+
+impl InstanceConfig {
+    pub async fn ensure_installing(
+        instance_dir: &std::path::Path,
+        is_dependency: bool,
+    ) -> Result<(), String> {
+        update_instance_config(instance_dir, |config| {
+            config.is_installing = true;
+            if is_dependency {
+                config.hidden = true;
+            }
+        })
+        .await
+        .map(|_| ())
     }
 }
 
@@ -281,6 +315,7 @@ const CONFIG_FILENAME: &str = "dlml.json";
 /// Get instance configuration
 #[tauri::command]
 pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, AppError> {
+    let _guard = INSTANCE_CONFIG_LOCK.lock().await;
     let base_dir = get_minecraft_base();
     let config_path = base_dir
         .join("versions")
@@ -311,42 +346,225 @@ pub async fn save_instance_config(
 ) -> Result<(), AppError> {
     let base_dir = get_minecraft_base();
     let version_dir = base_dir.join("versions").join(&version_id);
-    let config_path = version_dir.join(CONFIG_FILENAME);
 
-    // Create version directory if it doesn't exist
-    if !version_dir.exists() {
-        tokio::fs::create_dir_all(&version_dir)
-            .await
-            .map_err(|e| format!("Failed to create version directory: {}", e))?;
+    let final_config = update_instance_config(&version_dir, |final_config| {
+        // Update only the fields that are configurable via the settings UI
+        final_config.java_path = config.java_path;
+        final_config.max_memory = config.max_memory;
+        final_config.jvm_args_extra = config.jvm_args_extra;
+        final_config.jvm_tuner_mode = config.jvm_tuner_mode;
+        final_config.window_behavior = config.window_behavior;
+        final_config.show_game_log = config.show_game_log;
+        // We intentionally do NOT copy hidden, server_id, pack_version_id, pack_file_name, or is_installing here!
+    })
+    .await?;
+
+    tracing::info!("Saved config for {}: {:?}", version_id, final_config);
+    Ok(())
+}
+
+/// Preview payload consumed by the JVM tuner UI.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JvmTuningPreview {
+    pub mode: crate::core::jvm_tuner::JvmTunerMode,
+    pub enabled: bool,
+    pub global_enabled: bool,
+    pub profile: crate::core::jvm_tuner::GcProfile,
+    /// GC flags the tuner would inject for this instance (empty when skipped).
+    pub args: Vec<String>,
+    /// Resolved Java major version; `0` means "unknown / not scanned yet".
+    pub java_major: u32,
+}
+
+async fn resolve_instance_recommended_java(
+    base_dir: &Path,
+    version_id: &str,
+    instance_config: &InstanceConfig,
+) -> u32 {
+    let version_json_path = base_dir
+        .join("versions")
+        .join(version_id)
+        .join(format!("{}.json", version_id));
+    if let Ok(content) = tokio::fs::read_to_string(&version_json_path).await {
+        if let Ok(meta) = serde_json::from_str::<VersionMeta>(&content) {
+            if let Some(jv) = &meta.java_version {
+                return jv.major_version;
+            }
+            let mut current_inherits = meta.inherits_from.clone();
+            let mut last_mc_version = current_inherits
+                .clone()
+                .or_else(|| instance_config.mc_version.clone())
+                .unwrap_or_else(|| meta.id.clone());
+            while let Some(parent_id) = current_inherits {
+                last_mc_version = parent_id.clone();
+                let p1 = base_dir
+                    .join("versions")
+                    .join(&parent_id)
+                    .join(format!("{}.json", parent_id));
+                let p2 = crate::core::mojang::get_dawnland_cache()
+                    .join(&parent_id)
+                    .join(format!("{}.json", parent_id));
+                let parent_path = if p1.exists() { p1 } else { p2 };
+                if let Ok(p_content) = tokio::fs::read_to_string(&parent_path).await {
+                    if let Ok(p_meta) = serde_json::from_str::<VersionMeta>(&p_content) {
+                        if let Some(jv) = &p_meta.java_version {
+                            return jv.major_version;
+                        }
+                        current_inherits = p_meta.inherits_from;
+                        continue;
+                    }
+                }
+                break;
+            }
+            return crate::core::java::get_recommended_java(&last_mc_version);
+        }
     }
+    let fallback_mc = instance_config
+        .mc_version
+        .as_deref()
+        .unwrap_or(version_id);
+    crate::core::java::get_recommended_java(fallback_mc)
+}
 
-    // Read existing config so we don't overwrite backend-only fields (like server bindings or task states)
-    let mut final_config = if config_path.exists() {
+async fn probe_java_binary(java_executable: &str) -> Option<(u32, bool)> {
+    let output = crate::core::utils::create_hidden_command(java_executable)
+        .arg("-version")
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stderr_output = String::from_utf8_lossy(&output.stderr);
+    let major = crate::core::java::extract_major_version(&stderr_output);
+    if major == 0 {
+        return None;
+    }
+    let openj9 = crate::core::java::is_openj9(&stderr_output);
+    Some((major, openj9))
+}
+
+/// Preview the JVM tuning decision for an instance without launching the game.
+#[tauri::command]
+pub async fn get_jvm_tuning_preview(
+    version_id: String,
+    java_path: Option<String>,
+    max_memory: Option<u32>,
+    use_global_memory: Option<bool>,
+    jvm_tuner_mode: Option<crate::core::jvm_tuner::JvmTunerMode>,
+    jvm_args_extra: Option<Vec<String>>,
+) -> Result<JvmTuningPreview, AppError> {
+    let base_dir = get_minecraft_base();
+    let config_path = base_dir
+        .join("versions")
+        .join(&version_id)
+        .join(CONFIG_FILENAME);
+
+    let instance_config: InstanceConfig = if config_path.exists() {
         let content = tokio::fs::read_to_string(&config_path)
             .await
-            .unwrap_or_else(|_| "{}".to_string());
-        serde_json::from_str::<InstanceConfig>(&content).unwrap_or_default()
+            .map_err(|e| format!("Failed to read config: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?
     } else {
         InstanceConfig::default()
     };
 
-    // Update only the fields that are configurable via the settings UI
-    final_config.java_path = config.java_path;
-    final_config.max_memory = config.max_memory;
-    final_config.jvm_args_extra = config.jvm_args_extra;
-    final_config.window_behavior = config.window_behavior;
-    final_config.show_game_log = config.show_game_log;
-    // We intentionally do NOT copy hidden, server_id, pack_version_id, pack_file_name, or is_installing here!
+    let launcher_settings = crate::core::settings::get_launcher_settings().await;
+    let global_enabled = launcher_settings.enable_jvm_tuner;
+    let mode = jvm_tuner_mode.unwrap_or(instance_config.jvm_tuner_mode);
+    let enabled = mode.resolves_to(global_enabled);
 
-    let content = serde_json::to_string_pretty(&final_config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    let effective_java_path = match java_path {
+        Some(p) if !p.is_empty() => Some(p),
+        Some(_) => None,
+        None => instance_config.java_path.clone().filter(|p| !p.is_empty()),
+    };
 
-    tokio::fs::write(&config_path, content)
-        .await
-        .map_err(|e| format!("Failed to write config: {}", e))?;
+    let local_javas = match crate::core::java::get_cached_javas().await {
+        Some(javas) => javas,
+        None => crate::core::java::scan_local_javas()
+            .await
+            .unwrap_or_default(),
+    };
 
-    tracing::info!("Saved config for {}: {:?}", version_id, final_config);
-    Ok(())
+    let mut java_major: u32 = 0;
+    let mut is_openj9 = false;
+    if let Some(path) = &effective_java_path {
+        let wanted = path.to_lowercase();
+        if let Some(info) = local_javas.iter().find(|j| j.path.to_lowercase() == wanted) {
+            java_major = info.major_version;
+            is_openj9 = info.is_openj9;
+        } else if let Some((probed_major, probed_openj9)) = probe_java_binary(path).await {
+            java_major = probed_major;
+            is_openj9 = probed_openj9;
+        }
+    } else {
+        let recommended_major =
+            resolve_instance_recommended_java(base_dir, &version_id, &instance_config).await;
+        let matched_java = local_javas
+            .iter()
+            .find(|j| j.major_version == recommended_major)
+            .or_else(|| {
+                local_javas
+                    .iter()
+                    .find(|j| j.major_version > recommended_major)
+            });
+        if let Some(info) = matched_java {
+            java_major = info.major_version;
+            is_openj9 = info.is_openj9;
+        }
+    }
+
+    let resolved_instance_memory = match use_global_memory {
+        Some(true) => None,
+        Some(false) => max_memory.or(instance_config.max_memory),
+        None => max_memory.or(instance_config.max_memory),
+    };
+
+    let configured_max_mem = resolved_instance_memory
+        .or(launcher_settings.global_max_memory)
+        .map(|m| m.max(512))
+        .unwrap_or_else(get_recommended_max_memory);
+
+    let effective_extra = jvm_args_extra
+        .as_deref()
+        .or(instance_config.jvm_args_extra.as_deref())
+        .unwrap_or(&[]);
+    let effective_max_mem =
+        crate::core::jvm_tuner::resolve_effective_max_memory_mb(configured_max_mem, effective_extra);
+
+    let tuning_input = crate::core::jvm_tuner::TuningInput {
+        max_memory_mb: effective_max_mem,
+        java_major,
+        is_openj9,
+        cpu_cores: std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(4),
+    };
+
+    let result = if enabled {
+        let mut r = crate::core::jvm_tuner::generate_tuned_args(&tuning_input);
+        r.args = crate::core::jvm_tuner::merge_args(Vec::new(), &r.args, effective_extra)
+            .into_iter()
+            .filter(|a| !effective_extra.contains(a))
+            .collect();
+        r
+    } else {
+        crate::core::jvm_tuner::TuningResult {
+            profile: crate::core::jvm_tuner::GcProfile::Skipped,
+            args: Vec::new(),
+        }
+    };
+
+    Ok(JvmTuningPreview {
+        mode,
+        enabled,
+        global_enabled,
+        profile: result.profile,
+        args: result.args,
+        java_major,
+    })
 }
 
 // ============ Natives Extraction ============
@@ -1088,11 +1306,6 @@ pub fn parse_jvm_arguments(
         args.push("-Xms512M".to_string()); // Default 512MB initial
     }
 
-    // Add Djava.net.preferIPv4Stack=true for better compatibility
-    if !args.iter().any(|a| a.contains("preferIPv4Stack")) {
-        args.push("-Djava.net.preferIPv4Stack=true".to_string());
-    }
-
     tracing::debug!("Parsed JVM args: {:?}", args);
     Ok(args)
 }
@@ -1164,25 +1377,111 @@ pub fn parse_game_arguments(
 
     // Inject direct connection arguments if provided
     if let (Some(ip), Some(port)) = (&config.server_ip, config.server_port) {
+        let formatted_host = if ip.contains(':') && !ip.starts_with('[') {
+            format!("[{}]", ip)
+        } else {
+            ip.clone()
+        };
+        let supports_quick_play =
+            supports_quick_play_multiplayer(version_meta, &config.version_id);
+
         tracing::info!(
-            "Injecting direct connection arguments: --server {} --port {}",
-            ip,
-            port
+            "Injecting direct connection arguments for {}:{} (quickPlay={})",
+            formatted_host,
+            port,
+            supports_quick_play
         );
 
-        // For older versions (pre-1.20)
-        args.push("--server".to_string());
-        args.push(ip.clone());
-        args.push("--port".to_string());
-        args.push(port.to_string());
-
-        // For newer versions (1.20+) which removed --server and --port
-        args.push("--quickPlayMultiplayer".to_string());
-        args.push(format!("{}:{}", ip, port));
+        if supports_quick_play {
+            // Newer versions (1.20+) use --quickPlayMultiplayer
+            args.push("--quickPlayMultiplayer".to_string());
+            args.push(format!("{}:{}", formatted_host, port));
+        } else {
+            // Older versions (pre-1.20) use --server and --port
+            args.push("--server".to_string());
+            args.push(ip.clone());
+            args.push("--port".to_string());
+            args.push(port.to_string());
+        }
     }
 
     tracing::debug!("Parsed game args: {:?}", args);
     Ok(args)
+}
+
+fn parse_mc_version_quick_play(ver: &str) -> Option<bool> {
+    for token in ver.split(|c: char| c == '-' || c.is_whitespace()) {
+        if let Some(rest) = token.strip_prefix("1.") {
+            let minor_str = rest
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+                .unwrap_or("");
+            if let Ok(minor) = minor_str.parse::<u32>() {
+                return Some(minor >= 20);
+            }
+        }
+        // Snapshot format e.g. 23w14a (Quick Play was added in 23w14a)
+        if token.len() >= 5 && token.as_bytes().get(2) == Some(&b'w') {
+            if let (Ok(yy), Ok(ww)) = (token[..2].parse::<u32>(), token[3..5].parse::<u32>()) {
+                return Some(yy > 23 || (yy == 23 && ww >= 14));
+            }
+        }
+        // Year-based versioning e.g. 26.1
+        if let Some((major_s, minor_s)) = token.split_once('.') {
+            if minor_s.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                if let Ok(major) = major_s.parse::<u32>() {
+                    if major >= 25 {
+                        return Some(true);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn supports_quick_play_multiplayer(version_meta: &VersionMeta, version_id: &str) -> bool {
+    if version_meta
+        .arguments
+        .as_ref()
+        .and_then(|a| a.game.as_ref())
+        .is_some_and(|g| g.to_string().contains("quickPlayMultiplayer"))
+    {
+        return true;
+    }
+    if version_meta.minecraft_arguments.is_some() && version_meta.arguments.is_none() {
+        return false;
+    }
+    if version_meta
+        .java_version
+        .as_ref()
+        .is_some_and(|j| j.major_version >= 21)
+    {
+        return true;
+    }
+    for candidate in [
+        version_meta.inherits_from.as_deref(),
+        version_meta.asset_index.as_ref().map(|a| a.id.as_str()),
+        Some(version_meta.id.as_str()),
+        Some(version_id),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(supported) = parse_mc_version_quick_play(candidate) {
+            return supported;
+        }
+    }
+    if let Some(ts) = version_meta
+        .release_time
+        .as_deref()
+        .or(version_meta.time.as_deref())
+    {
+        if ts.len() >= 10 && &ts[..10] >= "2023-04-05" {
+            return true;
+        }
+    }
+    false
 }
 
 /// Parse the argument list which can contain strings or objects with rules.
@@ -1926,6 +2225,12 @@ pub async fn launch_instance(
         if version_meta.java_version.is_none() {
             version_meta.java_version = parent_meta.java_version;
         }
+        if version_meta.release_time.is_none() {
+            version_meta.release_time = parent_meta.release_time;
+        }
+        if version_meta.time.is_none() {
+            version_meta.time = parent_meta.time;
+        }
 
         // Merge libraries: parent libraries + current libraries
         let mut merged_libs = parent_meta.libraries.clone().unwrap_or_default();
@@ -2302,12 +2607,19 @@ pub async fn launch_instance(
         }
     }
 
-    // Apply custom max memory if configured, otherwise use recommended default
-    let max_mem = instance_config
+    // Apply custom max memory if configured, otherwise use global setting or recommended default
+    let launcher_settings = crate::core::settings::get_launcher_settings().await;
+    let configured_max_mem = instance_config
         .max_memory
+        .or(launcher_settings.global_max_memory)
         .map(|m| m.max(512)) // At least 512MB
         .unwrap_or_else(get_recommended_max_memory);
-    let min_mem = max_mem / 2;
+    let user_extra_args = instance_config.jvm_args_extra.as_deref().unwrap_or(&[]);
+    let max_mem = crate::core::jvm_tuner::resolve_effective_max_memory_mb(
+        configured_max_mem,
+        user_extra_args,
+    );
+    let min_mem = (max_mem / 4).clamp(512, 2048).min(max_mem);
 
     // Remove any existing -Xmx/-Xms flags and insert our custom ones at the front
     jvm_args.retain(|arg| !arg.starts_with("-Xmx") && !arg.starts_with("-Xms"));
@@ -2321,14 +2633,43 @@ pub async fn launch_instance(
         get_recommended_max_memory()
     );
 
-    // Apply extra JVM arguments if configured
-    if let Some(extra_args) = &instance_config.jvm_args_extra {
-        for arg in extra_args {
-            if !jvm_args.contains(arg) {
-                jvm_args.push(arg.clone());
-            }
-        }
-    }
+    // ========== Smart JVM Tuning ==========
+    // The strategy (see core::jvm_tuner) only depends on the resolved heap
+    // size, the runtime-detected Java major version, the CPU core count and
+    // the JVM vendor - all of which are already available here.
+    let global_tuner_enabled = launcher_settings.enable_jvm_tuner;
+    let tuner_enabled = instance_config
+        .jvm_tuner_mode
+        .resolves_to(global_tuner_enabled);
+
+    let tuned_args = if tuner_enabled {
+        let tuning_input = crate::core::jvm_tuner::TuningInput {
+            max_memory_mb: max_mem,
+            java_major: java_major_version,
+            is_openj9,
+            cpu_cores: std::thread::available_parallelism()
+                .map(|n| n.get() as u32)
+                .unwrap_or(4),
+        };
+        let result = crate::core::jvm_tuner::generate_tuned_args(&tuning_input);
+        tracing::info!(
+            "JVM tuner active: profile={:?}, generated {} flags",
+            result.profile,
+            result.args.len()
+        );
+        result.args
+    } else {
+        Vec::new()
+    };
+
+    // merge_args keeps the legacy ordering / dedup semantics while giving
+    // user extras the highest precedence: a user -XX flag shadows every
+    // engine flag with the same key so the JVM never sees conflicting flags.
+    jvm_args = crate::core::jvm_tuner::merge_args(
+        jvm_args,
+        &tuned_args,
+        user_extra_args,
+    );
 
     // Parse game args
     let game_args = parse_game_arguments(&version_meta, &config)?;

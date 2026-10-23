@@ -25,4 +25,5 @@ pub mod security;
 pub mod settings;
 pub mod ai;
 pub mod hash;
+pub mod jvm_tuner;
 pub mod statistics;

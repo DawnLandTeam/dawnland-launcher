@@ -88,6 +88,14 @@ pub struct JavaInfo {
     pub parsed_version: Vec<u32>,
 }
 
+/// Returns the cached Java list without triggering a scan.
+/// Used by best-effort consumers (e.g. the JVM tuning preview) that must stay
+/// cheap; `None` simply means "not scanned yet in this session".
+pub async fn get_cached_javas() -> Option<Vec<JavaInfo>> {
+    let cache = CACHED_JAVAS.lock().await;
+    cache.as_ref().cloned()
+}
+
 /// Scan all locally installed Java versions.
 #[tauri::command]
 pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {

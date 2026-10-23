@@ -182,8 +182,10 @@ impl TaskContext {
 }
 
 // A generic trait for any executable task
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait ExecutableTask: Send + Sync {
+    #[allow(clippy::double_must_use)]
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError>;
 }
 

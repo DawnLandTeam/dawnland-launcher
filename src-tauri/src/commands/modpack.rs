@@ -41,25 +41,13 @@ async fn protect_existing_instance(instance_dir: &std::path::Path) {
     if !config_path.exists() {
         return;
     }
-    
-    match tokio::fs::read_to_string(&config_path).await {
-        Ok(content) => {
-            match serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
-                Ok(mut config) => {
-                    config.is_updating = true;
-                    match serde_json::to_string_pretty(&config) {
-                        Ok(json) => {
-                            if let Err(e) = tokio::fs::write(&config_path, json).await {
-                                tracing::warn!("Failed to write dlml.json while protecting instance: {}", e);
-                            }
-                        }
-                        Err(e) => tracing::warn!("Failed to serialize dlml.json while protecting instance: {}", e),
-                    }
-                }
-                Err(e) => tracing::warn!("Failed to parse dlml.json while protecting instance: {}", e),
-            }
-        }
-        Err(e) => tracing::warn!("Failed to read dlml.json while protecting instance: {}", e),
+
+    if let Err(e) = crate::core::launcher::update_instance_config(instance_dir, |config| {
+        config.is_updating = true;
+    })
+    .await
+    {
+        tracing::warn!("Failed to update dlml.json while protecting instance: {}", e);
     }
 }
 
@@ -389,29 +377,26 @@ impl ExecutableTask for InstallModpackTask {
             };
 
         // Early save to dlml.json so UI shows correct info while downloading
-        let config_path = instance_dir.join("dlml.json");
-        if let Ok(config_content) = tokio::fs::read_to_string(&config_path).await {
-            if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&config_content) {
+        if instance_dir.join("dlml.json").exists() {
+            let loader_enum = if loader.to_lowercase().contains("forge") && !loader.to_lowercase().contains("neoforge") {
+                Some(crate::models::instance::LoaderType::Forge)
+            } else if loader.to_lowercase().contains("fabric") {
+                Some(crate::models::instance::LoaderType::Fabric)
+            } else if loader.to_lowercase().contains("neoforge") {
+                Some(crate::models::instance::LoaderType::NeoForge)
+            } else if loader.to_lowercase().contains("quilt") {
+                Some(crate::models::instance::LoaderType::Quilt)
+            } else {
+                Some(crate::models::instance::LoaderType::Vanilla)
+            };
+            let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
                 config.mc_version = Some(mc_version.clone());
-                let loader_enum = if loader.to_lowercase().contains("forge") && !loader.to_lowercase().contains("neoforge") {
-                    Some(crate::models::instance::LoaderType::Forge)
-                } else if loader.to_lowercase().contains("fabric") {
-                    Some(crate::models::instance::LoaderType::Fabric)
-                } else if loader.to_lowercase().contains("neoforge") {
-                    Some(crate::models::instance::LoaderType::NeoForge)
-                } else if loader.to_lowercase().contains("quilt") {
-                    Some(crate::models::instance::LoaderType::Quilt)
-                } else {
-                    Some(crate::models::instance::LoaderType::Vanilla)
-                };
                 config.loader_type = loader_enum;
                 config.modpack_project_id = project_id.clone();
                 config.modpack_type = Some(modpack_type_str.to_string());
                 config.modpack_version = Some(modpack_version.clone());
-                if let Ok(json) = serde_json::to_string_pretty(&config) {
-                    let _ = tokio::fs::write(&config_path, json).await;
-                }
-            }
+            })
+            .await;
         }
 
         // 3. Setup Instance
@@ -637,19 +622,12 @@ impl ExecutableTask for InstallModpackTask {
         // 6. Cleanup Temp
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
-        let config_path = instance_dir.join("dlml.json");
-        if config_path.exists() {
-            if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-                if let Ok(mut config) =
-                    serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
-                {
-                    config.is_installing = false;
-                    config.is_updating = false;
-                    if let Ok(json_str) = serde_json::to_string_pretty(&config) {
-                        let _ = tokio::fs::write(&config_path, json_str).await;
-                    }
-                }
-            }
+        if instance_dir.join("dlml.json").exists() {
+            let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
+                config.is_installing = false;
+                config.is_updating = false;
+            })
+            .await;
         }
 
         crate::core::launcher::apply_global_game_settings(&instance_dir).await;

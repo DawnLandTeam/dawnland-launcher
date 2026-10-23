@@ -460,30 +460,15 @@ impl ExecutableTask for InstallFabricTask {
                 "Installation cancelled by user".to_string(),
             ));
         }
-        // Step 4: Create default dlml.json config
-        let config_path = version_dir.join("dlml.json");
-        let mut config: crate::core::launcher::InstanceConfig = if config_path.exists() {
-            let content = tokio::fs::read_to_string(&config_path)
-                .await
-                .unwrap_or_else(|_| "{}".to_string());
-            serde_json::from_str(&content).unwrap_or_default()
-        } else {
-            crate::core::launcher::InstanceConfig::default()
-        };
+        // Step 4: Update dlml.json config atomically
+        crate::core::launcher::update_instance_config(&version_dir, |config| {
+            config.hidden = is_dependency.unwrap_or(false);
+            config.is_installing = false;
+        })
+        .await
+        .map_err(TaskError::ExecutionError)?;
 
-        config.hidden = is_dependency.unwrap_or(false);
-        config.is_installing = false;
-        let config_json = serde_json::to_string_pretty(&config).map_err(|e| {
-            TaskError::ExecutionError(format!("Failed to serialize instance config: {}", e))
-        })?;
-
-        tokio::fs::write(&config_path, config_json)
-            .await
-            .map_err(|e| {
-                TaskError::ExecutionError(format!("Failed to write instance config: {}", e))
-            })?;
-
-        tracing::info!("Created instance config at: {:?}", config_path);
+        tracing::info!("Updated instance config in: {:?}", version_dir);
 
         if !is_dependency.unwrap_or(false) {
             crate::core::launcher::apply_global_game_settings(&version_dir).await;

@@ -29,6 +29,7 @@ pub async fn parse_json_response<T: serde::de::DeserializeOwned>(
 
 /// Compare two version strings numerically (segment by segment)
 /// e.g., "0.9.1" < "0.10.1" < "0.19.1"
+#[allow(clippy::double_must_use)]
 #[async_recursion::async_recursion]
 pub async fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     tokio::fs::create_dir_all(dst).await?;
@@ -97,6 +98,7 @@ pub fn create_hidden_std_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::
     std_cmd
 }
 
+#[allow(clippy::double_must_use)]
 #[async_recursion::async_recursion]
 pub async fn flatten_instance_json_recursive(
     parent_id: &str,
