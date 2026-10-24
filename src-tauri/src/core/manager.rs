@@ -40,6 +40,8 @@ pub struct InstanceItem {
     pub is_installing: bool,
     /// Whether this instance is currently being updated
     pub is_updating: bool,
+    /// Absolute path of the cached instance icon (optional)
+    pub icon_path: Option<String>,
 }
 
 #[tauri::command]
@@ -100,6 +102,7 @@ pub async fn get_instance_datapack_dir(instance_id: String, world_name: String) 
 /// Scan all locally installed instances from the versions directory.
 #[tauri::command]
 pub async fn scan_installed_instances(
+    app: tauri::AppHandle,
     task_manager: tauri::State<'_, crate::core::task::TaskManager>,
 ) -> Result<Vec<InstanceItem>, String> {
     tracing::info!("Scanning installed instances...");
@@ -113,6 +116,7 @@ pub async fn scan_installed_instances(
     }
 
     let mut instances = Vec::new();
+    let mut icon_backfill = Vec::new();
 
     let mut entries = tokio::fs::read_dir(&versions_dir)
         .await
@@ -140,6 +144,7 @@ pub async fn scan_installed_instances(
                 let mut server_id = None;
                 let mut pack_version_id = None;
                 let mut pack_file_name = None;
+                let mut icon_name = None;
 
                 if config_path.exists() {
                     if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
@@ -152,9 +157,13 @@ pub async fn scan_installed_instances(
                             server_id = config.server_id;
                             pack_version_id = config.pack_version_id;
                             pack_file_name = config.pack_file_name;
+                            icon_name = config.icon;
                         }
                     }
                 }
+
+                let icon_path =
+                    crate::core::instance_icon::resolve_icon_path(&path, icon_name.as_deref()).await;
 
                 let mut has_valid_task = false;
                 for task in &tasks {
@@ -281,6 +290,20 @@ pub async fn scan_installed_instances(
                             }
                         }
 
+                        // Queue a background icon back-fill for modpack instances missing one
+                        if icon_path.is_none() && !is_installing && !is_updating {
+                            if let (Some(mp_type), Some(pid)) = (&modpack_type, &modpack_project_id) {
+                                if !pid.trim().is_empty() {
+                                    icon_backfill.push(crate::core::instance_icon::IconBackfillCandidate {
+                                        instance_id: id.clone(),
+                                        instance_dir: path.clone(),
+                                        modpack_type: mp_type.clone(),
+                                        project_id: pid.clone(),
+                                    });
+                                }
+                            }
+                        }
+
                         instances.push(InstanceItem {
                             id: id.clone(),
                             name: id.clone(),
@@ -294,6 +317,7 @@ pub async fn scan_installed_instances(
                             pack_file_name,
                             is_installing,
                             is_updating,
+                            icon_path: icon_path.map(|p| p.to_string_lossy().to_string()),
                         });
                     }
                     Err(e) => {
@@ -312,6 +336,7 @@ pub async fn scan_installed_instances(
                             pack_file_name,
                             is_installing,
                             is_updating,
+                            icon_path: icon_path.map(|p| p.to_string_lossy().to_string()),
                         });
                     }
                 }
@@ -321,6 +346,8 @@ pub async fn scan_installed_instances(
 
     // Sort by name
     instances.sort_by(|a, b| a.name.cmp(&b.name));
+
+    crate::core::instance_icon::schedule_icon_backfill(app, icon_backfill);
 
     tracing::info!("Found {} installed instances", instances.len());
     Ok(instances)
@@ -533,6 +560,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
     let mut pack_version_id = None;
     let mut pack_file_name = None;
     let mut is_installing = false;
+    let mut icon_name = None;
 
     if config_path.exists() {
         if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
@@ -543,6 +571,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
                 pack_version_id = config.pack_version_id;
                 pack_file_name = config.pack_file_name;
                 is_installing = config.is_installing;
+                icon_name = config.icon.clone();
                 
                 // Override metadata with dlml.json if available
                 if let Some(mc) = &config.mc_version {
@@ -594,6 +623,11 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         }
     }
 
+    let instance_dir = base_dir.join("versions").join(&version_id);
+    let icon_path = crate::core::instance_icon::resolve_icon_path(&instance_dir, icon_name.as_deref())
+        .await
+        .map(|p| p.to_string_lossy().to_string());
+
     Ok(InstanceItem {
         id: version_id.clone(),
         name: version_id,
@@ -607,6 +641,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         pack_file_name,
         is_installing,
         is_updating: false,
+        icon_path,
     })
 }
 

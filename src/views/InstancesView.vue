@@ -13,6 +13,8 @@ import { useInstances } from "../composables/useInstances";
 import { useStatistics } from "../composables/useStatistics";
 import { trackEvent } from "../utils/analytics";
 import { toast } from '../composables/useToast';
+import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
+import InstanceIcon from "../components/InstanceIcon.vue";
 
 // Types
 interface InstanceItem {
@@ -25,6 +27,7 @@ interface InstanceItem {
   modpackProjectId?: string;
   isInstalling?: boolean;
   isUpdating?: boolean;
+  iconPath?: string | null;
 }
 
 // Router — deep-link support
@@ -92,6 +95,12 @@ const handleTaskAdded = () => {
 useTaskStatusReload(async () => {
   await loadInstances();
   await fetchAllStats();
+});
+
+// Patch icons cached in the background without rescanning all instances
+useInstanceIconUpdates(({ instanceId, iconPath }) => {
+  const target = installedInstances.value.find((i) => i.id === instanceId);
+  if (target) target.iconPath = iconPath;
 });
 
 const handleManageQuery = async () => {
@@ -304,9 +313,11 @@ function normalizedModpackVersion(version: string): string {
           <!-- Top section -->
           <div class="flex-1 p-4 flex items-start justify-between gap-2 min-h-0">
             <div class="min-w-0 flex items-start gap-3 flex-1">
-              <div class="mt-0.5 w-10 h-10 shrink-0 bg-primary/10 flex items-center justify-center rounded-xl text-primary">
-                <Package class="h-5 w-5" />
-              </div>
+              <InstanceIcon
+                :icon-path="instance.iconPath"
+                :alt="instance.name"
+                class="mt-0.5 w-10 h-10 shrink-0 rounded-xl"
+              />
               <div class="min-w-0 flex-1 flex flex-col">
                 <h3 class="font-bold truncate text-[15px]" :title="instance.name">{{ instance.name }}</h3>
                 <div class="flex items-center gap-1.5 mt-1.5 flex-wrap overflow-hidden max-h-[40px]">

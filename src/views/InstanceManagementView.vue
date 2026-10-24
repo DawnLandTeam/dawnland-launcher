@@ -16,6 +16,8 @@ import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
 import { getErrorMessage } from "../utils/error";
 
 import { useInstances } from "../composables/useInstances";
+import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
+import InstanceIcon from "../components/InstanceIcon.vue";
 
 import InstanceSettingsTab from "../components/instances/InstanceSettingsTab.vue";
 import InstanceExportModal from "../components/instances/InstanceExportModal.vue";
@@ -38,6 +40,12 @@ const { instances, fetchInstances } = useInstances();
 
 const instanceId = computed(() => route.params.id as string);
 const currentInstance = computed(() => instances.value.find(i => i.id === instanceId.value));
+
+// Patch icons cached in the background without rescanning all instances
+useInstanceIconUpdates(({ instanceId: updatedId, iconPath }) => {
+  const target = instances.value.find(i => i.id === updatedId);
+  if (target) target.iconPath = iconPath;
+});
 
 const tabs = [
   { id: 'settings', name: 'instances.settings', icon: Settings }, // ungrouped
@@ -114,26 +122,39 @@ watch(instanceId, async (newId) => {
     
     <template v-else>
       <!-- Left Sidebar Area -->
-      <div class="flex flex-col gap-2">
-        <button
+      <div class="flex flex-col gap-2 w-56 shrink-0">
+        <!-- Back + Instance Header (Combined to keep sidebar fits without vertical scrollbar) -->
+        <div class="flex items-center gap-2.5 rounded-xl bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md px-2.5 py-2 shadow-sm border border-neutral-200/50 dark:border-zinc-800/50 w-full">
+          <button
             @click="router.push('/instances')"
-            class="flex items-center gap-2 rounded-xl bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md px-4 py-3 text-sm font-medium hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-colors shadow-sm border border-neutral-200/50 dark:border-zinc-800/50 w-56 text-left justify-start text-neutral-600 dark:text-neutral-400"
-        >
-          <ArrowLeft class="h-4 w-4 shrink-0" />
-          {{ t('common.back') }}
-        </button>
+            :title="t('common.back')"
+            class="p-1.5 rounded-lg hover:bg-neutral-200/60 dark:hover:bg-zinc-800/60 transition-colors text-neutral-600 dark:text-neutral-400 shrink-0"
+          >
+            <ArrowLeft class="h-4 w-4" />
+          </button>
+          <InstanceIcon
+            :icon-path="currentInstance.iconPath"
+            :alt="currentInstance.name"
+            class="w-7 h-7 shrink-0 rounded-md"
+          />
+          <div class="min-w-0 flex-1 flex flex-col">
+            <span class="font-bold text-xs truncate leading-tight" :title="currentInstance.name">{{ currentInstance.name }}</span>
+            <span class="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{{ currentInstance.mcVersion }} · {{ currentInstance.loaderType }}</span>
+          </div>
+        </div>
         
-        <div class="flex-1 min-h-0 overflow-y-auto">
+        <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           <DSidebarTabs
             :tabs="translatedTabs"
             :modelValue="activeTab"
             @update:modelValue="switchTab"
+            class="!w-full"
           />
         </div>
 
         <button
             @click="showExportModal = true"
-            class="flex items-center gap-2 rounded-xl bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md px-4 py-3 text-sm font-medium hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors shadow-sm border border-neutral-200/50 dark:border-zinc-800/50 w-56 text-left justify-start text-neutral-600 dark:text-neutral-400 mt-2"
+            class="flex items-center gap-2 rounded-xl bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md px-4 py-3 text-sm font-medium hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors shadow-sm border border-neutral-200/50 dark:border-zinc-800/50 w-full text-left justify-start text-neutral-600 dark:text-neutral-400"
         >
           <Share2 class="h-4 w-4 shrink-0" />
           {{ t('instances.export.title', 'Export Modpack') }}

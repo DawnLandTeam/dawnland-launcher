@@ -284,11 +284,53 @@ where
     Ok(config)
 }
 
+/// Atomically reads `dlml.json` under the process-wide lock, verifies `predicate(&config)`,
+/// and only mutates + writes if the predicate holds (and `dlml.json` still exists).
+pub async fn update_instance_config_if<P, F>(
+    instance_dir: &Path,
+    predicate: P,
+    mutate: F,
+) -> Result<InstanceConfig, String>
+where
+    P: FnOnce(&InstanceConfig) -> bool,
+    F: FnOnce(&mut InstanceConfig),
+{
+    let _guard = INSTANCE_CONFIG_LOCK.lock().await;
+    let config_path = instance_dir.join(CONFIG_FILENAME);
+    if !config_path.exists() {
+        return Err("Instance config no longer exists".to_string());
+    }
+    let content = tokio::fs::read_to_string(&config_path)
+        .await
+        .map_err(|e| format!("Failed to read instance config: {}", e))?;
+    let mut config: InstanceConfig = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse instance config: {}", e))?;
+
+    if !predicate(&config) {
+        return Err("Instance config predicate rejected update".to_string());
+    }
+
+    mutate(&mut config);
+
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
+    tokio::fs::write(&config_path, json)
+        .await
+        .map_err(|e| format!("Failed to write instance config: {}", e))?;
+
+    Ok(config)
+}
+
 impl InstanceConfig {
     pub async fn ensure_installing(
         instance_dir: &std::path::Path,
         is_dependency: bool,
     ) -> Result<(), String> {
+        if !is_dependency {
+            if let Some(instance_id) = instance_dir.file_name().and_then(|n| n.to_str()) {
+                crate::core::instance_icon::advance_instance_icon_generation(instance_id, None, None);
+            }
+        }
         update_instance_config(instance_dir, |config| {
             config.is_installing = true;
             if is_dependency {

@@ -399,6 +399,30 @@ impl ExecutableTask for InstallModpackTask {
             .await;
         }
 
+        // Advance the icon generation for this instance so any earlier in-flight icon job
+        // is invalidated, then spawn the background icon fetch when a project ID is present.
+        let clean_pid = project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty());
+        let icon_generation = crate::core::instance_icon::advance_instance_icon_generation(
+            instance_name,
+            Some(&modpack_type_str),
+            clean_pid,
+        );
+        if let Some(pid) = clean_pid {
+            crate::core::instance_icon::spawn_cache_modpack_icon(
+                ctx.app_handle.clone(),
+                crate::core::instance_icon::IconBackfillCandidate {
+                    instance_id: instance_name.clone(),
+                    instance_dir: instance_dir.clone(),
+                    modpack_type: modpack_type_str.clone(),
+                    project_id: pid.to_string(),
+                },
+                icon_generation,
+            );
+        }
+
         // 3. Setup Instance
         let ctx_vanilla_forge = ctx.clone();
         let mc_version_clone = mc_version.clone();
@@ -1004,6 +1028,11 @@ pub async fn install_modpack(
     }
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
+    crate::core::instance_icon::advance_instance_icon_generation(
+        &instance_name,
+        None,
+        project_id.as_deref(),
+    );
     if !is_update {
         let pre_config = crate::core::launcher::InstanceConfig {
             is_installing: true,
@@ -1054,6 +1083,11 @@ pub async fn download_and_install_online_modpack(
     let instance_dir = base_dir.join("versions").join(&instance_name);
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
+    crate::core::instance_icon::advance_instance_icon_generation(
+        &instance_name,
+        None,
+        project_id.as_deref(),
+    );
     if !is_update {
         let pre_config = crate::core::launcher::InstanceConfig {
             is_installing: true,

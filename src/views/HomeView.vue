@@ -14,7 +14,6 @@ import {
   X,
   Gamepad2,
   ChevronDown,
-  Package,
   MonitorCheck,
   WifiOff,
   Square,
@@ -24,10 +23,12 @@ import {
 } from "@lucide/vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
+import InstanceIcon from "../components/InstanceIcon.vue";
 import { useI18n } from "vue-i18n";
 import { fetchApi } from "../utils/api";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { useStatistics } from "../composables/useStatistics";
+import { applyCachedInstanceIcons, useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
 // Types
 interface InstanceItem {
   id: string;
@@ -42,6 +43,7 @@ interface InstanceItem {
   packFileName?: string;
   isInstalling?: boolean;
   isUpdating?: boolean;
+  iconPath?: string | null;
 }
 
 interface GameLog {
@@ -345,6 +347,12 @@ onUnmounted(() => {
   window.removeEventListener('task-added', handleTaskAdded);
 });
 
+// Patch icons cached in the background without rescanning all instances
+useInstanceIconUpdates(({ instanceId, iconPath }) => {
+  const target = installedInstances.value.find((i) => i.id === instanceId);
+  if (target) target.iconPath = iconPath;
+});
+
 onActivated(() => {
   // Refresh instances when returning to HomeView
   loadInstances();
@@ -445,7 +453,9 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
 // ---------------------------------------------------------------------------
 async function loadInstances() {
   try {
-    const instances = await invoke<InstanceItem[]>("scan_installed_instances");
+    const instances = applyCachedInstanceIcons(
+      await invoke<InstanceItem[]>("scan_installed_instances"),
+    );
     installedInstances.value = instances;
     // Auto-select first non-installing instance if none selected
     if (!selectedInstanceId.value && instances.length > 0) {
@@ -744,7 +754,7 @@ function loaderBadgeClass(loaderType: string): string {
                 <template #trigger>
                   <button class="w-full flex items-center justify-between px-3 py-2.5 bg-white/40 dark:bg-zinc-800/40 border border-white/20 rounded-xl hover:border-primary/50 transition-colors">
                     <div v-if="selectedInstance" class="flex items-center gap-2 overflow-hidden flex-1">
-                      <Package class="h-5 w-5 text-primary shrink-0" />
+                      <InstanceIcon :icon-path="selectedInstance.iconPath" :alt="selectedInstance.name" class="h-8 w-8 rounded-md shrink-0" />
                       <div class="flex flex-col text-left truncate flex-1">
                         <span class="font-medium truncate">{{ selectedInstance.name }}</span>
                         <span v-if="statsError" class="text-[10px] text-red-500 truncate flex items-center gap-1">
@@ -762,7 +772,7 @@ function loaderBadgeClass(loaderType: string): string {
                 </template>
                 <div class="max-h-60 overflow-y-auto">
                   <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="!(instance.isInstalling || instance.isUpdating) && (selectedInstanceId = instance.id)" class="flex items-center gap-3 p-2 rounded-lg" :class="(instance.isInstalling || instance.isUpdating) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'" :disabled="instance.isInstalling || instance.isUpdating">
-                    <Package class="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <InstanceIcon :icon-path="instance.iconPath" :alt="instance.name" class="h-6 w-6 rounded shrink-0" />
                     <span class="truncate font-medium flex-1 text-left">{{ instance.name }}</span>
                     <Loader2 v-if="instance.isInstalling || instance.isUpdating" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
                   </DropdownMenuItem>
