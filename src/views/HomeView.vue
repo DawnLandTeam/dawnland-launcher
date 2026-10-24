@@ -28,7 +28,7 @@ import { useI18n } from "vue-i18n";
 import { fetchApi } from "../utils/api";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { useStatistics } from "../composables/useStatistics";
-import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
+import { applyCachedInstanceIcons, useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
 // Types
 interface InstanceItem {
   id: string;
@@ -453,7 +453,9 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
 // ---------------------------------------------------------------------------
 async function loadInstances() {
   try {
-    const instances = await invoke<InstanceItem[]>("scan_installed_instances");
+    const instances = applyCachedInstanceIcons(
+      await invoke<InstanceItem[]>("scan_installed_instances"),
+    );
     installedInstances.value = instances;
     // Auto-select first non-installing instance if none selected
     if (!selectedInstanceId.value && instances.length > 0) {
