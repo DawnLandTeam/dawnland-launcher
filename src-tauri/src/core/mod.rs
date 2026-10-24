@@ -4,6 +4,7 @@ pub mod curseforge;
 pub mod fabric;
 pub mod forge;
 pub mod fs_utils;
+pub mod instance_icon;
 pub mod java;
 pub mod launcher;
 pub mod manager;

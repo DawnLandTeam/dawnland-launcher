@@ -399,6 +399,19 @@ impl ExecutableTask for InstallModpackTask {
             .await;
         }
 
+        // Cache the modpack icon in the background; failures never affect installation.
+        if let Some(pid) = project_id.as_ref().filter(|p| !p.trim().is_empty()) {
+            crate::core::instance_icon::spawn_cache_modpack_icon(
+                ctx.app_handle.clone(),
+                crate::core::instance_icon::IconBackfillCandidate {
+                    instance_id: instance_name.clone(),
+                    instance_dir: instance_dir.clone(),
+                    modpack_type: modpack_type_str.clone(),
+                    project_id: pid.clone(),
+                },
+            );
+        }
+
         // 3. Setup Instance
         let ctx_vanilla_forge = ctx.clone();
         let mc_version_clone = mc_version.clone();
