@@ -184,12 +184,20 @@ pub struct LaunchConfig {
     pub game_args: Vec<String>,
     pub server_ip: Option<String>,
     pub server_port: Option<u16>,
+    #[serde(
+        default = "default_window_width",
+        deserialize_with = "deserialize_window_width"
+    )]
     pub window_width: u32,
+    #[serde(
+        default = "default_window_height",
+        deserialize_with = "deserialize_window_height"
+    )]
     pub window_height: u32,
 }
 
 /// Instance-specific configuration stored in versions/<id>/dlml.json
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -217,9 +225,15 @@ pub struct InstanceConfig {
     /// Per-instance JVM tuner override (follow_global / on / off).
     #[serde(default)]
     pub jvm_tuner_mode: crate::core::jvm_tuner::JvmTunerMode,
-    #[serde(default = "default_window_width")]
+    #[serde(
+        default = "default_window_width",
+        deserialize_with = "deserialize_window_width"
+    )]
     pub window_width: u32,
-    #[serde(default = "default_window_height")]
+    #[serde(
+        default = "default_window_height",
+        deserialize_with = "deserialize_window_height"
+    )]
     pub window_height: u32,
     #[serde(default = "default_window_behavior")]
     pub window_behavior: String,
@@ -250,6 +264,40 @@ pub struct InstanceConfig {
 
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl Default for InstanceConfig {
+    fn default() -> Self {
+        Self {
+            name: None,
+            icon: None,
+            group: None,
+            mc_version: None,
+            loader_type: None,
+            loader_version: None,
+            modpack_version: None,
+            modpack_type: None,
+            modpack_project_id: None,
+            java_path: None,
+            max_memory: None,
+            jvm_args_extra: None,
+            jvm_tuner_mode: crate::core::jvm_tuner::JvmTunerMode::default(),
+            window_width: DEFAULT_WINDOW_WIDTH,
+            window_height: DEFAULT_WINDOW_HEIGHT,
+            window_behavior: default_window_behavior(),
+            show_game_log: default_show_game_log(),
+            hidden: false,
+            server_id: None,
+            pack_version_id: None,
+            pack_file_name: None,
+            is_installing: false,
+            is_updating: false,
+            play_time: 0,
+            last_played_at: None,
+            created_at: None,
+            extra: std::collections::HashMap::new(),
+        }
+    }
 }
 
 static INSTANCE_CONFIG_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
@@ -365,6 +413,66 @@ fn default_window_width() -> u32 {
 
 fn default_window_height() -> u32 {
     DEFAULT_WINDOW_HEIGHT
+}
+
+fn deserialize_window_dimension<'de, D>(deserializer: D, default_val: u32) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let val = serde_json::Value::deserialize(deserializer).unwrap_or(serde_json::Value::Null);
+    let parsed = match val {
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                if u > 0 {
+                    Some(u.min(u32::MAX as u64) as u32)
+                } else {
+                    None
+                }
+            } else if let Some(f) = n.as_f64() {
+                if f.is_finite() && f >= 1.0 {
+                    Some(f.round().min(u32::MAX as f64) as u32)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if let Ok(u) = trimmed.parse::<u64>() {
+                if u > 0 {
+                    Some(u.min(u32::MAX as u64) as u32)
+                } else {
+                    None
+                }
+            } else if let Ok(f) = trimmed.parse::<f64>() {
+                if f.is_finite() && f >= 1.0 {
+                    Some(f.round().min(u32::MAX as f64) as u32)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    Ok(parsed.unwrap_or(default_val))
+}
+
+fn deserialize_window_width<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_window_dimension(deserializer, DEFAULT_WINDOW_WIDTH)
+}
+
+fn deserialize_window_height<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_window_dimension(deserializer, DEFAULT_WINDOW_HEIGHT)
 }
 
 fn default_window_behavior() -> String {
@@ -1477,11 +1585,47 @@ pub fn parse_game_arguments(
             .replace("${resolution_height}", &height_str);
     }
 
-    if !args.iter().any(|a| a == "--width") {
+    let mut has_width = false;
+    let mut has_height = false;
+    let mut idx = 0;
+    while idx < args.len() {
+        if args[idx] == "--width" {
+            has_width = true;
+            if idx + 1 < args.len() && !args[idx + 1].starts_with("--") {
+                args[idx + 1] = width_str.clone();
+                idx += 2;
+                continue;
+            } else {
+                args.insert(idx + 1, width_str.clone());
+                idx += 2;
+                continue;
+            }
+        } else if args[idx].starts_with("--width=") {
+            has_width = true;
+            args[idx] = format!("--width={}", width_str);
+        } else if args[idx] == "--height" {
+            has_height = true;
+            if idx + 1 < args.len() && !args[idx + 1].starts_with("--") {
+                args[idx + 1] = height_str.clone();
+                idx += 2;
+                continue;
+            } else {
+                args.insert(idx + 1, height_str.clone());
+                idx += 2;
+                continue;
+            }
+        } else if args[idx].starts_with("--height=") {
+            has_height = true;
+            args[idx] = format!("--height={}", height_str);
+        }
+        idx += 1;
+    }
+
+    if !has_width {
         args.push("--width".to_string());
         args.push(width_str);
     }
-    if !args.iter().any(|a| a == "--height") {
+    if !has_height {
         args.push("--height".to_string());
         args.push(height_str);
     }
@@ -3243,5 +3387,82 @@ mod tests {
 
         // Test with no condition
         assert!(matches_os_condition(None, None));
+    }
+
+    #[test]
+    fn test_instance_config_default_and_deserialization_resolution() {
+        let default_cfg = InstanceConfig::default();
+        assert_eq!(default_cfg.window_width, DEFAULT_WINDOW_WIDTH);
+        assert_eq!(default_cfg.window_height, DEFAULT_WINDOW_HEIGHT);
+        assert_eq!(default_cfg.window_behavior, "keep");
+
+        let negative_cfg: InstanceConfig = serde_json::from_str(
+            r#"{"windowWidth": -800, "windowHeight": 0}"#,
+        )
+        .expect("should deserialize negative/zero dimensions using fallback");
+        assert_eq!(negative_cfg.window_width, DEFAULT_WINDOW_WIDTH);
+        assert_eq!(negative_cfg.window_height, DEFAULT_WINDOW_HEIGHT);
+
+        let oversized_cfg: InstanceConfig = serde_json::from_str(
+            r#"{"windowWidth": 9999999999999, "windowHeight": 1080}"#,
+        )
+        .expect("should clamp oversized dimensions");
+        assert_eq!(oversized_cfg.window_width, u32::MAX);
+        assert_eq!(oversized_cfg.window_height, 1080);
+    }
+
+    #[test]
+    fn test_parse_game_arguments_replaces_existing_width_height() {
+        let version_meta: VersionMeta = serde_json::from_str(
+            r#"{
+                "id": "1.20.1",
+                "minecraftArguments": "--username ${auth_player_name} --width 854 --height 480"
+            }"#,
+        )
+        .unwrap();
+        let launch_cfg = LaunchConfig {
+            version_id: "1.20.1".to_string(),
+            account: Account {
+                id: "12345678-1234-1234-1234-1234567890ab".to_string(),
+                username: "Player".to_string(),
+                account_type: crate::auth::AccountType::Offline,
+                access_token: None,
+                refresh_token: None,
+                textures: None,
+                client_token: None,
+                authlib_email: None,
+                authlib_url: None,
+                authlib_server_name: None,
+            },
+            game_directory: PathBuf::from("."),
+            assets_directory: PathBuf::from("."),
+            natives_directory: PathBuf::from("."),
+            classpath: Vec::new(),
+            main_class: "net.minecraft.client.main.Main".to_string(),
+            jvm_args: Vec::new(),
+            game_args: Vec::new(),
+            server_ip: None,
+            server_port: None,
+            window_width: 1920,
+            window_height: 1080,
+        };
+
+        let args = parse_game_arguments(&version_meta, &launch_cfg).unwrap();
+        let width_positions: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "--width")
+            .map(|(i, _)| i)
+            .collect();
+        let height_positions: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "--height")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(width_positions.len(), 1);
+        assert_eq!(height_positions.len(), 1);
+        assert_eq!(args[width_positions[0] + 1], "1920");
+        assert_eq!(args[height_positions[0] + 1], "1080");
     }
 }

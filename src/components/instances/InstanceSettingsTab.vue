@@ -77,6 +77,7 @@ const systemMemory = ref<SystemMemoryInfo>({
   recommendedMaxMb: 4096,
 });
 const installedJavas = ref<JavaInfo[]>([]);
+const isLoadingConfig = ref(false);
 const isSavingConfig = ref(false);
 const jvmTuningPreview = ref<JvmTuningPreview | null>(null);
 const jvmArgsExtraText = ref('');
@@ -112,7 +113,16 @@ const resolutionPresetOptions = computed(() => [
   { label: t('instances.settingsDialog.resolutionCustom', 'Custom'), value: 'custom' },
 ]);
 
+const MAX_WINDOW_DIMENSION = 4294967295;
 const selectedResolutionPreset = ref<string>('1280x720');
+
+function sanitizeWindowDimension(value: unknown, fallback: number): number {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    return fallback;
+  }
+  return Math.min(Math.round(num), MAX_WINDOW_DIMENSION);
+}
 
 function resolveResolutionPreset(w: number, h: number): string {
   const matched = resolutionPresets.find((p) => p.width === w && p.height === h);
@@ -133,12 +143,18 @@ function handleResolutionPresetChange(val: string | number) {
 }
 
 function handleWidthInput(val: string) {
-  settingsConfig.value.windowWidth = Number(val) || 0;
+  const num = Number(val);
+  settingsConfig.value.windowWidth = Number.isFinite(num) && num > 0
+    ? Math.min(Math.round(num), MAX_WINDOW_DIMENSION)
+    : 0;
   selectedResolutionPreset.value = 'custom';
 }
 
 function handleHeightInput(val: string) {
-  settingsConfig.value.windowHeight = Number(val) || 0;
+  const num = Number(val);
+  settingsConfig.value.windowHeight = Number.isFinite(num) && num > 0
+    ? Math.min(Math.round(num), MAX_WINDOW_DIMENSION)
+    : 0;
   selectedResolutionPreset.value = 'custom';
 }
 
@@ -282,81 +298,98 @@ watch(
   }
 );
 
+let loadDataRequestSeq = 0;
+
 async function loadData() {
-  if (!props.instanceId) return;
+  const requestedInstanceId = props.instanceId;
+  if (!requestedInstanceId) return;
+  const requestId = ++loadDataRequestSeq;
+  isLoadingConfig.value = true;
 
   try {
-    const memInfo = await invoke<SystemMemoryInfo>('get_system_memory');
-    systemMemory.value = memInfo;
-    globalMaxMemory.value = memInfo.recommendedMaxMb;
+    try {
+      const memInfo = await invoke<SystemMemoryInfo>('get_system_memory');
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      systemMemory.value = memInfo;
+      globalMaxMemory.value = memInfo.recommendedMaxMb;
 
-    const launcherSettings = await invoke<any>('load_launcher_settings');
-    if (launcherSettings.globalMaxMemory) {
-      globalMaxMemory.value = launcherSettings.globalMaxMemory;
+      const launcherSettings = await invoke<any>('load_launcher_settings');
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      if (launcherSettings.globalMaxMemory) {
+        globalMaxMemory.value = launcherSettings.globalMaxMemory;
+      }
+    } catch (e) {
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      console.error('Failed to load system memory:', e);
     }
-  } catch (e) {
-    console.error('Failed to load system memory:', e);
-  }
 
-  try {
-    installedJavas.value = await invoke<JavaInfo[]>('scan_local_javas');
-  } catch (e) {
-    console.error('Failed to load installed Javas:', e);
-  }
+    try {
+      const javas = await invoke<JavaInfo[]>('scan_local_javas');
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      installedJavas.value = javas;
+    } catch (e) {
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      console.error('Failed to load installed Javas:', e);
+    }
 
-  try {
-    const config = await invoke<InstanceConfig>('get_instance_config', {
-      versionId: props.instanceId,
-    });
-    useGlobalMemory.value = !config.maxMemory;
-    const extraArgs = Array.isArray(config.jvmArgsExtra) ? config.jvmArgsExtra : [];
-    jvmArgsExtraText.value = formatJvmArgs(extraArgs);
-    const loadedWidth = config.windowWidth && config.windowWidth > 0 ? config.windowWidth : 1280;
-    const loadedHeight = config.windowHeight && config.windowHeight > 0 ? config.windowHeight : 720;
-    selectedResolutionPreset.value = resolveResolutionPreset(loadedWidth, loadedHeight);
-    settingsConfig.value = {
-      javaPath: config.javaPath || '',
-      maxMemory: config.maxMemory || globalMaxMemory.value,
-      jvmArgsExtra: extraArgs,
-      jvmTunerMode: config.jvmTunerMode || 'followGlobal',
-      windowWidth: loadedWidth,
-      windowHeight: loadedHeight,
-      windowBehavior: config.windowBehavior || 'keep',
-      showGameLog: config.showGameLog === true,
-    };
-    await loadTuningPreview();
-  } catch (e) {
-    console.error('Failed to load instance config:', e);
-    useGlobalMemory.value = true;
-    jvmArgsExtraText.value = '';
-    selectedResolutionPreset.value = '1280x720';
-    settingsConfig.value = {
-      javaPath: '',
-      maxMemory: globalMaxMemory.value,
-      jvmArgsExtra: [],
-      jvmTunerMode: 'followGlobal',
-      windowWidth: 1280,
-      windowHeight: 720,
-      windowBehavior: 'keep',
-      showGameLog: false,
-    };
+    try {
+      const config = await invoke<InstanceConfig>('get_instance_config', {
+        versionId: requestedInstanceId,
+      });
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      useGlobalMemory.value = !config.maxMemory;
+      const extraArgs = Array.isArray(config.jvmArgsExtra) ? config.jvmArgsExtra : [];
+      jvmArgsExtraText.value = formatJvmArgs(extraArgs);
+      const loadedWidth = sanitizeWindowDimension(config.windowWidth, 1280);
+      const loadedHeight = sanitizeWindowDimension(config.windowHeight, 720);
+      selectedResolutionPreset.value = resolveResolutionPreset(loadedWidth, loadedHeight);
+      settingsConfig.value = {
+        javaPath: config.javaPath || '',
+        maxMemory: config.maxMemory || globalMaxMemory.value,
+        jvmArgsExtra: extraArgs,
+        jvmTunerMode: config.jvmTunerMode || 'followGlobal',
+        windowWidth: loadedWidth,
+        windowHeight: loadedHeight,
+        windowBehavior: config.windowBehavior || 'keep',
+        showGameLog: config.showGameLog === true,
+      };
+      await loadTuningPreview();
+    } catch (e) {
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      console.error('Failed to load instance config:', e);
+      useGlobalMemory.value = true;
+      jvmArgsExtraText.value = '';
+      selectedResolutionPreset.value = '1280x720';
+      settingsConfig.value = {
+        javaPath: '',
+        maxMemory: globalMaxMemory.value,
+        jvmArgsExtra: [],
+        jvmTunerMode: 'followGlobal',
+        windowWidth: 1280,
+        windowHeight: 720,
+        windowBehavior: 'keep',
+        showGameLog: false,
+      };
+    }
+  } finally {
+    if (requestId === loadDataRequestSeq && props.instanceId === requestedInstanceId) {
+      isLoadingConfig.value = false;
+    }
   }
 }
 
 watch(() => props.instanceId, loadData, { immediate: true });
 
 async function saveSettings() {
+  const targetInstanceId = props.instanceId;
+  if (!targetInstanceId || isLoadingConfig.value) return;
   isSavingConfig.value = true;
   try {
     const parsedJvmArgs = parseJvmArgs(jvmArgsExtraText.value);
     settingsConfig.value.jvmArgsExtra = parsedJvmArgs;
 
-    const windowWidth = Number(settingsConfig.value.windowWidth) > 0
-      ? Math.round(Number(settingsConfig.value.windowWidth))
-      : 1280;
-    const windowHeight = Number(settingsConfig.value.windowHeight) > 0
-      ? Math.round(Number(settingsConfig.value.windowHeight))
-      : 720;
+    const windowWidth = sanitizeWindowDimension(settingsConfig.value.windowWidth, 1280);
+    const windowHeight = sanitizeWindowDimension(settingsConfig.value.windowHeight, 720);
     settingsConfig.value.windowWidth = windowWidth;
     settingsConfig.value.windowHeight = windowHeight;
 
@@ -372,7 +405,7 @@ async function saveSettings() {
     };
 
     await invoke('save_instance_config', {
-      versionId: props.instanceId,
+      versionId: targetInstanceId,
       config,
     });
     toast.success(t('common.saveSuccess', 'Save successful'));
@@ -421,7 +454,7 @@ async function openInstanceSubfolder(subfolder: string) {
       <h3 class="text-lg font-semibold">{{ t('instances.settingsDialog.title') }}</h3>
       <button
         @click="saveSettings"
-        :disabled="isSavingConfig || isSettingsInstanceRunning"
+        :disabled="isSavingConfig || isLoadingConfig || isSettingsInstanceRunning"
         class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm"
       >
         <Save class="h-4 w-4" />
@@ -566,6 +599,7 @@ async function openInstanceSubfolder(subfolder: string) {
                 @update:model-value="handleWidthInput"
                 type="number"
                 min="1"
+                max="4294967295"
                 :placeholder="t('instances.settingsDialog.resolutionWidth', 'Width')"
                 class="w-full font-mono"
               />
@@ -575,6 +609,7 @@ async function openInstanceSubfolder(subfolder: string) {
                 @update:model-value="handleHeightInput"
                 type="number"
                 min="1"
+                max="4294967295"
                 :placeholder="t('instances.settingsDialog.resolutionHeight', 'Height')"
                 class="w-full font-mono"
               />
