@@ -92,6 +92,8 @@ const CLASSPATH_SEPARATOR: &str = ":";
 
 const LAUNCHER_NAME: &str = "Dawnland";
 const LAUNCHER_VERSION: &str = "1.0.0";
+pub const DEFAULT_WINDOW_WIDTH: u32 = 1280;
+pub const DEFAULT_WINDOW_HEIGHT: u32 = 720;
 
 // ============ Helper Functions ============
 
@@ -182,6 +184,8 @@ pub struct LaunchConfig {
     pub game_args: Vec<String>,
     pub server_ip: Option<String>,
     pub server_port: Option<u16>,
+    pub window_width: u32,
+    pub window_height: u32,
 }
 
 /// Instance-specific configuration stored in versions/<id>/dlml.json
@@ -213,6 +217,10 @@ pub struct InstanceConfig {
     /// Per-instance JVM tuner override (follow_global / on / off).
     #[serde(default)]
     pub jvm_tuner_mode: crate::core::jvm_tuner::JvmTunerMode,
+    #[serde(default = "default_window_width")]
+    pub window_width: u32,
+    #[serde(default = "default_window_height")]
+    pub window_height: u32,
     #[serde(default = "default_window_behavior")]
     pub window_behavior: String,
     #[serde(default)]
@@ -272,6 +280,15 @@ where
     } else {
         InstanceConfig::default()
     };
+    if config.window_width == 0 {
+        config.window_width = DEFAULT_WINDOW_WIDTH;
+    }
+    if config.window_height == 0 {
+        config.window_height = DEFAULT_WINDOW_HEIGHT;
+    }
+    if config.window_behavior.is_empty() {
+        config.window_behavior = default_window_behavior();
+    }
 
     mutate(&mut config);
 
@@ -342,6 +359,14 @@ impl InstanceConfig {
     }
 }
 
+fn default_window_width() -> u32 {
+    DEFAULT_WINDOW_WIDTH
+}
+
+fn default_window_height() -> u32 {
+    DEFAULT_WINDOW_HEIGHT
+}
+
 fn default_window_behavior() -> String {
     "keep".to_string()
 }
@@ -366,15 +391,26 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, A
 
     if !config_path.exists() {
         tracing::info!("No config found for {}, using defaults", version_id);
-        return Ok(InstanceConfig::default());
+        return Ok(InstanceConfig {
+            window_width: DEFAULT_WINDOW_WIDTH,
+            window_height: DEFAULT_WINDOW_HEIGHT,
+            window_behavior: default_window_behavior(),
+            ..InstanceConfig::default()
+        });
     }
 
     let content = tokio::fs::read_to_string(&config_path)
         .await
         .map_err(|e| format!("Failed to read config: {}", e))?;
 
-    let config: InstanceConfig =
+    let mut config: InstanceConfig =
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
+    if config.window_width == 0 {
+        config.window_width = DEFAULT_WINDOW_WIDTH;
+    }
+    if config.window_height == 0 {
+        config.window_height = DEFAULT_WINDOW_HEIGHT;
+    }
 
     tracing::info!("Loaded config for {}: {:?}", version_id, config);
     Ok(config)
@@ -395,6 +431,16 @@ pub async fn save_instance_config(
         final_config.max_memory = config.max_memory;
         final_config.jvm_args_extra = config.jvm_args_extra;
         final_config.jvm_tuner_mode = config.jvm_tuner_mode;
+        final_config.window_width = if config.window_width > 0 {
+            config.window_width
+        } else {
+            DEFAULT_WINDOW_WIDTH
+        };
+        final_config.window_height = if config.window_height > 0 {
+            config.window_height
+        } else {
+            DEFAULT_WINDOW_HEIGHT
+        };
         final_config.window_behavior = config.window_behavior;
         final_config.show_game_log = config.show_game_log;
         // We intentionally do NOT copy hidden, server_id, pack_version_id, pack_file_name, or is_installing here!
@@ -1378,6 +1424,18 @@ pub fn parse_game_arguments(
         .join("libraries")
         .to_string_lossy()
         .to_string();
+    let width = if config.window_width > 0 {
+        config.window_width
+    } else {
+        DEFAULT_WINDOW_WIDTH
+    };
+    let height = if config.window_height > 0 {
+        config.window_height
+    } else {
+        DEFAULT_WINDOW_HEIGHT
+    };
+    let width_str = width.to_string();
+    let height_str = height.to_string();
 
     for arg in &mut args {
         *arg = arg
@@ -1414,7 +1472,18 @@ pub fn parse_game_arguments(
             .replace("${library_directory}", &libraries_dir)
             .replace("${classpath_separator}", CLASSPATH_SEPARATOR)
             .replace("${ignore_list}", "")
-            .replace("${ignoreList}", "");
+            .replace("${ignoreList}", "")
+            .replace("${resolution_width}", &width_str)
+            .replace("${resolution_height}", &height_str);
+    }
+
+    if !args.iter().any(|a| a == "--width") {
+        args.push("--width".to_string());
+        args.push(width_str);
+    }
+    if !args.iter().any(|a| a == "--height") {
+        args.push("--height".to_string());
+        args.push(height_str);
     }
 
     // Inject direct connection arguments if provided
@@ -2423,6 +2492,16 @@ pub async fn launch_instance(
     tracing::info!("Classpath built with {} entries", classpath.len());
 
     // Create launch config
+    let window_width = if instance_config.window_width > 0 {
+        instance_config.window_width
+    } else {
+        DEFAULT_WINDOW_WIDTH
+    };
+    let window_height = if instance_config.window_height > 0 {
+        instance_config.window_height
+    } else {
+        DEFAULT_WINDOW_HEIGHT
+    };
     let config = LaunchConfig {
         version_id: version_id.clone(),
         account: account.clone(),
@@ -2435,6 +2514,8 @@ pub async fn launch_instance(
         game_args: Vec::new(),
         server_ip: server_ip.clone(), // use the resolved mutable server_ip
         server_port,
+        window_width,
+        window_height,
     };
 
     // Determine Java executable path: instance config > recommended matching java > system default

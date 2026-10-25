@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { Save, FolderOpen, Puzzle, Box, Sparkles, Globe } from '@lucide/vue';
+import DInput from '../ui/DInput.vue';
 import DSelect from '../ui/DSelect.vue';
 import { getErrorMessage } from '../../utils/error';
 import { launchingInstances, runningInstances, repairingInstances } from '../../composables/useLaunchState';
@@ -20,6 +21,8 @@ interface InstanceConfig {
   maxMemory?: number;
   jvmArgsExtra?: string[];
   jvmTunerMode?: string;
+  windowWidth?: number;
+  windowHeight?: number;
   windowBehavior?: string;
   showGameLog?: boolean;
 }
@@ -61,6 +64,8 @@ const settingsConfig = ref<InstanceConfig>({
   maxMemory: 4096,
   jvmArgsExtra: [],
   jvmTunerMode: 'followGlobal',
+  windowWidth: 1280,
+  windowHeight: 720,
   windowBehavior: 'keep',
   showGameLog: false,
 });
@@ -87,6 +92,55 @@ const windowBehaviorOptions = computed(() => [
   { label: t('instances.settingsDialog.hideLauncher'), value: 'hide' },
   { label: t('instances.settingsDialog.minimizeTaskbar'), value: 'minimize' }
 ]);
+
+const resolutionPresets = [
+  { width: 854, height: 480 },
+  { width: 1280, height: 720, isDefault: true },
+  { width: 1366, height: 768 },
+  { width: 1600, height: 900 },
+  { width: 1920, height: 1080 },
+  { width: 2560, height: 1440 },
+];
+
+const resolutionPresetOptions = computed(() => [
+  ...resolutionPresets.map((preset) => ({
+    label: preset.isDefault
+      ? `${preset.width} × ${preset.height} (${t('instances.settingsDialog.resolutionDefault', 'Default')})`
+      : `${preset.width} × ${preset.height}`,
+    value: `${preset.width}x${preset.height}`,
+  })),
+  { label: t('instances.settingsDialog.resolutionCustom', 'Custom'), value: 'custom' },
+]);
+
+const selectedResolutionPreset = ref<string>('1280x720');
+
+function resolveResolutionPreset(w: number, h: number): string {
+  const matched = resolutionPresets.find((p) => p.width === w && p.height === h);
+  return matched ? `${matched.width}x${matched.height}` : 'custom';
+}
+
+function handleResolutionPresetChange(val: string | number) {
+  const str = String(val);
+  selectedResolutionPreset.value = str;
+  if (str === 'custom') return;
+  const [wStr, hStr] = str.split('x');
+  const w = parseInt(wStr, 10);
+  const h = parseInt(hStr, 10);
+  if (w > 0 && h > 0) {
+    settingsConfig.value.windowWidth = w;
+    settingsConfig.value.windowHeight = h;
+  }
+}
+
+function handleWidthInput(val: string) {
+  settingsConfig.value.windowWidth = Number(val) || 0;
+  selectedResolutionPreset.value = 'custom';
+}
+
+function handleHeightInput(val: string) {
+  settingsConfig.value.windowHeight = Number(val) || 0;
+  selectedResolutionPreset.value = 'custom';
+}
 
 const javaPathOptions = computed(() => [
   { label: t('instances.settingsDialog.defaultAuto'), value: '' },
@@ -257,11 +311,16 @@ async function loadData() {
     useGlobalMemory.value = !config.maxMemory;
     const extraArgs = Array.isArray(config.jvmArgsExtra) ? config.jvmArgsExtra : [];
     jvmArgsExtraText.value = formatJvmArgs(extraArgs);
+    const loadedWidth = config.windowWidth && config.windowWidth > 0 ? config.windowWidth : 1280;
+    const loadedHeight = config.windowHeight && config.windowHeight > 0 ? config.windowHeight : 720;
+    selectedResolutionPreset.value = resolveResolutionPreset(loadedWidth, loadedHeight);
     settingsConfig.value = {
       javaPath: config.javaPath || '',
       maxMemory: config.maxMemory || globalMaxMemory.value,
       jvmArgsExtra: extraArgs,
       jvmTunerMode: config.jvmTunerMode || 'followGlobal',
+      windowWidth: loadedWidth,
+      windowHeight: loadedHeight,
       windowBehavior: config.windowBehavior || 'keep',
       showGameLog: config.showGameLog === true,
     };
@@ -270,11 +329,14 @@ async function loadData() {
     console.error('Failed to load instance config:', e);
     useGlobalMemory.value = true;
     jvmArgsExtraText.value = '';
+    selectedResolutionPreset.value = '1280x720';
     settingsConfig.value = {
       javaPath: '',
       maxMemory: globalMaxMemory.value,
       jvmArgsExtra: [],
       jvmTunerMode: 'followGlobal',
+      windowWidth: 1280,
+      windowHeight: 720,
       windowBehavior: 'keep',
       showGameLog: false,
     };
@@ -289,11 +351,22 @@ async function saveSettings() {
     const parsedJvmArgs = parseJvmArgs(jvmArgsExtraText.value);
     settingsConfig.value.jvmArgsExtra = parsedJvmArgs;
 
+    const windowWidth = Number(settingsConfig.value.windowWidth) > 0
+      ? Math.round(Number(settingsConfig.value.windowWidth))
+      : 1280;
+    const windowHeight = Number(settingsConfig.value.windowHeight) > 0
+      ? Math.round(Number(settingsConfig.value.windowHeight))
+      : 720;
+    settingsConfig.value.windowWidth = windowWidth;
+    settingsConfig.value.windowHeight = windowHeight;
+
     const config = {
       javaPath: settingsConfig.value.javaPath || null,
       maxMemory: useGlobalMemory.value ? null : (settingsConfig.value.maxMemory || null),
       jvmArgsExtra: parsedJvmArgs.length > 0 ? parsedJvmArgs : null,
       jvmTunerMode: settingsConfig.value.jvmTunerMode || 'followGlobal',
+      windowWidth,
+      windowHeight,
       windowBehavior: settingsConfig.value.windowBehavior || 'keep',
       showGameLog: settingsConfig.value.showGameLog,
     };
@@ -475,6 +548,41 @@ async function openInstanceSubfolder(subfolder: string) {
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Window Resolution -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium">{{ t('instances.settingsDialog.resolution') }}</label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <DSelect
+              :model-value="selectedResolutionPreset"
+              @update:model-value="handleResolutionPresetChange"
+              :options="resolutionPresetOptions"
+              class="w-full"
+            />
+            <div class="flex items-center gap-2">
+              <DInput
+                :model-value="settingsConfig.windowWidth"
+                @update:model-value="handleWidthInput"
+                type="number"
+                min="1"
+                :placeholder="t('instances.settingsDialog.resolutionWidth', 'Width')"
+                class="w-full font-mono"
+              />
+              <span class="text-sm text-muted-foreground font-mono select-none">×</span>
+              <DInput
+                :model-value="settingsConfig.windowHeight"
+                @update:model-value="handleHeightInput"
+                type="number"
+                min="1"
+                :placeholder="t('instances.settingsDialog.resolutionHeight', 'Height')"
+                class="w-full font-mono"
+              />
+            </div>
+          </div>
+          <p class="text-xs text-muted-foreground">
+            {{ t('instances.settingsDialog.resolutionDesc') }}
+          </p>
         </div>
 
         <!-- Window Behavior -->
