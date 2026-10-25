@@ -186,18 +186,16 @@ pub async fn scan_installed_instances(
                         let _ = tokio::fs::remove_dir_all(&path).await;
                     } else {
                         tracing::warn!("Instance {} is marked as updating. Skipping zombie auto-cleanup and rescuing it.", id);
-                        if config_path.exists() {
-                            if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-                                if let Ok(mut config) = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content) {
-                                    config.is_installing = false;
-                                    config.is_updating = false;
-                                    if let Ok(json) = serde_json::to_string_pretty(&config) {
-                                        let _ = tokio::fs::write(&config_path, json).await;
-                                    }
-                                    is_installing = false;
-                                    is_updating = false;
-                                }
-                            }
+                        if config_path.exists()
+                            && crate::core::launcher::update_instance_config(&path, |config| {
+                                config.is_installing = false;
+                                config.is_updating = false;
+                            })
+                            .await
+                            .is_ok()
+                        {
+                            is_installing = false;
+                            is_updating = false;
                         }
                     }
                     if is_installing {
@@ -2335,27 +2333,12 @@ pub async fn bind_instance_to_server(
         ));
     }
 
-    let config_path = instance_dir.join("dlml.json");
-
-    let mut config = if config_path.exists() {
-        let content = tokio::fs::read_to_string(&config_path)
-            .await
-            .unwrap_or_else(|_| "{}".to_string());
-        serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content).unwrap_or_default()
-    } else {
-        crate::core::launcher::InstanceConfig::default()
-    };
-
-    config.server_id = Some(server_id);
-    config.pack_version_id = pack_version_id;
-    config.pack_file_name = pack_file_name;
-
-    let json_str = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize dlml.json: {}", e))?;
-
-    tokio::fs::write(&config_path, json_str)
-        .await
-        .map_err(|e| format!("Failed to write dlml.json: {}", e))?;
+    crate::core::launcher::update_instance_config(&instance_dir, |config| {
+        config.server_id = Some(server_id);
+        config.pack_version_id = pack_version_id;
+        config.pack_file_name = pack_file_name;
+    })
+    .await?;
 
     Ok(())
 }

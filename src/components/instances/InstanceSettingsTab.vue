@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { Save, FolderOpen, Puzzle, Box, Sparkles, Globe } from '@lucide/vue';
+import DInput from '../ui/DInput.vue';
 import DSelect from '../ui/DSelect.vue';
 import { getErrorMessage } from '../../utils/error';
 import { launchingInstances, runningInstances, repairingInstances } from '../../composables/useLaunchState';
@@ -20,6 +21,8 @@ interface InstanceConfig {
   maxMemory?: number;
   jvmArgsExtra?: string[];
   jvmTunerMode?: string;
+  windowWidth?: number;
+  windowHeight?: number;
   windowBehavior?: string;
   showGameLog?: boolean;
 }
@@ -61,6 +64,8 @@ const settingsConfig = ref<InstanceConfig>({
   maxMemory: 4096,
   jvmArgsExtra: [],
   jvmTunerMode: 'followGlobal',
+  windowWidth: 1280,
+  windowHeight: 720,
   windowBehavior: 'keep',
   showGameLog: false,
 });
@@ -72,6 +77,7 @@ const systemMemory = ref<SystemMemoryInfo>({
   recommendedMaxMb: 4096,
 });
 const installedJavas = ref<JavaInfo[]>([]);
+const isLoadingConfig = ref(false);
 const isSavingConfig = ref(false);
 const jvmTuningPreview = ref<JvmTuningPreview | null>(null);
 const jvmArgsExtraText = ref('');
@@ -87,6 +93,70 @@ const windowBehaviorOptions = computed(() => [
   { label: t('instances.settingsDialog.hideLauncher'), value: 'hide' },
   { label: t('instances.settingsDialog.minimizeTaskbar'), value: 'minimize' }
 ]);
+
+const resolutionPresets = [
+  { width: 854, height: 480 },
+  { width: 1280, height: 720, isDefault: true },
+  { width: 1366, height: 768 },
+  { width: 1600, height: 900 },
+  { width: 1920, height: 1080 },
+  { width: 2560, height: 1440 },
+];
+
+const resolutionPresetOptions = computed(() => [
+  ...resolutionPresets.map((preset) => ({
+    label: preset.isDefault
+      ? `${preset.width} × ${preset.height} (${t('instances.settingsDialog.resolutionDefault', 'Default')})`
+      : `${preset.width} × ${preset.height}`,
+    value: `${preset.width}x${preset.height}`,
+  })),
+  { label: t('instances.settingsDialog.resolutionCustom', 'Custom'), value: 'custom' },
+]);
+
+const MAX_WINDOW_DIMENSION = 4294967295;
+const selectedResolutionPreset = ref<string>('1280x720');
+
+function sanitizeWindowDimension(value: unknown, fallback: number): number {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    return fallback;
+  }
+  return Math.min(Math.round(num), MAX_WINDOW_DIMENSION);
+}
+
+function resolveResolutionPreset(w: number, h: number): string {
+  const matched = resolutionPresets.find((p) => p.width === w && p.height === h);
+  return matched ? `${matched.width}x${matched.height}` : 'custom';
+}
+
+function handleResolutionPresetChange(val: string | number) {
+  const str = String(val);
+  selectedResolutionPreset.value = str;
+  if (str === 'custom') return;
+  const [wStr, hStr] = str.split('x');
+  const w = parseInt(wStr, 10);
+  const h = parseInt(hStr, 10);
+  if (w > 0 && h > 0) {
+    settingsConfig.value.windowWidth = w;
+    settingsConfig.value.windowHeight = h;
+  }
+}
+
+function handleWidthInput(val: string) {
+  const num = Number(val);
+  settingsConfig.value.windowWidth = Number.isFinite(num) && num > 0
+    ? Math.min(Math.round(num), MAX_WINDOW_DIMENSION)
+    : 0;
+  selectedResolutionPreset.value = 'custom';
+}
+
+function handleHeightInput(val: string) {
+  const num = Number(val);
+  settingsConfig.value.windowHeight = Number.isFinite(num) && num > 0
+    ? Math.min(Math.round(num), MAX_WINDOW_DIMENSION)
+    : 0;
+  selectedResolutionPreset.value = 'custom';
+}
 
 const javaPathOptions = computed(() => [
   { label: t('instances.settingsDialog.defaultAuto'), value: '' },
@@ -228,78 +298,114 @@ watch(
   }
 );
 
+let loadDataRequestSeq = 0;
+
 async function loadData() {
-  if (!props.instanceId) return;
+  const requestedInstanceId = props.instanceId;
+  if (!requestedInstanceId) return;
+  const requestId = ++loadDataRequestSeq;
+  isLoadingConfig.value = true;
 
   try {
-    const memInfo = await invoke<SystemMemoryInfo>('get_system_memory');
-    systemMemory.value = memInfo;
-    globalMaxMemory.value = memInfo.recommendedMaxMb;
+    try {
+      const memInfo = await invoke<SystemMemoryInfo>('get_system_memory');
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      systemMemory.value = memInfo;
+      globalMaxMemory.value = memInfo.recommendedMaxMb;
 
-    const launcherSettings = await invoke<any>('load_launcher_settings');
-    if (launcherSettings.globalMaxMemory) {
-      globalMaxMemory.value = launcherSettings.globalMaxMemory;
+      const launcherSettings = await invoke<any>('load_launcher_settings');
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      if (launcherSettings.globalMaxMemory) {
+        globalMaxMemory.value = launcherSettings.globalMaxMemory;
+      }
+    } catch (e) {
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      console.error('Failed to load system memory:', e);
     }
-  } catch (e) {
-    console.error('Failed to load system memory:', e);
-  }
 
-  try {
-    installedJavas.value = await invoke<JavaInfo[]>('scan_local_javas');
-  } catch (e) {
-    console.error('Failed to load installed Javas:', e);
-  }
+    try {
+      const javas = await invoke<JavaInfo[]>('scan_local_javas');
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      installedJavas.value = javas;
+    } catch (e) {
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      console.error('Failed to load installed Javas:', e);
+    }
 
-  try {
-    const config = await invoke<InstanceConfig>('get_instance_config', {
-      versionId: props.instanceId,
-    });
-    useGlobalMemory.value = !config.maxMemory;
-    const extraArgs = Array.isArray(config.jvmArgsExtra) ? config.jvmArgsExtra : [];
-    jvmArgsExtraText.value = formatJvmArgs(extraArgs);
-    settingsConfig.value = {
-      javaPath: config.javaPath || '',
-      maxMemory: config.maxMemory || globalMaxMemory.value,
-      jvmArgsExtra: extraArgs,
-      jvmTunerMode: config.jvmTunerMode || 'followGlobal',
-      windowBehavior: config.windowBehavior || 'keep',
-      showGameLog: config.showGameLog === true,
-    };
-    await loadTuningPreview();
-  } catch (e) {
-    console.error('Failed to load instance config:', e);
-    useGlobalMemory.value = true;
-    jvmArgsExtraText.value = '';
-    settingsConfig.value = {
-      javaPath: '',
-      maxMemory: globalMaxMemory.value,
-      jvmArgsExtra: [],
-      jvmTunerMode: 'followGlobal',
-      windowBehavior: 'keep',
-      showGameLog: false,
-    };
+    try {
+      const config = await invoke<InstanceConfig>('get_instance_config', {
+        versionId: requestedInstanceId,
+      });
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      useGlobalMemory.value = !config.maxMemory;
+      const extraArgs = Array.isArray(config.jvmArgsExtra) ? config.jvmArgsExtra : [];
+      jvmArgsExtraText.value = formatJvmArgs(extraArgs);
+      const loadedWidth = sanitizeWindowDimension(config.windowWidth, 1280);
+      const loadedHeight = sanitizeWindowDimension(config.windowHeight, 720);
+      selectedResolutionPreset.value = resolveResolutionPreset(loadedWidth, loadedHeight);
+      settingsConfig.value = {
+        javaPath: config.javaPath || '',
+        maxMemory: config.maxMemory || globalMaxMemory.value,
+        jvmArgsExtra: extraArgs,
+        jvmTunerMode: config.jvmTunerMode || 'followGlobal',
+        windowWidth: loadedWidth,
+        windowHeight: loadedHeight,
+        windowBehavior: config.windowBehavior || 'keep',
+        showGameLog: config.showGameLog === true,
+      };
+      await loadTuningPreview();
+    } catch (e) {
+      if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
+      console.error('Failed to load instance config:', e);
+      useGlobalMemory.value = true;
+      jvmArgsExtraText.value = '';
+      selectedResolutionPreset.value = '1280x720';
+      settingsConfig.value = {
+        javaPath: '',
+        maxMemory: globalMaxMemory.value,
+        jvmArgsExtra: [],
+        jvmTunerMode: 'followGlobal',
+        windowWidth: 1280,
+        windowHeight: 720,
+        windowBehavior: 'keep',
+        showGameLog: false,
+      };
+    }
+  } finally {
+    if (requestId === loadDataRequestSeq && props.instanceId === requestedInstanceId) {
+      isLoadingConfig.value = false;
+    }
   }
 }
 
 watch(() => props.instanceId, loadData, { immediate: true });
 
 async function saveSettings() {
+  const targetInstanceId = props.instanceId;
+  if (!targetInstanceId || isLoadingConfig.value) return;
   isSavingConfig.value = true;
   try {
     const parsedJvmArgs = parseJvmArgs(jvmArgsExtraText.value);
     settingsConfig.value.jvmArgsExtra = parsedJvmArgs;
+
+    const windowWidth = sanitizeWindowDimension(settingsConfig.value.windowWidth, 1280);
+    const windowHeight = sanitizeWindowDimension(settingsConfig.value.windowHeight, 720);
+    settingsConfig.value.windowWidth = windowWidth;
+    settingsConfig.value.windowHeight = windowHeight;
 
     const config = {
       javaPath: settingsConfig.value.javaPath || null,
       maxMemory: useGlobalMemory.value ? null : (settingsConfig.value.maxMemory || null),
       jvmArgsExtra: parsedJvmArgs.length > 0 ? parsedJvmArgs : null,
       jvmTunerMode: settingsConfig.value.jvmTunerMode || 'followGlobal',
+      windowWidth,
+      windowHeight,
       windowBehavior: settingsConfig.value.windowBehavior || 'keep',
       showGameLog: settingsConfig.value.showGameLog,
     };
 
     await invoke('save_instance_config', {
-      versionId: props.instanceId,
+      versionId: targetInstanceId,
       config,
     });
     toast.success(t('common.saveSuccess', 'Save successful'));
@@ -348,7 +454,7 @@ async function openInstanceSubfolder(subfolder: string) {
       <h3 class="text-lg font-semibold">{{ t('instances.settingsDialog.title') }}</h3>
       <button
         @click="saveSettings"
-        :disabled="isSavingConfig || isSettingsInstanceRunning"
+        :disabled="isSavingConfig || isLoadingConfig || isSettingsInstanceRunning"
         class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm"
       >
         <Save class="h-4 w-4" />
@@ -475,6 +581,43 @@ async function openInstanceSubfolder(subfolder: string) {
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Window Resolution -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium">{{ t('instances.settingsDialog.resolution') }}</label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <DSelect
+              :model-value="selectedResolutionPreset"
+              @update:model-value="handleResolutionPresetChange"
+              :options="resolutionPresetOptions"
+              class="w-full"
+            />
+            <div class="flex items-center gap-2">
+              <DInput
+                :model-value="settingsConfig.windowWidth"
+                @update:model-value="handleWidthInput"
+                type="number"
+                min="1"
+                max="4294967295"
+                :placeholder="t('instances.settingsDialog.resolutionWidth', 'Width')"
+                class="w-full font-mono"
+              />
+              <span class="text-sm text-muted-foreground font-mono select-none">×</span>
+              <DInput
+                :model-value="settingsConfig.windowHeight"
+                @update:model-value="handleHeightInput"
+                type="number"
+                min="1"
+                max="4294967295"
+                :placeholder="t('instances.settingsDialog.resolutionHeight', 'Height')"
+                class="w-full font-mono"
+              />
+            </div>
+          </div>
+          <p class="text-xs text-muted-foreground">
+            {{ t('instances.settingsDialog.resolutionDesc') }}
+          </p>
         </div>
 
         <!-- Window Behavior -->
