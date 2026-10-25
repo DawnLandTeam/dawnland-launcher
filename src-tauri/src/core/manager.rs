@@ -186,17 +186,16 @@ pub async fn scan_installed_instances(
                         let _ = tokio::fs::remove_dir_all(&path).await;
                     } else {
                         tracing::warn!("Instance {} is marked as updating. Skipping zombie auto-cleanup and rescuing it.", id);
-                        if config_path.exists() {
-                            if crate::core::launcher::update_instance_config(&path, |config| {
+                        if config_path.exists()
+                            && crate::core::launcher::update_instance_config(&path, |config| {
                                 config.is_installing = false;
                                 config.is_updating = false;
                             })
                             .await
                             .is_ok()
-                            {
-                                is_installing = false;
-                                is_updating = false;
-                            }
+                        {
+                            is_installing = false;
+                            is_updating = false;
                         }
                     }
                     if is_installing {
