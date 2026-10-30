@@ -108,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
@@ -119,6 +119,8 @@ import DButton from '../ui/DButton.vue';
 import DSelect from '../ui/DSelect.vue';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
+import { useFileDrop, INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
+import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
 
 const props = defineProps<{
   instanceId: string;
@@ -136,6 +138,7 @@ interface LocalDatapackItem {
 const loadingWorlds = ref(false);
 const worldOptions = ref<{label: string, value: string}[]>([]);
 const selectedWorld = ref<string>('');
+const { setActiveDatapackWorld } = useFileDrop();
 
 const datapacks = ref<LocalDatapackItem[]>([]);
 const loadingDatapacks = ref(false);
@@ -160,7 +163,9 @@ async function loadWorlds() {
     const saves = await invoke<string[]>('get_instance_saves', { instanceId: props.instanceId });
     worldOptions.value = saves.map(save => ({ label: save, value: save }));
     if (worldOptions.value.length > 0) {
-      selectedWorld.value = worldOptions.value[0].value;
+      if (!selectedWorld.value || !saves.includes(selectedWorld.value)) {
+        selectedWorld.value = worldOptions.value[0].value;
+      }
     } else {
       selectedWorld.value = '';
       datapacks.value = [];
@@ -204,8 +209,29 @@ watch(() => props.instanceId, () => {
   loadWorlds();
 }, { immediate: true });
 
-watch(selectedWorld, () => {
+watch(selectedWorld, (val) => {
+  setActiveDatapackWorld(val || null);
   loadDatapacks();
+});
+
+function handleAssetsUpdated(event: Event) {
+  const detail = (event as CustomEvent<InstanceAssetsUpdatedDetail>).detail;
+  if (!detail || detail.instanceId !== props.instanceId) return;
+  if (detail.kinds.includes('World')) {
+    loadWorlds();
+  } else if (detail.kinds.includes('Datapack')) {
+    loadDatapacks();
+  }
+}
+
+onMounted(() => {
+  setActiveDatapackWorld(selectedWorld.value || null);
+  window.addEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+});
+
+onUnmounted(() => {
+  setActiveDatapackWorld(null);
+  window.removeEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
 });
 
 function confirmDelete(pack: LocalDatapackItem) {

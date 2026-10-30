@@ -10,11 +10,13 @@ import { trackEvent, getErrorType } from "../../utils/analytics";
 import { getErrorMessage } from "../../utils/error";
 import { toast } from "../../composables/useToast";
 import { useI18n } from "vue-i18n";
-import { Package, UploadCloud, Loader2, Search, Download, User, Calendar } from "@lucide/vue";
+import { Package, UploadCloud, Loader2, Search, Download, User, Calendar, AlertTriangle } from "@lucide/vue";
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../../components/ui/alert-dialog";
 import { DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
 import DInput from "../ui/DInput.vue";
+import DButton from "../ui/DButton.vue";
 import DSelect from "../ui/DSelect.vue";
+import { useFileDrop } from "../../composables/useFileDrop";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -39,11 +41,122 @@ const emit = defineEmits(['cancel-update']);
 // Modes: 'online' or 'local'
 const installMode = ref<'online' | 'local'>('online');
 
-const isUpdate = computed(() => !!props.updateId || (!!route.query.update_id && !route.query.server_id));
+const installedInstances = shallowRef<any[]>([]);
+
+const isUpdate = computed(() => {
+  if (props.updateId) return true;
+  if (route.query.is_update === 'true' || route.query.is_update === '1') return true;
+  if (route.query.update_id) {
+    if (!route.query.server_id) return true;
+    const targetName = String(route.query.update_id).trim().toLowerCase();
+    const serverId = String(route.query.server_id);
+    return installedInstances.value.some(
+      (i: any) => i.id.toLowerCase() === targetName || (i.serverId && i.serverId === serverId)
+    );
+  }
+  return false;
+});
 
 const zipPath = ref("");
 const onlineUrl = ref("");
 const selectedVersionName = ref<string | null>(null);
+const selectedVersionId = ref<string | null>(null);
+const showDowngradeConfirmModal = ref(false);
+const pendingDowngradeVersion = ref<any>(null);
+const isDowngradeConfirmed = ref(false);
+const localArchiveVersion = ref<string | null>(null);
+
+const currentDisplayVersion = computed(() => {
+  if (props.isModalUpdate && props.updateCurrentVersion) {
+    return String(props.updateCurrentVersion).trim();
+  }
+  if (route.query.current_version) {
+    return String(route.query.current_version).trim();
+  }
+  const targetInstanceName = instanceName.value || instanceNameInput.value;
+  const existingInst = installedInstances.value.find(
+    (i: any) => (targetInstanceName && i.id.toLowerCase() === targetInstanceName.toLowerCase()) || (route.query.server_id && i.serverId === String(route.query.server_id))
+  );
+  if (existingInst) {
+    return String(existingInst.packVersionId || existingInst.modpackVersion || "").trim();
+  }
+  return "";
+});
+
+const targetDowngradeVersionName = computed(() => {
+  if (pendingDowngradeVersion.value) {
+    return pendingDowngradeVersion.value.name || pendingDowngradeVersion.value.version_number || pendingDowngradeVersion.value.id || "未知";
+  }
+  if (selectedVersionName.value) {
+    return selectedVersionName.value;
+  }
+  if (localArchiveVersion.value) {
+    return localArchiveVersion.value;
+  }
+  if (zipPath.value) {
+    return zipPath.value.replace(/\\/g, '/').split('/').pop() || "未知";
+  }
+  return "未知";
+});
+
+function compareSemver(v1: string, v2: string): number {
+  const extractNums = (s: string) => {
+    const match = s.match(/\d+(?:\.\d+)*/);
+    return match ? match[0].split('.').map(Number) : [];
+  };
+  const parts1 = extractNums(v1);
+  const parts2 = extractNums(v2);
+  const maxLen = Math.max(parts1.length, parts2.length);
+  for (let i = 0; i < maxLen; i++) {
+    const num1 = parts1[i] ?? 0;
+    const num2 = parts2[i] ?? 0;
+    if (num1 > num2) return 1;
+    if (num1 < num2) return -1;
+  }
+  return 0;
+}
+
+const isDowngradeTarget = (targetVersion?: any): boolean => {
+  const cv = currentDisplayVersion.value?.trim();
+  if (!cv) return false;
+
+  if (targetVersion && modpackVersions.value.length > 0) {
+    const cvLower = cv.toLowerCase();
+    const currentVersionIndex = modpackVersions.value.findIndex(v => {
+      const vName = String(v.name || "");
+      const vId = String(v.id || "");
+      if (vName === cv || vId === cv || (vName && vName.toLowerCase().includes(cvLower))) {
+        return true;
+      }
+      const extractVer = (s: string) => {
+        const match = s.match(/\d+(?:\.\d+)+/);
+        return match ? match[0] : "";
+      };
+      const cvVer = extractVer(cv);
+      const vNameVer = extractVer(vName);
+      return cvVer && vNameVer && cvVer === vNameVer;
+    });
+
+    if (currentVersionIndex !== -1) {
+      const targetIndex = modpackVersions.value.findIndex(
+        v => v === targetVersion || String(v.id) === String(targetVersion.id)
+      );
+      if (targetIndex !== -1) {
+        return targetIndex > currentVersionIndex;
+      }
+    }
+  }
+
+  const targetVerStr = targetVersion
+    ? (targetVersion.name || targetVersion.id || "")
+    : (localArchiveVersion.value || "");
+  
+  if (targetVerStr && cv) {
+    return compareSemver(String(targetVerStr), cv) < 0;
+  }
+
+  return false;
+};
 const instanceName = ref("");
 const isInstalling = ref(false);
 const showSuccessModal = ref(false);
@@ -103,6 +216,12 @@ const initializeView = async () => {
   }
   lastProcessedQueryStr.value = currentQueryStr;
 
+  try {
+    installedInstances.value = await invoke<any[]>("scan_installed_instances");
+  } catch (e) {
+    console.error("Failed to fetch installed instances:", e);
+  }
+
   // Restore if task is already running
   if (currentTaskId.value) {
      const task = taskStore.tasks.value.find((t: any) => t.id === currentTaskId.value);
@@ -125,6 +244,7 @@ const initializeView = async () => {
   zipPath.value = "";
   onlineUrl.value = "";
   selectedVersionName.value = null;
+  selectedVersionId.value = null;
   instanceName.value = "";
   isInstalling.value = false;
 
@@ -197,6 +317,7 @@ const initializeView = async () => {
               if (targetVersion) {
                 onlineUrl.value = targetVersion.download_url;
                 selectedVersionName.value = targetVersion.name;
+                selectedVersionId.value = String(targetVersion.id || targetVersion.version_id || route.query.version_id);
                 nextTick(() => {
                   installModpack();
                 });
@@ -368,16 +489,9 @@ const openVersionsModal = async (modpack: any) => {
 };
 
 const getVersionUpgradeStatus = (index: number) => {
-  let cv = "";
-  if (props.isModalUpdate) {
-    cv = String(props.updateCurrentVersion || "");
-  } else {
-    cv = String(route.query.current_version || "");
-  }
-  cv = cv.trim();
-
+  const cv = currentDisplayVersion.value;
   if (!cv || cv === "undefined" || cv === "null") {
-    return { text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+    return { action: 'install', text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
   }
   
   const cvLower = cv.toLowerCase();
@@ -389,7 +503,6 @@ const getVersionUpgradeStatus = (index: number) => {
       return true;
     }
     
-    // Fuzzy match: extract the semver part (e.g., "1.7.31" from "v1.7.31-CF" and "COBBLEVERSE 1.7.31 [CF]")
     const extractVer = (s: string) => {
       const match = s.match(/\d+(?:\.\d+)+/);
       return match ? match[0] : "";
@@ -406,15 +519,50 @@ const getVersionUpgradeStatus = (index: number) => {
   });
   
   if (currentVersionIndex === -1) {
-    return { text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+    return { action: 'install', text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
   }
   
-  if (index < currentVersionIndex) return { text: t('modpack.upgrade'), disabled: false, class: 'bg-blue-600 hover:bg-blue-700' };
-  if (index === currentVersionIndex) return { text: t('modpack.reinstall'), disabled: false, class: 'bg-amber-600 hover:bg-amber-700' };
-  return { text: t('modpack.outdated'), disabled: true, class: 'bg-gray-500' };
+  if (index < currentVersionIndex) return { action: 'upgrade', text: t('modpack.upgrade'), disabled: false, class: 'bg-blue-600 hover:bg-blue-700' };
+  if (index === currentVersionIndex) return { action: 'reinstall', text: t('modpack.reinstall'), disabled: false, class: 'bg-amber-600 hover:bg-amber-700' };
+  return { action: 'downgrade', text: t('modpack.downgrade', '降级'), disabled: false, class: 'bg-zinc-600 hover:bg-zinc-700 text-white' };
+};
+
+const handleSelectVersion = (version: any, index: number) => {
+  const status = getVersionUpgradeStatus(index);
+  if (status.action === 'downgrade') {
+    pendingDowngradeVersion.value = version;
+    showDowngradeConfirmModal.value = true;
+    return;
+  }
+  selectOnlineVersion(version);
+};
+
+const confirmDowngrade = () => {
+  showDowngradeConfirmModal.value = false;
+  isDowngradeConfirmed.value = true;
+  if (pendingDowngradeVersion.value) {
+    const v = pendingDowngradeVersion.value;
+    pendingDowngradeVersion.value = null;
+    selectOnlineVersion(v);
+  } else {
+    installModpack();
+  }
+};
+
+const cancelDowngrade = () => {
+  showDowngradeConfirmModal.value = false;
+  pendingDowngradeVersion.value = null;
+  isDowngradeConfirmed.value = false;
+  isInstalling.value = false;
 };
 
 const selectOnlineVersion = (version: any) => {
+  if (!isDowngradeConfirmed.value && isDowngradeTarget(version)) {
+    pendingDowngradeVersion.value = version;
+    showDowngradeConfirmModal.value = true;
+    return;
+  }
+
   if (!instanceNameInput.value.trim()) {
     alert("请输入实例名称 / Please enter an instance name");
     return;
@@ -424,6 +572,7 @@ const selectOnlineVersion = (version: any) => {
   onlineUrl.value = version.download_url;
   installMode.value = 'online';
   selectedVersionName.value = version.name;
+  selectedVersionId.value = version.id ? String(version.id) : (version.version_id ? String(version.version_id) : null);
   
   // Start installation automatically
   installModpack();
@@ -440,9 +589,9 @@ const selectZip = async () => {
       zipPath.value = selected;
       
       // Auto-extract name if not set
-      if (!isInstanceNameDirty.value) {
+      if (!isInstanceNameDirty.value && !isUpdate.value) {
         try {
-          const manifestName = await invoke('read_modpack_name', { zipPath: selected });
+          const manifestName = await invoke<string>('get_modpack_name', { zipPath: selected });
           if (manifestName && typeof manifestName === 'string') {
             instanceName.value = String(manifestName).replace(/[<>:"/\\|?*]/g, "").trim();
           }
@@ -459,6 +608,34 @@ const selectZip = async () => {
     console.error("Failed to open dialog", err);
   }
 };
+
+const { pendingLocalModpackPath } = useFileDrop();
+
+watch(
+  pendingLocalModpackPath,
+  async (droppedPath) => {
+    if (!droppedPath) return;
+    pendingLocalModpackPath.value = null;
+    localNameError.value = null;
+    installMode.value = 'local';
+    zipPath.value = droppedPath;
+    if (!isInstanceNameDirty.value && !isUpdate.value) {
+      try {
+        const manifestName = await invoke<string>('get_modpack_name', { zipPath: droppedPath });
+        if (manifestName && typeof manifestName === 'string') {
+          instanceName.value = String(manifestName).replace(/[<>:"/\\|?*]/g, "").trim();
+        }
+      } catch (e) {
+        console.warn("Failed to read modpack name from manifest:", e);
+        const match = droppedPath.match(/[\\\/]([^\\\/]+)\.(zip|mrpack)$/i);
+        if (match) {
+          instanceName.value = match[1];
+        }
+      }
+    }
+  },
+  { immediate: true }
+);
 
 const installModpack = async () => {
   if (isInstalling.value) return;
@@ -508,6 +685,17 @@ const installModpack = async () => {
 
   try {
     // Event tracking removed: trackEvent("modpack_install_started", { type: onlineUrl.value ? "online" : "local", isUpdate: isUpdate.value });
+    const targetInstanceName = finalInstanceName;
+    const existingInst = installedInstances.value.find(
+      (i: any) => i.id.toLowerCase() === targetInstanceName.toLowerCase() || (route.query.server_id && i.serverId === String(route.query.server_id))
+    );
+    const effectiveServerId = route.query.server_id ? String(route.query.server_id) : (existingInst?.serverId || null);
+    // Explicitly selected version ID takes priority over route query
+    const effectivePackVersionId = selectedVersionId.value || (route.query.version_id ? String(route.query.version_id) : null);
+    const effectivePackFileName = route.query.pack_file_name
+      ? String(route.query.pack_file_name)
+      : (zipPath.value ? zipPath.value.replace(/\\/g, '/').split('/').pop() || null : null);
+
     if (onlineUrl.value) {
       console.log("Invoking download_and_install_online_modpack...");
       currentTaskId.value = await invoke<string>("download_and_install_online_modpack", {
@@ -515,6 +703,9 @@ const installModpack = async () => {
         instanceName: finalInstanceName,
         projectId: selectedModpack.value?.project_id || route.query.project_id || null,
         isUpdate: isUpdate.value,
+        serverId: effectiveServerId,
+        packVersionId: effectivePackVersionId,
+        packFileName: effectivePackFileName,
       });
     } else {
       console.log("Invoking install_modpack...");
@@ -523,18 +714,9 @@ const installModpack = async () => {
         instanceName: finalInstanceName,
         isUpdate: isUpdate.value,
         projectId: null,
-      });
-    }
-    // Bind to server if applicable (we wait for bind to submit, wait, bind happens AFTER install?)
-    // Actually, bind_instance_to_server expects the instance to exist. Wait! If the install is running in the background, the instance folder might not be fully ready.
-    // However, bind_instance_to_server just writes to `servers.json` in the app data. So it's fine to do it immediately.
-    if (route.query.server_id) {
-      console.log("Binding instance to server...");
-      await invoke("bind_instance_to_server", {
-        instanceId: finalInstanceName,
-        serverId: String(route.query.server_id),
-        packVersionId: route.query.version_id ? String(route.query.version_id) : null,
-        packFileName: route.query.pack_file_name ? String(route.query.pack_file_name) : null,
+        serverId: effectiveServerId,
+        packVersionId: effectivePackVersionId,
+        packFileName: effectivePackFileName,
       });
     }
     
@@ -545,7 +727,7 @@ const installModpack = async () => {
         finalName = await invoke<string>("get_modpack_name", { zipPath: zipPath.value });
       } catch (e) {
         console.warn("Could not read manifest name, falling back to filename", e);
-        finalName = zipPath.value.split(/[/\\]/).pop() || "Unknown Modpack";
+        finalName = zipPath.value.replace(/\\/g, '/').split('/').pop() || "Unknown Modpack";
       }
     }
     trackEvent("Modpack Install Completed", { name: finalName, projectId: selectedModpack.value?.project_id || route.query.project_id || null });
@@ -566,9 +748,12 @@ const cancelInstallation = async () => {
   showCancelConfirmModal.value = false;
   isCanceling.value = true;
   try {
-    await invoke("cancel_installation");
+    if (currentTaskId.value) {
+      await taskStore.cancelTask(currentTaskId.value);
+    }
   } catch (e) {
     console.error("Failed to cancel installation:", e);
+  } finally {
     isCanceling.value = false;
   }
 };
@@ -782,7 +967,7 @@ const formatDate = (dateString: string) => {
               :disabled="!zipPath || !instanceName"
               @click="installModpack"
             >
-              {{ t('install.installButton', 'Install Local Archive') }}
+              {{ isUpdate ? t('install.updateButton', '更新整合包') : t('install.installButton', 'Install Local Archive') }}
             </button>
           </div>
         </div>
@@ -883,7 +1068,7 @@ const formatDate = (dateString: string) => {
                     class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 text-white h-9 px-3 w-full shadow-sm hover:shadow-md transition-all"
                     :class="getVersionUpgradeStatus(index).class"
                     :disabled="getVersionUpgradeStatus(index).disabled"
-                    @click="selectOnlineVersion(version)"
+                    @click="handleSelectVersion(version, index)"
                   >
                     {{ getVersionUpgradeStatus(index).text }}
                   </button>
@@ -909,6 +1094,75 @@ const formatDate = (dateString: string) => {
           >
             {{ t('common.confirm', 'OK') }}
           </button>
+        </div>
+      </div>
+    </AlertDialog>
+
+
+    <!-- Downgrade Confirmation Modal -->
+    <AlertDialog :open="showDowngradeConfirmModal" @update:open="val => { if (!val) cancelDowngrade() }">
+      <div class="p-3 max-w-md">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="p-2 rounded-full bg-amber-500/10 text-amber-500 shrink-0">
+            <AlertTriangle class="h-6 w-6" />
+          </div>
+          <AlertDialogTitle class="text-lg font-bold text-gray-900 dark:text-white leading-tight">
+            {{ t('modpack.downgradeConfirmTitle') }}
+          </AlertDialogTitle>
+        </div>
+
+        <AlertDialogDescription class="text-sm text-gray-600 dark:text-gray-300 space-y-3">
+          <p class="font-medium text-amber-600 dark:text-amber-400">
+            {{ t('modpack.downgradeConfirmWarning') }}
+          </p>
+
+          <!-- Version Comparison Box -->
+          <div class="bg-secondary/60 rounded-lg p-3 border border-white/5 text-xs space-y-1.5 font-mono">
+            <div class="flex justify-between items-center text-muted-foreground">
+              <span>{{ t('modpack.downgradeFrom') }}</span>
+              <span class="font-bold text-foreground">{{ currentDisplayVersion || t('common.unknown', '未知') }}</span>
+            </div>
+            <div class="flex justify-between items-center text-amber-600 dark:text-amber-400">
+              <span>{{ t('modpack.downgradeTo') }}</span>
+              <span class="font-bold">{{ targetDowngradeVersionName }}</span>
+            </div>
+          </div>
+
+          <!-- Risks List -->
+          <div class="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs space-y-2 text-amber-950 dark:text-amber-200">
+            <div class="flex items-start gap-2">
+              <span class="font-bold text-amber-600 dark:text-amber-400 shrink-0">•</span>
+              <span>{{ t('modpack.downgradeRiskWorld') }}</span>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="font-bold text-amber-600 dark:text-amber-400 shrink-0">•</span>
+              <span>{{ t('modpack.downgradeRiskConfig') }}</span>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="font-bold text-amber-600 dark:text-amber-400 shrink-0">•</span>
+              <span>{{ t('modpack.downgradeRiskFailure') }}</span>
+            </div>
+          </div>
+
+          <p class="text-xs text-muted-foreground italic">
+            {{ t('modpack.downgradeAdvice') }}
+          </p>
+        </AlertDialogDescription>
+
+        <div class="flex justify-end gap-3 mt-5">
+          <DButton
+            variant="outline"
+            class="px-5 py-2 text-sm font-medium border-gray-300 dark:border-zinc-700 text-gray-700 dark:text-zinc-200 hover:bg-gray-100 dark:hover:bg-zinc-800"
+            @click="cancelDowngrade"
+          >
+            {{ t('common.cancel', '取消') }}
+          </DButton>
+          <DButton
+            class="px-5 py-2 text-sm font-medium bg-amber-600 hover:bg-amber-700 text-white shadow-sm"
+            @click="confirmDowngrade"
+          >
+            {{ t('modpack.downgradeConfirmBtn') }}
+          </DButton>
         </div>
       </div>
     </AlertDialog>

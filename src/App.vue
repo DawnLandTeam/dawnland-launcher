@@ -16,6 +16,7 @@ import TaskCenter from "./components/TaskCenter.vue";
 import TaskDetailModal from "./components/TaskDetailModal.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
 import Toaster from "./components/Toaster.vue";
+import DropInstallOverlay from "./components/DropInstallOverlay.vue";
 import DeepLinkReceiveModal, { type DeepLinkData } from "./components/DeepLinkReceiveModal.vue";
 import { toast } from "./composables/useToast";
 import { parseDeepLinkUrl } from "./utils/deepLink";
@@ -165,7 +166,8 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
           source: source,
           projectId: projectId,
           versionId: versionId,
-          isUpdate: false
+          isUpdate: false,
+          packVersionId: targetVersion.id ? String(targetVersion.id) : (versionId ? String(versionId) : null),
         });
         trackEvent("Modpack Install Completed", { name: targetVersion.name || targetVersion.displayName || name || 'Shared Modpack', projectId });
         toast.success(t('deepLink.installStarted', '已开始安装整合包'), t('deepLink.installStartedDesc', '请在任务中心查看进度'));
@@ -260,4 +262,5 @@ onUnmounted(() => {
   <NotificationCenter />
   <DeepLinkReceiveModal v-model:open="showDeepLinkModal" :data="incomingLinkData" @confirm="handleDeepLinkConfirm" />
   <Toaster />
+  <DropInstallOverlay />
 </template>

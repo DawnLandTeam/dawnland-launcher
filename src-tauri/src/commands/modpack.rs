@@ -34,16 +34,15 @@ pub struct InstallModpackOptions {
     pub instance_name: String,
     pub is_update: bool,
     pub project_id: Option<String>,
+    pub server_id: Option<String>,
+    pub pack_version_id: Option<String>,
+    pub pack_file_name: Option<String>,
 }
 
 async fn protect_existing_instance(instance_dir: &std::path::Path) {
-    let config_path = instance_dir.join("dlml.json");
-    if !config_path.exists() {
-        return;
-    }
-
     if let Err(e) = crate::core::launcher::update_instance_config(instance_dir, |config| {
         config.is_updating = true;
+        config.is_installing = false;
     })
     .await
     {
@@ -131,13 +130,14 @@ impl ExecutableTask for InstallModpackTask {
             .join(&ctx.id);
         let instance_dir = base_dir.join("versions").join(instance_name);
         let has_assets_json = instance_dir.join("assets.json").exists();
+        let json_path = instance_dir.join(format!("{}.json", instance_name));
+        let has_version_json = json_path.exists();
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
-        if !is_update {
+        if is_update || has_assets_json || has_version_json {
+            protect_existing_instance(&instance_dir).await;
+        } else {
             crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-            if has_assets_json {
-                protect_existing_instance(&instance_dir).await;
-            }
         }
 
         macro_rules! check_cancel {
@@ -145,7 +145,7 @@ impl ExecutableTask for InstallModpackTask {
                 if ctx.is_cancelled() {
                     tracing::warn!("Modpack installation cancelled, cleaning up...");
                     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-                    if !is_update && !has_assets_json {
+                    if !is_update && !has_assets_json && !has_version_json {
                         let _ = tokio::fs::remove_dir_all(&instance_dir).await;
                     }
                     return Err(TaskError::ExecutionError(
@@ -376,8 +376,8 @@ impl ExecutableTask for InstallModpackTask {
                 )
             };
 
-        // Early save to dlml.json so UI shows correct info while downloading
-        if instance_dir.join("dlml.json").exists() {
+        // Early save to dlml.json so UI shows correct info while downloading (only for fresh install)
+        if !is_update && instance_dir.join("dlml.json").exists() {
             let loader_enum = if loader.to_lowercase().contains("forge") && !loader.to_lowercase().contains("neoforge") {
                 Some(crate::models::instance::LoaderType::Forge)
             } else if loader.to_lowercase().contains("fabric") {
@@ -438,8 +438,7 @@ impl ExecutableTask for InstallModpackTask {
             .await
             .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
-        // Smart Cleanup if is_update is true
-        // Read existing assets.json (or create new)
+        // Pre-compute expected mod paths and prepare asset manifest in memory
         let assets_path = instance_dir.join("assets.json");
         let mut manifest: crate::models::instance::AssetManifest = if assets_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
@@ -455,11 +454,45 @@ impl ExecutableTask for InstallModpackTask {
         for task in &tasks {
             if let Some((path_key, record)) = &task.asset_record {
                 expected_mod_paths.insert(path_key.clone());
-                // Pre-register all assets sequentially to avoid race conditions during concurrent downloads
                 manifest.assets.insert(path_key.clone(), record.clone());
             }
         }
 
+        // 4. Batch Download Mods
+        check_cancel!();
+
+        let ctx_download_mods = ctx.with_sub_task("download_mods");
+
+        let download_task = tokio::spawn(async move {
+            if !tasks.is_empty() {
+                if let Err(e) = run_batch_download_task(tasks, ctx_download_mods.clone()).await {
+                    if ctx_download_mods.is_cancelled() {
+                        tracing::warn!(
+                            "Modpack installation cancelled during batch download, cleaning up..."
+                        );
+                        return Err(TaskError::ExecutionError(
+                            "Installation cancelled by user".to_string(),
+                        ));
+                    }
+                    tracing::warn!(
+                        "Installation failed during batch download. Temp dir preserved for resume."
+                    );
+                    return Err(TaskError::ExecutionError(e));
+                }
+            }
+            Ok(())
+        });
+
+        // Wait for both loader installation and mods download to complete
+        let (actual_loader_res, download_res) = tokio::join!(actual_loader_task, download_task);
+
+        check_cancel!();
+
+        let actual_loader =
+            actual_loader_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
+        download_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
+
+        // Perform smart cleanup only AFTER downloads complete successfully to prevent data loss on cancellation/failure
         if is_update {
             // First, migrate from legacy modpack_files.json if it exists
             let legacy_modpack_files_path = instance_dir.join("modpack_files.json");
@@ -473,13 +506,11 @@ impl ExecutableTask for InstallModpackTask {
                                 let base_name = name_str.trim_end_matches(".disable").to_string();
                                 
                                 let mut found = false;
-                                for task in &tasks {
-                                    if let Some((path_key, _)) = &task.asset_record {
-                                        let expected_name = std::path::Path::new(path_key).file_name().unwrap_or_default().to_string_lossy().to_string();
-                                        if expected_name.trim_end_matches(".disable") == base_name {
-                                            found = true;
-                                            break;
-                                        }
+                                for expected in &expected_mod_paths {
+                                    let expected_name = std::path::Path::new(expected).file_name().unwrap_or_default().to_string_lossy().to_string();
+                                    if expected_name.trim_end_matches(".disable") == base_name {
+                                        found = true;
+                                        break;
                                     }
                                 }
                                 
@@ -529,40 +560,6 @@ impl ExecutableTask for InstallModpackTask {
         if let Ok(json_str) = serde_json::to_string_pretty(&manifest) {
             let _ = tokio::fs::write(&assets_path, json_str).await;
         }
-
-        // 4. Batch Download Mods
-        check_cancel!();
-
-        let ctx_download_mods = ctx.with_sub_task("download_mods");
-
-        let download_task = tokio::spawn(async move {
-            if !tasks.is_empty() {
-                if let Err(e) = run_batch_download_task(tasks, ctx_download_mods.clone()).await {
-                    if ctx_download_mods.is_cancelled() {
-                        tracing::warn!(
-                            "Modpack installation cancelled during batch download, cleaning up..."
-                        );
-                        return Err(TaskError::ExecutionError(
-                            "Installation cancelled by user".to_string(),
-                        ));
-                    }
-                    tracing::warn!(
-                        "Installation failed during batch download. Temp dir preserved for resume."
-                    );
-                    return Err(TaskError::ExecutionError(e));
-                }
-            }
-            Ok(())
-        });
-
-        // Wait for both loader installation and mods download to complete
-        let (actual_loader_res, download_res) = tokio::join!(actual_loader_task, download_task);
-
-        check_cancel!();
-
-        let actual_loader =
-            actual_loader_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
-        download_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
 
         // Setup Instance JSON based on the resolved loader
         let inherits_from = actual_loader;
@@ -647,9 +644,41 @@ impl ExecutableTask for InstallModpackTask {
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
         if instance_dir.join("dlml.json").exists() {
+            let loader_enum = if loader.to_lowercase().contains("forge") && !loader.to_lowercase().contains("neoforge") {
+                Some(crate::models::instance::LoaderType::Forge)
+            } else if loader.to_lowercase().contains("fabric") {
+                Some(crate::models::instance::LoaderType::Fabric)
+            } else if loader.to_lowercase().contains("neoforge") {
+                Some(crate::models::instance::LoaderType::NeoForge)
+            } else if loader.to_lowercase().contains("quilt") {
+                Some(crate::models::instance::LoaderType::Quilt)
+            } else {
+                Some(crate::models::instance::LoaderType::Vanilla)
+            };
+            let server_id = self.options.server_id.clone();
+            let pack_version_id = self.options.pack_version_id.clone();
+            let pack_file_name = self.options.pack_file_name.clone();
+
             let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
                 config.is_installing = false;
                 config.is_updating = false;
+                config.mc_version = Some(mc_version.clone());
+                config.loader_type = loader_enum;
+                config.modpack_project_id = project_id.clone();
+                config.modpack_type = Some(modpack_type_str.to_string());
+                config.modpack_version = Some(modpack_version.clone());
+                // Always record pack_version_id and pack_file_name to keep normal and server modpacks completely consistent
+                if pack_version_id.is_some() {
+                    config.pack_version_id = pack_version_id;
+                } else {
+                    config.pack_version_id = Some(modpack_version.clone());
+                }
+                if pack_file_name.is_some() {
+                    config.pack_file_name = pack_file_name;
+                }
+                if server_id.is_some() {
+                    config.server_id = server_id;
+                }
             })
             .await;
         }
@@ -665,6 +694,9 @@ pub struct InstallOnlineModpackOptions {
     pub instance_name: String,
     pub project_id: Option<String>,
     pub is_update: bool,
+    pub server_id: Option<String>,
+    pub pack_version_id: Option<String>,
+    pub pack_file_name: Option<String>,
 }
 
 pub struct InstallOnlineModpackTask {
@@ -690,11 +722,12 @@ impl ExecutableTask for InstallOnlineModpackTask {
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
         let has_assets_json = instance_dir.join("assets.json").exists();
-        if !is_update {
+        let json_path = instance_dir.join(format!("{}.json", instance_name));
+        let has_version_json = json_path.exists();
+        if is_update || has_assets_json || has_version_json {
+            protect_existing_instance(&instance_dir).await;
+        } else {
             crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-            if has_assets_json {
-                protect_existing_instance(&instance_dir).await;
-            }
         }
 
         let temp_dir = base_dir
@@ -789,10 +822,12 @@ impl ExecutableTask for InstallOnlineModpackTask {
             });
 
             let has_assets_json = instance_dir.join("assets.json").exists();
+            let json_path = instance_dir.join(format!("{}.json", instance_name));
+            let has_version_json = json_path.exists();
             if let Err(e) = crate::downloader::download::download_file_task(task, client, &ctx_zip, &global_downloaded).await {
                 monitor.abort();
                 let _ = tokio::fs::remove_file(&temp_zip_path).await;
-                if !is_update && !has_assets_json {
+                if !is_update && !has_assets_json && !has_version_json {
                     let _ = tokio::fs::remove_dir_all(&instance_dir).await;
                 }
                 return Err(TaskError::ExecutionError(e));
@@ -811,6 +846,9 @@ impl ExecutableTask for InstallOnlineModpackTask {
                 instance_name: instance_name.clone(),
                 is_update,
                 project_id: project_id.clone(),
+                server_id: self.options.server_id.clone(),
+                pack_version_id: self.options.pack_version_id.clone(),
+                pack_file_name: self.options.pack_file_name.clone(),
             },
         };
 
@@ -1015,6 +1053,9 @@ pub async fn install_modpack(
     instance_name: String,
     is_update: bool,
     project_id: Option<String>,
+    server_id: Option<String>,
+    pack_version_id: Option<String>,
+    pack_file_name: Option<String>,
     app: AppHandle,
 ) -> Result<String, AppError> {
     let task_manager = app.state::<TaskManager>().inner().clone();
@@ -1022,8 +1063,12 @@ pub async fn install_modpack(
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
+    let json_path = instance_dir.join(format!("{}.json", instance_name));
+    let is_existing_instance = instance_dir.exists()
+        && (json_path.exists() || instance_dir.join("dlml.json").exists() || instance_dir.join("assets.json").exists());
+    let effective_is_update = is_update || is_existing_instance;
 
-    if !is_update && instance_dir.exists() {
+    if !effective_is_update && instance_dir.exists() {
         return Err(crate::error::DawnlandError::Unknown(format!("Instance with name '{}' already exists", instance_name)).into());
     }
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
@@ -1033,7 +1078,7 @@ pub async fn install_modpack(
         None,
         project_id.as_deref(),
     );
-    if !is_update {
+    if !effective_is_update {
         let pre_config = crate::core::launcher::InstanceConfig {
             is_installing: true,
             ..Default::default()
@@ -1047,8 +1092,11 @@ pub async fn install_modpack(
         options: InstallModpackOptions {
             zip_path: zip_path.clone(),
             instance_name: instance_name.clone(),
-            is_update,
+            is_update: effective_is_update,
             project_id: project_id.clone(),
+            server_id: server_id.clone(),
+            pack_version_id: pack_version_id.clone(),
+            pack_file_name: pack_file_name.clone(),
         },
     };
 
@@ -1057,8 +1105,11 @@ pub async fn install_modpack(
             TaskType::InstallModpack {
                 zip_path: zip_path.clone(),
                 instance_name: instance_name.clone(),
-                is_update,
+                is_update: effective_is_update,
                 project_id,
+                server_id,
+                pack_version_id,
+                pack_file_name,
             },
             task,
         )
@@ -1074,6 +1125,9 @@ pub async fn download_and_install_online_modpack(
     instance_name: String,
     project_id: Option<String>,
     is_update: bool,
+    server_id: Option<String>,
+    pack_version_id: Option<String>,
+    pack_file_name: Option<String>,
     app: AppHandle,
 ) -> Result<String, AppError> {
     let task_manager = app.state::<TaskManager>().inner().clone();
@@ -1081,6 +1135,11 @@ pub async fn download_and_install_online_modpack(
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
+    let json_path = instance_dir.join(format!("{}.json", instance_name));
+    let is_existing_instance = instance_dir.exists()
+        && (json_path.exists() || instance_dir.join("dlml.json").exists() || instance_dir.join("assets.json").exists());
+    let effective_is_update = is_update || is_existing_instance;
+
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
     crate::core::instance_icon::advance_instance_icon_generation(
@@ -1088,7 +1147,7 @@ pub async fn download_and_install_online_modpack(
         None,
         project_id.as_deref(),
     );
-    if !is_update {
+    if !effective_is_update {
         let pre_config = crate::core::launcher::InstanceConfig {
             is_installing: true,
             ..Default::default()
@@ -1103,7 +1162,10 @@ pub async fn download_and_install_online_modpack(
             url: url.clone(),
             instance_name: instance_name.clone(),
             project_id: project_id.clone(),
-            is_update,
+            is_update: effective_is_update,
+            server_id: server_id.clone(),
+            pack_version_id: pack_version_id.clone(),
+            pack_file_name: pack_file_name.clone(),
         },
     };
 
@@ -1112,8 +1174,11 @@ pub async fn download_and_install_online_modpack(
             TaskType::InstallOnlineModpack {
                 url: url.clone(),
                 instance_name: instance_name.clone(),
-                is_update,
+                is_update: effective_is_update,
                 project_id: project_id.clone(),
+                server_id,
+                pack_version_id,
+                pack_file_name,
             },
             task,
         )
@@ -1163,4 +1228,60 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, AppError> {
     .map_err(|e| DawnlandError::ProcessError(format!("Task join error: {}", e)))??;
 
     Ok(name)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ModpackArchiveInfo {
+    pub name: String,
+    pub version: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_modpack_info(zip_path: String) -> Result<ModpackArchiveInfo, AppError> {
+    let info = tokio::task::spawn_blocking(move || -> Result<ModpackArchiveInfo, DawnlandError> {
+        let file = std::fs::File::open(&zip_path)
+            .map_err(|e| DawnlandError::Unknown(format!("Failed to open zip: {}", e)))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| DawnlandError::Unknown(format!("Failed to read zip: {}", e)))?;
+
+        if let Ok(mut manifest_file) = archive.by_name("manifest.json") {
+            let mut contents = String::new();
+            use std::io::Read;
+            if manifest_file.read_to_string(&mut contents).is_ok() {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
+                        let version = json.get("version").and_then(|v| v.as_str()).map(ToString::to_string);
+                        return Ok(ModpackArchiveInfo {
+                            name: name.to_string(),
+                            version,
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Ok(mut manifest_file) = archive.by_name("modrinth.index.json") {
+            let mut contents = String::new();
+            use std::io::Read;
+            if manifest_file.read_to_string(&mut contents).is_ok() {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
+                        let version = json.get("versionId").and_then(|v| v.as_str()).map(ToString::to_string);
+                        return Ok(ModpackArchiveInfo {
+                            name: name.to_string(),
+                            version,
+                        });
+                    }
+                }
+            }
+        }
+
+        Err(DawnlandError::Unknown(
+            "Could not find manifest.json or modrinth.index.json with a valid name".to_string(),
+        ))
+    })
+    .await
+    .map_err(|e| DawnlandError::ProcessError(format!("Task join error: {}", e)))??;
+
+    Ok(info)
 }
