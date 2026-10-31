@@ -110,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
@@ -120,6 +120,8 @@ import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
+import { INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
+import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
 
 const props = defineProps<{
   instanceId: string;
@@ -179,6 +181,21 @@ async function loadMods() {
 }
 
 watch(() => props.instanceId, loadMods, { immediate: true });
+
+function handleAssetsUpdated(event: Event) {
+  const detail = (event as CustomEvent<InstanceAssetsUpdatedDetail>).detail;
+  if (detail && detail.instanceId === props.instanceId && detail.kinds.includes('Mod')) {
+    loadMods();
+  }
+}
+
+onMounted(() => {
+  window.addEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+});
+
+onUnmounted(() => {
+  window.removeEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+});
 
 async function toggleMod(mod: LocalMod) {
   if (mod.isToggling) return;

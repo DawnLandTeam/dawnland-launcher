@@ -16,6 +16,7 @@ import TaskCenter from "./components/TaskCenter.vue";
 import TaskDetailModal from "./components/TaskDetailModal.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
 import Toaster from "./components/Toaster.vue";
+import DropInstallOverlay from "./components/DropInstallOverlay.vue";
 import DeepLinkReceiveModal, { type DeepLinkData } from "./components/DeepLinkReceiveModal.vue";
 import { toast } from "./composables/useToast";
 import { parseDeepLinkUrl } from "./utils/deepLink";
@@ -147,7 +148,7 @@ function handlePrivacyResolved() {
 const handleDeepLinkConfirm = async (data: DeepLinkData) => {
   if (data.type === 'modpack') {
     const { projectId, source, versionId, name } = data.payload;
-    toast.info(t('deepLink.fetching', '正在获取整合包详情...'));
+    toast.info(t('deepLink.fetching', 'Fetching modpack details...'));
     try {
       const fetchVersions = source === 'modrinth' ? 'get_modrinth_modpack_versions' : 'get_curseforge_modpack_versions';
       const versions: any = await invoke(fetchVersions, { projectId });
@@ -168,13 +169,13 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
           isUpdate: false
         });
         trackEvent("Modpack Install Completed", { name: targetVersion.name || targetVersion.displayName || name || 'Shared Modpack', projectId });
-        toast.success(t('deepLink.installStarted', '已开始安装整合包'), t('deepLink.installStartedDesc', '请在任务中心查看进度'));
+        toast.success(t('deepLink.installStarted', 'Modpack installation started'), t('deepLink.installStartedDesc', 'Check progress in the Task Center'));
       } else {
-        toast.error(t('deepLink.installFailed', '安装失败'), t('deepLink.versionNotFound', '未找到对应的整合包版本'));
+        toast.error(t('deepLink.installFailed', 'Installation failed'), t('deepLink.versionNotFound', 'Modpack version not found'));
         trackEvent("Error Occurred", { context: "deeplink_modpack_install", error_type: "VersionNotFound" });
       }
     } catch (e) {
-      toast.error(t('deepLink.installFailed', '安装失败'), String(e));
+      toast.error(t('deepLink.installFailed', 'Installation failed'), String(e));
       trackEvent("Error Occurred", { 
         context: "deeplink_modpack_install", 
         error_type: getErrorType(e) 
@@ -260,4 +261,5 @@ onUnmounted(() => {
   <NotificationCenter />
   <DeepLinkReceiveModal v-model:open="showDeepLinkModal" :data="incomingLinkData" @confirm="handleDeepLinkConfirm" />
   <Toaster />
+  <DropInstallOverlay />
 </template>

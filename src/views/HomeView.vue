@@ -29,6 +29,7 @@ import { fetchApi } from "../utils/api";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { useStatistics } from "../composables/useStatistics";
 import { applyCachedInstanceIcons, useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
+import { useFileDrop } from "../composables/useFileDrop";
 // Types
 interface InstanceItem {
   id: string;
@@ -82,6 +83,8 @@ const installedInstances = ref<InstanceItem[]>([]);
 const { t } = useI18n();
 const accounts = ref<Account[]>([]);
 const selectedInstanceId = ref<string>("");
+const { setHomeSelectedInstanceId } = useFileDrop();
+watch(selectedInstanceId, (id) => setHomeSelectedInstanceId(id || ""), { immediate: true });
 const selectedAccountId = useStorage<string>('selectedAccountId', '');
 
 import { launchingInstances, jvmSpawnedInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';

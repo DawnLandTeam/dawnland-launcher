@@ -3,7 +3,7 @@ import { ref, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
-import { Package, Plus, Gamepad2, Loader2, Check, Share2, Trash2, Clock, Play, AlertTriangle } from "@lucide/vue";
+import { Package, Plus, Gamepad2, Loader2, Check, Share2, Trash2, Clock, Play, AlertTriangle, UploadCloud } from "@lucide/vue";
 
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
 
@@ -15,6 +15,7 @@ import { trackEvent } from "../utils/analytics";
 import { toast } from '../composables/useToast';
 import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
 import InstanceIcon from "../components/InstanceIcon.vue";
+import { useFileDrop } from "../composables/useFileDrop";
 
 // Types
 interface InstanceItem {
@@ -33,10 +34,11 @@ interface InstanceItem {
 // Router — deep-link support
 const route = useRoute();
 const router = useRouter();
-useI18n();
+const { t } = useI18n();
 
 // State
 const { instances: installedInstances, fetchInstances: loadInstances } = useInstances();
+const { hoveredInstanceId, isDragging, draggedFiles } = useFileDrop();
 const { fetchAllStats, getInstanceStats, formatPlayTime, error: statsError } = useStatistics();
 const copiedShareInstanceId = ref<string | null>(null);
 
@@ -170,7 +172,7 @@ async function shareModpack(instance: InstanceItem) {
     }, 2000);
   } catch (err) {
     console.error("Failed to write to clipboard:", err);
-    toast.error('无法复制链接到剪贴板，请检查浏览器权限。');
+    toast.error(t('instances.share.copyFailed', 'Failed to copy link to clipboard, please check browser permissions.'));
   }
 }
 async function confirmDeleteInstance(instance: InstanceItem) {
@@ -296,9 +298,17 @@ function normalizedModpackVersion(version: string): string {
         <div
           v-for="instance in installedInstances"
           :key="instance.id"
+          :data-drop-instance-id="instance.id"
           @click="openSettings(instance)"
           class="group flex flex-col h-[136px] rounded-2xl border border-white/20 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md hover:border-primary/50 hover:bg-white/80 dark:hover:bg-zinc-900/80 transition-all shadow-sm relative hover:z-50 focus-within:z-50 cursor-pointer overflow-hidden"
-          :class="openDropdownId === instance.id ? 'z-50' : ''"
+          :class="[
+            openDropdownId === instance.id ? 'z-50' : '',
+            hoveredInstanceId === instance.id
+              ? 'ring-2 ring-emerald-500 dark:ring-emerald-400 !border-emerald-500/80 !bg-white/95 dark:!bg-zinc-900/95 shadow-lg shadow-emerald-500/10 -translate-y-0.5 z-40'
+              : isDragging && hoveredInstanceId
+                ? 'opacity-60'
+                : ''
+          ]"
         >
           <!-- Installing/Updating Overlay -->
           <div v-if="instance.isInstalling || instance.isUpdating" class="absolute inset-0 z-10 bg-white/50 dark:bg-black/50 backdrop-blur-[1px] flex items-center justify-center rounded-2xl">
@@ -369,7 +379,23 @@ function normalizedModpackVersion(version: string): string {
           </div>
 
           <!-- Bottom stats footer -->
-          <div v-if="statsError" class="px-4 py-2 border-t border-black/5 dark:border-white/10 flex items-center justify-center text-[11px] text-red-500 shrink-0 mt-auto gap-1">
+          <!-- Bottom stats / drop footer -->
+          <div
+            v-if="hoveredInstanceId === instance.id"
+            class="px-4 py-2 border-t border-emerald-500/20 bg-emerald-500/10 dark:bg-emerald-500/15 flex items-center justify-between text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 shrink-0 mt-auto gap-2"
+          >
+            <div class="flex items-center gap-1.5 min-w-0 truncate">
+              <UploadCloud class="w-3.5 h-3.5 shrink-0 animate-bounce" />
+              <span class="truncate">{{ $t('dropInstall.dropToInstallHere', 'Drop to install to this instance') }}</span>
+            </div>
+            <span
+              v-if="draggedFiles.length > 0"
+              class="shrink-0 rounded-full bg-emerald-500/20 dark:bg-emerald-400/20 px-2 py-0.5 text-[10px] font-bold"
+            >
+              {{ draggedFiles.length === 1 ? $t(`dropInstall.kind${draggedFiles[0].kind}`, draggedFiles[0].kind) : `${draggedFiles.length}` }}
+            </span>
+          </div>
+          <div v-else-if="statsError" class="px-4 py-2 border-t border-black/5 dark:border-white/10 flex items-center justify-center text-[11px] text-red-500 shrink-0 mt-auto gap-1">
             <AlertTriangle class="w-3.5 h-3.5" />
             <span>{{ $t('instances.statisticsError', 'Failed to load statistics') }}</span>
           </div>

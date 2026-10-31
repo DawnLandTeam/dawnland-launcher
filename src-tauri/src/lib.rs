@@ -390,6 +390,8 @@ pub fn run() {
             core::manager::open_custom_asset_folder,
             commands::install_mod_to_instance,
             core::manager::import_local_mod_to_instance,
+            core::drop_install::inspect_dropped_files,
+            core::drop_install::import_dropped_files_to_instance,
             core::manager::bind_instance_to_server,
             core::manager::get_instance_mod_mapping,
             core::manager::download_mod_to_directory,
