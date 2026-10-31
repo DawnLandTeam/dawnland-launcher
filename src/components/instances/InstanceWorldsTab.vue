@@ -90,7 +90,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { Globe, Search, Trash2 } from '@lucide/vue';
@@ -99,6 +99,8 @@ import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
+import { INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
+import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
 
 const props = defineProps<{
   instanceId: string;
@@ -151,6 +153,21 @@ watch(() => props.instanceId, () => {
   searchQuery.value = '';
   loadAssets();
 }, { immediate: true });
+
+function handleAssetsUpdated(event: Event) {
+  const detail = (event as CustomEvent<InstanceAssetsUpdatedDetail>).detail;
+  if (detail && detail.instanceId === props.instanceId && detail.kinds.includes('World')) {
+    loadAssets();
+  }
+}
+
+onMounted(() => {
+  window.addEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+});
+
+onUnmounted(() => {
+  window.removeEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+});
 
 function confirmDelete(asset: LocalAssetItem) {
   assetToDelete.value = asset;

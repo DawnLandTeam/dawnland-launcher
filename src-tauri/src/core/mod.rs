@@ -28,3 +28,4 @@ pub mod ai;
 pub mod hash;
 pub mod jvm_tuner;
 pub mod statistics;
+pub mod drop_install;

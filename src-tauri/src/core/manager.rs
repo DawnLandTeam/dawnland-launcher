@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 use tokio::sync::Mutex;
 use tauri::Manager;
 
-static MANIFEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+pub static MANIFEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Represents a scanned installed instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,7 +180,7 @@ pub async fn scan_installed_instances(
 
                 // If it is installing or updating, check if its corresponding task exists and is not cancelled
                 if (is_installing || is_updating) && !has_valid_task {
-                    // For first time installation, always clean up zombie instances (even if they have partial data from extraction)
+                    // For first time installation, only clean up zombie instances if they do NOT have existing version json
                     if is_installing && !is_updating {
                         tracing::info!("Cleaning up zombie installing instance: {}", id);
                         let _ = tokio::fs::remove_dir_all(&path).await;
@@ -1495,9 +1495,16 @@ pub async fn toggle_mod_status(
             record.enabled = enable;
             let json = serde_json::to_string_pretty(&manifest)
                 .map_err(|e| format!("Failed to serialize assets.json: {}", e))?;
-            tokio::fs::write(&assets_path, json)
+            let temp_assets_path = base_dir
+                .join("versions")
+                .join(&version_id)
+                .join(format!(".assets_{}.json.tmp", uuid::Uuid::new_v4().simple()));
+            tokio::fs::write(&temp_assets_path, json)
                 .await
-                .map_err(|e| format!("Failed to write assets.json: {}", e))?;
+                .map_err(|e| format!("Failed to write assets.json temp: {}", e))?;
+            tokio::fs::rename(&temp_assets_path, &assets_path)
+                .await
+                .map_err(|e| format!("Failed to commit assets.json: {}", e))?;
         }
     }
 
@@ -1884,7 +1891,8 @@ pub async fn register_manual_asset_with_metadata(
 pub async fn save_asset_to_manifest(instance_id: &str, path_key: String, record: crate::models::instance::AssetRecord) {
     let _lock = MANIFEST_LOCK.lock().await;
     let base_dir = get_minecraft_base();
-    let assets_path = base_dir.join("versions").join(instance_id).join("assets.json");
+    let instance_dir = base_dir.join("versions").join(instance_id);
+    let assets_path = instance_dir.join("assets.json");
     let mut manifest = if assets_path.exists() {
         if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
             serde_json::from_str::<crate::models::instance::AssetManifest>(&content).unwrap_or_default()
@@ -1896,19 +1904,26 @@ pub async fn save_asset_to_manifest(instance_id: &str, path_key: String, record:
     };
     manifest.assets.insert(path_key, record);
     if let Ok(json) = serde_json::to_string_pretty(&manifest) {
-        let _ = tokio::fs::write(&assets_path, json).await;
+        let temp_assets_path = instance_dir.join(format!(".assets_{}.json.tmp", uuid::Uuid::new_v4().simple()));
+        if tokio::fs::write(&temp_assets_path, &json).await.is_ok() {
+            let _ = tokio::fs::rename(&temp_assets_path, &assets_path).await;
+        }
     }
 }
 
 pub async fn delete_asset_from_manifest(instance_id: &str, path_key: &str) {
     let _lock = MANIFEST_LOCK.lock().await;
     let base_dir = get_minecraft_base();
-    let assets_path = base_dir.join("versions").join(instance_id).join("assets.json");
+    let instance_dir = base_dir.join("versions").join(instance_id);
+    let assets_path = instance_dir.join("assets.json");
     if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
         if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
             if manifest.assets.remove(path_key).is_some() {
                 if let Ok(json) = serde_json::to_string_pretty(&manifest) {
-                    let _ = tokio::fs::write(&assets_path, json).await;
+                    let temp_assets_path = instance_dir.join(format!(".assets_{}.json.tmp", uuid::Uuid::new_v4().simple()));
+                    if tokio::fs::write(&temp_assets_path, &json).await.is_ok() {
+                        let _ = tokio::fs::rename(&temp_assets_path, &assets_path).await;
+                    }
                 }
             }
         }
@@ -1947,7 +1962,8 @@ async fn save_installed_mods_json(
 ) {
     let _lock = MANIFEST_LOCK.lock().await;
     let base_dir = get_minecraft_base();
-    let assets_path = base_dir.join("versions").join(instance_id).join("assets.json");
+    let instance_dir = base_dir.join("versions").join(instance_id);
+    let assets_path = instance_dir.join("assets.json");
     let mut manifest = if assets_path.exists() {
         if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
             serde_json::from_str::<crate::models::instance::AssetManifest>(&content).unwrap_or_default()
@@ -2036,7 +2052,10 @@ async fn save_installed_mods_json(
     }
     
     if let Ok(json) = serde_json::to_string_pretty(&manifest) {
-        let _ = tokio::fs::write(&assets_path, json).await;
+        let temp_assets_path = instance_dir.join(format!(".assets_{}.json.tmp", uuid::Uuid::new_v4().simple()));
+        if tokio::fs::write(&temp_assets_path, &json).await.is_ok() {
+            let _ = tokio::fs::rename(&temp_assets_path, &assets_path).await;
+        }
     }
 }
 
