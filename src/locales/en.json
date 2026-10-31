@@ -304,7 +304,9 @@
       "install": "Install",
       "copyIp": "Copy IP",
       "installInstance": "Install Instance",
-      "details": "Details"
+      "details": "Details",
+      "updateClient": "Update client modpack",
+      "update": "Update"
     },
     "publishDialog": {
       "stepOf": "Step {step} of {total}:",
@@ -381,7 +383,8 @@
       "modded": "Modded",
       "noDescription": "No description provided",
       "authAuthlib": "Auth: Authlib"
-    }
+    },
+    "updateAvailable": "Update Available"
   },
   "accounts": {
     "title": "Account Management",

@@ -374,33 +374,29 @@ impl TaskManager {
 
                     // Clean up the half-installed instance directory
                     if let Some(instance_id) = state.task_type.instance_id() {
+                        let is_update_task = state.task_type.is_update();
                         let base_dir = crate::core::mojang::get_minecraft_base();
                         let instance_dir = base_dir.join("versions").join(&instance_id);
                         let config_path = instance_dir.join("dlml.json");
-                        if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
-                            if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-                                if let Ok(config) = serde_json::from_str::<
-                                    crate::core::launcher::InstanceConfig,
-                                >(&content)
-                                {
-                                    // For first time installation, always clean up failed/cancelled instances
-                                    if config.is_installing && !config.is_updating {
-                                        tracing::info!(
-                                            "Cleaning up failed/cancelled instance: {}",
-                                            instance_id
-                                        );
-                                        let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-                                    } else if config.is_updating {
-                                        tracing::warn!("Instance {} is marked as updating. Skipping auto-cleanup.", instance_id);
-                                        let mut rescued_config = config.clone();
-                                        rescued_config.is_installing = false;
-                                        rescued_config.is_updating = false;
-                                        if let Ok(json) = serde_json::to_string_pretty(&rescued_config) {
-                                            let _ = tokio::fs::write(&config_path, json).await;
-                                        }
-                                    }
-                                }
+
+                        // If it is an update task, it is an existing instance and MUST NOT be deleted!
+                        if is_update_task {
+                            tracing::warn!(
+                                "Instance {} is an existing instance being updated. Skipping auto-cleanup and resetting flags.",
+                                instance_id
+                            );
+                            if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                                let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
+                                    config.is_installing = false;
+                                    config.is_updating = false;
+                                }).await;
                             }
+                        } else if state.task_type.is_core_installation() {
+                            tracing::info!(
+                                "Cleaning up failed fresh installation instance: {}",
+                                instance_id
+                            );
+                            let _ = tokio::fs::remove_dir_all(&instance_dir).await;
                         }
                     }
                 }
@@ -425,34 +421,29 @@ impl TaskManager {
 
                 // Eagerly delete the installing directory if applicable
                 if let Some(instance_id) = state.task_type.instance_id() {
+                    let is_update_task = state.task_type.is_update();
                     let base_dir = crate::core::mojang::get_minecraft_base();
                     let instance_dir = base_dir.join("versions").join(&instance_id);
-                    // Only delete if it's currently marked as installing to avoid deleting valid updates
                     let config_path = instance_dir.join("dlml.json");
-                    if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
-                        if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
-                            if let Ok(config) = serde_json::from_str::<
-                                crate::core::launcher::InstanceConfig,
-                            >(&content)
-                            {
-                                // For first time installation, always eagerly clean up
-                                if config.is_installing && !config.is_updating {
-                                    tracing::info!(
-                                        "Eagerly cleaning up cancelled instance: {}",
-                                        instance_id
-                                    );
-                                    let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-                                } else if config.is_updating {
-                                    tracing::warn!("Instance {} is marked as updating. Skipping eager auto-cleanup.", instance_id);
-                                    let mut rescued_config = config.clone();
-                                    rescued_config.is_installing = false;
-                                    rescued_config.is_updating = false;
-                                    if let Ok(json) = serde_json::to_string_pretty(&rescued_config) {
-                                        let _ = tokio::fs::write(&config_path, json).await;
-                                    }
-                                }
-                            }
+
+                    // If it is an update task, it is an existing instance and MUST NOT be deleted!
+                    if is_update_task {
+                        tracing::warn!(
+                            "Instance {} is an existing instance being updated. Skipping eager auto-cleanup and resetting flags.",
+                            instance_id
+                        );
+                        if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                            let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
+                                config.is_installing = false;
+                                config.is_updating = false;
+                            }).await;
                         }
+                    } else if state.task_type.is_core_installation() {
+                        tracing::info!(
+                            "Eagerly cleaning up cancelled fresh installation instance: {}",
+                            instance_id
+                        );
+                        let _ = tokio::fs::remove_dir_all(&instance_dir).await;
                     }
                 }
             }

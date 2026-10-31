@@ -180,12 +180,13 @@ pub async fn scan_installed_instances(
 
                 // If it is installing or updating, check if its corresponding task exists and is not cancelled
                 if (is_installing || is_updating) && !has_valid_task {
-                    // For first time installation, only clean up zombie instances if they do NOT have existing version json
+                    // For first time installation, clean up zombie instances
                     if is_installing && !is_updating {
                         tracing::info!("Cleaning up zombie installing instance: {}", id);
                         let _ = tokio::fs::remove_dir_all(&path).await;
+                        continue;
                     } else {
-                        tracing::warn!("Instance {} is marked as updating. Skipping zombie auto-cleanup and rescuing it.", id);
+                        tracing::warn!("Instance {} is marked as updating. Skipping zombie auto-cleanup and resetting flags.", id);
                         if config_path.exists()
                             && crate::core::launcher::update_instance_config(&path, |config| {
                                 config.is_installing = false;

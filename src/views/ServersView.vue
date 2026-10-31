@@ -263,12 +263,20 @@ function isClientInstalled(server: ServerInfo): boolean {
     }
     
     return installedInstances.value.some(i => {
-      // Exact match on serverId
-      if (i.serverId !== String(server.id)) return false;
+      // Match on serverId or name/id fallback
+      const matchesServer = (i.serverId && i.serverId === String(server.id)) || (!i.serverId && (i.name === server.name || i.id === server.name));
+      if (!matchesServer) return false;
       
-      // If it's an online modpack, compare packVersionId
+      // If it's an online modpack, compare packVersionId or modpackVersion to support consistent version identification
       if (server.packVersionId) {
-        return i.packVersionId === server.packVersionId;
+        const targetVer = String(server.packVersionId).trim();
+        const matchesPackVersionId = Boolean(i.packVersionId && String(i.packVersionId).trim() === targetVer);
+        const matchesModpackVersion = Boolean(i.modpackVersion && (
+          String(i.modpackVersion).trim() === targetVer ||
+          String(i.modpackVersion).trim().toLowerCase() === targetVer.toLowerCase() ||
+          String(i.modpackVersion).trim().replace(/^v/i, '') === targetVer.replace(/^v/i, '')
+        ));
+        return matchesPackVersionId || matchesModpackVersion;
       }
       
       // If it's a local zip modpack, compare packFileName
@@ -281,6 +289,22 @@ function isClientInstalled(server: ServerInfo): boolean {
   }
   
   return true;
+}
+
+function hasMatchingInstance(server: ServerInfo): boolean {
+  return installedInstances.value.some(
+    i => (i.serverId && i.serverId === String(server.id)) || (!i.serverId && (i.name === server.name || i.id === server.name))
+  );
+}
+
+function hasClientUpdate(server: ServerInfo): boolean {
+  if (server.serverType === 'vanilla') {
+    return false;
+  }
+  if (!server.packFileName && !server.packSource) {
+    return false;
+  }
+  return hasMatchingInstance(server) && !isClientInstalled(server);
 }
 
 
@@ -485,9 +509,12 @@ async function installClient(server: ServerInfo) {
   }
   
   // Route to ModpackInstallView with appropriate query params
+  const matchedInst = installedInstances.value.find(i => (i.serverId && i.serverId === String(server.id)) || (!i.serverId && (i.name === server.name || i.id === server.name)));
   const queryParams: Record<string, string> = {
     server_id: String(server.id),
-    update_id: server.name, // Use server name as instance name
+    update_id: (matchedInst?.id || server.name),
+    is_update: (matchedInst ? 'true' : 'false'),
+    current_version: (matchedInst?.packVersionId || matchedInst?.modpackVersion || ''),
   };
 
   if (server.packSource && server.packProjectId && server.packVersionId) {
@@ -700,6 +727,13 @@ async function openPublishUrl() {
 
         <!-- Server Info -->
         <div class="flex flex-wrap gap-2 mb-3">
+          <!-- Update Available Badge -->
+          <span
+            v-if="hasClientUpdate(server)"
+            class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 animate-pulse"
+          >
+            {{ $t('servers.updateAvailable', 'Update available') }}
+          </span>
           <!-- First Tag Badge -->
           <span
             v-if="server.tags && server.tags.trim()"
@@ -746,17 +780,23 @@ async function openPublishUrl() {
             </button>
           </div>
           <div class="flex items-center gap-2 shrink-0">
-            <!-- Install Client button -->
+            <!-- Install / Update Client button -->
             <button
               v-if="!isClientInstalled(server)"
               @click="installClient(server)"
               :disabled="installingServerId === server.id"
-              class="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground text-sm font-bold rounded-md hover:bg-primary/90 transition-all shadow-sm active:scale-95 disabled:opacity-50 whitespace-nowrap"
-              :title="$t('servers.actions.installClient')"
+              class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold rounded-md transition-all shadow-sm active:scale-95 disabled:opacity-50 whitespace-nowrap"
+              :class="hasClientUpdate(server) ? 'bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-700' : 'bg-primary text-primary-foreground hover:bg-primary/90'"
+              :title="hasClientUpdate(server) ? $t('servers.actions.updateClient') : $t('servers.actions.installClient')"
             >
               <Loader2 v-if="installingServerId === server.id" class="h-4 w-4 animate-spin" />
+              <RefreshCw v-else-if="hasClientUpdate(server)" class="h-4 w-4" />
               <Download v-else class="h-4 w-4" />
-              {{ server.serverType === 'vanilla' ? $t('servers.actions.installInstance') : $t('servers.actions.install') }}
+              {{
+                hasClientUpdate(server)
+                  ? $t('servers.actions.update')
+                  : (server.serverType === 'vanilla' ? $t('servers.actions.installInstance') : $t('servers.actions.install'))
+              }}
             </button>
             <button 
               v-else
