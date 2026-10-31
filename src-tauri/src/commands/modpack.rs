@@ -34,16 +34,15 @@ pub struct InstallModpackOptions {
     pub instance_name: String,
     pub is_update: bool,
     pub project_id: Option<String>,
+    pub server_id: Option<String>,
+    pub pack_version_id: Option<String>,
+    pub pack_file_name: Option<String>,
 }
 
 async fn protect_existing_instance(instance_dir: &std::path::Path) {
-    let config_path = instance_dir.join("dlml.json");
-    if !config_path.exists() {
-        return;
-    }
-
     if let Err(e) = crate::core::launcher::update_instance_config(instance_dir, |config| {
         config.is_updating = true;
+        config.is_installing = false;
     })
     .await
     {
@@ -74,7 +73,7 @@ impl InstallModpackTask {
         vec![
             crate::core::task::state::SubTaskState {
                 key: "extract_modpack".to_string(),
-                name: "解压整合包文件".to_string(),
+                name: "Extract modpack archive".to_string(),
                 status: crate::core::task::state::SubTaskStatus::Pending,
                 current: 0,
                 total: 100,
@@ -82,7 +81,7 @@ impl InstallModpackTask {
             },
             crate::core::task::state::SubTaskState {
                 key: "resolve_mods".to_string(),
-                name: "解析 Mod 下载信息".to_string(),
+                name: "Resolve mod downloads".to_string(),
                 status: crate::core::task::state::SubTaskStatus::Pending,
                 current: 0,
                 total: 100,
@@ -90,7 +89,7 @@ impl InstallModpackTask {
             },
             crate::core::task::state::SubTaskState {
                 key: "download_mods".to_string(),
-                name: "下载 Mod".to_string(),
+                name: "Download mods".to_string(),
                 status: crate::core::task::state::SubTaskStatus::Pending,
                 current: 0,
                 total: 100,
@@ -98,7 +97,7 @@ impl InstallModpackTask {
             },
             crate::core::task::state::SubTaskState {
                 key: "apply_overrides".to_string(),
-                name: "应用 Overrides".to_string(),
+                name: "Apply overrides".to_string(),
                 status: crate::core::task::state::SubTaskStatus::Pending,
                 current: 0,
                 total: 100,
@@ -116,6 +115,9 @@ impl ExecutableTask for InstallModpackTask {
         let is_update = self.options.is_update;
         let project_id = &self.options.project_id;
 
+        let instance_lock = crate::core::drop_install::get_instance_lock(instance_name);
+        let _instance_guard = instance_lock.lock().await;
+
         tracing::info!(
             "Starting modpack installation: {} -> {}",
             zip_path,
@@ -131,13 +133,14 @@ impl ExecutableTask for InstallModpackTask {
             .join(&ctx.id);
         let instance_dir = base_dir.join("versions").join(instance_name);
         let has_assets_json = instance_dir.join("assets.json").exists();
+        let json_path = instance_dir.join(format!("{}.json", instance_name));
+        let has_version_json = json_path.exists();
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
-        if !is_update {
+        if is_update {
+            protect_existing_instance(&instance_dir).await;
+        } else {
             crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-            if has_assets_json {
-                protect_existing_instance(&instance_dir).await;
-            }
         }
 
         macro_rules! check_cancel {
@@ -145,7 +148,7 @@ impl ExecutableTask for InstallModpackTask {
                 if ctx.is_cancelled() {
                     tracing::warn!("Modpack installation cancelled, cleaning up...");
                     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-                    if !is_update && !has_assets_json {
+                    if !is_update {
                         let _ = tokio::fs::remove_dir_all(&instance_dir).await;
                     }
                     return Err(TaskError::ExecutionError(
@@ -376,8 +379,8 @@ impl ExecutableTask for InstallModpackTask {
                 )
             };
 
-        // Early save to dlml.json so UI shows correct info while downloading
-        if instance_dir.join("dlml.json").exists() {
+        // Early save to dlml.json so UI shows correct info while downloading (only for fresh install)
+        if !is_update && instance_dir.join("dlml.json").exists() {
             let loader_enum = if loader.to_lowercase().contains("forge") && !loader.to_lowercase().contains("neoforge") {
                 Some(crate::models::instance::LoaderType::Forge)
             } else if loader.to_lowercase().contains("fabric") {
@@ -438,8 +441,7 @@ impl ExecutableTask for InstallModpackTask {
             .await
             .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
 
-        // Smart Cleanup if is_update is true
-        // Read existing assets.json (or create new)
+        // Pre-compute expected mod paths and prepare asset manifest in memory
         let assets_path = instance_dir.join("assets.json");
         let mut manifest: crate::models::instance::AssetManifest = if assets_path.exists() {
             if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
@@ -455,79 +457,8 @@ impl ExecutableTask for InstallModpackTask {
         for task in &tasks {
             if let Some((path_key, record)) = &task.asset_record {
                 expected_mod_paths.insert(path_key.clone());
-                // Pre-register all assets sequentially to avoid race conditions during concurrent downloads
                 manifest.assets.insert(path_key.clone(), record.clone());
             }
-        }
-
-        if is_update {
-            // First, migrate from legacy modpack_files.json if it exists
-            let legacy_modpack_files_path = instance_dir.join("modpack_files.json");
-            if legacy_modpack_files_path.exists() {
-                if let Ok(content) = tokio::fs::read_to_string(&legacy_modpack_files_path).await {
-                    if let Ok(old_files) = serde_json::from_str::<Vec<String>>(&content) {
-                        for old_file in old_files {
-                            let file_path = instance_dir.join(&old_file);
-                            if let Some(filename) = file_path.file_name() {
-                                let name_str = filename.to_string_lossy().to_string();
-                                let base_name = name_str.trim_end_matches(".disable").to_string();
-                                
-                                let mut found = false;
-                                for task in &tasks {
-                                    if let Some((path_key, _)) = &task.asset_record {
-                                        let expected_name = std::path::Path::new(path_key).file_name().unwrap_or_default().to_string_lossy().to_string();
-                                        if expected_name.trim_end_matches(".disable") == base_name {
-                                            found = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                
-                                if !found {
-                                    tracing::info!("Update legacy cleanup: Deleting outdated modpack mod {}", old_file);
-                                    let _ = tokio::fs::remove_file(&file_path).await;
-                                    let disabled_path = file_path.with_file_name(format!("{}.disable", base_name));
-                                    let _ = tokio::fs::remove_file(&disabled_path).await;
-                                    let enabled_path = file_path.with_file_name(&base_name);
-                                    let _ = tokio::fs::remove_file(&enabled_path).await;
-                                }
-                            }
-                        }
-                    }
-                }
-                let _ = tokio::fs::remove_file(&legacy_modpack_files_path).await;
-            }
-
-            // Smart cleanup for existing managed_by_modpack records
-            let mut to_remove = Vec::new();
-            for (path_key, record) in &manifest.assets {
-                if record.managed_by_modpack {
-                    let mut found = false;
-                    for expected in &expected_mod_paths {
-                        let normalized_expected = expected.trim_end_matches(".disable");
-                        let normalized_path_key = path_key.trim_end_matches(".disable");
-                        if normalized_expected == normalized_path_key {
-                            found = true;
-                            break;
-                        }
-                    }
-                    
-                    if !found {
-                        to_remove.push(path_key.clone());
-                    }
-                }
-            }
-            for path_key in to_remove {
-                tracing::info!("Removing old modpack file from assets: {}", path_key);
-                let _ = tokio::fs::remove_file(instance_dir.join(&path_key)).await;
-                let _ = tokio::fs::remove_file(instance_dir.join(format!("{}.disable", path_key))).await;
-                manifest.assets.remove(&path_key);
-            }
-        }
-        
-        // Write the fully updated assets.json ONCE to disk
-        if let Ok(json_str) = serde_json::to_string_pretty(&manifest) {
-            let _ = tokio::fs::write(&assets_path, json_str).await;
         }
 
         // 4. Batch Download Mods
@@ -563,6 +494,8 @@ impl ExecutableTask for InstallModpackTask {
         let actual_loader =
             actual_loader_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
         download_res.map_err(|e| TaskError::ExecutionError(e.to_string()))??;
+
+
 
         // Setup Instance JSON based on the resolved loader
         let inherits_from = actual_loader;
@@ -643,13 +576,118 @@ impl ExecutableTask for InstallModpackTask {
             .update_progress(100, 100, "Overrides applied")
             .await;
 
+        // Perform smart cleanup only AFTER all installation steps and overrides succeed
+        // to prevent deleting working mods on failure
+        if is_update {
+            // First, migrate from legacy modpack_files.json if it exists
+            let legacy_modpack_files_path = instance_dir.join("modpack_files.json");
+            if legacy_modpack_files_path.exists() {
+                if let Ok(content) = tokio::fs::read_to_string(&legacy_modpack_files_path).await {
+                    if let Ok(old_files) = serde_json::from_str::<Vec<String>>(&content) {
+                        for old_file in old_files {
+                            let file_path = instance_dir.join(&old_file);
+                            if let Some(filename) = file_path.file_name() {
+                                let name_str = filename.to_string_lossy().to_string();
+                                let base_name = name_str.trim_end_matches(".disable").to_string();
+                                
+                                let mut found = false;
+                                for expected in &expected_mod_paths {
+                                    let expected_name = std::path::Path::new(expected).file_name().unwrap_or_default().to_string_lossy().to_string();
+                                    if expected_name.trim_end_matches(".disable") == base_name {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if !found {
+                                    tracing::info!("Update legacy cleanup: Deleting outdated modpack mod {}", old_file);
+                                    let _ = tokio::fs::remove_file(&file_path).await;
+                                    let disabled_path = file_path.with_file_name(format!("{}.disable", base_name));
+                                    let _ = tokio::fs::remove_file(&disabled_path).await;
+                                    let enabled_path = file_path.with_file_name(&base_name);
+                                    let _ = tokio::fs::remove_file(&enabled_path).await;
+                                }
+                            }
+                        }
+                    }
+                }
+                let _ = tokio::fs::remove_file(&legacy_modpack_files_path).await;
+            }
+
+            // Smart cleanup for existing managed_by_modpack records
+            let mut to_remove = Vec::new();
+            for (path_key, record) in &manifest.assets {
+                if record.managed_by_modpack {
+                    let mut found = false;
+                    for expected in &expected_mod_paths {
+                        let normalized_expected = expected.trim_end_matches(".disable");
+                        let normalized_path_key = path_key.trim_end_matches(".disable");
+                        if normalized_expected == normalized_path_key {
+                            found = true;
+                            break;
+                        }
+                    }
+                    
+                    if !found {
+                        to_remove.push(path_key.clone());
+                    }
+                }
+            }
+            for path_key in to_remove {
+                tracing::info!("Removing old modpack file from assets: {}", path_key);
+                let _ = tokio::fs::remove_file(instance_dir.join(&path_key)).await;
+                let _ = tokio::fs::remove_file(instance_dir.join(format!("{}.disable", path_key))).await;
+                manifest.assets.remove(&path_key);
+            }
+        }
+        
+        // Write the fully updated assets.json atomically with shared MANIFEST_LOCK
+        let _lock = crate::core::manager::MANIFEST_LOCK.lock().await;
+        if let Ok(json_str) = serde_json::to_string_pretty(&manifest) {
+            let temp_assets_path = instance_dir.join(format!(".assets_{}.json.tmp", uuid::Uuid::new_v4().simple()));
+            if tokio::fs::write(&temp_assets_path, json_str).await.is_ok() {
+                let _ = tokio::fs::rename(&temp_assets_path, &assets_path).await;
+            }
+        }
+        drop(_lock);
+
         // 6. Cleanup Temp
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
         if instance_dir.join("dlml.json").exists() {
+            let loader_enum = if loader.to_lowercase().contains("forge") && !loader.to_lowercase().contains("neoforge") {
+                Some(crate::models::instance::LoaderType::Forge)
+            } else if loader.to_lowercase().contains("fabric") {
+                Some(crate::models::instance::LoaderType::Fabric)
+            } else if loader.to_lowercase().contains("neoforge") {
+                Some(crate::models::instance::LoaderType::NeoForge)
+            } else if loader.to_lowercase().contains("quilt") {
+                Some(crate::models::instance::LoaderType::Quilt)
+            } else {
+                Some(crate::models::instance::LoaderType::Vanilla)
+            };
+            let server_id = self.options.server_id.clone();
+            let pack_version_id = self.options.pack_version_id.clone();
+            let pack_file_name = self.options.pack_file_name.clone();
+
             let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
                 config.is_installing = false;
                 config.is_updating = false;
+                config.mc_version = Some(mc_version.clone());
+                config.loader_type = loader_enum;
+                config.modpack_project_id = project_id.clone();
+                config.modpack_type = Some(modpack_type_str.to_string());
+                config.modpack_version = Some(modpack_version.clone());
+                // When pack_version_id is provided, record it; when absent from options, preserve existing pack_version_id
+                if pack_version_id.is_some() {
+                    config.pack_version_id = pack_version_id;
+                }
+                if pack_file_name.is_some() {
+                    config.pack_file_name = pack_file_name;
+                }
+                if server_id.is_some() {
+                    config.server_id = server_id;
+                }
             })
             .await;
         }
@@ -665,6 +703,9 @@ pub struct InstallOnlineModpackOptions {
     pub instance_name: String,
     pub project_id: Option<String>,
     pub is_update: bool,
+    pub server_id: Option<String>,
+    pub pack_version_id: Option<String>,
+    pub pack_file_name: Option<String>,
 }
 
 pub struct InstallOnlineModpackTask {
@@ -679,6 +720,9 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let project_id = &self.options.project_id;
         let is_update = self.options.is_update;
 
+        let instance_lock = crate::core::drop_install::get_instance_lock(instance_name);
+        let _instance_guard = instance_lock.lock().await;
+
         tracing::info!(
             "Downloading online modpack from {} to {}",
             url,
@@ -689,12 +733,10 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let instance_dir = base_dir.join("versions").join(instance_name);
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
-        let has_assets_json = instance_dir.join("assets.json").exists();
-        if !is_update {
+        if is_update {
+            protect_existing_instance(&instance_dir).await;
+        } else {
             crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-            if has_assets_json {
-                protect_existing_instance(&instance_dir).await;
-            }
         }
 
         let temp_dir = base_dir
@@ -705,7 +747,7 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let _ = tokio::fs::create_dir_all(&temp_dir).await;
         let mut sub_tasks = vec![crate::core::task::state::SubTaskState {
             key: "download_modpack_zip".to_string(),
-            name: "下载整合包文件".to_string(),
+            name: "Download modpack archive".to_string(),
             status: crate::core::task::state::SubTaskStatus::Pending,
             current: 0,
             total: 100,
@@ -788,11 +830,10 @@ impl ExecutableTask for InstallOnlineModpackTask {
                 }
             });
 
-            let has_assets_json = instance_dir.join("assets.json").exists();
             if let Err(e) = crate::downloader::download::download_file_task(task, client, &ctx_zip, &global_downloaded).await {
                 monitor.abort();
                 let _ = tokio::fs::remove_file(&temp_zip_path).await;
-                if !is_update && !has_assets_json {
+                if !is_update {
                     let _ = tokio::fs::remove_dir_all(&instance_dir).await;
                 }
                 return Err(TaskError::ExecutionError(e));
@@ -811,8 +852,14 @@ impl ExecutableTask for InstallOnlineModpackTask {
                 instance_name: instance_name.clone(),
                 is_update,
                 project_id: project_id.clone(),
+                server_id: self.options.server_id.clone(),
+                pack_version_id: self.options.pack_version_id.clone(),
+                pack_file_name: self.options.pack_file_name.clone(),
             },
         };
+
+        // Release outer instance mutex before calling inner task to prevent non-reentrant deadlock
+        drop(_instance_guard);
 
         let result = modpack_task.execute(ctx).await;
 
@@ -1010,16 +1057,40 @@ async fn ensure_dependencies(
 // ==========================================
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn install_modpack(
     zip_path: String,
     instance_name: String,
     is_update: bool,
     project_id: Option<String>,
+    server_id: Option<String>,
+    pack_version_id: Option<String>,
+    pack_file_name: Option<String>,
     app: AppHandle,
 ) -> Result<String, AppError> {
+    if !crate::core::drop_install::is_safe_single_name(&instance_name) {
+        return Err(DawnlandError::Unknown("Invalid instance name".to_string()).into());
+    }
+
     let task_manager = app.state::<TaskManager>().inner().clone();
 
-    // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
+    // Reject duplicate tasks for the same instance before touching any files or flags
+    if let Ok(all_tasks) = task_manager.load_history().await {
+        for t in all_tasks {
+            if (t.status == crate::core::task::TaskStatus::Pending
+                || t.status == crate::core::task::TaskStatus::Running
+                || t.status == crate::core::task::TaskStatus::Paused)
+                && t.task_type.instance_id().as_deref() == Some(&instance_name)
+            {
+                return Err(DawnlandError::Unknown(format!(
+                    "CONFLICTING_TASK:{}",
+                    t.task_type.name()
+                ))
+                .into());
+            }
+        }
+    }
+
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
 
@@ -1036,6 +1107,7 @@ pub async fn install_modpack(
     if !is_update {
         let pre_config = crate::core::launcher::InstanceConfig {
             is_installing: true,
+            is_updating: false,
             ..Default::default()
         };
         let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
@@ -1049,6 +1121,9 @@ pub async fn install_modpack(
             instance_name: instance_name.clone(),
             is_update,
             project_id: project_id.clone(),
+            server_id: server_id.clone(),
+            pack_version_id: pack_version_id.clone(),
+            pack_file_name: pack_file_name.clone(),
         },
     };
 
@@ -1059,6 +1134,9 @@ pub async fn install_modpack(
                 instance_name: instance_name.clone(),
                 is_update,
                 project_id,
+                server_id,
+                pack_version_id,
+                pack_file_name,
             },
             task,
         )
@@ -1069,18 +1147,46 @@ pub async fn install_modpack(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn download_and_install_online_modpack(
     url: String,
     instance_name: String,
     project_id: Option<String>,
     is_update: bool,
+    server_id: Option<String>,
+    pack_version_id: Option<String>,
+    pack_file_name: Option<String>,
     app: AppHandle,
 ) -> Result<String, AppError> {
+    if !crate::core::drop_install::is_safe_single_name(&instance_name) {
+        return Err(DawnlandError::Unknown("Invalid instance name".to_string()).into());
+    }
+
     let task_manager = app.state::<TaskManager>().inner().clone();
 
-    // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
+    // Reject duplicate tasks for the same instance before touching any files or flags
+    if let Ok(all_tasks) = task_manager.load_history().await {
+        for t in all_tasks {
+            if (t.status == crate::core::task::TaskStatus::Pending
+                || t.status == crate::core::task::TaskStatus::Running
+                || t.status == crate::core::task::TaskStatus::Paused)
+                && t.task_type.instance_id().as_deref() == Some(&instance_name)
+            {
+                return Err(DawnlandError::Unknown(format!(
+                    "CONFLICTING_TASK:{}",
+                    t.task_type.name()
+                ))
+                .into());
+            }
+        }
+    }
+
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
+
+    if !is_update && instance_dir.exists() {
+        return Err(crate::error::DawnlandError::Unknown(format!("Instance with name '{}' already exists", instance_name)).into());
+    }
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
     crate::core::instance_icon::advance_instance_icon_generation(
@@ -1091,6 +1197,7 @@ pub async fn download_and_install_online_modpack(
     if !is_update {
         let pre_config = crate::core::launcher::InstanceConfig {
             is_installing: true,
+            is_updating: false,
             ..Default::default()
         };
         let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
@@ -1104,6 +1211,9 @@ pub async fn download_and_install_online_modpack(
             instance_name: instance_name.clone(),
             project_id: project_id.clone(),
             is_update,
+            server_id: server_id.clone(),
+            pack_version_id: pack_version_id.clone(),
+            pack_file_name: pack_file_name.clone(),
         },
     };
 
@@ -1114,6 +1224,9 @@ pub async fn download_and_install_online_modpack(
                 instance_name: instance_name.clone(),
                 is_update,
                 project_id: project_id.clone(),
+                server_id,
+                pack_version_id,
+                pack_file_name,
             },
             task,
         )

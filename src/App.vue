@@ -166,7 +166,8 @@ const handleDeepLinkConfirm = async (data: DeepLinkData) => {
           source: source,
           projectId: projectId,
           versionId: versionId,
-          isUpdate: false
+          isUpdate: false,
+          packVersionId: targetVersion.id ? String(targetVersion.id) : (versionId ? String(versionId) : null),
         });
         trackEvent("Modpack Install Completed", { name: targetVersion.name || targetVersion.displayName || name || 'Shared Modpack', projectId });
         toast.success(t('deepLink.installStarted', 'Modpack installation started'), t('deepLink.installStartedDesc', 'Check progress in the Task Center'));

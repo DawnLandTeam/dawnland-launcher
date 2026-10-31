@@ -137,11 +137,21 @@ pub async fn retry_task(
             instance_name,
             is_update,
             project_id,
+            server_id,
+            pack_version_id,
+            pack_file_name,
         } => {
             let base_dir = crate::core::mojang::get_minecraft_base();
             let instance_dir = base_dir.join("versions").join(&instance_name);
             let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+            if is_update {
+                crate::core::launcher::update_instance_config(&instance_dir, |config| {
+                    config.is_updating = true;
+                    config.is_installing = false;
+                }).await.ok();
+            } else {
+                crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+            }
 
             let executable = crate::commands::modpack::InstallModpackTask {
                 options: crate::commands::modpack::InstallModpackOptions {
@@ -149,6 +159,9 @@ pub async fn retry_task(
                     instance_name,
                     is_update,
                     project_id,
+                    server_id,
+                    pack_version_id,
+                    pack_file_name,
                 },
             };
             task_manager
@@ -215,11 +228,21 @@ pub async fn retry_task(
             instance_name,
             is_update,
             project_id,
+            server_id,
+            pack_version_id,
+            pack_file_name,
         } => {
             let base_dir = crate::core::mojang::get_minecraft_base();
             let instance_dir = base_dir.join("versions").join(&instance_name);
             let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+            if is_update {
+                crate::core::launcher::update_instance_config(&instance_dir, |config| {
+                    config.is_updating = true;
+                    config.is_installing = false;
+                }).await.ok();
+            } else {
+                crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+            }
 
             let executable = crate::commands::modpack::InstallOnlineModpackTask {
                 options: crate::commands::modpack::InstallOnlineModpackOptions {
@@ -227,6 +250,9 @@ pub async fn retry_task(
                     instance_name,
                     project_id,
                     is_update,
+                    server_id,
+                    pack_version_id,
+                    pack_file_name,
                 },
             };
             task_manager
