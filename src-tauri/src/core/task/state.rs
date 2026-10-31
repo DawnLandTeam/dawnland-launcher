@@ -27,12 +27,24 @@ pub enum TaskType {
         instance_name: String,
         is_update: bool,
         project_id: Option<String>,
+        #[serde(default)]
+        server_id: Option<String>,
+        #[serde(default)]
+        pack_version_id: Option<String>,
+        #[serde(default)]
+        pack_file_name: Option<String>,
     },
     InstallOnlineModpack {
         url: String,
         instance_name: String,
         is_update: bool,
         project_id: Option<String>,
+        #[serde(default)]
+        server_id: Option<String>,
+        #[serde(default)]
+        pack_version_id: Option<String>,
+        #[serde(default)]
+        pack_file_name: Option<String>,
     },
     InstallMod {
         source: String,

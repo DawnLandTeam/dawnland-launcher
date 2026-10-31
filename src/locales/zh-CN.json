@@ -304,7 +304,9 @@
       "install": "安装",
       "copyIp": "复制 IP",
       "installInstance": "安装实例",
-      "details": "详情"
+      "details": "详情",
+      "updateClient": "更新客户端整合包",
+      "update": "更新"
     },
     "publishDialog": {
       "stepOf": "步骤 {step} / {total}:",
@@ -381,7 +383,8 @@
       "modded": "模组 (Modded)",
       "noDescription": "暂无介绍 (No description provided)",
       "authAuthlib": "验证方式: 外置登录 (Authlib)"
-    }
+    },
+    "updateAvailable": "可更新"
   },
   "accounts": {
     "title": "账号管理",

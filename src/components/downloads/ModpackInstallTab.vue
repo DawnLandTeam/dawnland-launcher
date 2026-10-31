@@ -39,7 +39,13 @@ const emit = defineEmits(['cancel-update']);
 // Modes: 'online' or 'local'
 const installMode = ref<'online' | 'local'>('online');
 
-const isUpdate = computed(() => !!props.updateId || (!!route.query.update_id && !route.query.server_id));
+const isUpdate = computed(() => {
+  if (props.updateId) return true;
+  if (route.query.is_update !== undefined) {
+    return route.query.is_update === 'true' || route.query.is_update === '1';
+  }
+  return !!route.query.update_id && !route.query.server_id;
+});
 
 const zipPath = ref("");
 const onlineUrl = ref("");
