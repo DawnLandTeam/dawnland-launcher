@@ -165,21 +165,37 @@ pub async fn scan_installed_instances(
                 let icon_path =
                     crate::core::instance_icon::resolve_icon_path(&path, icon_name.as_deref()).await;
 
-                let mut has_valid_task = false;
-                for task in &tasks {
-                    if let Some(tid) = task.task_type.instance_id() {
-                        if tid == id && matches!(task.status, crate::core::task::TaskStatus::Pending | crate::core::task::TaskStatus::Running | crate::core::task::TaskStatus::Paused) {
-                            has_valid_task = true;
-                            if task.task_type.is_update() {
-                                is_updating = true;
+                let mut has_valid_task = task_manager.is_instance_starting(&id);
+                if !has_valid_task {
+                    for task in &tasks {
+                        if let Some(tid) = task.task_type.instance_id() {
+                            if tid == id && matches!(task.status, crate::core::task::TaskStatus::Pending | crate::core::task::TaskStatus::Running | crate::core::task::TaskStatus::Paused) {
+                                has_valid_task = true;
+                                if task.task_type.is_update() {
+                                    is_updating = true;
+                                }
+                                break;
                             }
-                            break;
                         }
                     }
                 }
 
                 // If it is installing or updating, check if its corresponding task exists and is not cancelled
                 if (is_installing || is_updating) && !has_valid_task {
+                    // Check if installation startup or modification is recent (under 60s)
+                    let is_recently_modified = if let Ok(meta) = tokio::fs::metadata(&config_path).await {
+                        meta.modified().ok().and_then(|m| m.elapsed().ok()).map(|d| d.as_secs() < 60).unwrap_or(false)
+                    } else if let Ok(meta) = tokio::fs::metadata(&path).await {
+                        meta.modified().ok().and_then(|m| m.elapsed().ok()).map(|d| d.as_secs() < 60).unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    if is_recently_modified {
+                        tracing::info!("Instance {} was created or modified recently; skipping zombie cleanup as installation startup may be in progress", id);
+                        continue;
+                    }
+
                     // For first time installation, clean up zombie instances
                     if is_installing && !is_updating {
                         tracing::info!("Cleaning up zombie installing instance: {}", id);

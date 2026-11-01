@@ -81,9 +81,19 @@ describe('useTaskStore composable', () => {
 
   it('handles task cancellation', async () => {
     const store = useTaskStore();
-    await store.cancelTask('task-1');
+    const result = await store.cancelTask('task-1');
     
     expect(invoke).toHaveBeenCalledWith('cancel_task', { taskId: 'task-1' });
+    expect(result).toBe(true);
+  });
+
+  it('returns false when task cancellation fails', async () => {
+    const store = useTaskStore();
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('Backend rejection'));
+    const result = await store.cancelTask('task-fail');
+    
+    expect(invoke).toHaveBeenCalledWith('cancel_task', { taskId: 'task-fail' });
+    expect(result).toBe(false);
   });
 
   it('removes tasks when task-deleted event fires', async () => {

@@ -120,14 +120,16 @@ export function useTaskStore() {
 
   const processingCancels = new Set<string>();
 
-  async function cancelTask(id: string) {
-    if (processingCancels.has(id)) return;
+  async function cancelTask(id: string): Promise<boolean> {
+    if (processingCancels.has(id)) return false;
     
     try {
       processingCancels.add(id);
       await invoke('cancel_task', { taskId: id });
+      return true;
     } catch (e) {
       console.error('Failed to cancel task:', e);
+      return false;
     } finally {
       processingCancels.delete(id);
     }
