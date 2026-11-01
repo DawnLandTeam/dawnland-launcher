@@ -19,7 +19,7 @@ const route = useRoute();
       <CustomTitleBar />
       <div class="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main class="flex-1 overflow-y-auto">
+        <main class="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar">
           <router-view v-slot="{ Component }">
             <keep-alive exclude="InstanceManagementView">
               <component :is="Component" :key="route.path" />

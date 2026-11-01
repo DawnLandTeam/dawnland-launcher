@@ -14,10 +14,10 @@ describe('DSelect', () => {
     const wrapper = mount(DSelect, {
       props: {
         options,
-        placeholder: 'Select an option'
-      }
+        placeholder: 'Select an option',
+      },
     });
-    
+
     expect(wrapper.text()).toContain('Select an option');
   });
 
@@ -25,21 +25,21 @@ describe('DSelect', () => {
     const wrapper = mount(DSelect, {
       props: {
         options,
-        modelValue: '2'
-      }
+        modelValue: '2',
+      },
     });
-    
+
     expect(wrapper.text()).toContain('Option 2');
   });
 
   it('opens dropdown when clicked', async () => {
     const wrapper = mount(DSelect, {
-      props: { options }
+      props: { options },
     });
-    
+
     const button = wrapper.find('button');
     await button.trigger('click');
-    
+
     // After click, options should be visible
     expect(wrapper.text()).toContain('Option 1');
     expect(wrapper.text()).toContain('Option 2');
@@ -47,30 +47,72 @@ describe('DSelect', () => {
 
   it('emits update:modelValue when an option is selected', async () => {
     const wrapper = mount(DSelect, {
-      props: { options }
+      props: { options },
     });
-    
+
     await wrapper.find('button').trigger('click');
-    
+
     // Find all options in the dropdown and click the first one
     const optionElements = wrapper.findAll('[role="option"]:not([aria-disabled="true"])');
     await optionElements[0].trigger('click');
-    
+
     expect(wrapper.emitted('update:modelValue')).toBeTruthy();
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['1']);
   });
 
   it('does not emit update:modelValue for disabled options', async () => {
     const wrapper = mount(DSelect, {
-      props: { options }
+      props: { options },
     });
-    
+
     await wrapper.find('button').trigger('click');
-    
+
     // The disabled option has aria-disabled
     const disabledOption = wrapper.find('[role="option"][aria-disabled="true"]');
     await disabledOption.trigger('click');
-    
+
     expect(wrapper.emitted('update:modelValue')).toBeFalsy();
+  });
+
+  it('filters options by keyword when searchable is enabled and renders instance icons', async () => {
+    const instanceOptions: SelectOption[] = [
+      {
+        label: 'All the Mods 11',
+        sublabel: '1.21.1 · NeoForge',
+        value: 'atm11',
+        iconPath: null,
+        showInstanceIcon: true,
+      },
+      {
+        label: 'Fabric Survival',
+        sublabel: '1.20.1 · Fabric',
+        value: 'fabric-1.20.1',
+        iconPath: null,
+        showInstanceIcon: true,
+      },
+    ];
+
+    const wrapper = mount(DSelect, {
+      props: {
+        options: instanceOptions,
+        modelValue: 'atm11',
+        searchable: true,
+        searchPlaceholder: 'Search instances...',
+      },
+    });
+
+    // Selected option renders an <img> icon and sublabel in the trigger button
+    expect(wrapper.find('button img').exists()).toBe(true);
+    expect(wrapper.find('button').text()).toContain('All the Mods 11');
+    expect(wrapper.find('button').text()).toContain('1.21.1 · NeoForge');
+
+    await wrapper.find('button').trigger('click');
+    const searchInput = wrapper.find('input[type="text"]');
+    expect(searchInput.exists()).toBe(true);
+
+    await searchInput.setValue('fabric');
+    const visibleOptions = wrapper.findAll('[role="option"]');
+    expect(visibleOptions).toHaveLength(1);
+    expect(visibleOptions[0].text()).toContain('Fabric Survival');
   });
 });

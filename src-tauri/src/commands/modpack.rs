@@ -1297,3 +1297,59 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, AppError> {
 
     Ok(name)
 }
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ModpackArchiveInfo {
+    pub name: String,
+    pub version: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_modpack_info(zip_path: String) -> Result<ModpackArchiveInfo, AppError> {
+    let info = tokio::task::spawn_blocking(move || -> Result<ModpackArchiveInfo, DawnlandError> {
+        let file = std::fs::File::open(&zip_path)
+            .map_err(|e| DawnlandError::Unknown(format!("Failed to open zip: {}", e)))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| DawnlandError::Unknown(format!("Failed to read zip: {}", e)))?;
+
+        if let Ok(mut manifest_file) = archive.by_name("manifest.json") {
+            let mut contents = String::new();
+            use std::io::Read;
+            if manifest_file.read_to_string(&mut contents).is_ok() {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
+                        let version = json.get("version").and_then(|v| v.as_str()).map(ToString::to_string);
+                        return Ok(ModpackArchiveInfo {
+                            name: name.to_string(),
+                            version,
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Ok(mut manifest_file) = archive.by_name("modrinth.index.json") {
+            let mut contents = String::new();
+            use std::io::Read;
+            if manifest_file.read_to_string(&mut contents).is_ok() {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
+                        let version = json.get("versionId").or_else(|| json.get("version")).and_then(|v| v.as_str()).map(ToString::to_string);
+                        return Ok(ModpackArchiveInfo {
+                            name: name.to_string(),
+                            version,
+                        });
+                    }
+                }
+            }
+        }
+
+        Err(DawnlandError::Unknown(
+            "Could not find manifest.json or modrinth.index.json with a valid name".to_string(),
+        ))
+    })
+    .await
+    .map_err(|e| DawnlandError::ProcessError(format!("Task join error: {}", e)))??;
+
+    Ok(info)
+}

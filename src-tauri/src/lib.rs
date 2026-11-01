@@ -310,6 +310,7 @@ pub fn run() {
             commands::modpack::install_modpack,
             commands::modpack::download_and_install_online_modpack,
             commands::modpack::get_modpack_name,
+            commands::modpack::get_modpack_info,
             core::curseforge::set_curseforge_api_key,
             core::curseforge::get_curseforge_api_key,
             core::curseforge::get_curseforge_game_versions,
