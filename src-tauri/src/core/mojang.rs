@@ -865,6 +865,7 @@ pub async fn install_vanilla_version(
         }
         dir
     };
+    let _startup_guard = task_manager.start_instance_install(&instance_id);
     let _ = std::fs::create_dir_all(&version_dir);
     let config_path = version_dir.join("dlml.json");
     let pre_config = crate::core::launcher::InstanceConfig {

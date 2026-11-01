@@ -653,7 +653,8 @@
     "noVersionsFound": "没有找到对应的版本",
     "oldVersions": "旧版本",
     "fetchingVersions": "获取版本中...",
-    "finish": "完成"
+    "finish": "完成",
+    "cancelFailed": "取消安装失败，请重试。"
   },
   "mods": {
     "title": "探索 Mod",

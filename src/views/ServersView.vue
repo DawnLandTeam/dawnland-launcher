@@ -512,9 +512,16 @@ async function installClient(server: ServerInfo) {
   const matchedInst = installedInstances.value.find(i => (i.serverId && i.serverId === String(server.id)) || (!i.serverId && (i.name === server.name || i.id === server.name)));
   const queryParams: Record<string, string> = {
     server_id: String(server.id),
-    update_id: (matchedInst?.id || server.name),
     is_update: (matchedInst ? 'true' : 'false'),
-    current_version: (matchedInst?.packVersionId || matchedInst?.modpackVersion || ''),
+    ...(matchedInst
+      ? {
+          update_id: matchedInst.id,
+          current_version: matchedInst.packVersionId || matchedInst.modpackVersion || '',
+          modpack_version: matchedInst.modpackVersion || '',
+        }
+      : {
+          instance_name: server.name,
+        }),
   };
 
   if (server.packSource && server.packProjectId && server.packVersionId) {

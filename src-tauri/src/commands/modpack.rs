@@ -1091,6 +1091,16 @@ pub async fn install_modpack(
         }
     }
 
+    if task_manager.is_instance_starting(&instance_name) {
+        return Err(DawnlandError::Unknown(format!(
+            "CONFLICTING_TASK:{}",
+            instance_name
+        ))
+        .into());
+    }
+
+    let _startup_guard = task_manager.start_instance_install(&instance_name);
+
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);
 
@@ -1180,6 +1190,16 @@ pub async fn download_and_install_online_modpack(
             }
         }
     }
+
+    if task_manager.is_instance_starting(&instance_name) {
+        return Err(DawnlandError::Unknown(format!(
+            "CONFLICTING_TASK:{}",
+            instance_name
+        ))
+        .into());
+    }
+
+    let _startup_guard = task_manager.start_instance_install(&instance_name);
 
     let base_dir = crate::core::mojang::get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_name);

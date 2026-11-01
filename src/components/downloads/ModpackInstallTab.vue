@@ -44,7 +44,10 @@ const isUpdate = computed(() => {
   if (route.query.is_update !== undefined) {
     return route.query.is_update === 'true' || route.query.is_update === '1';
   }
-  return !!route.query.update_id && !route.query.server_id;
+  if (route.query.update_id) {
+    return true;
+  }
+  return false;
 });
 
 const zipPath = ref("");
@@ -159,9 +162,10 @@ const initializeView = async () => {
     return;
   }
 
-  if (route.query.update_id) {
-    instanceName.value = route.query.update_id as string;
-    instanceNameInput.value = route.query.update_id as string;
+  const targetInstName = (route.query.update_id || route.query.instance_name) as string | undefined;
+  if (targetInstName) {
+    instanceName.value = targetInstName;
+    instanceNameInput.value = targetInstName;
     
     if (route.query.zip) {
       installMode.value = 'local';
@@ -177,7 +181,7 @@ const initializeView = async () => {
       });
     } else {
       installMode.value = 'online';
-      searchQuery.value = route.query.update_id as string;
+      searchQuery.value = targetInstName;
       const sourceQuery = route.query.source as string;
       if (sourceQuery === 'modrinth' || sourceQuery === 'curseforge') {
         source.value = sourceQuery;
@@ -186,7 +190,7 @@ const initializeView = async () => {
       if (route.query.project_id) {
         const dummyModpack = {
           project_id: route.query.project_id as string,
-          title: route.query.update_id as string,
+          title: targetInstName,
           source: source.value
         };
         
@@ -568,13 +572,31 @@ const installModpack = async () => {
   }
 };
 
+const cancelError = ref<string | null>(null);
+
 const cancelInstallation = async () => {
-  showCancelConfirmModal.value = false;
+  cancelError.value = null;
   isCanceling.value = true;
   try {
-    await invoke("cancel_installation");
+    if (currentTaskId.value) {
+      const success = await taskStore.cancelTask(currentTaskId.value);
+      if (success) {
+        showCancelConfirmModal.value = false;
+      } else {
+        const errorMsg = t('install.cancelFailed', 'Failed to cancel installation. Please try again.');
+        cancelError.value = errorMsg;
+        toast.error(t('common.error', 'Error'), errorMsg);
+      }
+    } else {
+      showCancelConfirmModal.value = false;
+      isInstalling.value = false;
+    }
   } catch (e) {
     console.error("Failed to cancel installation:", e);
+    const errorMsg = getErrorMessage(e);
+    cancelError.value = errorMsg;
+    toast.error(t('common.error', 'Error'), errorMsg);
+  } finally {
     isCanceling.value = false;
   }
 };
@@ -920,7 +942,7 @@ const formatDate = (dateString: string) => {
     </AlertDialog>
 
     <!-- Cancel Confirmation Modal -->
-    <AlertDialog :open="showCancelConfirmModal" @update:open="val => showCancelConfirmModal = val">
+    <AlertDialog :open="showCancelConfirmModal" @update:open="val => { showCancelConfirmModal = val; if (!val) cancelError = null; }">
       <div class="p-2">
         <AlertDialogTitle class="text-xl font-bold text-gray-900 dark:text-white mb-2">
           {{ t('install.cancelConfirmTitle', 'Cancel Installation') }}
@@ -928,18 +950,23 @@ const formatDate = (dateString: string) => {
         <AlertDialogDescription class="text-gray-600 dark:text-gray-300 mb-6">
           {{ t('install.cancelConfirmDesc', 'Are you sure you want to cancel the installation? This will clean up all downloaded and extracted files for this instance.') }}
         </AlertDialogDescription>
+        <p v-if="cancelError" class="text-sm text-red-500 mb-4">
+          {{ cancelError }}
+        </p>
         <div class="flex justify-end gap-3 mt-4">
           <button
             class="px-5 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg font-medium transition-colors"
-            @click="showCancelConfirmModal = false"
+            :disabled="isCanceling"
+            @click="showCancelConfirmModal = false; cancelError = null;"
           >
             {{ t('common.cancel', 'Cancel') }}
           </button>
           <button
-            class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+            class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+            :disabled="isCanceling"
             @click="cancelInstallation"
           >
-            {{ t('common.confirm', 'Yes, Cancel') }}
+            {{ isCanceling ? t('install.canceling', 'Canceling...') : t('common.confirm', 'Yes, Cancel') }}
           </button>
         </div>
       </div>

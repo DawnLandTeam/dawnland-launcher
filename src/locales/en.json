@@ -653,7 +653,8 @@
     "noVersionsFound": "No corresponding versions found",
     "oldVersions": "Old Alpha/Beta",
     "fetchingVersions": "Fetching versions...",
-    "finish": "Finish"
+    "finish": "Finish",
+    "cancelFailed": "Failed to cancel installation. Please try again."
   },
   "mods": {
     "title": "Discover Mods",

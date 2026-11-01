@@ -1374,6 +1374,7 @@ pub async fn install_forge_instance(
         }
         dir
     };
+    let _startup_guard = task_manager.start_instance_install(&custom_instance_name);
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
     let pre_config = crate::core::launcher::InstanceConfig {

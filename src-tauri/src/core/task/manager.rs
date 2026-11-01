@@ -1,7 +1,7 @@
 use super::db::TaskDatabase;
 use super::state::{TaskError, TaskState, TaskStatus, TaskType};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::RwLock;
@@ -189,10 +189,24 @@ pub trait ExecutableTask: Send + Sync {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError>;
 }
 
+pub struct InstanceStartupGuard {
+    instance_id: String,
+    starting_instances: Arc<std::sync::RwLock<HashSet<String>>>,
+}
+
+impl Drop for InstanceStartupGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.starting_instances.write() {
+            set.remove(&self.instance_id);
+        }
+    }
+}
+
 pub struct TaskManager {
     db: TaskDatabase,
     app_handle: AppHandle,
     active_tasks: Arc<RwLock<HashMap<String, CancellationToken>>>,
+    starting_instances: Arc<std::sync::RwLock<HashSet<String>>>,
 }
 
 impl Clone for TaskManager {
@@ -201,6 +215,7 @@ impl Clone for TaskManager {
             db: self.db.clone(),
             app_handle: self.app_handle.clone(),
             active_tasks: self.active_tasks.clone(),
+            starting_instances: self.starting_instances.clone(),
         }
     }
 }
@@ -211,7 +226,25 @@ impl TaskManager {
             db,
             app_handle,
             active_tasks: Arc::new(RwLock::new(HashMap::new())),
+            starting_instances: Arc::new(std::sync::RwLock::new(HashSet::new())),
         }
+    }
+
+    pub fn start_instance_install(&self, instance_id: &str) -> InstanceStartupGuard {
+        if let Ok(mut set) = self.starting_instances.write() {
+            set.insert(instance_id.to_string());
+        }
+        InstanceStartupGuard {
+            instance_id: instance_id.to_string(),
+            starting_instances: self.starting_instances.clone(),
+        }
+    }
+
+    pub fn is_instance_starting(&self, instance_id: &str) -> bool {
+        self.starting_instances
+            .read()
+            .map(|set| set.contains(instance_id))
+            .unwrap_or(false)
     }
 
     pub async fn load_history(&self) -> Result<Vec<TaskState>, TaskError> {
@@ -451,5 +484,27 @@ impl TaskManager {
         } else {
             Err(TaskError::NotFound)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_instance_startup_guard_lifecycle() {
+        let starting = Arc::new(std::sync::RwLock::new(HashSet::new()));
+        let id = "test_instance";
+        {
+            if let Ok(mut set) = starting.write() {
+                set.insert(id.to_string());
+            }
+            let _guard = InstanceStartupGuard {
+                instance_id: id.to_string(),
+                starting_instances: starting.clone(),
+            };
+            assert!(starting.read().unwrap().contains(id));
+        }
+        assert!(!starting.read().unwrap().contains(id));
     }
 }
