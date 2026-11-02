@@ -227,6 +227,13 @@ pub async fn copy_overrides(
     instance_dir: &std::path::Path,
     overrides_folder: &str,
 ) -> Result<(), DawnlandError> {
+    if !crate::core::fs_utils::is_safe_relative_path(overrides_folder) {
+        tracing::warn!(
+            "Unsafe overrides folder '{}' rejected.",
+            overrides_folder
+        );
+        return Ok(());
+    }
     let overrides_path = extract_dir.join(overrides_folder);
     if !overrides_path.exists() || !overrides_path.is_dir() {
         tracing::warn!(

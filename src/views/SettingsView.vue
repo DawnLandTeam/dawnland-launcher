@@ -84,9 +84,9 @@ onUnmounted(() => {
 });
 
 onActivated(async () => {
+  await loadSystemMemory();
   await loadLauncherSettings();
   await loadAuthlibServers();
-  await loadSystemMemory();
   await scanLocalJavas();
   await loadJavaDownloadPath();
   await loadAvailableJavas();
@@ -155,6 +155,7 @@ interface AuthlibServer {
 
 const systemMemory = ref<SystemMemoryInfo>({ totalMb: 8192, recommendedMaxMb: 4096 });
 const defaultMaxMemory = ref(4096);
+const hasCustomMaxMemory = ref(false);
 
 // Updater state
 const isCheckingUpdate = ref(false);
@@ -238,6 +239,9 @@ async function loadLauncherSettings() {
     enableJvmTuner.value = settings.enableJvmTuner ?? true;
     if (settings.globalMaxMemory) {
       defaultMaxMemory.value = settings.globalMaxMemory;
+      hasCustomMaxMemory.value = true;
+    } else {
+      hasCustomMaxMemory.value = false;
     }
     if (settings.aiConfig) {
       aiProviderType.value = settings.aiConfig.providerType === 'remoteApi' ? 'remoteApi' : 'embeddedLlm';
@@ -411,7 +415,9 @@ async function removeAuthlibServer(url: string): Promise<void> {
 async function loadSystemMemory(): Promise<void> {
   try {
     systemMemory.value = await invoke<SystemMemoryInfo>("get_system_memory");
-    defaultMaxMemory.value = systemMemory.value.recommendedMaxMb;
+    if (!hasCustomMaxMemory.value) {
+      defaultMaxMemory.value = systemMemory.value.recommendedMaxMb;
+    }
   } catch (err) {
     console.error("Failed to load system memory:", err);
   }

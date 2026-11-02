@@ -704,11 +704,7 @@ onMounted(async () => {
   await loadCategories();
   await loadOptions();
   
-  if (searchQuery.value) {
-    performSearch(true);
-  } else {
-    performSearch(false);
-  }
+  performSearch(false);
   setupIntersectionObserver();
 });
 
@@ -717,6 +713,10 @@ onActivated(async () => {
 });
 
 onUnmounted(() => {
+  if (intersectionObserver.value) {
+    intersectionObserver.value.disconnect();
+    intersectionObserver.value = null;
+  }
 });
 </script>
 

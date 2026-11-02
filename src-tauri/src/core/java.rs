@@ -654,48 +654,89 @@ pub async fn add_manual_java(path: String) -> Result<JavaInfo, String> {
     Ok(java_info)
 }
 
+fn resolve_jdk_root(
+    canon_java: &std::path::Path,
+    canon_root: &std::path::Path,
+) -> Option<PathBuf> {
+    if !canon_java.starts_with(canon_root) {
+        return None;
+    }
+    let bin_dir = canon_java.parent()?;
+    if !bin_dir
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("bin"))
+    {
+        return None;
+    }
+    let jdk_home = bin_dir.parent()?;
+    if !jdk_home.starts_with(canon_root) || jdk_home == canon_root {
+        return None;
+    }
+
+    // Handle macOS bundle layout: <jdk_root>/Contents/Home/bin/java
+    if jdk_home
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("Home"))
+    {
+        if let Some(contents_dir) = jdk_home.parent() {
+            if contents_dir
+                .file_name()
+                .is_some_and(|n| n.eq_ignore_ascii_case("Contents"))
+            {
+                if let Some(bundle_root) = contents_dir.parent() {
+                    if bundle_root.starts_with(canon_root) && bundle_root != canon_root {
+                        return Some(bundle_root.to_path_buf());
+                    }
+                }
+            }
+        }
+    }
+
+    Some(jdk_home.to_path_buf())
+}
+
 #[tauri::command]
 pub async fn remove_java(path: String) -> Result<(), String> {
     *CACHED_JAVAS.lock().await = None;
     let mut config = load_java_config().await;
 
-    // Check if it's in manual paths
     if let Some(pos) = config.manual_paths.iter().position(|p| p == &path) {
         config.manual_paths.remove(pos);
         save_java_config(&config).await?;
-        tracing::info!("Removed manual Java path: {}", path);
+        tracing::info!("Removed manual Java path from config: {}", path);
         return Ok(());
     }
 
-    // Check if it's a downloaded Java in runtimes or custom download path
-    let is_managed = {
-        let runtimes_dir = get_minecraft_base()
-            .join("runtimes")
-            .to_string_lossy()
-            .to_string();
-        let custom_dir = config
-            .custom_download_path
-            .as_deref()
-            .unwrap_or(&runtimes_dir);
-        path.starts_with(&runtimes_dir) || path.starts_with(custom_dir)
-    };
+    let dawnland_base = get_minecraft_base()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(".dawnland");
+    let mut managed_roots = vec![
+        dawnland_base.join("runtimes"),
+        dawnland_base.join("runtime"),
+        get_minecraft_base().join("runtimes"),
+    ];
+    if let Some(custom_dir) = &config.custom_download_path {
+        if !custom_dir.trim().is_empty() {
+            managed_roots.push(PathBuf::from(custom_dir));
+        }
+    }
 
-    if is_managed {
-        let java_path = PathBuf::from(&path);
-        // We want to delete the whole jdk directory, not just java.exe
-        // Usually it's in `jdk-17/bin/java.exe`, so we go up 2 levels
-        if let Some(bin_dir) = java_path.parent() {
-            if let Some(jdk_dir) = bin_dir.parent() {
-                if jdk_dir.exists() {
-                    tokio::fs::remove_dir_all(jdk_dir)
-                        .await
-                        .map_err(|e| format!("Failed to delete Java directory: {}", e))?;
-                    tracing::info!("Deleted managed Java at: {}", jdk_dir.display());
-                    return Ok(());
+    let java_path = PathBuf::from(&path);
+    if let Ok(canon_java) = tokio::fs::canonicalize(&java_path).await {
+        for root in &managed_roots {
+            if let Ok(canon_root) = tokio::fs::canonicalize(root).await {
+                if let Some(jdk_dir) = resolve_jdk_root(&canon_java, &canon_root) {
+                    if jdk_dir != canon_root && jdk_dir != canon_java && jdk_dir.is_dir() {
+                        tokio::fs::remove_dir_all(&jdk_dir)
+                            .await
+                            .map_err(|e| format!("Failed to delete Java directory: {}", e))?;
+                        tracing::info!("Deleted managed Java at: {}", jdk_dir.display());
+                        return Ok(());
+                    }
                 }
             }
         }
-        return Err("Could not determine JDK root directory for deletion".to_string());
     }
 
     Err(
@@ -853,6 +894,41 @@ mod tests {
         assert_eq!(get_recommended_java("1.19.4"), 17);
         assert_eq!(get_recommended_java("1.16.5"), 8);
         assert_eq!(get_recommended_java("1.7.10"), 8);
+    }
+
+    #[test]
+    fn test_resolve_jdk_root() {
+        let root = PathBuf::from("/custom/javas");
+        let direct_java = root.join("jdk-21.0.2").join("bin").join("java");
+        assert_eq!(
+            resolve_jdk_root(&direct_java, &root),
+            Some(root.join("jdk-21.0.2"))
+        );
+
+        let nested_java = root
+            .join("work")
+            .join("tools")
+            .join("jdk-17")
+            .join("bin")
+            .join("java.exe");
+        assert_eq!(
+            resolve_jdk_root(&nested_java, &root),
+            Some(root.join("work").join("tools").join("jdk-17"))
+        );
+
+        let macos_java = root
+            .join("jdk-21.jdk")
+            .join("Contents")
+            .join("Home")
+            .join("bin")
+            .join("java");
+        assert_eq!(
+            resolve_jdk_root(&macos_java, &root),
+            Some(root.join("jdk-21.jdk"))
+        );
+
+        let root_as_jdk = root.join("bin").join("java");
+        assert_eq!(resolve_jdk_root(&root_as_jdk, &root), None);
     }
 }
 

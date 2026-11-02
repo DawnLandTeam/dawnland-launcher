@@ -12,6 +12,18 @@ pub fn get_http_client() -> &'static reqwest::Client {
     })
 }
 
+/// Safely slices a UTF-8 string up to `max_bytes` without panicking on multi-byte character boundaries.
+pub fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Helper to parse a reqwest::Response into JSON, propagating I/O errors and logging JSON parsing failures.
 pub async fn parse_json_response<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
@@ -22,7 +34,7 @@ pub async fn parse_json_response<T: serde::de::DeserializeOwned>(
         .map_err(|e| format!("Failed to read response body: {}", e))?;
         
     serde_json::from_str(&body).map_err(|e| {
-        let snippet = if body.len() > 200 { &body[..200] } else { &body };
+        let snippet = truncate_utf8(&body, 200);
         format!("Failed to parse JSON: {} - body: {}", e, snippet)
     })
 }
@@ -98,19 +110,31 @@ pub fn create_hidden_std_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::
     std_cmd
 }
 
-#[allow(clippy::double_must_use)]
-#[async_recursion::async_recursion]
 pub async fn flatten_instance_json_recursive(
     parent_id: &str,
     child_obj: &mut serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
+    flatten_instance_json_recursive_inner(parent_id, child_obj, 0).await
+}
+
+#[allow(clippy::double_must_use)]
+#[async_recursion::async_recursion]
+async fn flatten_instance_json_recursive_inner(
+    parent_id: &str,
+    child_obj: &mut serde_json::Map<String, serde_json::Value>,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > 8 {
+        return Err(format!("Maximum inheritsFrom depth exceeded while resolving '{}'", parent_id));
+    }
+    let child_id = child_obj.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let base_dir = crate::core::mojang::get_minecraft_base();
     let mut parent_json_path = base_dir
         .join("versions")
         .join(parent_id)
         .join(format!("{}.json", parent_id));
 
-    if !parent_json_path.exists() {
+    if child_id == parent_id || !parent_json_path.exists() {
         let dawnland_cache = crate::core::mojang::get_dawnland_cache();
         let cache_json = dawnland_cache
             .join(parent_id)
@@ -137,7 +161,9 @@ pub async fn flatten_instance_json_recursive(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
     {
-        flatten_instance_json_recursive(&grandparent_id, &mut parent_obj).await?;
+        if grandparent_id != parent_id {
+            flatten_instance_json_recursive_inner(&grandparent_id, &mut parent_obj, depth + 1).await?;
+        }
     }
 
     // Merge logic: Merge child_obj into parent_obj

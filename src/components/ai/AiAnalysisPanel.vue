@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { Zap } from "@lucide/vue";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { marked } from "marked";
@@ -90,14 +91,16 @@ function handleAiResultClick(e: MouseEvent) {
   const target = e.target as HTMLElement;
   const anchor = target.closest('a');
   if (anchor) {
-    const href = anchor.getAttribute('href');
+    e.preventDefault();
+    const href = anchor.getAttribute('href')?.trim();
     if (href && href.startsWith('#action:')) {
-      e.preventDefault();
       const parts = href.substring(8).split(':');
       const action = parts[0];
       const payload = decodeURIComponent(parts.slice(1).join(':'));
       
       executeAction({ type: action, payload });
+    } else if (href && (href.startsWith('https://') || href.startsWith('http://'))) {
+      openUrl(href).catch((err) => console.error('Failed to open external URL:', err));
     }
   }
 }

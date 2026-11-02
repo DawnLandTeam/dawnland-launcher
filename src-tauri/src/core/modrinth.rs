@@ -331,13 +331,16 @@ async fn search_modrinth_internal(
     }
 
     // Debug: print the response body
-    tracing::debug!("Modrinth response: {}", &body[..body.len().min(500)]);
+    tracing::debug!(
+        "Modrinth response: {}",
+        crate::core::utils::truncate_utf8(&body, 500)
+    );
 
     let search_result: ModrinthSearchResult = serde_json::from_str(&body).map_err(|e| {
         format!(
             "Failed to parse response: {} - body: {}",
             e,
-            &body[..body.len().min(200)]
+            crate::core::utils::truncate_utf8(&body, 200)
         )
     })?;
 

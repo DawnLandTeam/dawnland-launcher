@@ -89,6 +89,12 @@ pub async fn download_model(targets: Vec<ModelDownloadTarget>, main_filename: St
     
     let mut tasks = Vec::new();
     for (i, target) in targets.iter().enumerate() {
+        if !crate::core::fs_utils::is_safe_single_name(&target.filename) {
+            return Err(AppError::from(format!(
+                "Invalid model filename: {}",
+                target.filename
+            )));
+        }
         let dest_path = models_dir.join(&target.filename);
         let dest_path_str = dest_path.to_string_lossy().into_owned();
         let task_id = if targets.len() > 1 {
@@ -238,10 +244,16 @@ fn get_free_port() -> u16 {
 }
 
 pub async fn start_llama_engine(model_name: &str) -> Result<u16, String> {
+    if !crate::core::fs_utils::is_safe_single_name(model_name) {
+        return Err(format!("Invalid model filename: {}", model_name));
+    }
     let engine_lock_arc = get_engine_lock();
     let mut engine_lock = engine_lock_arc.lock().await;
-    if let Some((_, port)) = engine_lock.as_ref() {
-        return Ok(*port); // Return existing port if already running
+    if let Some((child, port)) = engine_lock.as_mut() {
+        if let Ok(None) = child.try_wait() {
+            return Ok(*port); // Return existing port if still alive
+        }
+        *engine_lock = None;
     }
 
     let bin_path = get_llama_server_path();
@@ -278,7 +290,10 @@ pub async fn start_llama_engine(model_name: &str) -> Result<u16, String> {
 
     let ctx_size = if settings.ai_config.unlock_context_size { "0" } else { "8192" };
 
-    let mut cmd = Command::new(&bin_path);
+    let log_file_err = log_file
+        .try_clone()
+        .map_err(|e| format!("Failed to clone log file handle: {}", e))?;
+    let mut cmd = crate::core::utils::create_hidden_command(&bin_path);
     cmd.current_dir(get_engine_dir())
        .arg("-m")
        .arg(&model_path)
@@ -286,7 +301,7 @@ pub async fn start_llama_engine(model_name: &str) -> Result<u16, String> {
        .arg(ctx_size)
        .arg("--port")
        .arg(port.to_string())
-       .stdout(log_file.try_clone().unwrap())
+       .stdout(log_file_err)
        .stderr(log_file);
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn llama-server: {}", e))?;

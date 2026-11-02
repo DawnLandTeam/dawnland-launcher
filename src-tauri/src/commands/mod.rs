@@ -182,7 +182,7 @@ pub async fn fetch_account_textures(account_id: String) -> Result<auth::AccountT
                 DawnlandError::Unknown("No Authlib URL found".to_string())
             })?;
             // Call sessionserver profile API
-            let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+            let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
             let url = format!("{}/sessionserver/session/minecraft/profile/{}?unsigned=false&t={}", authlib_url.trim_end_matches('/'), account.id.replace("-", ""), timestamp);
             let client = reqwest::Client::new();
             let res = client.get(&url).send().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
@@ -259,7 +259,10 @@ pub async fn upload_microsoft_skin(account_id: String, skin_path: String, varian
 
     // Refresh token first to ensure valid access
     let account = auth::refresh_microsoft_token(&account_id).await?;
-    let token = account.access_token.as_ref().unwrap();
+    let token = account
+        .access_token
+        .as_ref()
+        .ok_or_else(|| DawnlandError::Unknown("Missing Microsoft access token".to_string()))?;
 
     let skin_data = tokio::fs::read(&skin_path).await.map_err(|e| DawnlandError::Unknown(format!("Failed to read skin file: {}", e)))?;
 
@@ -268,7 +271,7 @@ pub async fn upload_microsoft_skin(account_id: String, skin_path: String, varian
     let file_part = reqwest::multipart::Part::bytes(skin_data)
         .file_name("skin.png")
         .mime_str("image/png")
-        .unwrap();
+        .map_err(|e| DawnlandError::Unknown(e.to_string()))?;
 
     let form = reqwest::multipart::Form::new()
         .text("variant", variant)
@@ -323,9 +326,24 @@ pub async fn update_launcher(version: String, md5: Option<String>, url: Option<S
                 DawnlandError::Unknown("Unsupported OS for native auto-update".to_string()).into(),
             );
         };
-        format!("https://dl.88880222.xyz/releases/v{}/{}", version, filename)
+        format!("https://dl.dlml.app/releases/v{}/{}", version, filename)
     };
     
+    let parsed_update_url = reqwest::Url::parse(&url)
+        .map_err(|e| DawnlandError::Unknown(format!("Invalid update URL: {}", e)))?;
+    let host = parsed_update_url.host_str().unwrap_or_default().to_lowercase();
+    let is_allowed_host = host == "dlml.app"
+        || host.ends_with(".dlml.app")
+        || host == "dawnland.cn"
+        || host.ends_with(".dawnland.cn");
+    if parsed_update_url.scheme() != "https" || !is_allowed_host {
+        return Err(DawnlandError::Unknown(format!(
+            "Untrusted update URL rejected: {}",
+            url
+        ))
+        .into());
+    }
+
     tracing::info!("Starting native update from {}", url);
 
     use std::io::Write;
@@ -358,6 +376,7 @@ pub async fn update_launcher(version: String, md5: Option<String>, url: Option<S
     .map_err(|e| e.to_string())?;
 
     let mut temp_file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
+    let mut md5_ctx = md5::Context::new();
 
     use futures_util::StreamExt;
     while let Some(chunk) = response
@@ -365,6 +384,7 @@ pub async fn update_launcher(version: String, md5: Option<String>, url: Option<S
         .await
         .map_err(|e| format!("Download error: {}", e))?
     {
+        md5_ctx.consume(&chunk);
         temp_file
             .write_all(&chunk)
             .map_err(|e| format!("Write error: {}", e))?;
@@ -384,20 +404,34 @@ pub async fn update_launcher(version: String, md5: Option<String>, url: Option<S
     temp_file.flush().map_err(|e| e.to_string())?;
 
     let temp_path = temp_file.into_temp_path();
-    
-    // Verify MD5 if provided
-    if let Some(expected_md5) = md5 {
-        tracing::info!("Verifying MD5 checksum...");
-        let file_bytes = std::fs::read(&temp_path).map_err(|e| format!("Failed to read temp file for MD5 verification: {}", e))?;
-        let computed_md5 = format!("{:x}", md5::compute(file_bytes));
-        let expected_md5_normalized = expected_md5.trim().to_lowercase();
-        
-        if computed_md5 != expected_md5_normalized {
-            tracing::error!("MD5 mismatch! Expected: {}, Computed: {}", expected_md5_normalized, computed_md5);
-            return Err(DawnlandError::Md5Mismatch.into());
-        }
-        tracing::info!("MD5 verification passed.");
+
+    // Enforce MD5 verification (fail closed when missing, empty, or whitespace)
+    let Some(expected_md5_normalized) = md5
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+    else {
+        tracing::error!("Missing or empty MD5 checksum for launcher update");
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(DawnlandError::Unknown(
+            "Missing MD5 checksum for launcher update".to_string(),
+        )
+        .into());
+    };
+
+    tracing::info!("Verifying MD5 checksum...");
+    #[allow(deprecated)]
+    let computed_md5 = format!("{:x}", md5_ctx.compute());
+
+    if computed_md5 != expected_md5_normalized {
+        tracing::error!(
+            "MD5 mismatch! Expected: {}, Computed: {}",
+            expected_md5_normalized,
+            computed_md5
+        );
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(DawnlandError::Md5Mismatch.into());
     }
+    tracing::info!("MD5 verification passed.");
 
     tracing::info!("Performing self-replace with downloaded file");
 
@@ -498,6 +532,15 @@ pub async fn proxy_image_base64(url: String) -> Result<String, AppError> {
                     }
                 }
                 IpAddr::V6(ipv6) => {
+                    if let Some(ipv4) = ipv6.to_ipv4_mapped() {
+                        if ipv4.is_loopback()
+                            || ipv4.is_private()
+                            || ipv4.is_link_local()
+                            || ipv4.is_unspecified()
+                        {
+                            is_private = true;
+                        }
+                    }
                     let segments = ipv6.segments();
                     if (segments[0] & 0xfe00) == 0xfc00 { // Unique local fc00::/7
                         is_private = true;
@@ -553,3 +596,18 @@ pub async fn proxy_image_base64(url: String) -> Result<String, AppError> {
 }
 
 pub mod export;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[allow(deprecated)]
+    fn test_incremental_md5_matches_compute() {
+        let payload = b"dawnland-launcher-update-binary-test-payload";
+        let mut ctx = md5::Context::new();
+        ctx.consume(&payload[..16]);
+        ctx.consume(&payload[16..]);
+        let incremental_hex = format!("{:x}", ctx.compute());
+        let direct_hex = format!("{:x}", md5::compute(payload));
+        assert_eq!(incremental_hex, direct_hex);
+    }
+}

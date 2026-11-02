@@ -168,7 +168,10 @@ impl ModParser {
     }
 
     pub fn get_icon_path(&self, cache_key: &str) -> PathBuf {
-        self.icons_dir.join(format!("{}.png", cache_key))
+        let sanitized: String = cache_key.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' }).collect();
+        let safe_name = sanitized.trim_matches('.');
+        let final_name = if safe_name.is_empty() { "unknown_mod" } else { safe_name };
+        self.icons_dir.join(format!("{}.png", final_name))
     }
 
     pub fn parse_mod(&self, file_path: &Path, cache_key: &str, loader_type: Option<&str>) -> ModMetadata {
