@@ -2,6 +2,7 @@
 import { ref, reactive, computed, onMounted, watch, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { 
   User, Trash2, Plus, UserPlus, Loader2, WifiOff, Globe, MonitorCheck, AlertCircle
 } from "@lucide/vue";
@@ -162,6 +163,7 @@ function handleFaviconError(accountId: string) {
 
 // Close add account modal
 function closeAddAccountModal(): void {
+  cancelMicrosoftLogin();
   showAddAccountModal.value = false;
   newUsername.value = "";
   loginError.value = null;
@@ -171,6 +173,18 @@ function closeAddAccountModal(): void {
   authlibProfiles.value = null;
   selectedAuthlibProfiles.value = [];
   tempAuthData.value = null;
+}
+
+function isSafeHttpUrl(url?: string): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  return trimmed.startsWith("https://") || trimmed.startsWith("http://");
+}
+
+function openExternalSafe(url?: string): void {
+  if (isSafeHttpUrl(url) && url) {
+    openUrl(url.trim()).catch((err) => console.error("Failed to open external link:", err));
+  }
 }
 
 // Add offline account
@@ -349,8 +363,18 @@ async function startSeamlessMicrosoftLogin(): Promise<void> {
   }
 }
 
+let msaPollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearMsaPollTimer(): void {
+  if (msaPollTimer !== null) {
+    clearTimeout(msaPollTimer);
+    msaPollTimer = null;
+  }
+}
+
 // Start Microsoft login (Device Code Fallback)
 async function startMicrosoftLogin(): Promise<void> {
+  clearMsaPollTimer();
   isLoggingInMicrosoft.value = true;
   loginError.value = null;
   microsoftLoginData.value = null;
@@ -370,8 +394,10 @@ async function startMicrosoftLogin(): Promise<void> {
 
 // Poll for Microsoft token
 async function pollMicrosoftToken(code: string): Promise<void> {
+  if (!isLoggingInMicrosoft.value) return;
   try {
     const account = await invoke<Account>("poll_microsoft_token", { deviceCode: code });
+    if (!isLoggingInMicrosoft.value) return;
     if (!accounts.value) accounts.value = [];
     accounts.value.push(account);
     trackEvent("Account Added", { type: "microsoft", flow: "device_code" });
@@ -381,9 +407,10 @@ async function pollMicrosoftToken(code: string): Promise<void> {
     // Notify other views to refresh accounts
     await emit("accounts-updated");
   } catch (err) {
+    if (!isLoggingInMicrosoft.value) return;
     const errorMsg = getErrorMessage(err);
     if (errorMsg.includes("authorization_pending")) {
-      setTimeout(() => pollMicrosoftToken(code), 5000);
+      msaPollTimer = setTimeout(() => pollMicrosoftToken(code), 5000);
     } else if (errorMsg.includes("expired_token") || errorMsg.includes("cancellation")) {
       trackEvent("Login Failed", { type: "microsoft", flow: "device_code", error_type: "DeviceCodeError", error_msg: errorMsg });
       loginError.value = errorMsg;
@@ -391,7 +418,7 @@ async function pollMicrosoftToken(code: string): Promise<void> {
       isLoggingInMicrosoft.value = false;
     } else {
       console.error("Poll error:", errorMsg);
-      setTimeout(() => pollMicrosoftToken(code), 5000);
+      msaPollTimer = setTimeout(() => pollMicrosoftToken(code), 5000);
     }
   }
 }
@@ -401,6 +428,7 @@ function copyCode(): void {
 }
 
 function cancelMicrosoftLogin(): void {
+  clearMsaPollTimer();
   microsoftLoginData.value = null;
   isLoggingInMicrosoft.value = false;
 }
@@ -710,9 +738,9 @@ watch(
                   </span>
                 </div>
                 <div class="flex items-center gap-2 text-xs" v-if="authlibMeta?.meta?.links">
-                  <a v-if="authlibMeta.meta.links.homepage" :href="authlibMeta.meta.links.homepage" target="_blank" class="text-blue-500 hover:underline">{{ $t('accounts.homePage') }}</a>
-                  <a v-if="authlibMeta.meta.links.register" :href="authlibMeta.meta.links.register" target="_blank" class="text-blue-500 hover:underline">{{ $t('accounts.register') }}</a>
-                  <a v-if="authlibMeta.meta.links.register && authlibMeta.meta.links.register.includes('/register')" :href="authlibMeta.meta.links.register.replace('/register', '/forgot')" target="_blank" class="text-blue-500 hover:underline">{{ $t('accounts.forgotPassword') }}</a>
+                  <a v-if="isSafeHttpUrl(authlibMeta.meta.links.homepage)" href="#" @click.prevent="openExternalSafe(authlibMeta.meta.links.homepage)" class="text-blue-500 hover:underline">{{ $t('accounts.homePage') }}</a>
+                  <a v-if="isSafeHttpUrl(authlibMeta.meta.links.register)" href="#" @click.prevent="openExternalSafe(authlibMeta.meta.links.register)" class="text-blue-500 hover:underline">{{ $t('accounts.register') }}</a>
+                  <a v-if="isSafeHttpUrl(authlibMeta.meta.links.register) && authlibMeta.meta.links.register?.includes('/register')" href="#" @click.prevent="openExternalSafe(authlibMeta.meta.links.register.replace('/register', '/forgot'))" class="text-blue-500 hover:underline">{{ $t('accounts.forgotPassword') }}</a>
                 </div>
               </div>
               

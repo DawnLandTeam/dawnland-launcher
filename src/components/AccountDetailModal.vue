@@ -167,15 +167,21 @@ async function uploadSkin() {
   } else if (props.account.accountType === 'authlib') {
     // Open homepage
     if (props.account.authlibUrl) {
+      const openSafe = (u: string) => {
+        const trimmed = u.trim();
+        if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
+          openUrl(trimmed);
+        }
+      };
       try {
         const meta = await invoke<any>('get_authlib_meta', { url: props.account.authlibUrl });
-        if (meta?.meta?.links?.homepage) {
-          openUrl(meta.meta.links.homepage);
+        if (meta?.meta?.links?.homepage && typeof meta.meta.links.homepage === 'string') {
+          openSafe(meta.meta.links.homepage);
         } else {
-          openUrl(props.account.authlibUrl);
+          openSafe(props.account.authlibUrl);
         }
       } catch (e) {
-        openUrl(props.account.authlibUrl);
+        openSafe(props.account.authlibUrl);
       }
     }
   }
