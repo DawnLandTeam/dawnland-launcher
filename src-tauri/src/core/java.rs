@@ -115,11 +115,19 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
 
     // 1. Check JAVA_HOME
     if let Ok(java_home) = std::env::var("JAVA_HOME") {
-        let java_path = PathBuf::from(&java_home).join("bin").join("java.exe");
-        if java_path.exists() {
-            if let Some(java_info) = probe_java(&java_path).await {
-                tracing::info!("Found Java at JAVA_HOME: {}", java_home);
-                javas.push(java_info);
+        let home_path = PathBuf::from(&java_home);
+        let candidates = [
+            home_path.join("bin").join("java.exe"),
+            home_path.join("bin").join("java"),
+            home_path.join("Contents").join("Home").join("bin").join("java"),
+        ];
+        for java_path in candidates {
+            if java_path.exists() {
+                if let Some(java_info) = probe_java(&java_path).await {
+                    tracing::info!("Found Java at JAVA_HOME: {}", java_home);
+                    javas.push(java_info);
+                    break;
+                }
             }
         }
     }
@@ -695,17 +703,43 @@ fn resolve_jdk_root(
     Some(jdk_home.to_path_buf())
 }
 
+/// Filters stored manual paths when removing a managed JDK, removing any entries that point
+/// to the specified Java executable or lie within the JDK directory.
+/// Canonicalizes stored manual paths (falling back to raw value) so that verbatim paths on
+/// Windows (`\\?\` prefix) match `jdk_dir` properly.
+/// Returns `(retained_paths, changed)`.
+pub(crate) async fn filter_manual_paths_for_deleted_jdk(
+    manual_paths: impl IntoIterator<Item = String>,
+    path: &str,
+    canon_java: &std::path::Path,
+    jdk_dir: &std::path::Path,
+) -> (Vec<String>, bool) {
+    let mut changed = false;
+    let mut retained = Vec::new();
+
+    for p in manual_paths {
+        let p_buf = PathBuf::from(&p);
+        let canon_p = tokio::fs::canonicalize(&p_buf)
+            .await
+            .unwrap_or_else(|_| p_buf.clone());
+        if p == path
+            || canon_p == canon_java
+            || canon_p.starts_with(jdk_dir)
+            || p_buf.starts_with(jdk_dir)
+        {
+            changed = true;
+        } else {
+            retained.push(p);
+        }
+    }
+
+    (retained, changed)
+}
+
 #[tauri::command]
 pub async fn remove_java(path: String) -> Result<(), String> {
     *CACHED_JAVAS.lock().await = None;
     let mut config = load_java_config().await;
-
-    if let Some(pos) = config.manual_paths.iter().position(|p| p == &path) {
-        config.manual_paths.remove(pos);
-        save_java_config(&config).await?;
-        tracing::info!("Removed manual Java path from config: {}", path);
-        return Ok(());
-    }
 
     let dawnland_base = get_minecraft_base()
         .parent()
@@ -728,6 +762,20 @@ pub async fn remove_java(path: String) -> Result<(), String> {
             if let Ok(canon_root) = tokio::fs::canonicalize(root).await {
                 if let Some(jdk_dir) = resolve_jdk_root(&canon_java, &canon_root) {
                     if jdk_dir != canon_root && jdk_dir != canon_java && jdk_dir.is_dir() {
+                        let (retained_paths, changed) = filter_manual_paths_for_deleted_jdk(
+                            std::mem::take(&mut config.manual_paths),
+                            &path,
+                            &canon_java,
+                            &jdk_dir,
+                        )
+                        .await;
+                        config.manual_paths = retained_paths;
+
+                        // Persist updated config before deleting the directory on disk
+                        if changed {
+                            save_java_config(&config).await?;
+                        }
+
                         tokio::fs::remove_dir_all(&jdk_dir)
                             .await
                             .map_err(|e| format!("Failed to delete Java directory: {}", e))?;
@@ -737,6 +785,34 @@ pub async fn remove_java(path: String) -> Result<(), String> {
                 }
             }
         }
+    }
+
+    let java_path_buf = PathBuf::from(&path);
+    let canon_target = tokio::fs::canonicalize(&java_path_buf)
+        .await
+        .unwrap_or_else(|_| java_path_buf.clone());
+
+    let mut matched_pos = None;
+    for (idx, p) in config.manual_paths.iter().enumerate() {
+        if p == &path {
+            matched_pos = Some(idx);
+            break;
+        }
+        let p_buf = PathBuf::from(p);
+        let canon_p = tokio::fs::canonicalize(&p_buf)
+            .await
+            .unwrap_or_else(|_| p_buf.clone());
+        if canon_p == canon_target {
+            matched_pos = Some(idx);
+            break;
+        }
+    }
+
+    if let Some(pos) = matched_pos {
+        let removed = config.manual_paths.remove(pos);
+        save_java_config(&config).await?;
+        tracing::info!("Removed manual Java path from config: {}", removed);
+        return Ok(());
     }
 
     Err(
@@ -929,6 +1005,36 @@ mod tests {
 
         let root_as_jdk = root.join("bin").join("java");
         assert_eq!(resolve_jdk_root(&root_as_jdk, &root), None);
+    }
+
+    #[tokio::test]
+    async fn test_remove_java_manual_paths_cleanup_matching() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let jdk_dir = temp_dir.path().join("jdk-21");
+        let bin_dir = jdk_dir.join("bin");
+        tokio::fs::create_dir_all(&bin_dir).await.unwrap();
+        let java_bin = bin_dir.join(if cfg!(windows) { "java.exe" } else { "java" });
+        tokio::fs::write(&java_bin, b"fake java").await.unwrap();
+
+        let canon_jdk = tokio::fs::canonicalize(&jdk_dir).await.unwrap();
+        let canon_java = tokio::fs::canonicalize(&java_bin).await.unwrap();
+        let raw_path_str = java_bin.to_string_lossy().to_string();
+
+        let config_manual_paths = vec![
+            raw_path_str.clone(),
+            "D:\\other\\java\\bin\\java.exe".to_string(),
+        ];
+
+        let (retained_paths, changed) = filter_manual_paths_for_deleted_jdk(
+            config_manual_paths,
+            &raw_path_str,
+            &canon_java,
+            &canon_jdk,
+        )
+        .await;
+
+        assert!(changed);
+        assert_eq!(retained_paths, vec!["D:\\other\\java\\bin\\java.exe".to_string()]);
     }
 }
 
