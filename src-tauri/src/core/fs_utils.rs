@@ -103,6 +103,53 @@ pub async fn is_file_valid_sha1(path: impl AsRef<Path>, expected_hash: &str) -> 
     }
 }
 
+/// Validates that `name` is a single safe directory or file name without path traversal
+/// or directory separators.
+pub fn is_safe_single_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        return false;
+    }
+    if trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains(':')
+        || trimmed.contains('\0')
+    {
+        return false;
+    }
+    let mut comps = Path::new(trimmed).components();
+    matches!(comps.next(), Some(std::path::Component::Normal(_))) && comps.next().is_none()
+}
+
+/// Validates that `path_str` is a safe relative path (can have multiple normal segments,
+/// but no `..`, root `/`, `\`, drive prefixes, or null bytes).
+pub fn is_safe_relative_path(path_str: &str) -> bool {
+    let trimmed = path_str.trim();
+    if trimmed.is_empty()
+        || trimmed.contains('\0')
+        || trimmed.contains(':')
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+    {
+        return false;
+    }
+    let mut has_normal = false;
+    for comp in Path::new(trimmed).components() {
+        match comp {
+            std::path::Component::Normal(os_str) => {
+                let s = os_str.to_string_lossy();
+                if s == "." || s == ".." || s.is_empty() {
+                    return false;
+                }
+                has_normal = true;
+            }
+            std::path::Component::CurDir => {}
+            _ => return false,
+        }
+    }
+    has_normal
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

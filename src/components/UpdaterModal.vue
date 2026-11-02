@@ -52,9 +52,12 @@ const parsedReleaseNotes = computed(() => {
 async function handleLinkClick(event: MouseEvent) {
   const target = event.target as HTMLElement;
   const a = target.closest('a');
-  if (a && a.href) {
+  if (a) {
     event.preventDefault();
-    await openUrl(a.href);
+    const href = a.getAttribute('href')?.trim();
+    if (href && (href.startsWith('https://') || href.startsWith('http://'))) {
+      await openUrl(href);
+    }
   }
 }
 

@@ -354,7 +354,7 @@ pub async fn ensure_authlib_token_valid(account_id: &str) -> Result<Account, App
 }
 
 fn normalize_uuid(uuid_str: &str) -> String {
-    if uuid_str.len() == 32 {
+    if uuid_str.len() == 32 && uuid_str.is_ascii() {
         format!(
             "{}-{}-{}-{}-{}",
             &uuid_str[0..8],

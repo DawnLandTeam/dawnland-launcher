@@ -112,6 +112,12 @@ impl ExecutableTask for InstallModpackTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
         let zip_path = &self.options.zip_path;
         let instance_name = &self.options.instance_name;
+        if !crate::core::fs_utils::is_safe_single_name(instance_name) {
+            return Err(TaskError::ExecutionError(format!(
+                "Invalid instance name: {}",
+                instance_name
+            )));
+        }
         let is_update = self.options.is_update;
         let project_id = &self.options.project_id;
 
@@ -251,6 +257,10 @@ impl ExecutableTask for InstallModpackTask {
 
                         let mut tasks = Vec::new();
                         for file in resolved_files {
+                            if !crate::core::fs_utils::is_safe_single_name(&file.filename) {
+                                tracing::warn!("Skipping unsafe CurseForge mod filename in modpack: {}", file.filename);
+                                continue;
+                            }
                             let mut dest = instance_dir.join("mods").join(&file.filename);
                             let disabled_dest = instance_dir
                                 .join("mods")
@@ -305,6 +315,10 @@ impl ExecutableTask for InstallModpackTask {
 
                         let mut tasks = Vec::new();
                         for file in manifest.files {
+                            if !crate::core::fs_utils::is_safe_relative_path(&file.path) {
+                                tracing::warn!("Skipping unsafe Modrinth file path in modpack: {}", file.path);
+                                continue;
+                            }
                             if let Some(url) = file.downloads.first() {
                                 let mut dest = instance_dir.join(&file.path);
                                 if let Some(filename) = dest.file_name().and_then(|n| n.to_str()) {
@@ -550,10 +564,11 @@ impl ExecutableTask for InstallModpackTask {
         let version_json = serde_json::Value::Object(version_json_map);
 
         if let Ok(json_str) = serde_json::to_string_pretty(&version_json) {
-            std::fs::write(
+            tokio::fs::write(
                 instance_dir.join(format!("{}.json", instance_name)),
                 json_str,
             )
+            .await
             .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
         }
 
@@ -585,6 +600,10 @@ impl ExecutableTask for InstallModpackTask {
                 if let Ok(content) = tokio::fs::read_to_string(&legacy_modpack_files_path).await {
                     if let Ok(old_files) = serde_json::from_str::<Vec<String>>(&content) {
                         for old_file in old_files {
+                            if !crate::core::fs_utils::is_safe_relative_path(&old_file) {
+                                tracing::warn!("Skipping unsafe legacy modpack file path during cleanup: {}", old_file);
+                                continue;
+                            }
                             let file_path = instance_dir.join(&old_file);
                             if let Some(filename) = file_path.file_name() {
                                 let name_str = filename.to_string_lossy().to_string();
@@ -634,6 +653,11 @@ impl ExecutableTask for InstallModpackTask {
                 }
             }
             for path_key in to_remove {
+                if !crate::core::fs_utils::is_safe_relative_path(&path_key) {
+                    tracing::warn!("Skipping unsafe modpack asset path during cleanup: {}", path_key);
+                    manifest.assets.remove(&path_key);
+                    continue;
+                }
                 tracing::info!("Removing old modpack file from assets: {}", path_key);
                 let _ = tokio::fs::remove_file(instance_dir.join(&path_key)).await;
                 let _ = tokio::fs::remove_file(instance_dir.join(format!("{}.disable", path_key))).await;
@@ -717,6 +741,12 @@ impl ExecutableTask for InstallOnlineModpackTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
         let url = &self.options.url;
         let instance_name = &self.options.instance_name;
+        if !crate::core::fs_utils::is_safe_single_name(instance_name) {
+            return Err(TaskError::ExecutionError(format!(
+                "Invalid instance name: {}",
+                instance_name
+            )));
+        }
         let project_id = &self.options.project_id;
         let is_update = self.options.is_update;
 
