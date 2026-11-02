@@ -89,13 +89,7 @@ pub struct DropImportReport {
 
 /// Validate that a filename or world folder name is a single safe path component.
 pub fn is_safe_single_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains('/')
-        && !name.contains('\\')
-        && !name.contains('\0')
-        && !name.contains("..")
+    crate::core::fs_utils::is_safe_single_name(name)
 }
 
 /// Normalize a zip entry path to forward slashes without leading slash.
@@ -824,7 +818,15 @@ fn extract_world_archive_sync(
                 norm.as_str()
             };
 
-            if rel_str.is_empty() || rel_str.contains("..") {
+            let has_traversal = Path::new(rel_str).components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            });
+            if rel_str.is_empty() || has_traversal {
                 continue;
             }
 
@@ -988,7 +990,15 @@ fn install_zip_stripping_wrapper_sync(
                         Some(stripped) => stripped.to_string(),
                         None => continue,
                     };
-                    if new_name.is_empty() || new_name.contains("..") {
+                    let has_traversal = Path::new(&new_name).components().any(|c| {
+                        matches!(
+                            c,
+                            std::path::Component::ParentDir
+                                | std::path::Component::RootDir
+                                | std::path::Component::Prefix(_)
+                        )
+                    });
+                    if new_name.is_empty() || has_traversal {
                         continue;
                     }
                     if entry.is_dir() {
@@ -2182,6 +2192,7 @@ displayName="Just Enough Items"
             &[
                 ("SkyBlockWorld/level.dat", b"nbt"),
                 ("SkyBlockWorld/region/r.0.0.mca", b"mca"),
+                ("SkyBlockWorld/region/r..0.0.mca", b"mca_twodot"),
             ],
         );
         let res_world = inspect_single_path_sync(&world_zip);
@@ -2201,6 +2212,11 @@ displayName="Just Enough Items"
             .join("SkyBlockWorld")
             .join("region")
             .join("r.0.0.mca")
+            .exists());
+        assert!(saves_dir
+            .join("SkyBlockWorld")
+            .join("region")
+            .join("r..0.0.mca")
             .exists());
 
         // 6. Path traversal in world zip rejection test

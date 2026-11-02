@@ -1098,7 +1098,7 @@ pub async fn install_modpack(
     pack_file_name: Option<String>,
     app: AppHandle,
 ) -> Result<String, AppError> {
-    if !crate::core::drop_install::is_safe_single_name(&instance_name) {
+    if !crate::core::fs_utils::is_safe_single_name(&instance_name) {
         return Err(DawnlandError::Unknown("Invalid instance name".to_string()).into());
     }
 
@@ -1198,7 +1198,7 @@ pub async fn download_and_install_online_modpack(
     pack_file_name: Option<String>,
     app: AppHandle,
 ) -> Result<String, AppError> {
-    if !crate::core::drop_install::is_safe_single_name(&instance_name) {
+    if !crate::core::fs_utils::is_safe_single_name(&instance_name) {
         return Err(DawnlandError::Unknown("Invalid instance name".to_string()).into());
     }
 
