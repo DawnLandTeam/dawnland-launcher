@@ -414,12 +414,14 @@ const initializeView = async () => {
   }
 };
 
+let isDisposed = false;
 let unlistenInstallProgress: (() => void) | null = null;
 let unlistenDownloadProgress: (() => void) | null = null;
 
 onMounted(async () => {
+  isDisposed = false;
   initializeView();
-  unlistenInstallProgress = await listen("install-progress", (e: { payload: Record<string, any> }) => {
+  const unlistenInstall = await listen("install-progress", (e: { payload: Record<string, any> }) => {
     if (e.payload.phase) {
       currentPhase.value = e.payload.phase;
     }
@@ -458,8 +460,13 @@ onMounted(async () => {
       currentFile.value = e.payload.completedFile;
     }
   });
+  if (isDisposed) {
+    unlistenInstall();
+  } else {
+    unlistenInstallProgress = unlistenInstall;
+  }
 
-  unlistenDownloadProgress = await listen("download-progress", (e: { payload: Record<string, any> }) => {
+  const unlistenDownload = await listen("download-progress", (e: { payload: Record<string, any> }) => {
     const p = e.payload;
     if (p.completed) {
       activeDownloads.value.delete(p.taskId);
@@ -476,9 +483,15 @@ onMounted(async () => {
       }
     }
   });
+  if (isDisposed) {
+    unlistenDownload();
+  } else {
+    unlistenDownloadProgress = unlistenDownload;
+  }
 });
 
 onUnmounted(() => {
+  isDisposed = true;
   if (unlistenInstallProgress) {
     unlistenInstallProgress();
     unlistenInstallProgress = null;
