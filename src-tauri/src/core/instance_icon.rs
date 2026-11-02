@@ -123,11 +123,17 @@ fn ensure_or_match_generation(candidate: &IconBackfillCandidate) -> Option<u64> 
     let mut map = INSTANCE_GENERATIONS.lock().ok()?;
     let norm_type = candidate.modpack_type.to_ascii_lowercase();
     let norm_pid = candidate.project_id.trim().to_string();
-    match map.get(&candidate.instance_id) {
+    match map.get_mut(&candidate.instance_id) {
         Some(existing) => {
-            if existing.modpack_type == norm_type
-                && existing.project_id.as_deref() == Some(norm_pid.as_str())
+            if (existing.modpack_type.is_empty() || existing.modpack_type == norm_type)
+                && (existing.project_id.is_none() || existing.project_id.as_deref() == Some(norm_pid.as_str()))
             {
+                if existing.modpack_type.is_empty() {
+                    existing.modpack_type = norm_type;
+                }
+                if existing.project_id.is_none() {
+                    existing.project_id = Some(norm_pid);
+                }
                 Some(existing.generation)
             } else {
                 None
@@ -161,8 +167,8 @@ fn is_generation_current(
         return false;
     };
     curr.generation == generation
-        && curr.modpack_type.eq_ignore_ascii_case(modpack_type)
-        && curr.project_id.as_deref() == Some(project_id.trim())
+        && (curr.modpack_type.is_empty() || curr.modpack_type.eq_ignore_ascii_case(modpack_type))
+        && (curr.project_id.is_none() || curr.project_id.as_deref() == Some(project_id.trim()))
 }
 
 /// Validate that a URL points to an approved public HTTPS host and never a private,
@@ -698,5 +704,19 @@ mod tests {
         .await;
         assert!(res.is_err());
         assert_eq!(tokio::fs::read(&final_path).await.unwrap(), b"new-bytes");
+    }
+
+    #[test]
+    fn test_generation_empty_modpack_type_matching() {
+        let instance_id = "test_gen_inst";
+        let gen = advance_instance_icon_generation(instance_id, None, Some("12345"));
+        let candidate = IconBackfillCandidate {
+            instance_id: instance_id.to_string(),
+            instance_dir: PathBuf::from("/dummy"),
+            modpack_type: "curseforge".to_string(),
+            project_id: "12345".to_string(),
+        };
+        let matched_gen = ensure_or_match_generation(&candidate);
+        assert_eq!(matched_gen, Some(gen));
     }
 }
