@@ -103,6 +103,126 @@ pub async fn is_file_valid_sha1(path: impl AsRef<Path>, expected_hash: &str) -> 
     }
 }
 
+fn is_windows_reserved_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches([' ', '.']);
+    let upper = stem.to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "CONIN$"
+            | "CONOUT$"
+            | "COM0"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "COM\u{00b9}"
+            | "COM\u{00b2}"
+            | "COM\u{00b3}"
+            | "LPT0"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+            | "LPT\u{00b9}"
+            | "LPT\u{00b2}"
+            | "LPT\u{00b3}"
+    )
+}
+
+fn is_safe_path_component(comp: &str) -> bool {
+    if comp.is_empty() {
+        return false;
+    }
+    if comp.contains('/')
+        || comp.contains('\\')
+        || comp.contains(':')
+        || comp.contains('\0')
+    {
+        return false;
+    }
+    // Reject components consisting solely of dots (".", "..", "...", etc.)
+    if comp.chars().all(|c| c == '.') {
+        return false;
+    }
+    // Reject components ending with a dot or trailing whitespace
+    if comp.ends_with('.') || comp.ends_with(' ') || comp.trim_end() != comp {
+        return false;
+    }
+    if is_windows_reserved_name(comp) {
+        return false;
+    }
+    true
+}
+
+/// Validates that `name` is a single safe directory or file name without path traversal
+/// or directory separators.
+pub fn is_safe_single_name(name: &str) -> bool {
+    if !is_safe_path_component(name) {
+        return false;
+    }
+    let mut comps = Path::new(name).components();
+    matches!(comps.next(), Some(std::path::Component::Normal(_))) && comps.next().is_none()
+}
+
+/// Validates that `path_str` is a safe relative path (can have multiple normal segments,
+/// but no `..`, root `/`, `\`, drive prefixes, or null bytes).
+pub fn is_safe_relative_path(path_str: &str) -> bool {
+    if path_str.is_empty()
+        || path_str.contains('\0')
+        || path_str.contains(':')
+        || path_str.starts_with('/')
+        || path_str.starts_with('\\')
+        || path_str.ends_with('/')
+        || path_str.ends_with('\\')
+    {
+        return false;
+    }
+    let mut has_segment = false;
+    for raw_seg in path_str.split(['/', '\\']) {
+        if !is_safe_path_component(raw_seg) {
+            return false;
+        }
+        has_segment = true;
+    }
+    if !has_segment {
+        return false;
+    }
+    let mut has_normal = false;
+    for comp in Path::new(path_str).components() {
+        match comp {
+            std::path::Component::Normal(os_str) => {
+                let Some(s) = os_str.to_str() else {
+                    return false;
+                };
+                if !is_safe_path_component(s) {
+                    return false;
+                }
+                has_normal = true;
+            }
+            _ => return false,
+        }
+    }
+    has_normal
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,5 +300,42 @@ mod tests {
 
         let content = fs::read_to_string(&dest_path).await.unwrap();
         assert_eq!(content, "old content");
+    }
+
+    #[test]
+    fn test_safe_single_name_and_relative_path() {
+        assert!(is_safe_single_name("1.20.1"));
+        assert!(is_safe_single_name("Fabric 1.20.1"));
+        assert!(is_safe_single_name(".minecraft"));
+        assert!(is_safe_single_name("sodium-fabric-0.5.8+mc1.20.1.jar"));
+
+        assert!(!is_safe_single_name(""));
+        assert!(!is_safe_single_name("."));
+        assert!(!is_safe_single_name(".."));
+        assert!(!is_safe_single_name("..."));
+        assert!(!is_safe_single_name("...."));
+        assert!(!is_safe_single_name("mod."));
+        assert!(!is_safe_single_name("mod "));
+        assert!(!is_safe_single_name("CON"));
+        assert!(!is_safe_single_name("nul.txt"));
+        assert!(!is_safe_single_name("com1.jar"));
+        assert!(!is_safe_single_name("LPT9"));
+        assert!(!is_safe_single_name("a/b"));
+        assert!(!is_safe_single_name("a\\b"));
+
+        assert!(is_safe_relative_path("mods/sodium.jar"));
+        assert!(is_safe_relative_path("config/sub/options.json"));
+
+        assert!(!is_safe_relative_path(""));
+        assert!(!is_safe_relative_path("."));
+        assert!(!is_safe_relative_path(".."));
+        assert!(!is_safe_relative_path("..."));
+        assert!(!is_safe_relative_path("mods/.../sodium.jar"));
+        assert!(!is_safe_relative_path("mods/mod./sodium.jar"));
+        assert!(!is_safe_relative_path("mods/mod /sodium.jar"));
+        assert!(!is_safe_relative_path("mods/CON/sodium.jar"));
+        assert!(!is_safe_relative_path("mods/nul.jar"));
+        assert!(!is_safe_relative_path("/mods/sodium.jar"));
+        assert!(!is_safe_relative_path("C:\\mods\\sodium.jar"));
     }
 }

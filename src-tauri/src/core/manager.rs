@@ -82,6 +82,11 @@ pub async fn get_instance_saves(instance_id: String) -> Result<Vec<String>, Stri
 
 #[tauri::command]
 pub async fn get_instance_datapack_dir(instance_id: String, world_name: String) -> Result<String, String> {
+    if !crate::core::fs_utils::is_safe_single_name(&instance_id)
+        || !crate::core::fs_utils::is_safe_single_name(&world_name)
+    {
+        return Err("Invalid instance ID or world name".to_string());
+    }
     let base_dir = get_minecraft_base();
     let datapack_dir = base_dir
         .join("versions")
@@ -670,6 +675,9 @@ fn get_instance_dir(version_id: &str) -> std::path::PathBuf {
 /// Open the instance folder in the system file manager.
 #[tauri::command]
 pub async fn open_instance_folder(version_id: String) -> Result<(), String> {
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) {
+        return Err("Invalid instance ID".to_string());
+    }
     let instance_dir = get_instance_dir(&version_id);
 
     // Ensure directory exists — create it if missing so the user sees an empty folder
@@ -687,6 +695,9 @@ pub async fn open_instance_folder(version_id: String) -> Result<(), String> {
 /// Open a specific subfolder of an instance in the system file manager.
 #[tauri::command]
 pub async fn open_instance_subfolder(version_id: String, subfolder: String) -> Result<(), String> {
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) {
+        return Err("Invalid instance ID".to_string());
+    }
     let mut target_dir = get_instance_dir(&version_id);
 
     // Prevent path traversal
@@ -742,6 +753,9 @@ pub async fn delete_instance(
     task_manager: tauri::State<'_, crate::core::task::TaskManager>,
     running_instances: tauri::State<'_, crate::core::launcher::RunningInstances>,
 ) -> Result<(), String> {
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) {
+        return Err(format!("Invalid instance name: {}", version_id));
+    }
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&version_id);
 
@@ -899,8 +913,11 @@ pub async fn get_installed_datapacks(version_id: String, world_name: String) -> 
 
 #[tauri::command]
 pub async fn delete_local_datapack(version_id: String, world_name: String, filename: String) -> Result<(), String> {
-    if filename.contains('/') || filename.contains('\\') || filename == ".." || filename == "." {
-        return Err("Invalid filename".to_string());
+    if !crate::core::fs_utils::is_safe_single_name(&version_id)
+        || !crate::core::fs_utils::is_safe_single_name(&world_name)
+        || !crate::core::fs_utils::is_safe_single_name(&filename)
+    {
+        return Err("Invalid instance, world, or datapack filename".to_string());
     }
 
     let base_dir = get_minecraft_base();
@@ -1173,6 +1190,9 @@ pub async fn resolve_preset_for_instance(preset_name: String, asset_type: String
     let loader = instance.loader_type.to_lowercase();
     
     let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
+    if !crate::core::fs_utils::is_safe_single_name(&clean_name) {
+        return Err("Invalid preset name".to_string());
+    }
     let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
     
     let preset_content = tokio::fs::read_to_string(&file_path).await.map_err(|e| e.to_string())?;
@@ -1247,6 +1267,9 @@ pub async fn add_mod_to_preset(preset_name: String, asset_type: String, source: 
     }
     
     let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
+    if !crate::core::fs_utils::is_safe_single_name(&clean_name) {
+        return Err("Invalid preset name".to_string());
+    }
     let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
     
     let mut preset = if tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
@@ -1280,6 +1303,9 @@ pub async fn get_preset_details(asset_type: String, preset_name: String) -> Resu
     }
     
     let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
+    if !crate::core::fs_utils::is_safe_single_name(&clean_name) {
+        return Err("Invalid preset name".to_string());
+    }
     let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
     
     match tokio::fs::try_exists(&file_path).await {
@@ -1301,6 +1327,9 @@ pub async fn update_preset(asset_type: String, preset_name: String, preset: Onli
     }
     
     let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
+    if !crate::core::fs_utils::is_safe_single_name(&clean_name) {
+        return Err("Invalid preset name".to_string());
+    }
     let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
     
     let json_content = serde_json::to_string_pretty(&preset).map_err(|e| e.to_string())?;
@@ -1364,6 +1393,9 @@ fn get_mod_icon_url(
 pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) -> Result<Vec<LocalModItem>, String> {
     tracing::info!("Getting installed mods for instance: {}", version_id);
 
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) {
+        return Err("Invalid instance ID".to_string());
+    }
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
@@ -1468,8 +1500,14 @@ pub async fn toggle_mod_status(
         enable
     );
 
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) {
+        return Err("Invalid instance ID".to_string());
+    }
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
+    if !crate::core::fs_utils::is_safe_single_name(&filename) {
+        return Err("Invalid mod filename".to_string());
+    }
     let enabled_file = mods_dir.join(&filename);
     let disabled_file = mods_dir.join(format!("{}.disable", filename));
 
@@ -1602,6 +1640,9 @@ pub struct PrelaunchCheckResult {
 pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult, String> {
     tracing::info!("Running prelaunch check for instance: {}", version_id);
 
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) {
+        return Err("Invalid instance ID".to_string());
+    }
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
@@ -1715,9 +1756,15 @@ pub async fn delete_local_mod(
 ) -> Result<(), String> {
     tracing::info!("Deleting mod {} from instance {}", filename, version_id);
 
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) {
+        return Err("Invalid instance ID".to_string());
+    }
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
+    if !crate::core::fs_utils::is_safe_single_name(&filename) {
+        return Err("Invalid mod filename".to_string());
+    }
     let mod_file = mods_dir.join(&filename);
     let disabled_file = mods_dir.join(format!("{}.disable", filename));
 
@@ -1851,12 +1898,28 @@ fn extract_filename_from_url(url: &str, project_id: &str) -> String {
         .map(|c| c.into_owned())
         .unwrap_or(url_filename);
 
-    if decoded.is_empty() {
-        format!("{}.jar", project_id)
-    } else if !decoded.contains('.') {
-        format!("{}.jar", decoded)
+    let leaf = decoded
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+
+    let safe_project_id: String = project_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    let fallback_stem = if safe_project_id.is_empty() {
+        "mod"
     } else {
-        decoded
+        safe_project_id.as_str()
+    };
+
+    if leaf.is_empty() || !crate::core::fs_utils::is_safe_single_name(leaf) {
+        format!("{}.jar", fallback_stem)
+    } else if !leaf.contains('.') {
+        format!("{}.jar", leaf)
+    } else {
+        leaf.to_string()
     }
 }
 
@@ -2099,6 +2162,9 @@ pub async fn install_mod_to_instance(
         version_id
     );
 
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) {
+        return Err("Invalid instance ID".to_string());
+    }
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
@@ -2313,6 +2379,9 @@ pub async fn import_local_mod_to_instance(
     version_id: String,
     file_path: String,
 ) -> Result<String, String> {
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) {
+        return Err("Invalid instance ID".to_string());
+    }
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
@@ -2771,6 +2840,12 @@ impl InstallModTask {
         } else {
             return Err(crate::core::task::TaskError::ExecutionError("Unknown source".to_string()));
         };
+        if !crate::core::fs_utils::is_safe_single_name(&fname) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe dependency filename rejected: {}",
+                fname
+            )));
+        }
 
         if let Some(v_id) = ctx.version_id_opt {
             if let Some((old_fname, _)) = installed_map.get(&dep_key) {
