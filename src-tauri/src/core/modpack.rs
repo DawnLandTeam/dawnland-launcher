@@ -260,13 +260,52 @@ pub async fn copy_overrides(
                     continue;
                 }
             };
+
+            // Skip symlinks to prevent path traversal or leaking sensitive files
+            if entry.path_is_symlink() || entry.file_type().is_symlink() {
+                tracing::warn!("Skipping symlink in overrides: {:?}", entry.path());
+                continue;
+            }
+
             let path = entry.path();
 
             if path.is_file() {
-                let relative_path = path.strip_prefix(&overrides_path_clone).unwrap();
+                let relative_path = match path.strip_prefix(&overrides_path_clone) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!("Failed to strip prefix for {:?}: {}", path, e);
+                        continue;
+                    }
+                };
+                let rel_str = relative_path.to_string_lossy();
+                if !crate::core::fs_utils::is_safe_relative_path(&rel_str) {
+                    tracing::warn!("Skipping unsafe relative path in overrides: {}", rel_str);
+                    continue;
+                }
+
                 let dest_path = instance_dir_clone.join(relative_path);
 
                 if let Some(parent) = dest_path.parent() {
+                    // Ensure none of the parent components within the instance dir are symlinks
+                    let mut check = parent;
+                    let mut has_symlink = false;
+                    while check.starts_with(&instance_dir_clone) && check != instance_dir_clone {
+                        if let Ok(meta) = std::fs::symlink_metadata(check) {
+                            if meta.file_type().is_symlink() {
+                                has_symlink = true;
+                                break;
+                            }
+                        }
+                        match check.parent() {
+                            Some(p) => check = p,
+                            None => break,
+                        }
+                    }
+                    if has_symlink {
+                        tracing::warn!("Skipping override file because parent path is a symlink: {:?}", dest_path);
+                        continue;
+                    }
+
                     std::fs::create_dir_all(parent).map_err(|e| {
                         DawnlandError::Unknown(format!(
                             "Failed to create parent directory for override file {:?}: {}",
@@ -276,7 +315,36 @@ pub async fn copy_overrides(
                 }
 
                 if let Ok(dest_metadata) = std::fs::symlink_metadata(&dest_path) {
-                    if dest_metadata.file_type().is_dir() {
+                    if dest_metadata.file_type().is_symlink() {
+                        #[cfg(windows)]
+                        {
+                            use std::os::windows::fs::FileTypeExt;
+                            if dest_metadata.file_type().is_symlink_dir() {
+                                std::fs::remove_dir(&dest_path).map_err(|e| {
+                                    DawnlandError::Unknown(format!(
+                                        "Failed to remove existing directory symlink {:?}: {}",
+                                        dest_path, e
+                                    ))
+                                })?;
+                            } else {
+                                std::fs::remove_file(&dest_path).map_err(|e| {
+                                    DawnlandError::Unknown(format!(
+                                        "Failed to remove existing file symlink {:?}: {}",
+                                        dest_path, e
+                                    ))
+                                })?;
+                            }
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            std::fs::remove_file(&dest_path).map_err(|e| {
+                                DawnlandError::Unknown(format!(
+                                    "Failed to remove existing symlink {:?}: {}",
+                                    dest_path, e
+                                ))
+                            })?;
+                        }
+                    } else if dest_metadata.file_type().is_dir() {
                         force_remove_dir_all(&dest_path).map_err(|e| {
                             DawnlandError::Unknown(format!(
                                 "Failed to remove existing directory {:?}: {}",
@@ -284,18 +352,11 @@ pub async fn copy_overrides(
                             ))
                         })?;
                     } else {
-                        if !dest_metadata.file_type().is_symlink() {
-                            let mut perms = dest_metadata.permissions();
-                            if perms.readonly() {
-                                #[allow(clippy::permissions_set_readonly_false)]
-                                perms.set_readonly(false);
-                                std::fs::set_permissions(&dest_path, perms).map_err(|e| {
-                                    DawnlandError::Unknown(format!(
-                                        "Failed to update permissions for {:?}: {}",
-                                        dest_path, e
-                                    ))
-                                })?;
-                            }
+                        let mut perms = dest_metadata.permissions();
+                        if perms.readonly() {
+                            #[allow(clippy::permissions_set_readonly_false)]
+                            perms.set_readonly(false);
+                            let _ = std::fs::set_permissions(&dest_path, perms);
                         }
                         std::fs::remove_file(&dest_path).map_err(|e| {
                             DawnlandError::Unknown(format!(
@@ -303,6 +364,15 @@ pub async fn copy_overrides(
                                 dest_path, e
                             ))
                         })?;
+                    }
+                }
+
+                if let Ok(final_check) = std::fs::symlink_metadata(&dest_path) {
+                    if final_check.file_type().is_symlink() {
+                        return Err(DawnlandError::Unknown(format!(
+                            "Refusing to copy override file to symlink destination: {:?}",
+                            dest_path
+                        )));
                     }
                 }
 
@@ -320,4 +390,94 @@ pub async fn copy_overrides(
     .map_err(|e| DawnlandError::ProcessError(format!("Task join error: {}", e)))??;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_copy_overrides_removes_file_symlink() {
+        let temp = tempdir().expect("tempdir");
+        let extract_dir = temp.path().join("extract");
+        let instance_dir = temp.path().join("instance");
+        let overrides = extract_dir.join("overrides");
+        std::fs::create_dir_all(&overrides).expect("create overrides");
+        std::fs::create_dir_all(&instance_dir).expect("create instance");
+
+        let override_file = overrides.join("config.txt");
+        std::fs::write(&override_file, "new content").expect("write override");
+
+        let outside_dir = temp.path().join("outside");
+        std::fs::create_dir_all(&outside_dir).expect("create outside");
+        let outside_file = outside_dir.join("target.txt");
+        std::fs::write(&outside_file, "original content").expect("write outside");
+
+        let symlink_dest = instance_dir.join("config.txt");
+        #[cfg(windows)]
+        {
+            if std::os::windows::fs::symlink_file(&outside_file, &symlink_dest).is_ok() {
+                let res = copy_overrides(&extract_dir, &instance_dir, "overrides").await;
+                assert!(res.is_ok());
+                assert_eq!(std::fs::read_to_string(&outside_file).unwrap(), "original content");
+                assert_eq!(std::fs::read_to_string(&symlink_dest).unwrap(), "new content");
+                let meta = std::fs::symlink_metadata(&symlink_dest).unwrap();
+                assert!(!meta.file_type().is_symlink());
+            }
+        }
+        #[cfg(unix)]
+        {
+            if std::os::unix::fs::symlink(&outside_file, &symlink_dest).is_ok() {
+                let res = copy_overrides(&extract_dir, &instance_dir, "overrides").await;
+                assert!(res.is_ok());
+                assert_eq!(std::fs::read_to_string(&outside_file).unwrap(), "original content");
+                assert_eq!(std::fs::read_to_string(&symlink_dest).unwrap(), "new content");
+                let meta = std::fs::symlink_metadata(&symlink_dest).unwrap();
+                assert!(!meta.file_type().is_symlink());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_copy_overrides_removes_directory_symlink() {
+        let temp = tempdir().expect("tempdir");
+        let extract_dir = temp.path().join("extract");
+        let instance_dir = temp.path().join("instance");
+        let overrides = extract_dir.join("overrides");
+        std::fs::create_dir_all(&overrides).expect("create overrides");
+        std::fs::create_dir_all(&instance_dir).expect("create instance");
+
+        let override_file = overrides.join("data_link");
+        std::fs::write(&override_file, "override data").expect("write override");
+
+        let outside_dir = temp.path().join("outside_dir");
+        std::fs::create_dir_all(&outside_dir).expect("create outside dir");
+        let canary_file = outside_dir.join("canary.txt");
+        std::fs::write(&canary_file, "canary").expect("write canary");
+
+        let symlink_dest = instance_dir.join("data_link");
+        #[cfg(windows)]
+        {
+            if std::os::windows::fs::symlink_dir(&outside_dir, &symlink_dest).is_ok() {
+                let res = copy_overrides(&extract_dir, &instance_dir, "overrides").await;
+                assert!(res.is_ok());
+                assert_eq!(std::fs::read_to_string(&canary_file).unwrap(), "canary");
+                assert_eq!(std::fs::read_to_string(&symlink_dest).unwrap(), "override data");
+                let meta = std::fs::symlink_metadata(&symlink_dest).unwrap();
+                assert!(!meta.file_type().is_symlink());
+            }
+        }
+        #[cfg(unix)]
+        {
+            if std::os::unix::fs::symlink(&outside_dir, &symlink_dest).is_ok() {
+                let res = copy_overrides(&extract_dir, &instance_dir, "overrides").await;
+                assert!(res.is_ok());
+                assert_eq!(std::fs::read_to_string(&canary_file).unwrap(), "canary");
+                assert_eq!(std::fs::read_to_string(&symlink_dest).unwrap(), "override data");
+                let meta = std::fs::symlink_metadata(&symlink_dest).unwrap();
+                assert!(!meta.file_type().is_symlink());
+            }
+        }
+    }
 }
