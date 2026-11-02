@@ -154,9 +154,6 @@ impl ExecutableTask for InstallModpackTask {
                 if ctx.is_cancelled() {
                     tracing::warn!("Modpack installation cancelled, cleaning up...");
                     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-                    if !is_update {
-                        let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-                    }
                     return Err(TaskError::ExecutionError(
                         "Installation cancelled by user".to_string(),
                     ));
@@ -572,6 +569,8 @@ impl ExecutableTask for InstallModpackTask {
             .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
         }
 
+        check_cancel!();
+
         // 5. Apply Overrides
         let ctx_overrides = ctx.with_sub_task("apply_overrides");
         ctx_overrides
@@ -590,6 +589,8 @@ impl ExecutableTask for InstallModpackTask {
         ctx_overrides
             .update_progress(100, 100, "Overrides applied")
             .await;
+
+        check_cancel!();
 
         // Perform smart cleanup only AFTER all installation steps and overrides succeed
         // to prevent deleting working mods on failure
@@ -677,6 +678,8 @@ impl ExecutableTask for InstallModpackTask {
 
         // 6. Cleanup Temp
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        check_cancel!();
 
         if instance_dir.join("dlml.json").exists() {
             let loader_enum = if loader.to_lowercase().contains("forge") && !loader.to_lowercase().contains("neoforge") {
@@ -863,9 +866,6 @@ impl ExecutableTask for InstallOnlineModpackTask {
             if let Err(e) = crate::downloader::download::download_file_task(task, client, &ctx_zip, &global_downloaded).await {
                 monitor.abort();
                 let _ = tokio::fs::remove_file(&temp_zip_path).await;
-                if !is_update {
-                    let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-                }
                 return Err(TaskError::ExecutionError(e));
             }
             monitor.abort();
@@ -874,6 +874,11 @@ impl ExecutableTask for InstallOnlineModpackTask {
         ctx_zip
             .update_progress(100, 100, "Download complete. Starting installation...")
             .await;
+
+        if ctx.is_cancelled() {
+            let _ = tokio::fs::remove_file(&temp_zip_path).await;
+            return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+        }
 
         // Instantiate internal modpack task
         let modpack_task = InstallModpackTask {

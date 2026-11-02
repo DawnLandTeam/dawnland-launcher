@@ -807,6 +807,9 @@ pub async fn run_batch_download_task(
                             return Ok(());
                         }
                         Err(err) => {
+                            if ctx.is_cancelled() {
+                                return Err("Download cancelled by user".to_string());
+                            }
                             last_err = err;
                             attempts += 1;
                             if attempts < max_attempts {
@@ -817,7 +820,12 @@ pub async fn run_batch_download_task(
                                     max_attempts,
                                     last_err
                                 );
-                                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                                tokio::select! {
+                                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {},
+                                    _ = ctx.cancel_token.cancelled() => {
+                                        return Err("Download cancelled by user".to_string());
+                                    }
+                                }
                             }
                         }
                     }
@@ -927,6 +935,9 @@ pub async fn run_batch_download(
                             return Ok(());
                         }
                         Err(err) => {
+                            if cancel_flag.load(Ordering::SeqCst) {
+                                return Err("Cancelled".to_string());
+                            }
                             last_err = err;
                             attempts += 1;
                             if attempts < max_attempts {
