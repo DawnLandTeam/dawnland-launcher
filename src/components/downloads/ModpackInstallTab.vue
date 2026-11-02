@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, computed, nextTick, onMounted, onDeactivated, onActivated, watch } from "vue";
+import { ref, shallowRef, computed, nextTick, onMounted, onUnmounted, onDeactivated, onActivated, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useTaskStore } from "../../composables/useTaskStore";
 import TaskDetailView from "../TaskDetailView.vue";
@@ -270,8 +270,11 @@ const initializeView = async () => {
      }
   }
 
-  const activeTask = taskStore.tasks.value.find((t: any) => 
-    (t.status === 'Running' || t.status === 'Pending') && (t.type === 'install_modpack' || t.type === 'update_modpack' || t.type === 'install_server_modpack')
+  const activeTask = taskStore.tasks.value.find((t) => 
+    (t.status === 'Running' || t.status === 'Pending') &&
+    typeof t.task_type === 'object' &&
+    t.task_type !== null &&
+    ('InstallModpack' in t.task_type || 'InstallOnlineModpack' in t.task_type)
   );
   if (activeTask) {
     currentTaskId.value = activeTask.id;
@@ -411,8 +414,79 @@ const initializeView = async () => {
   }
 };
 
-onMounted(() => {
+let unlistenInstallProgress: (() => void) | null = null;
+let unlistenDownloadProgress: (() => void) | null = null;
+
+onMounted(async () => {
   initializeView();
+  unlistenInstallProgress = await listen("install-progress", (e: { payload: Record<string, any> }) => {
+    if (e.payload.phase) {
+      currentPhase.value = e.payload.phase;
+    }
+
+    if (e.payload.phase === "downloading" && e.payload.totalTasks) {
+      totalMods.value = e.payload.totalTasks;
+      completedMods.value.clear();
+    } else if (e.payload.phase === "running_processors") {
+      totalMods.value = 0;
+    } else if (e.payload.phase === "complete") {
+      totalMods.value = 0;
+      forgeLogs.value = [];
+    }
+
+    if (e.payload.currentFile) {
+      if (e.payload.phase === "running_processors") {
+        statusMessage.value = "Running Forge Installer...";
+        forgeLogs.value.push(e.payload.currentFile);
+        if (forgeLogs.value.length > 500) {
+          forgeLogs.value.shift();
+        }
+        nextTick(() => {
+          if (logContainer.value) {
+            logContainer.value.scrollTop = logContainer.value.scrollHeight;
+          }
+        });
+      } else {
+        statusMessage.value = "Installing dependency: " + e.payload.currentFile;
+      }
+    } else if (e.payload.phase && e.payload.phase !== "complete" && e.payload.phase !== "running_processors") {
+      statusMessage.value = "Installing dependency...";
+    }
+
+    if (e.payload.completedFile) {
+      completedMods.value.add(e.payload.completedFile);
+      currentFile.value = e.payload.completedFile;
+    }
+  });
+
+  unlistenDownloadProgress = await listen("download-progress", (e: { payload: Record<string, any> }) => {
+    const p = e.payload;
+    if (p.completed) {
+      activeDownloads.value.delete(p.taskId);
+      if (!p.error) {
+        completedMods.value.add(p.taskId);
+        if (p.fileName) {
+          currentFile.value = p.fileName;
+        }
+      }
+    } else {
+      activeDownloads.value.set(p.taskId, p);
+      if (p.fileName) {
+        currentFile.value = p.fileName;
+      }
+    }
+  });
+});
+
+onUnmounted(() => {
+  if (unlistenInstallProgress) {
+    unlistenInstallProgress();
+    unlistenInstallProgress = null;
+  }
+  if (unlistenDownloadProgress) {
+    unlistenDownloadProgress();
+    unlistenDownloadProgress = null;
+  }
 });
 
 onActivated(() => {
@@ -420,7 +494,7 @@ onActivated(() => {
 });
 
 watch(() => route.query, () => {
-  if (route.path === '/modpack-install') {
+  if (route.path === '/downloads' || route.path.startsWith('/instances/')) {
     initializeView();
   }
 }, { deep: true });
@@ -429,66 +503,6 @@ onDeactivated(() => {
   searchQuery.value = "";
   modpacks.value = [];
   lastProcessedQueryStr.value = "";
-});
-
-
-
-listen("install-progress", (e: any) => {
-  if (e.payload.phase) {
-    currentPhase.value = e.payload.phase;
-  }
-
-  if (e.payload.phase === "downloading" && e.payload.totalTasks) {
-    totalMods.value = e.payload.totalTasks;
-    completedMods.value.clear();
-  } else if (e.payload.phase === "running_processors") {
-    totalMods.value = 0;
-  } else if (e.payload.phase === "complete") {
-    totalMods.value = 0;
-    forgeLogs.value = [];
-  }
-
-  if (e.payload.currentFile) {
-    if (e.payload.phase === "running_processors") {
-      statusMessage.value = "Running Forge Installer...";
-      forgeLogs.value.push(e.payload.currentFile);
-      if (forgeLogs.value.length > 500) {
-        forgeLogs.value.shift();
-      }
-      nextTick(() => {
-        if (logContainer.value) {
-          logContainer.value.scrollTop = logContainer.value.scrollHeight;
-        }
-      });
-    } else {
-      statusMessage.value = "Installing dependency: " + e.payload.currentFile;
-    }
-  } else if (e.payload.phase && e.payload.phase !== "complete" && e.payload.phase !== "running_processors") {
-    statusMessage.value = "Installing dependency...";
-  }
-
-  if (e.payload.completedFile) {
-    completedMods.value.add(e.payload.completedFile);
-    currentFile.value = e.payload.completedFile;
-  }
-});
-
-listen("download-progress", (e: any) => {
-  const p = e.payload;
-  if (p.completed) {
-    activeDownloads.value.delete(p.taskId);
-    if (!p.error) {
-      completedMods.value.add(p.taskId);
-      if (p.fileName) {
-        currentFile.value = p.fileName;
-      }
-    }
-  } else {
-    activeDownloads.value.set(p.taskId, p);
-    if (p.fileName) {
-      currentFile.value = p.fileName;
-    }
-  }
 });
 
 /* const progressPercent = computed(() => {

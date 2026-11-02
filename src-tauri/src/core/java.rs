@@ -659,43 +659,52 @@ pub async fn remove_java(path: String) -> Result<(), String> {
     *CACHED_JAVAS.lock().await = None;
     let mut config = load_java_config().await;
 
-    // Check if it's in manual paths
+    let mut removed_from_manual = false;
     if let Some(pos) = config.manual_paths.iter().position(|p| p == &path) {
         config.manual_paths.remove(pos);
         save_java_config(&config).await?;
-        tracing::info!("Removed manual Java path: {}", path);
-        return Ok(());
+        tracing::info!("Removed manual Java path from config: {}", path);
+        removed_from_manual = true;
     }
 
-    // Check if it's a downloaded Java in runtimes or custom download path
-    let is_managed = {
-        let runtimes_dir = get_minecraft_base()
-            .join("runtimes")
-            .to_string_lossy()
-            .to_string();
-        let custom_dir = config
-            .custom_download_path
-            .as_deref()
-            .unwrap_or(&runtimes_dir);
-        path.starts_with(&runtimes_dir) || path.starts_with(custom_dir)
-    };
+    let dawnland_base = get_minecraft_base()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(".dawnland");
+    let mut managed_roots = vec![
+        dawnland_base.join("runtimes"),
+        dawnland_base.join("runtime"),
+        get_minecraft_base().join("runtimes"),
+    ];
+    if let Some(custom_dir) = &config.custom_download_path {
+        if !custom_dir.trim().is_empty() {
+            managed_roots.push(PathBuf::from(custom_dir));
+        }
+    }
 
-    if is_managed {
-        let java_path = PathBuf::from(&path);
-        // We want to delete the whole jdk directory, not just java.exe
-        // Usually it's in `jdk-17/bin/java.exe`, so we go up 2 levels
-        if let Some(bin_dir) = java_path.parent() {
-            if let Some(jdk_dir) = bin_dir.parent() {
-                if jdk_dir.exists() {
-                    tokio::fs::remove_dir_all(jdk_dir)
-                        .await
-                        .map_err(|e| format!("Failed to delete Java directory: {}", e))?;
-                    tracing::info!("Deleted managed Java at: {}", jdk_dir.display());
-                    return Ok(());
+    let java_path = PathBuf::from(&path);
+    if let Ok(canon_java) = tokio::fs::canonicalize(&java_path).await {
+        for root in &managed_roots {
+            if let Ok(canon_root) = tokio::fs::canonicalize(root).await {
+                if let Ok(rel) = canon_java.strip_prefix(&canon_root) {
+                    if let Some(std::path::Component::Normal(jdk_folder)) = rel.components().next()
+                    {
+                        let jdk_dir = canon_root.join(jdk_folder);
+                        if jdk_dir != canon_root && jdk_dir != canon_java && jdk_dir.is_dir() {
+                            tokio::fs::remove_dir_all(&jdk_dir)
+                                .await
+                                .map_err(|e| format!("Failed to delete Java directory: {}", e))?;
+                            tracing::info!("Deleted managed Java at: {}", jdk_dir.display());
+                            return Ok(());
+                        }
+                    }
                 }
             }
         }
-        return Err("Could not determine JDK root directory for deletion".to_string());
+    }
+
+    if removed_from_manual {
+        return Ok(());
     }
 
     Err(

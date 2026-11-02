@@ -592,7 +592,12 @@ async fn resolve_instance_recommended_java(
                 .clone()
                 .or_else(|| instance_config.mc_version.clone())
                 .unwrap_or_else(|| meta.id.clone());
+            let mut visited_parents = std::collections::HashSet::new();
             while let Some(parent_id) = current_inherits {
+                if !visited_parents.insert(parent_id.clone()) || visited_parents.len() > 8 {
+                    tracing::warn!("Breaking circular or deep inheritsFrom chain at {}", parent_id);
+                    break;
+                }
                 last_mc_version = parent_id.clone();
                 let p1 = base_dir
                     .join("versions")
@@ -601,7 +606,7 @@ async fn resolve_instance_recommended_java(
                 let p2 = crate::core::mojang::get_dawnland_cache()
                     .join(&parent_id)
                     .join(format!("{}.json", parent_id));
-                let parent_path = if p1.exists() { p1 } else { p2 };
+                let parent_path = if parent_id != version_id && p1.exists() { p1 } else { p2 };
                 if let Ok(p_content) = tokio::fs::read_to_string(&parent_path).await {
                     if let Ok(p_meta) = serde_json::from_str::<VersionMeta>(&p_content) {
                         if let Some(jv) = &p_meta.java_version {
@@ -971,7 +976,11 @@ async fn extract_jar(jar_path: &Path, dest_dir: &Path, lib: &Library) -> Result<
                 .by_index(i)
                 .map_err(|e| format!("Failed to read ZIP entry: {e}"))?;
 
-            let outpath = dest_dir_owned.join(file.name());
+            let Some(enclosed) = file.enclosed_name() else {
+                tracing::warn!("Skipping unsafe ZIP entry in native JAR: {}", file.name());
+                continue;
+            };
+            let outpath = dest_dir_owned.join(enclosed);
 
             let should_exclude = exclude_patterns.iter().any(|pat| {
                 if pat.ends_with("/*") {
@@ -1356,7 +1365,9 @@ pub async fn verify_and_collect_missing_files(
                 tracing::info!("Downloading missing asset index: {}", url);
                 if let Ok(resp) = reqwest::get(url).await {
                     if let Ok(text) = resp.text().await {
-                        let _ = tokio::fs::create_dir_all(asset_index_path.parent().unwrap()).await;
+                        if let Some(parent) = asset_index_path.parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
                         let _ = tokio::fs::write(&asset_index_path, &text).await;
                         asset_index_content = Some(text);
                     }
@@ -1370,7 +1381,7 @@ pub async fn verify_and_collect_missing_files(
                 if let Some(objects) = meta.objects {
                     for (_path, obj) in objects {
                         if let Some(hash) = obj.hash {
-                            if hash.is_empty() {
+                            if hash.len() < 2 || !hash.is_ascii() {
                                 continue;
                             }
                             let hash_prefix = &hash[..2];
@@ -1660,7 +1671,7 @@ pub fn parse_game_arguments(
         }
     }
 
-    tracing::debug!("Parsed game args: {:?}", args);
+    tracing::debug!("Parsed game args (count={})", args.len());
     Ok(args)
 }
 
@@ -1676,7 +1687,7 @@ fn parse_mc_version_quick_play(ver: &str) -> Option<bool> {
             }
         }
         // Snapshot format e.g. 23w14a (Quick Play was added in 23w14a)
-        if token.len() >= 5 && token.as_bytes().get(2) == Some(&b'w') {
+        if token.len() >= 5 && token.is_ascii() && token.as_bytes().get(2) == Some(&b'w') {
             if let (Ok(yy), Ok(ww)) = (token[..2].parse::<u32>(), token[3..5].parse::<u32>()) {
                 return Some(yy > 23 || (yy == 23 && ww >= 14));
             }
@@ -1732,7 +1743,7 @@ fn supports_quick_play_multiplayer(version_meta: &VersionMeta, version_id: &str)
         .as_deref()
         .or(version_meta.time.as_deref())
     {
-        if ts.len() >= 10 && &ts[..10] >= "2023-04-05" {
+        if ts.len() >= 10 && ts.is_char_boundary(10) && &ts[..10] >= "2023-04-05" {
             return true;
         }
     }
@@ -2345,16 +2356,31 @@ pub async fn launch_instance(
     }
 
     // Handle inheritsFrom recursively (used by Modpacks, Fabric, Forge, etc.)
+    let mut visited_parents = std::collections::HashSet::new();
     while let Some(parent_version) = current_inherits.take() {
+        if !visited_parents.insert(parent_version.clone()) || visited_parents.len() > 8 {
+            tracing::warn!(
+                "Detected circular or overly deep inheritsFrom chain at {}, breaking loop",
+                parent_version
+            );
+            break;
+        }
         tracing::info!(
             "Version inherits from {}, loading parent...",
             parent_version
         );
 
         let parent_dir = base_dir.join("versions").join(&parent_version);
-        verify_instance_integrity(&app, &parent_dir).await?;
+        let cache_json_path = crate::core::mojang::get_dawnland_cache()
+            .join(&parent_version)
+            .join(format!("{}.json", parent_version));
 
-        let parent_json_path = parent_dir.join(format!("{}.json", parent_version));
+        let parent_json_path = if parent_version == version_id && cache_json_path.exists() {
+            cache_json_path
+        } else {
+            verify_instance_integrity(&app, &parent_dir).await?;
+            parent_dir.join(format!("{}.json", parent_version))
+        };
 
         let parent_content = match tokio::fs::read_to_string(&parent_json_path).await {
             Ok(c) => c,
@@ -2795,6 +2821,11 @@ pub async fn launch_instance(
             {
                 if let Ok(json) = res.json::<serde_json::Value>().await {
                     if let Some(download_url) = json.get("download_url").and_then(|v| v.as_str()) {
+                        let expected_sha256 = json
+                            .get("checksums")
+                            .and_then(|c| c.get("sha256"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
                         tracing::info!("Downloading authlib-injector from {}", download_url);
                         let _ = app.emit(
                             "instance-state-changed",
@@ -2818,6 +2849,28 @@ pub async fn launch_instance(
                         .await
                         {
                             tracing::warn!("Failed to download authlib-injector: {}", e);
+                        } else if let Some(ref exp_sha256) = expected_sha256 {
+                            match crate::core::fs_utils::compute_sha256(&injector_path).await {
+                                Ok(actual) if actual.eq_ignore_ascii_case(exp_sha256) => {
+                                    tracing::info!("Verified authlib-injector SHA-256 successfully");
+                                }
+                                Ok(actual) => {
+                                    let _ = tokio::fs::remove_file(&injector_path).await;
+                                    return Err(DawnlandError::Unknown(format!(
+                                        "authlib-injector SHA-256 mismatch: expected {}, got {}",
+                                        exp_sha256, actual
+                                    ))
+                                    .into());
+                                }
+                                Err(e) => {
+                                    let _ = tokio::fs::remove_file(&injector_path).await;
+                                    return Err(DawnlandError::Unknown(format!(
+                                        "Failed to verify authlib-injector SHA-256: {}",
+                                        e
+                                    ))
+                                    .into());
+                                }
+                            }
                         }
                     }
                 }
@@ -2943,7 +2996,23 @@ pub async fn launch_instance(
 
     tracing::info!("Starting Minecraft with main class: {}", main_class);
     tracing::info!("Full JVM args: {:?}", jvm_args);
-    tracing::debug!("Game args: {:?}", game_args);
+    let redacted_game_args: Vec<&str> = {
+        let mut out = Vec::with_capacity(game_args.len());
+        let mut redact_next = false;
+        for arg in &game_args {
+            if redact_next {
+                out.push("***");
+                redact_next = false;
+            } else {
+                if arg == "--accessToken" {
+                    redact_next = true;
+                }
+                out.push(arg.as_str());
+            }
+        }
+        out
+    };
+    tracing::debug!("Game args: {:?}", redacted_game_args);
 
     // Get the main window for behavior control
     let window = app

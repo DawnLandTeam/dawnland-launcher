@@ -146,15 +146,16 @@ where
 
     if settings.enable_global_mod_cache && is_cachable {
         if let Some(expected_hash) = &task.hash {
-            let hash_lower = expected_hash.to_lowercase();
-            _cache_lock = Some(get_download_lock(&hash_lower).await.lock_owned().await);
-            
-            let prefix = if hash_lower.len() >= 2 { &hash_lower[0..2] } else { "00" };
-            let cache_dir = crate::core::mojang::get_dawnland_dir().join("pools").join("objects").join(prefix);
-            let _ = tokio::fs::create_dir_all(&cache_dir).await;
-            cache_path = Some(cache_dir.join(&hash_lower));
-            
-            let c_path = cache_path.as_ref().unwrap();
+            if expected_hash.len() >= 2 && expected_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                let hash_lower = expected_hash.to_lowercase();
+                _cache_lock = Some(get_download_lock(&hash_lower).await.lock_owned().await);
+
+                let prefix = &hash_lower[0..2];
+                let cache_dir = crate::core::mojang::get_dawnland_dir().join("pools").join("objects").join(prefix);
+                let _ = tokio::fs::create_dir_all(&cache_dir).await;
+                cache_path = Some(cache_dir.join(&hash_lower));
+            }
+            if let Some(c_path) = cache_path.as_ref() {
             
             if c_path.exists() {
                 let mut size_ok = true;
@@ -202,6 +203,7 @@ where
                         return Ok(());
                     }
                 }
+            }
             }
         }
     }
@@ -473,8 +475,25 @@ where
             spawn_handles.push(h);
         }
 
-        for h in spawn_handles {
-            h.await.map_err(|e| e.to_string())??;
+        let mut chunk_err: Option<String> = None;
+        for h in &mut spawn_handles {
+            match h.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    chunk_err = Some(e);
+                    break;
+                }
+                Err(e) => {
+                    chunk_err = Some(e.to_string());
+                    break;
+                }
+            }
+        }
+        if let Some(err) = chunk_err {
+            for h in spawn_handles {
+                h.abort();
+            }
+            return Err(err);
         }
 
         // Merge parts
@@ -709,7 +728,7 @@ pub async fn run_batch_download_task(
             let current_bytes = global_dl_clone.load(Ordering::Relaxed);
             let elapsed = last_time.elapsed().as_secs_f64();
             if elapsed > 0.0 {
-                let speed = ((current_bytes - last_bytes) as f64 / elapsed) as u64;
+                let speed = (current_bytes.saturating_sub(last_bytes) as f64 / elapsed) as u64;
                 let remaining =
                     total_files.saturating_sub(completed_files_clone.load(Ordering::SeqCst) as u32);
                 ctx_monitor.update_download_metrics(speed, remaining).await;

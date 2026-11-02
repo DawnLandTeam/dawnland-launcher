@@ -334,10 +334,11 @@ impl ExecutableTask for InstallFabricTask {
             let settings = crate::core::settings::load_launcher_settings()
                 .await
                 .unwrap_or_default();
-            if !settings.enable_instance_inheritance {
+            if !settings.enable_instance_inheritance || custom_instance_name == mc_version {
                 crate::core::utils::flatten_instance_json_recursive(mc_version, obj)
                     .await
                     .map_err(TaskError::ExecutionError)?;
+                obj.remove("inheritsFrom");
                 obj.insert("clientVersion".to_string(), serde_json::json!(mc_version));
 
                 // Any failures are logged but do not fail the overall task.
@@ -494,6 +495,14 @@ pub async fn install_fabric_instance(
     is_dependency: Option<bool>,
     app: AppHandle,
 ) -> Result<String, AppError> {
+    if !crate::core::fs_utils::is_safe_single_name(&custom_instance_name)
+        || !crate::core::fs_utils::is_safe_single_name(&mc_version)
+    {
+        return Err(crate::error::DawnlandError::Unknown(
+            "Invalid instance name or Minecraft version".to_string(),
+        )
+        .into());
+    }
     let task_manager = app.state::<TaskManager>().inner().clone();
 
     // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately

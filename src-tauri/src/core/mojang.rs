@@ -749,7 +749,7 @@ impl ExecutableTask for InstallVanillaTask {
         if let Some(objects) = &asset_index.objects {
             for obj in objects.values() {
                 let hash = obj.hash.as_ref().unwrap_or(&"".to_string()).clone();
-                if hash.is_empty() {
+                if hash.len() < 2 || !hash.is_ascii() {
                     continue;
                 }
 
@@ -853,8 +853,13 @@ pub async fn install_vanilla_version(
     tracing::info!("Starting installation of version: {}", version_id);
 
     let instance_id = custom_instance_name.clone().filter(|s| !s.trim().is_empty()).unwrap_or(version_id.clone());
+    if !crate::core::fs_utils::is_safe_single_name(&instance_id)
+        || !crate::core::fs_utils::is_safe_single_name(&version_id)
+    {
+        return Err("Invalid instance name or Minecraft version".to_string());
+    }
 
-    // Pre-create instance directory and dlml.json synchronously so frontend can detect it immediately
+    // Pre-create instance directory and dlml.json so frontend can detect it immediately
     let base_dir = crate::core::mojang::get_minecraft_base();
     let version_dir = if is_dependency.unwrap_or(false) {
         crate::core::mojang::get_dawnland_cache().join(&version_id)
@@ -866,17 +871,16 @@ pub async fn install_vanilla_version(
         dir
     };
     let _startup_guard = task_manager.start_instance_install(&instance_id);
-    let _ = std::fs::create_dir_all(&version_dir);
+    let _ = tokio::fs::create_dir_all(&version_dir).await;
     let config_path = version_dir.join("dlml.json");
     let pre_config = crate::core::launcher::InstanceConfig {
         is_installing: true,
         hidden: is_dependency.unwrap_or(false),
         ..Default::default()
     };
-    let _ = std::fs::write(
-        &config_path,
-        serde_json::to_string_pretty(&pre_config).unwrap(),
-    );
+    if let Ok(json_str) = serde_json::to_string_pretty(&pre_config) {
+        let _ = tokio::fs::write(&config_path, json_str).await;
+    }
 
     let task = InstallVanillaTask {
         options: VanillaInstallOptions {

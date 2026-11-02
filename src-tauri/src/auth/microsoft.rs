@@ -143,18 +143,14 @@ pub async fn start_microsoft_login() -> Result<LoginInitResponse, AppError> {
         .into());
     }
 
-    // Debug: print raw response body
     let raw_text = response
         .text()
         .await
         .map_err(|e| format!("Failed to read response: {e}"))?;
-    tracing::info!("Raw Device Code Response: {}", raw_text);
+    tracing::debug!("Received device code response from backend");
 
     let device_code: DeviceCodeResponse = serde_json::from_str(&raw_text).map_err(|e| {
-        format!(
-            "Failed to parse device code response: {e}. Raw: {}",
-            raw_text
-        )
+        format!("Failed to parse device code response: {e}")
     })?;
 
     Ok(LoginInitResponse {
@@ -347,9 +343,7 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), AppError> {
         token_type: "JWT".to_string(),
     };
 
-    // Debug: print exact JSON being sent
-    let request_json = serde_json::to_string(&request).unwrap_or_default();
-    tracing::info!("XSTS request JSON: {}", request_json);
+    tracing::debug!("Sending XSTS token exchange request");
 
     let response = client
         .post(get_xsts_url())
@@ -363,8 +357,7 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), AppError> {
     let status = response.status();
     let raw_text = response.text().await.unwrap_or_default();
 
-    // Log full response details
-    tracing::info!("XSTS response status: {}, body: {}", status, raw_text);
+    tracing::info!("XSTS response status: {}", status);
 
     if !status.is_success() {
         tracing::error!("XSTS auth failed ({}): body='{}'", status, raw_text);
@@ -968,6 +961,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
         authlib_email: None,
     };
 
+    let _lock = super::ACCOUNTS_LOCK.lock().await;
     let mut accounts = get_accounts().await?;
     accounts.retain(|a| {
         let same_type = a.account_type == AccountType::Microsoft;
