@@ -739,6 +739,7 @@ const selectOnlineVersion = async (version: any) => {
 };
 
 const selectZip = async () => {
+  if (isInstalling.value) return;
   localNameError.value = null;
   try {
     const selected = await open({
@@ -746,6 +747,8 @@ const selectZip = async () => {
     });
     
     if (selected && typeof selected === 'string') {
+      if (isInstalling.value) return;
+      installMode.value = 'local';
       zipPath.value = selected;
       isDowngradeConfirmed.value = false;
       localArchiveVersion.value = null;
@@ -762,9 +765,13 @@ watch(
   pendingLocalModpackPath,
   async (droppedPath) => {
     if (!droppedPath) return;
+    if (isInstalling.value) {
+      pendingLocalModpackPath.value = null;
+      return;
+    }
+    installMode.value = 'local';
     pendingLocalModpackPath.value = null;
     localNameError.value = null;
-    installMode.value = 'local';
     zipPath.value = droppedPath;
     isDowngradeConfirmed.value = false;
     localArchiveVersion.value = null;
@@ -773,21 +780,98 @@ watch(
   { immediate: true }
 );
 
+const isSafeDirectoryName = (name: string): boolean => {
+  return (
+    name.length > 0 &&
+    name !== '.' &&
+    name !== '..' &&
+    !name.includes('..') &&
+    !name.includes('/') &&
+    !name.includes('\\') &&
+    !/[<>:"/\\|?*\x00-\x1F]/.test(name)
+  );
+};
+
+watch(
+  installMode,
+  (newMode) => {
+    if (isInstalling.value) return;
+    if (newMode === 'local') {
+      onlineUrl.value = "";
+      selectedVersionName.value = null;
+      selectedVersionId.value = null;
+      showVersionsModal.value = false;
+      onlineNameError.value = null;
+    } else {
+      zipPath.value = "";
+      localArchiveVersion.value = null;
+      localNameError.value = null;
+    }
+  },
+  { immediate: true }
+);
+
 const installModpack = async () => {
   if (isInstalling.value) return;
-  if (!zipPath.value && !onlineUrl.value) return;
-  
   if (installMode.value === 'online') {
+    if (!onlineUrl.value) return;
     instanceNameInput.value = instanceNameInput.value.trim();
   } else {
+    if (!zipPath.value) return;
     instanceName.value = instanceName.value.trim();
   }
   
   const finalInstanceName = installMode.value === 'online' ? instanceNameInput.value : instanceName.value;
   if (!finalInstanceName) return;
 
-  if (!await checkDowngrade()) {
+  if (!isSafeDirectoryName(finalInstanceName)) {
+    const errorMsg = t('dropInstall.invalidInstanceName', 'Instance name contains invalid characters or path separators');
+    if (installMode.value === 'online') {
+      if (!showVersionsModal.value) {
+        toast.error(t('common.error', 'Error'), errorMsg);
+      } else {
+        onlineNameError.value = errorMsg;
+      }
+    } else {
+      localNameError.value = errorMsg;
+    }
     return;
+  }
+
+  // Lock installing before awaiting downgrade check so mode watcher guard covers the flow
+  isInstalling.value = true;
+  let downgradeOk = false;
+  try {
+    downgradeOk = await checkDowngrade();
+  } catch (err) {
+    console.error("Failed to check downgrade status:", err);
+    isInstalling.value = false;
+    toast.error(t('common.error', 'Error'), getErrorMessage(err));
+    return;
+  }
+  if (!downgradeOk) {
+    isInstalling.value = false;
+    return;
+  }
+
+  // Copy mode and inputs into immutable local constants right after re-validation
+  const targetMode = installMode.value;
+  const targetOnlineUrl = onlineUrl.value;
+  const targetZipPath = zipPath.value;
+
+  // Re-validate that the required input for the currently active mode is still present
+  if (targetMode === 'online') {
+    if (!targetOnlineUrl) {
+      isInstalling.value = false;
+      toast.error(t('common.error', 'Error'), t('install.missingOnlineUrl', 'Missing online modpack download URL'));
+      return;
+    }
+  } else {
+    if (!targetZipPath) {
+      isInstalling.value = false;
+      toast.error(t('common.error', 'Error'), t('install.missingZipPath', 'Missing modpack archive file'));
+      return;
+    }
   }
 
   if (scanError.value) {
@@ -800,6 +884,7 @@ const installModpack = async () => {
       const errMsg = getErrorMessage(e);
       scanError.value = errMsg;
       localNameError.value = errMsg;
+      isInstalling.value = false;
       toast.error(t('common.error', 'Error'), errMsg);
       return;
     }
@@ -811,7 +896,8 @@ const installModpack = async () => {
       scanError.value = null;
       const exists = scannedInstances.some((i: any) => i.id.toLowerCase() === finalInstanceName.trim().toLowerCase());
       if (exists) {
-        if (installMode.value === 'online') {
+        isInstalling.value = false;
+        if (targetMode === 'online') {
           if (!showVersionsModal.value) {
             toast.error(t('common.error', 'Error'), t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name."));
           } else {
@@ -826,13 +912,12 @@ const installModpack = async () => {
       console.error("Failed to check instance existence:", e);
       const errMsg = getErrorMessage(e);
       scanError.value = errMsg;
+      isInstalling.value = false;
       toast.error(t('common.error', 'Error'), errMsg);
       return;
     }
   }
 
-
-  isInstalling.value = true;
   instanceName.value = finalInstanceName;
   showVersionsModal.value = false;
   localNameError.value = null;
@@ -854,12 +939,12 @@ const installModpack = async () => {
     const effectivePackVersionId = selectedVersionId.value || (route.query.version_id ? String(route.query.version_id) : null);
     const effectivePackFileName = route.query.pack_file_name
       ? String(route.query.pack_file_name)
-      : (zipPath.value ? zipPath.value.replace(/\\/g, '/').split('/').pop() || null : null);
+      : (targetMode === 'local' && targetZipPath ? targetZipPath.replace(/\\/g, '/').split('/').pop() || null : null);
 
-    if (onlineUrl.value) {
+    if (targetMode === 'online') {
       console.log("Invoking download_and_install_online_modpack...");
       currentTaskId.value = await invoke<string>("download_and_install_online_modpack", {
-        url: onlineUrl.value,
+        url: targetOnlineUrl,
         instanceName: finalInstanceName,
         projectId: selectedModpack.value?.project_id || route.query.project_id || null,
         isUpdate: isUpdate.value,
@@ -870,7 +955,7 @@ const installModpack = async () => {
     } else {
       console.log("Invoking install_modpack...");
       currentTaskId.value = await invoke<string>("install_modpack", {
-        zipPath: zipPath.value,
+        zipPath: targetZipPath,
         instanceName: finalInstanceName,
         isUpdate: isUpdate.value,
         projectId: null,
@@ -885,12 +970,12 @@ const installModpack = async () => {
     confirmedDowngradeVersionId.value = null;
     pendingDowngradeVersion.value = null;
     let finalName = selectedModpack.value ? selectedModpack.value.title || selectedModpack.value.name : "Unknown Modpack";
-    if (!selectedModpack.value && zipPath.value) {
+    if (!selectedModpack.value && targetZipPath) {
       try {
-        finalName = await invoke<string>("get_modpack_name", { zipPath: zipPath.value });
+        finalName = await invoke<string>("get_modpack_name", { zipPath: targetZipPath });
       } catch (e) {
         console.warn("Could not read manifest name, falling back to filename", e);
-        finalName = zipPath.value.replace(/\\/g, '/').split('/').pop() || "Unknown Modpack";
+        finalName = targetZipPath.replace(/\\/g, '/').split('/').pop() || "Unknown Modpack";
       }
     }
     trackEvent("Modpack Install Completed", { name: finalName, projectId: selectedModpack.value?.project_id || route.query.project_id || null });
