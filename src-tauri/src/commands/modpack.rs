@@ -1286,6 +1286,8 @@ pub async fn download_and_install_online_modpack(
     Ok(task_id)
 }
 
+const MAX_MANIFEST_BYTES: u64 = 2 * 1024 * 1024; // 2 MB limit for manifest inspection
+
 #[tauri::command]
 pub async fn get_modpack_name(zip_path: String) -> Result<String, AppError> {
     let name = tokio::task::spawn_blocking(move || -> Result<String, DawnlandError> {
@@ -1297,7 +1299,7 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, AppError> {
         if let Ok(mut manifest_file) = archive.by_name("manifest.json") {
             let mut contents = String::new();
             use std::io::Read;
-            if manifest_file.read_to_string(&mut contents).is_ok() {
+            if manifest_file.by_ref().take(MAX_MANIFEST_BYTES).read_to_string(&mut contents).is_ok() {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
                     if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
                         return Ok(name.to_string());
@@ -1309,7 +1311,7 @@ pub async fn get_modpack_name(zip_path: String) -> Result<String, AppError> {
         if let Ok(mut manifest_file) = archive.by_name("modrinth.index.json") {
             let mut contents = String::new();
             use std::io::Read;
-            if manifest_file.read_to_string(&mut contents).is_ok() {
+            if manifest_file.by_ref().take(MAX_MANIFEST_BYTES).read_to_string(&mut contents).is_ok() {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
                     if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
                         return Ok(name.to_string());
@@ -1345,7 +1347,7 @@ pub async fn get_modpack_info(zip_path: String) -> Result<ModpackArchiveInfo, Ap
         if let Ok(mut manifest_file) = archive.by_name("manifest.json") {
             let mut contents = String::new();
             use std::io::Read;
-            if manifest_file.read_to_string(&mut contents).is_ok() {
+            if manifest_file.by_ref().take(MAX_MANIFEST_BYTES).read_to_string(&mut contents).is_ok() {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
                     if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
                         let version = json.get("version").and_then(|v| v.as_str()).map(ToString::to_string);
@@ -1361,7 +1363,7 @@ pub async fn get_modpack_info(zip_path: String) -> Result<ModpackArchiveInfo, Ap
         if let Ok(mut manifest_file) = archive.by_name("modrinth.index.json") {
             let mut contents = String::new();
             use std::io::Read;
-            if manifest_file.read_to_string(&mut contents).is_ok() {
+            if manifest_file.by_ref().take(MAX_MANIFEST_BYTES).read_to_string(&mut contents).is_ok() {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) {
                     if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
                         let version = json.get("versionId").or_else(|| json.get("version")).and_then(|v| v.as_str()).map(ToString::to_string);
