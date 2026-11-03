@@ -165,6 +165,9 @@ async function loadWorlds() {
     if (worldOptions.value.length > 0) {
       if (!selectedWorld.value || !saves.includes(selectedWorld.value)) {
         selectedWorld.value = worldOptions.value[0].value;
+      } else {
+        // Even if the selected world name matches across instances, reload datapacks for the new instance
+        loadDatapacks();
       }
     } else {
       selectedWorld.value = '';
@@ -206,6 +209,7 @@ async function loadDatapacks() {
 
 watch(() => props.instanceId, () => {
   searchQuery.value = '';
+  datapacks.value = [];
   loadWorlds();
 }, { immediate: true });
 
