@@ -77,6 +77,7 @@ const pendingModpackFile = ref<InspectedDropFile | null>(null);
 const pendingLocalModpackPath = ref<string | null>(null);
 
 let unlistenDragDrop: UnlistenFn | null = null;
+let listenerSeq = 0;
 let inspectSeq = 0;
 let isWindowElevatedForDrag = false;
 
@@ -183,21 +184,28 @@ export function useFileDrop() {
   }
 
   async function initFileDropListener(onDrop: DropHandlerCallback): Promise<void> {
+    const seq = ++listenerSeq;
     onFilesDroppedCallback = onDrop;
     if (unlistenDragDrop) {
       unlistenDragDrop();
       unlistenDragDrop = null;
     }
     try {
-      unlistenDragDrop = await getCurrentWebview().onDragDropEvent((event) => {
+      const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
         void handleDragDropPayload(event.payload);
       });
+      if (seq !== listenerSeq) {
+        unlisten();
+      } else {
+        unlistenDragDrop = unlisten;
+      }
     } catch (err) {
       console.warn('Failed to register webview drag-drop listener:', err);
     }
   }
 
   function destroyFileDropListener(): void {
+    listenerSeq++;
     if (unlistenDragDrop) {
       unlistenDragDrop();
       unlistenDragDrop = null;
