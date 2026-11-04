@@ -490,39 +490,50 @@ where
             }
         }
         if let Some(err) = chunk_err {
-            for h in spawn_handles {
+            for h in &spawn_handles {
                 h.abort();
+            }
+            for h in spawn_handles {
+                let _ = h.await;
+            }
+            for part in &parts {
+                let _ = tokio::fs::remove_file(part).await;
             }
             return Err(err);
         }
 
         // Merge parts
-        let mut final_file = File::create(&tmp_path).await.map_err(|e| e.to_string())?;
-        for part in &parts {
-            let mut part_file = File::open(part).await.map_err(|e| e.to_string())?;
-            tokio::io::copy(&mut part_file, &mut final_file).await.map_err(|e| e.to_string())?;
-        }
-        final_file.flush().await.map_err(|e| e.to_string())?;
-        drop(final_file);
-
-        if total_size > 0 {
-            let metadata = tokio::fs::metadata(&tmp_path)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            if metadata.len() != total_size {
-                let _ = tokio::fs::remove_file(&tmp_path).await;
-                return Err(format!(
-                    "downloaded size mismatch: expected {}, got {}",
-                    total_size,
-                    metadata.len()
-                ));
+        let merge_res = async {
+            let mut final_file = File::create(&tmp_path).await.map_err(|e| e.to_string())?;
+            for part in &parts {
+                let mut part_file = File::open(part).await.map_err(|e| e.to_string())?;
+                tokio::io::copy(&mut part_file, &mut final_file).await.map_err(|e| e.to_string())?;
             }
+            final_file.flush().await.map_err(|e| e.to_string())?;
+            drop(final_file);
+
+            if total_size > 0 {
+                let metadata = tokio::fs::metadata(&tmp_path)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                if metadata.len() != total_size {
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                    return Err(format!(
+                        "downloaded size mismatch: expected {}, got {}",
+                        total_size,
+                        metadata.len()
+                    ));
+                }
+            }
+            Ok::<(), String>(())
+        }.await;
+
+        for part in &parts {
+            let _ = tokio::fs::remove_file(part).await;
         }
 
-        for part in parts {
-            let _ = tokio::fs::remove_file(&part).await;
-        }
+        merge_res?;
 
         if let Some(expected_hash) = &task.hash {
             let tmp_path_clone = tmp_path.clone();

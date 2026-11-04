@@ -74,11 +74,20 @@ pub async fn kill_instance(
     }
 }
 
+async fn validate_instance_id_for_launcher(version_id: &str) -> bool {
+    let base_dir = get_minecraft_base();
+    let versions_dir = base_dir.join("versions");
+    crate::core::fs_utils::is_safe_or_existing_instance_id(version_id, &versions_dir).await
+}
+
 #[tauri::command]
 pub async fn is_instance_running(
     version_id: String,
     state: State<'_, RunningInstances>,
 ) -> Result<bool, AppError> {
+    if !validate_instance_id_for_launcher(&version_id).await {
+        return Ok(false);
+    }
     let map = state.0.lock().await;
     Ok(map.contains_key(&version_id))
 }
@@ -490,6 +499,9 @@ const CONFIG_FILENAME: &str = "dlml.json";
 /// Get instance configuration
 #[tauri::command]
 pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, AppError> {
+    if !validate_instance_id_for_launcher(&version_id).await {
+        return Err(DawnlandError::Unknown("Invalid version ID".to_string()).into());
+    }
     let _guard = INSTANCE_CONFIG_LOCK.lock().await;
     let base_dir = get_minecraft_base();
     let config_path = base_dir
@@ -530,6 +542,9 @@ pub async fn save_instance_config(
     version_id: String,
     config: InstanceConfig,
 ) -> Result<(), AppError> {
+    if !validate_instance_id_for_launcher(&version_id).await {
+        return Err(DawnlandError::Unknown("Invalid version ID".to_string()).into());
+    }
     let base_dir = get_minecraft_base();
     let version_dir = base_dir.join("versions").join(&version_id);
 
@@ -656,6 +671,9 @@ pub async fn get_jvm_tuning_preview(
     jvm_tuner_mode: Option<crate::core::jvm_tuner::JvmTunerMode>,
     jvm_args_extra: Option<Vec<String>>,
 ) -> Result<JvmTuningPreview, AppError> {
+    if !validate_instance_id_for_launcher(&version_id).await {
+        return Err(DawnlandError::Unknown("Invalid version ID".to_string()).into());
+    }
     let base_dir = get_minecraft_base();
     let config_path = base_dir
         .join("versions")
@@ -2199,6 +2217,9 @@ pub async fn launch_instance(
     mut server_ip: Option<String>,
     mut server_port: Option<u16>,
 ) -> Result<(), AppError> {
+    if !validate_instance_id_for_launcher(&version_id).await {
+        return Err(DawnlandError::Unknown("Invalid version ID".to_string()).into());
+    }
     tracing::info!(
         "Launching instance {} with account {}",
         version_id,
@@ -3402,6 +3423,9 @@ pub async fn save_global_game_settings(content: String) -> Result<(), crate::err
 
 #[tauri::command]
 pub async fn set_instance_options_as_global(version_id: String) -> Result<(), crate::error::AppError> {
+    if !validate_instance_id_for_launcher(&version_id).await {
+        return Err(crate::error::DawnlandError::Unknown("Invalid version ID".to_string()).into());
+    }
     let instance_dir = get_minecraft_base().join("versions").join(&version_id);
     let options_path = instance_dir.join("options.txt");
 

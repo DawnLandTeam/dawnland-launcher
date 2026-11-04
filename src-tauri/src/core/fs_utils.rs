@@ -151,10 +151,8 @@ fn is_safe_path_component(comp: &str) -> bool {
     if comp.is_empty() {
         return false;
     }
-    if comp.contains('/')
-        || comp.contains('\\')
-        || comp.contains(':')
-        || comp.contains('\0')
+    if comp.contains(['/', '\\', ':', '\0', '<', '>', '"', '|', '?', '*'])
+        || comp.chars().any(|c| (c as u32) <= 31)
     {
         return false;
     }
@@ -180,6 +178,52 @@ pub fn is_safe_single_name(name: &str) -> bool {
     }
     let mut comps = Path::new(name).components();
     matches!(comps.next(), Some(std::path::Component::Normal(_))) && comps.next().is_none()
+}
+
+/// Legacy path component validation: rejects path separators ('/', '\\'), null bytes ('\0'),
+/// colons (':'), and components that are "." or "..".
+/// This matches what was permitted under previous versions on POSIX systems (Linux/macOS).
+pub fn is_legacy_safe_path_component(comp: &str) -> bool {
+    if comp.is_empty() {
+        return false;
+    }
+    if comp.contains(['/', '\\', ':', '\0']) {
+        return false;
+    }
+    if comp.chars().all(|c| c == '.') {
+        return false;
+    }
+    true
+}
+
+/// Checks whether an instance ID is strictly safe according to current naming rules,
+/// or falls back to permitting existing legacy directories under `versions_dir` that
+/// do not attempt path traversal.
+pub async fn is_safe_or_existing_instance_id(version_id: &str, versions_dir: &Path) -> bool {
+    if is_safe_single_name(version_id) {
+        return true;
+    }
+
+    // Compatibility fallback: if it doesn't contain path separators or traversal,
+    // and the directory exists under versions_dir.
+    if !is_legacy_safe_path_component(version_id) {
+        return false;
+    }
+
+    let instance_dir = versions_dir.join(version_id);
+    if let Ok(metadata) = tokio::fs::metadata(&instance_dir).await {
+        if metadata.is_dir() {
+            // Ensure canonicalized path is strictly a direct child of versions_dir
+            if let (Ok(canon_inst), Ok(canon_versions)) = (
+                tokio::fs::canonicalize(&instance_dir).await,
+                tokio::fs::canonicalize(versions_dir).await,
+            ) {
+                return canon_inst.parent() == Some(&canon_versions);
+            }
+        }
+    }
+
+    false
 }
 
 /// Validates that `path_str` is a safe relative path (can have multiple normal segments,
@@ -322,6 +366,12 @@ mod tests {
         assert!(!is_safe_single_name("LPT9"));
         assert!(!is_safe_single_name("a/b"));
         assert!(!is_safe_single_name("a\\b"));
+        assert!(!is_safe_single_name("mod*name"));
+        assert!(!is_safe_single_name("mod?name"));
+        assert!(!is_safe_single_name("mod<name>"));
+        assert!(!is_safe_single_name("mod|name"));
+        assert!(!is_safe_single_name("mod\"name"));
+        assert!(!is_safe_single_name("mod\x01name"));
 
         assert!(is_safe_relative_path("mods/sodium.jar"));
         assert!(is_safe_relative_path("config/sub/options.json"));
@@ -337,5 +387,31 @@ mod tests {
         assert!(!is_safe_relative_path("mods/nul.jar"));
         assert!(!is_safe_relative_path("/mods/sodium.jar"));
         assert!(!is_safe_relative_path("C:\\mods\\sodium.jar"));
+    }
+
+    #[tokio::test]
+    async fn test_safe_or_existing_instance_id_fallback() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let versions_dir = temp_dir.path().join("versions");
+        tokio::fs::create_dir_all(&versions_dir).await.unwrap();
+
+        // 1. Safe name passes even if dir doesn't exist
+        assert!(is_safe_or_existing_instance_id("vanilla-1.20", &versions_dir).await);
+
+        // 2. Traversal always rejected even if dir doesn't exist
+        assert!(!is_safe_or_existing_instance_id("../outside", &versions_dir).await);
+        assert!(!is_safe_or_existing_instance_id("..", &versions_dir).await);
+        assert!(!is_safe_or_existing_instance_id("foo/bar", &versions_dir).await);
+        assert!(!is_safe_or_existing_instance_id("foo\\bar", &versions_dir).await);
+        assert!(!is_safe_or_existing_instance_id("foo:bar", &versions_dir).await);
+        assert!(!is_safe_or_existing_instance_id("foo\0bar", &versions_dir).await);
+
+        // 3. Name with legacy-allowed char that fails strict safe check when dir does not exist
+        assert!(!is_safe_or_existing_instance_id("legacy-instance.", &versions_dir).await);
+
+        // 4. If directory actually exists under versions_dir, legacy fallback permits it
+        let legacy_dir = versions_dir.join("legacy_inst_dir");
+        tokio::fs::create_dir_all(&legacy_dir).await.unwrap();
+        assert!(is_safe_or_existing_instance_id("legacy_inst_dir", &versions_dir).await);
     }
 }

@@ -246,11 +246,14 @@ impl TaskManager {
     }
 
     pub async fn get_instance_lock(&self, instance_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        let mut locks = self.instance_locks.lock().await;
-        locks
-            .entry(instance_id.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
+        crate::core::drop_install::get_instance_lock(instance_id)
+    }
+
+    pub async fn is_instance_busy(&self, instance_id: &str) -> bool {
+        let active = self.active_tasks.read().await;
+        active
+            .values()
+            .any(|h| h.instance_id.as_deref() == Some(instance_id))
     }
 
     pub async fn get_task_lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {

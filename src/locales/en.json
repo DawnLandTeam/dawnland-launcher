@@ -892,7 +892,9 @@
     "downgradeFrom": "Current Version:",
     "downgradeTo": "Target Version:",
     "downgradeAdvice": "Please ensure you have backed up any critical data before proceeding.",
-    "downgradeConfirmBtn": "I understand the risks, Downgrade"
+    "downgradeConfirmBtn": "I understand the risks, Downgrade",
+    "downloadUrlMissingTitle": "Missing Download URL",
+    "downloadUrlMissingDesc": "No valid download address is available for this version. Please select another version."
   },
   "modCategories": {
     "adventure": "Adventure",
@@ -1009,6 +1011,8 @@
     "kindUnknown": "Unknown File",
     "instanceBusyTitle": "Instance Busy",
     "instanceBusyDesc": "Instance {instance} is currently installing or updating. Please try again later.",
+    "instanceRunningTitle": "Game is Running",
+    "instanceRunningDesc": "Instance {instance} is currently running. Please close the game before importing or replacing resources.",
     "importSuccessTitle": "Drag-and-Drop Import Complete",
     "importSuccessDesc": "Imported {summary} into {instance}",
     "vanillaModWarningTitle": "Vanilla Instance Notice",

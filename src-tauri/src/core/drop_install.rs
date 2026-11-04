@@ -14,7 +14,7 @@ static INSTANCE_LOCKS: std::sync::LazyLock<StdMutex<HashMap<String, Arc<TokioMut
 
 /// Get or create an asynchronous per-instance lock to serialize tasks and imports.
 pub fn get_instance_lock(instance_id: &str) -> Arc<TokioMutex<()>> {
-    let mut map = INSTANCE_LOCKS.lock().unwrap();
+    let mut map = INSTANCE_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
     map.entry(instance_id.to_string())
         .or_insert_with(|| Arc::new(TokioMutex::new(())))
         .clone()
@@ -104,13 +104,8 @@ fn sanitize_zip_entry_rel_path(raw: &str) -> Option<String> {
     }
     let normalized = raw.replace('\\', "/");
     let trimmed = normalized.trim_start_matches('/');
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || !crate::core::fs_utils::is_safe_relative_path(trimmed) {
         return None;
-    }
-    for seg in trimmed.split('/') {
-        if seg == ".." {
-            return None;
-        }
     }
     Some(trimmed.to_string())
 }
@@ -990,15 +985,7 @@ fn install_zip_stripping_wrapper_sync(
                         Some(stripped) => stripped.to_string(),
                         None => continue,
                     };
-                    let has_traversal = Path::new(&new_name).components().any(|c| {
-                        matches!(
-                            c,
-                            std::path::Component::ParentDir
-                                | std::path::Component::RootDir
-                                | std::path::Component::Prefix(_)
-                        )
-                    });
-                    if new_name.is_empty() || has_traversal {
+                    if new_name.is_empty() || !crate::core::fs_utils::is_safe_relative_path(&new_name) {
                         continue;
                     }
                     if entry.is_dir() {
@@ -1113,12 +1100,23 @@ async fn compute_sha1(path: &Path) -> Result<String, String> {
 }
 
 /// Import a list of inspected drop files into an instance's appropriate subdirectories.
-/// Verify instance is not currently locked by an active installation, update, or task.
+/// Verify instance is not currently locked by an active installation, update, task, or running game.
 async fn verify_instance_idle(
     instance_dir: &Path,
     instance_id: &str,
     task_manager: &crate::core::task::TaskManager,
+    running_instances: &crate::core::launcher::RunningInstances,
 ) -> Result<(), DawnlandError> {
+    if running_instances.0.lock().await.contains_key(instance_id) {
+        return Err(DawnlandError::Unknown("GAME_IS_RUNNING".to_string()));
+    }
+
+    if task_manager.is_instance_busy(instance_id).await {
+        return Err(DawnlandError::Unknown(
+            "Instance has an active background task".to_string(),
+        ));
+    }
+
     let config_path = instance_dir.join("dlml.json");
     if config_path.exists() {
         let content = tokio::fs::read_to_string(&config_path)
@@ -1162,6 +1160,7 @@ pub async fn import_dropped_files_to_instance(
     target_world: Option<String>,
     overwrite: bool,
     task_manager: tauri::State<'_, crate::core::task::TaskManager>,
+    running_instances: tauri::State<'_, crate::core::launcher::RunningInstances>,
 ) -> Result<DropImportReport, AppError> {
     if !is_safe_single_name(&instance_id) {
         return Err(DawnlandError::Unknown("Invalid instance ID".to_string()).into());
@@ -1180,12 +1179,12 @@ pub async fn import_dropped_files_to_instance(
         .into());
     }
 
-    verify_instance_idle(&instance_dir, &instance_id, &task_manager).await?;
+    verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await?;
 
     let mut report = DropImportReport::default();
 
     for item in items {
-        verify_instance_idle(&instance_dir, &instance_id, &task_manager).await?;
+        verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await?;
         let src_path = PathBuf::from(&item.path);
         let inspected = {
             let p = src_path.clone();
@@ -1249,6 +1248,31 @@ pub async fn import_dropped_files_to_instance(
                 let target_path = mods_dir.join(&installed_filename);
                 if is_same_file_path(&src_path, &target_path) {
                     let rel_key = format!("mods/{}", installed_filename);
+                    let hash_sha1 = compute_sha1(&target_path).await.ok();
+                    let size = tokio::fs::metadata(&target_path)
+                        .await
+                        .map(|m| m.len())
+                        .ok();
+                    let canonical_filename = installed_filename
+                        .strip_suffix(".disable")
+                        .unwrap_or(&installed_filename);
+                    let _ = save_asset_to_manifest(
+                        &instance_id,
+                        format!("mods/{}", canonical_filename),
+                        AssetRecord {
+                            category: AssetCategory::Mod,
+                            source_type: AssetSourceType::LocalImport,
+                            project_id: None,
+                            version_id: None,
+                            download_url: None,
+                            hash_sha1,
+                            hash_sha512: None,
+                            size,
+                            enabled: !installed_filename.ends_with(".disable"),
+                            managed_by_modpack: false,
+                        },
+                    )
+                    .await;
                     report.succeeded.push(ImportedFileResult {
                         filename,
                         kind: DetectedFileKind::Mod,
@@ -1267,7 +1291,7 @@ pub async fn import_dropped_files_to_instance(
                 }
 
                 // Re-verify instance idle immediately before committing file
-                if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager).await {
+                if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
                     report.failed.push(FailedFileResult {
                         filename,
                         error: format!("Instance is busy: {}", e),
@@ -1434,6 +1458,33 @@ pub async fn import_dropped_files_to_instance(
                 let target_path = target_dir.join(&filename);
                 if is_same_file_path(&src_path, &target_path) {
                     let rel_key = format!("{}/{}", folder_name, filename);
+                    let hash_sha1 = if !inspected.is_dir {
+                        compute_sha1(&target_path).await.ok()
+                    } else {
+                        None
+                    };
+                    let size = if !inspected.is_dir {
+                        tokio::fs::metadata(&target_path).await.map(|m| m.len()).ok()
+                    } else {
+                        Some(0)
+                    };
+                    let _ = save_asset_to_manifest(
+                        &instance_id,
+                        rel_key.clone(),
+                        AssetRecord {
+                            category,
+                            source_type: AssetSourceType::LocalImport,
+                            project_id: None,
+                            version_id: None,
+                            download_url: None,
+                            hash_sha1,
+                            hash_sha512: None,
+                            size,
+                            enabled: true,
+                            managed_by_modpack: false,
+                        },
+                    )
+                    .await;
                     report.succeeded.push(ImportedFileResult {
                         filename,
                         kind: effective_kind,
@@ -1452,7 +1503,7 @@ pub async fn import_dropped_files_to_instance(
                 }
 
                 // Re-verify instance idle immediately before committing file
-                if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager).await {
+                if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
                     report.failed.push(FailedFileResult {
                         filename,
                         error: format!("Instance is busy: {}", e),
@@ -1644,6 +1695,33 @@ pub async fn import_dropped_files_to_instance(
                 let target_path = datapacks_dir.join(&filename);
                 if is_same_file_path(&src_path, &target_path) {
                     let rel_key = format!("saves/{}/datapacks/{}", resolved_world, filename);
+                    let hash_sha1 = if !inspected.is_dir {
+                        compute_sha1(&target_path).await.ok()
+                    } else {
+                        None
+                    };
+                    let size = if !inspected.is_dir {
+                        tokio::fs::metadata(&target_path).await.map(|m| m.len()).ok()
+                    } else {
+                        Some(0)
+                    };
+                    let _ = save_asset_to_manifest(
+                        &instance_id,
+                        rel_key.clone(),
+                        AssetRecord {
+                            category: AssetCategory::Datapack,
+                            source_type: AssetSourceType::LocalImport,
+                            project_id: None,
+                            version_id: None,
+                            download_url: None,
+                            hash_sha1,
+                            hash_sha512: None,
+                            size,
+                            enabled: true,
+                            managed_by_modpack: false,
+                        },
+                    )
+                    .await;
                     report.succeeded.push(ImportedFileResult {
                         filename,
                         kind: DetectedFileKind::Datapack,
@@ -1662,7 +1740,7 @@ pub async fn import_dropped_files_to_instance(
                 }
 
                 // Re-verify instance idle immediately before committing file
-                if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager).await {
+                if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
                     report.failed.push(FailedFileResult {
                         filename,
                         error: format!("Instance is busy: {}", e),
@@ -1804,6 +1882,23 @@ pub async fn import_dropped_files_to_instance(
                     let target_path = saves_dir.join(&filename);
                     if is_same_file_path(&src_path, &target_path) {
                         let rel_key = format!("saves/{}", filename);
+                        let _ = save_asset_to_manifest(
+                            &instance_id,
+                            rel_key.clone(),
+                            AssetRecord {
+                                category: AssetCategory::Save,
+                                source_type: AssetSourceType::LocalImport,
+                                project_id: None,
+                                version_id: None,
+                                download_url: None,
+                                hash_sha1: None,
+                                hash_sha512: None,
+                                size: Some(0),
+                                enabled: true,
+                                managed_by_modpack: false,
+                            },
+                        )
+                        .await;
                         report.succeeded.push(ImportedFileResult {
                             filename,
                             kind: DetectedFileKind::World,
@@ -1821,7 +1916,7 @@ pub async fn import_dropped_files_to_instance(
                     }
 
                     // Re-verify instance idle immediately before committing directory
-                    if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager).await {
+                    if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
                         report.failed.push(FailedFileResult {
                             filename,
                             error: format!("Instance is busy: {}", e),
@@ -1897,7 +1992,7 @@ pub async fn import_dropped_files_to_instance(
                     let sd = saves_dir.clone();
 
                     // Re-verify instance idle immediately before extracting archive
-                    if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager).await {
+                    if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
                         report.failed.push(FailedFileResult {
                             filename,
                             error: format!("Instance is busy: {}", e),

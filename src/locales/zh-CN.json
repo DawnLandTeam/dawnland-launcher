@@ -893,7 +893,9 @@
     "downgradeFrom": "当前版本：",
     "downgradeTo": "降级目标版本：",
     "downgradeAdvice": "请在继续之前确保已做好关键数据备份。",
-    "downgradeConfirmBtn": "已知晓风险，继续降级"
+    "downgradeConfirmBtn": "已知晓风险，继续降级",
+    "downloadUrlMissingTitle": "无法获取下载链接",
+    "downloadUrlMissingDesc": "该版本暂无可用的下载地址，请选择其他版本。"
   },
   "modCategories": {
     "adventure": "冒险",
@@ -1010,6 +1012,8 @@
     "kindUnknown": "未知文件",
     "instanceBusyTitle": "实例正忙",
     "instanceBusyDesc": "实例 {instance} 正在安装或更新中，请稍后再试。",
+    "instanceRunningTitle": "游戏正在运行",
+    "instanceRunningDesc": "实例 {instance} 正在运行中，请在关闭游戏后再导入或替换资源。",
     "importSuccessTitle": "拖拽导入成功",
     "importSuccessDesc": "已将 {summary} 导入到 {instance}",
     "vanillaModWarningTitle": "原版实例提示",
