@@ -893,7 +893,9 @@
     "downgradeFrom": "当前版本：",
     "downgradeTo": "降级目标版本：",
     "downgradeAdvice": "请在继续之前确保已做好关键数据备份。",
-    "downgradeConfirmBtn": "已知晓风险，继续降级"
+    "downgradeConfirmBtn": "已知晓风险，继续降级",
+    "downloadUrlMissingTitle": "无法获取下载链接",
+    "downloadUrlMissingDesc": "该版本暂无可用的下载地址，请选择其他版本。"
   },
   "modCategories": {
     "adventure": "冒险",

@@ -389,6 +389,14 @@ const initializeView = async () => {
               if (!targetVersion) targetVersion = versions.find((v: any) => typeof v.name === 'string' && v.name.includes(route.query.version_id as string));
 
               if (targetVersion) {
+                if (!targetVersion.download_url) {
+                  toast.error(
+                    t('modpack.downloadUrlMissingTitle', 'Cannot get download link'),
+                    t('modpack.downloadUrlMissingDesc', 'No download address is available for this version. Please select another version.')
+                  );
+                  openVersionsModal(dummyModpack);
+                  return;
+                }
                 modpackVersions.value = versions;
                 onlineUrl.value = targetVersion.download_url;
                 selectedVersionName.value = targetVersion.name;
@@ -630,6 +638,13 @@ const getVersionUpgradeStatus = (index: number) => {
 };
 
 const handleSelectVersion = (version: ModpackVersionTarget, index: number) => {
+  if (!version.download_url) {
+    toast.error(
+      t('modpack.downloadUrlMissingTitle', 'Cannot get download link'),
+      t('modpack.downloadUrlMissingDesc', 'No download address is available for this version. Please choose another version.')
+    );
+    return;
+  }
   const status = getVersionUpgradeStatus(index);
   if (status.action === 'downgrade') {
     const versionKey = getVersionKey(version);
@@ -760,12 +775,24 @@ const selectOnlineVersion = async (version: ModpackVersionTarget | string) => {
     return;
   }
 
+  const resolvedDownloadUrl = typeof version === 'string'
+    ? onlineUrl.value
+    : (version.download_url || '');
+
+  if (!resolvedDownloadUrl) {
+    toast.error(
+      t('modpack.downloadUrlMissingTitle', 'Cannot get download link'),
+      t('modpack.downloadUrlMissingDesc', 'No download address is available for this version. Please choose another version.')
+    );
+    return;
+  }
+
   const vObj: ModpackVersionTarget = typeof version === 'string'
-    ? { name: version, download_url: onlineUrl.value }
+    ? { name: version, download_url: resolvedDownloadUrl }
     : version;
   
   // Set installation parameters
-  onlineUrl.value = vObj.download_url || onlineUrl.value || '';
+  onlineUrl.value = resolvedDownloadUrl;
   installMode.value = 'online';
   selectedVersionName.value = vObj.name ?? null;
   selectedVersionId.value = vObj.id ? String(vObj.id) : (vObj.version_id ? String(vObj.version_id) : null);
