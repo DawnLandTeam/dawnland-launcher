@@ -102,6 +102,11 @@ export function useTaskStore() {
         const deletedId = event.payload;
         tasks.value = tasks.value.filter(t => t.id !== deletedId);
       });
+
+      // Listen for instance state or config changes after tasks end
+      await listen('instances-changed', () => {
+        window.dispatchEvent(new CustomEvent('instances-changed'));
+      });
       
       isInitialized.value = true;
     } catch (e) {

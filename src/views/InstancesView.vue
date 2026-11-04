@@ -16,20 +16,7 @@ import { toast } from '../composables/useToast';
 import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
 import InstanceIcon from "../components/InstanceIcon.vue";
 import { useFileDrop } from "../composables/useFileDrop";
-
-// Types
-interface InstanceItem {
-  id: string;
-  name: string;
-  mcVersion: string;
-  loaderType: string;
-  modpackVersion?: string;
-  modpackType?: string;
-  modpackProjectId?: string;
-  isInstalling?: boolean;
-  isUpdating?: boolean;
-  iconPath?: string | null;
-}
+import { type InstanceItem, isInstanceBusy, getInstanceStatusLabel } from "../types";
 
 // Router — deep-link support
 const route = useRoute();
@@ -151,6 +138,7 @@ async function refreshInstancesList() {
 // ---------------------------------------------------------------------------
 
 function openSettings(instance: InstanceItem) {
+  if (isInstanceBusy(instance)) return;
   router.push('/instances/' + instance.id);
 }
 
@@ -310,12 +298,12 @@ function normalizedModpackVersion(version: string): string {
                 : ''
           ]"
         >
-          <!-- Installing/Updating Overlay -->
-          <div v-if="instance.isInstalling || instance.isUpdating" class="absolute inset-0 z-10 bg-white/50 dark:bg-black/50 backdrop-blur-[1px] flex items-center justify-center rounded-2xl">
+          <!-- Status Overlay -->
+          <div v-if="isInstanceBusy(instance)" class="absolute inset-0 z-10 bg-white/50 dark:bg-black/50 backdrop-blur-[1px] flex items-center justify-center rounded-2xl">
             <div class="bg-background/90 px-3 py-1.5 rounded-full flex items-center gap-2 shadow-sm border border-border">
               <Loader2 class="h-4 w-4 animate-spin text-primary" />
               <span class="text-xs font-medium">
-                {{ instance.isUpdating ? $t('instances.updating', 'Updating...') : $t('instances.installing', 'Installing...') }}
+                {{ $t(getInstanceStatusLabel(instance.status) || 'instances.processing') }}
               </span>
             </div>
           </div>
@@ -361,7 +349,7 @@ function normalizedModpackVersion(version: string): string {
                 v-if="instance.modpackType && instance.modpackProjectId && instance.modpackVersion"
                 @click.stop="shareModpack(instance)"
                 class="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                :disabled="instance.isInstalling || instance.isUpdating"
+                :disabled="isInstanceBusy(instance)"
                 :title="$t('instances.shareModpack', 'Share Modpack')"
               >
                 <Check v-if="copiedShareInstanceId === instance.id" class="h-4 w-4 text-green-500" />
@@ -370,7 +358,7 @@ function normalizedModpackVersion(version: string): string {
               <button
                 @click.stop="confirmDeleteInstance(instance)"
                 class="p-1.5 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                :disabled="instance.isInstalling || instance.isUpdating"
+                :disabled="isInstanceBusy(instance)"
                 :title="$t('instances.delete')"
               >
                 <Trash2 class="h-4 w-4" />

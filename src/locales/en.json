@@ -263,6 +263,9 @@
     "share": {
       "copyFailed": "Failed to copy link to clipboard, please check browser permissions."
     },
+    "cancelling": "Cancelling...",
+    "cancellingUpdate": "Cancelling update...",
+    "cancellingInstall": "Cancelling installation...",
     "updating": "Updating...",
     "installing": "Installing...",
     "modpack": "Modpack",

@@ -464,7 +464,7 @@ impl ExecutableTask for InstallFabricTask {
         // Step 4: Update dlml.json config atomically
         crate::core::launcher::update_instance_config(&version_dir, |config| {
             config.hidden = is_dependency.unwrap_or(false);
-            config.is_installing = false;
+            config.set_status(crate::core::launcher::InstanceStatus::Idle);
         })
         .await
         .map_err(TaskError::ExecutionError)?;
@@ -519,12 +519,11 @@ pub async fn install_fabric_instance(
     let _startup_guard = task_manager.start_instance_install(&custom_instance_name);
     let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let config_path = instance_dir.join("dlml.json");
-    let pre_config = crate::core::launcher::InstanceConfig {
-        is_installing: true,
-        is_updating: false,
+    let mut pre_config = crate::core::launcher::InstanceConfig {
         hidden: is_dependency.unwrap_or(false),
         ..Default::default()
     };
+    pre_config.set_status(crate::core::launcher::InstanceStatus::Installing);
     let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
 
     let task = InstallFabricTask {

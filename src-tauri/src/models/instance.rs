@@ -1,6 +1,54 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum InstanceStatus {
+    #[default]
+    Idle,
+    Installing,
+    CancellingInstall,
+    Updating,
+    CancellingUpdate,
+}
+
+impl InstanceStatus {
+    pub fn is_busy(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+
+    pub fn can_transition_to(&self, next: InstanceStatus) -> bool {
+        match (*self, next) {
+            (a, b) if a == b => true,
+            // From Idle: can start installing or updating
+            (Self::Idle, Self::Installing | Self::Updating) => true,
+            // From Installing: can finish to Idle, or cancel to CancellingInstall
+            (Self::Installing, Self::Idle | Self::CancellingInstall) => true,
+            // From CancellingInstall: can finish cleanup to Idle
+            (Self::CancellingInstall, Self::Idle) => true,
+            // From Updating: can finish to Idle, or cancel to CancellingUpdate
+            (Self::Updating, Self::Idle | Self::CancellingUpdate) => true,
+            // From CancellingUpdate: can finish rollback to Idle
+            (Self::CancellingUpdate, Self::Idle) => true,
+            // Recovery/Reset: any state can be recovered to Idle
+            (_, Self::Idle) => true,
+            _ => false,
+        }
+    }
+
+    pub fn transition_to(&mut self, next: InstanceStatus) -> Result<(), String> {
+        if self.can_transition_to(next) {
+            *self = next;
+            Ok(())
+        } else {
+            Err(format!(
+                "Invalid instance status transition from {:?} to {:?}",
+                self, next
+            ))
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum LoaderType {
     #[default]
@@ -107,4 +155,37 @@ where
         });
     }
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_instance_status_transitions() {
+        let mut status = InstanceStatus::Idle;
+        assert!(!status.is_busy());
+
+        // Idle -> Installing -> Idle
+        assert!(status.transition_to(InstanceStatus::Installing).is_ok());
+        assert!(status.is_busy());
+        assert!(status.transition_to(InstanceStatus::Idle).is_ok());
+        assert!(!status.is_busy());
+
+        // Idle -> Installing -> CancellingInstall -> Idle
+        assert!(status.transition_to(InstanceStatus::Installing).is_ok());
+        assert!(status.transition_to(InstanceStatus::CancellingInstall).is_ok());
+        assert!(status.is_busy());
+        assert!(status.transition_to(InstanceStatus::Idle).is_ok());
+
+        // Idle -> Updating -> CancellingUpdate -> Idle
+        assert!(status.transition_to(InstanceStatus::Updating).is_ok());
+        assert!(status.transition_to(InstanceStatus::CancellingUpdate).is_ok());
+        assert!(status.is_busy());
+        assert!(status.transition_to(InstanceStatus::Idle).is_ok());
+
+        // Invalid transitions
+        assert!(status.transition_to(InstanceStatus::CancellingUpdate).is_err());
+        assert!(status.transition_to(InstanceStatus::CancellingInstall).is_err());
+    }
 }

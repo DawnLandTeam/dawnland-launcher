@@ -287,6 +287,14 @@ impl TaskManager {
             .unwrap_or(false)
     }
 
+    pub fn task_context<'a>(&'a self, tasks: &'a [TaskState]) -> crate::core::manager::InstanceTaskContext<'a> {
+        crate::core::manager::InstanceTaskContext {
+            starting_instances: Some(&self.starting_instances),
+            active_tasks: Some(&self.active_tasks),
+            tasks,
+        }
+    }
+
     pub async fn load_history(&self) -> Result<Vec<TaskState>, TaskError> {
         self.db.load_all_tasks().await
     }
@@ -568,8 +576,7 @@ impl TaskManager {
                                     );
                                     if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
                                         let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                                            config.is_installing = false;
-                                            config.is_updating = false;
+                                            config.set_status(crate::core::launcher::InstanceStatus::Idle);
                                         }).await;
                                     }
                                 } else if task_type.is_core_installation() {
@@ -625,8 +632,7 @@ impl TaskManager {
                                     let config_path = instance_dir.join("dlml.json");
                                     if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
                                         let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                                            config.is_installing = false;
-                                            config.is_updating = false;
+                                            config.set_status(crate::core::launcher::InstanceStatus::Idle);
                                         }).await;
                                     }
                                 }
@@ -643,6 +649,8 @@ impl TaskManager {
             {
                 active.remove(&id_clone);
             }
+            drop(active);
+            let _ = manager.app_handle.emit("instances-changed", ());
         }.instrument(span));
 
         Ok(id)
@@ -653,6 +661,8 @@ impl TaskManager {
         if let Some(handle) = tasks.get(id) {
             handle.cancel_token.cancel();
 
+            let instance_id_opt = handle.instance_id.clone();
+
             // Eagerly update the state to Cancelled to provide instant feedback in UI.
             // Cleanup of directories is performed safely by the task worker after execution stops.
             if let Ok(Some(mut state)) = self.db.get_task(id).await {
@@ -660,6 +670,25 @@ impl TaskManager {
                 state.error = Some("Task cancelled".to_string());
                 self.emit_state(&state).await;
             }
+
+            if let Some(ref inst_id) = instance_id_opt {
+                if crate::core::fs_utils::is_safe_single_name(inst_id) {
+                    let base_dir = crate::core::mojang::get_minecraft_base();
+                    let inst_dir = base_dir.join("versions").join(inst_id);
+                    let config_path = inst_dir.join("dlml.json");
+                    if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                        let _ = crate::core::launcher::update_instance_config(&inst_dir, |config| {
+                            if config.effective_status() == crate::core::launcher::InstanceStatus::Updating {
+                                config.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
+                            } else {
+                                config.set_status(crate::core::launcher::InstanceStatus::CancellingInstall);
+                            }
+                        }).await;
+                        let _ = self.app_handle.emit("instances-changed", ());
+                    }
+                }
+            }
+
             Ok(())
         } else {
             Err(TaskError::NotFound)
@@ -713,7 +742,7 @@ pub async fn recover_stale_instances_internal(
             Err(_) => continue,
         };
 
-        if !config.is_installing && !config.is_updating {
+        if !config.effective_status().is_busy() {
             continue;
         }
 
@@ -758,12 +787,11 @@ pub async fn recover_stale_instances_internal(
             }
         } else {
             tracing::info!(
-                "Startup recovery: resetting stale is_installing/is_updating flags for instance: {}",
+                "Startup recovery: resetting stale status for instance: {}",
                 instance_id
             );
             let _ = crate::core::launcher::update_instance_config(&path, |cfg| {
-                cfg.is_installing = false;
-                cfg.is_updating = false;
+                cfg.set_status(crate::core::launcher::InstanceStatus::Idle);
             })
             .await;
         }
@@ -800,7 +828,7 @@ mod tests {
         tokio::fs::create_dir_all(&inst_dir).await.expect("create inst dir");
 
         let config = crate::core::launcher::InstanceConfig {
-            is_installing: true,
+            status: crate::core::launcher::InstanceStatus::Installing,
             ..Default::default()
         };
         let json = serde_json::to_string_pretty(&config).unwrap();
@@ -833,7 +861,7 @@ mod tests {
         tokio::fs::create_dir_all(&inst_dir).await.expect("create inst dir");
 
         let config = crate::core::launcher::InstanceConfig {
-            is_updating: true,
+            status: crate::core::launcher::InstanceStatus::Updating,
             ..Default::default()
         };
         let json = serde_json::to_string_pretty(&config).unwrap();
@@ -861,11 +889,10 @@ mod tests {
         // Directory must still exist!
         assert!(tokio::fs::try_exists(&inst_dir).await.unwrap_or(false));
 
-        // Config must have is_updating reset to false
+        // Config must have status reset to Idle
         let content = tokio::fs::read_to_string(inst_dir.join("dlml.json")).await.unwrap();
         let loaded: crate::core::launcher::InstanceConfig = serde_json::from_str(&content).unwrap();
-        assert!(!loaded.is_updating);
-        assert!(!loaded.is_installing);
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Idle);
     }
 
     #[tokio::test]
@@ -876,7 +903,7 @@ mod tests {
         tokio::fs::create_dir_all(&inst_dir).await.expect("create inst dir");
 
         let config = crate::core::launcher::InstanceConfig {
-            is_installing: true,
+            status: crate::core::launcher::InstanceStatus::Installing,
             ..Default::default()
         };
         let json = serde_json::to_string_pretty(&config).unwrap();
@@ -903,6 +930,6 @@ mod tests {
 
         let content = tokio::fs::read_to_string(inst_dir.join("dlml.json")).await.unwrap();
         let loaded: crate::core::launcher::InstanceConfig = serde_json::from_str(&content).unwrap();
-        assert!(!loaded.is_installing);
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Idle);
     }
 }

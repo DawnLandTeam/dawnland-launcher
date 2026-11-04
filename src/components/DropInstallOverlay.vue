@@ -25,7 +25,7 @@ import { useTaskStore } from '../composables/useTaskStore';
 import { toast } from '../composables/useToast';
 import { getErrorMessage } from '../utils/error';
 import { findIncompatibleMods, type ModIncompatIssue, type ModIncompatReason } from '../utils/modCompat';
-import type { DetectedFileKind, InspectedDropFile } from '../types';
+import { type DetectedFileKind, type InspectedDropFile, isInstanceBusy } from '../types';
 
 const route = useRoute();
 const router = useRouter();
@@ -89,7 +89,7 @@ function processNextQueuedModpack() {
 
 const availableInstanceOptions = computed(() =>
   instances.value
-    .filter((i) => !i.isInstalling && !i.isUpdating && !runningInstances.value.has(i.id))
+    .filter((i) => !isInstanceBusy(i) && !runningInstances.value.has(i.id))
     .map((i) => ({
       label: i.name,
       sublabel: `${i.mcVersion} · ${i.loaderType}`,
@@ -362,7 +362,7 @@ async function executeImportAndNotify(
     await fetchInstances();
   }
   const targetInstance = instances.value.find((i) => i.id === instanceId);
-  if (targetInstance && (targetInstance.isInstalling || targetInstance.isUpdating)) {
+  if (targetInstance && isInstanceBusy(targetInstance)) {
     toast.error(
       t('dropInstall.instanceBusyTitle', 'Instance is busy'),
       t('dropInstall.instanceBusyDesc', { instance: instanceId }),
@@ -580,7 +580,7 @@ async function onFilesDropped(
     }
 
     // No target instance in context -> open instance selection modal
-    const readyInstances = instances.value.filter((i) => !i.isInstalling && !i.isUpdating && !runningInstances.value.has(i.id));
+    const readyInstances = instances.value.filter((i) => !isInstanceBusy(i) && !runningInstances.value.has(i.id));
     if (readyInstances.length === 0) {
       toast.error(
         t('dropInstall.noInstancesTitle', 'No instances available'),

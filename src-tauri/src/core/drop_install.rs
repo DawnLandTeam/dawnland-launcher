@@ -1124,7 +1124,7 @@ async fn verify_instance_idle(
             .map_err(|e| DawnlandError::Unknown(format!("Failed to read instance config: {}", e)))?;
         let cfg = serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
             .map_err(|e| DawnlandError::Unknown(format!("Malformed instance config: {}", e)))?;
-        if cfg.is_installing || cfg.is_updating {
+        if cfg.effective_status().is_busy() {
             return Err(DawnlandError::Unknown(
                 "Instance is currently installing or updating".to_string(),
             ));

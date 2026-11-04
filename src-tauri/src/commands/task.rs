@@ -147,8 +147,7 @@ pub async fn retry_task(
             let _ = tokio::fs::create_dir_all(&instance_dir).await;
             if is_update {
                 crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                    config.is_updating = true;
-                    config.is_installing = false;
+                    config.set_status(crate::core::launcher::InstanceStatus::Updating);
                 }).await.ok();
             } else {
                 crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
@@ -238,8 +237,7 @@ pub async fn retry_task(
             let _ = tokio::fs::create_dir_all(&instance_dir).await;
             if is_update {
                 crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                    config.is_updating = true;
-                    config.is_installing = false;
+                    config.set_status(crate::core::launcher::InstanceStatus::Updating);
                 }).await.ok();
             } else {
                 crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;

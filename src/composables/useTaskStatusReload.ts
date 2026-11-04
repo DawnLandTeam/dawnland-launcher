@@ -11,11 +11,17 @@ export function useTaskStatusReload(reloadFn: () => void) {
     }
   };
 
+  const handleInstancesChanged = () => {
+    reloadFn();
+  };
+
   onMounted(() => {
     window.addEventListener('task-status-changed', handleTaskStatusChanged);
+    window.addEventListener('instances-changed', handleInstancesChanged);
   });
 
   onUnmounted(() => {
     window.removeEventListener('task-status-changed', handleTaskStatusChanged);
+    window.removeEventListener('instances-changed', handleInstancesChanged);
   });
 }
