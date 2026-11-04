@@ -6,10 +6,11 @@ import { open } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
 import DCombobox from "../components/ui/DCombobox.vue";
 import DSidebarTabs, { type SidebarTab } from '../components/ui/DSidebarTabs.vue';
-import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText, Edit, X, RefreshCw, Gauge } from "@lucide/vue";
+import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText, Edit, X, RefreshCw, Gauge, CircleHelp } from "@lucide/vue";
 import { useI18n } from 'vue-i18n';
 import DSelect from '../components/ui/DSelect.vue';
 import DButton from '../components/ui/DButton.vue';
+import DTooltip from '../components/ui/DTooltip.vue';
 import { useLogStore } from '../composables/useLogStore';
 import { useRoute, useRouter } from "vue-router";
 import UpdaterModal from "../components/UpdaterModal.vue";
@@ -780,49 +781,61 @@ const clearLogs = () => {
     <div class="flex-1 relative bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md rounded-xl border border-neutral-200/50 dark:border-zinc-800/50 shadow-sm overflow-y-auto p-6">
 
     <!-- General Settings Tab -->
-    <div v-if="activeTab === 'general'" class="space-y-6">
+    <div v-if="activeTab === 'general'" class="space-y-4">
       <!-- Language Settings -->
-      <div class="relative z-50 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
-        <div>
-          <h2 class="text-lg font-semibold flex items-center gap-2">
-            <Languages :size="20" class="text-primary" />
+      <div class="relative z-50 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2.5">
+          <Languages :size="18" class="text-primary shrink-0" />
+          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
             {{ $t('settings.general.languageTitle') }}
+            <DTooltip :content="$t('settings.general.languageDesc')">
+              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                <CircleHelp :size="15" />
+              </span>
+            </DTooltip>
           </h2>
-          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.languageDesc') }}</p>
         </div>
         <DSelect 
           :model-value="locale"
           :options="languageOptions"
           @update:model-value="changeLanguage($event as string)"
-          class="min-w-[120px]"
+          class="min-w-[140px]"
         />
       </div>
 
       <!-- Update Channel Settings -->
-      <div class="relative z-40 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
-        <div>
-          <h2 class="text-lg font-semibold flex items-center gap-2">
-            <Download :size="20" class="text-primary" />
+      <div class="relative z-40 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2.5">
+          <Download :size="18" class="text-primary shrink-0" />
+          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
             {{ $t('settings.general.updateChannelTitle') }}
+            <DTooltip :content="$t('settings.general.updateChannelDesc')">
+              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                <CircleHelp :size="15" />
+              </span>
+            </DTooltip>
           </h2>
-          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.updateChannelDesc') }}</p>
         </div>
         <DSelect 
           :model-value="updateChannel"
           :options="updateChannelOptions"
           @update:model-value="changeUpdateChannel($event as string)"
-          class="min-w-[120px]"
+          class="min-w-[140px]"
         />
       </div>
 
       <!-- Instance Inheritance Settings -->
-      <div class="relative z-30 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
-        <div>
-          <h2 class="text-lg font-semibold flex items-center gap-2">
-            <Package :size="20" class="text-primary" />
+      <div class="relative z-30 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2.5">
+          <Package :size="18" class="text-primary shrink-0" />
+          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
             {{ $t('settings.general.inheritanceTitle') }}
+            <DTooltip :content="$t('settings.general.inheritanceDesc')">
+              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                <CircleHelp :size="15" />
+              </span>
+            </DTooltip>
           </h2>
-          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.inheritanceDesc') }}</p>
         </div>
         <label class="relative inline-flex items-center cursor-pointer">
           <input type="checkbox" v-model="enableInstanceInheritance" @change="saveLauncherSettings" class="sr-only peer">
@@ -831,60 +844,68 @@ const clearLogs = () => {
       </div>
 
       <!-- Global Game Settings -->
-      <div class="relative z-25 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex flex-col gap-4 shadow-sm">
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="text-lg font-semibold flex items-center gap-2">
-              <Settings class="w-5 h-5 text-primary" />
-              {{ $t('settings.general.globalGameSettingsTitle') }}
-            </h2>
-            <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.globalGameSettingsDesc') }}</p>
-          </div>
+      <div class="relative z-25 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between gap-4 shadow-sm">
+        <div class="flex items-center gap-2.5">
+          <Settings class="w-[18px] h-[18px] text-primary shrink-0" />
+          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
+            {{ $t('settings.general.globalGameSettingsTitle') }}
+            <DTooltip :content="$t('settings.general.globalGameSettingsDesc')">
+              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                <CircleHelp :size="15" />
+              </span>
+            </DTooltip>
+          </h2>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <DButton v-if="enableGlobalGameSettings" variant="outline" size="sm" @click="openGlobalGameSettings">
+            <Edit class="w-4 h-4 mr-1.5" />
+            {{ $t('settings.general.editGlobalGameSettings') }}
+          </DButton>
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="enableGlobalGameSettings" @change="saveLauncherSettings" class="sr-only peer">
             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
           </label>
         </div>
-        <div v-if="enableGlobalGameSettings" class="flex justify-end">
-          <DButton variant="outline" size="sm" @click="openGlobalGameSettings">
-            <Edit class="w-4 h-4 mr-2" />
-            {{ $t('settings.general.editGlobalGameSettings') }}
-          </DButton>
-        </div>
       </div>
 
       <!-- Global Mod Cache -->
-      <div class="relative z-24 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex flex-col gap-4 shadow-sm">
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="text-lg font-semibold flex items-center gap-2">
-              <RefreshCw class="w-5 h-5 text-primary" />
-              {{ $t('settings.general.globalModCacheTitle') }}
-            </h2>
-            <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.globalModCacheDesc') }}</p>
-          </div>
+      <div class="relative z-24 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between gap-4 shadow-sm">
+        <div class="flex items-center gap-2.5">
+          <RefreshCw class="w-[18px] h-[18px] text-primary shrink-0" />
+          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
+            {{ $t('settings.general.globalModCacheTitle') }}
+            <DTooltip :content="$t('settings.general.globalModCacheDesc')">
+              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                <CircleHelp :size="15" />
+              </span>
+            </DTooltip>
+          </h2>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <DButton variant="outline" size="sm" @click="cleanGlobalModCache" :disabled="isCleaningCache">
+            <Loader2 v-if="isCleaningCache" class="w-4 h-4 mr-1.5 animate-spin" />
+            <Trash2 v-else class="w-4 h-4 mr-1.5" />
+            {{ $t('settings.general.cleanGlobalModCache') }}
+          </DButton>
           <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="enableGlobalModCache" @change="saveLauncherSettings" class="sr-only peer">
             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
           </label>
         </div>
-        <div class="flex justify-end">
-          <DButton variant="outline" size="sm" @click="cleanGlobalModCache" :disabled="isCleaningCache">
-            <Loader2 v-if="isCleaningCache" class="w-4 h-4 mr-2 animate-spin" />
-            <Trash2 v-else class="w-4 h-4 mr-2" />
-            {{ $t('settings.general.cleanGlobalModCache') }}
-          </DButton>
-        </div>
       </div>
 
       <!-- Smart JVM Tuning -->
-      <div class="relative z-23 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
-        <div>
-          <h2 class="text-lg font-semibold flex items-center gap-2">
-            <Gauge :size="20" class="text-primary" />
+      <div class="relative z-23 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2.5">
+          <Gauge :size="18" class="text-primary shrink-0" />
+          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
             {{ $t('settings.general.jvmTunerTitle') }}
+            <DTooltip :content="$t('settings.general.jvmTunerDesc')">
+              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                <CircleHelp :size="15" />
+              </span>
+            </DTooltip>
           </h2>
-          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.jvmTunerDesc') }}</p>
         </div>
         <label class="relative inline-flex items-center cursor-pointer">
           <input type="checkbox" v-model="enableJvmTuner" @change="saveLauncherSettings" class="sr-only peer">
@@ -893,33 +914,43 @@ const clearLogs = () => {
       </div>
 
       <!-- Download Source Settings -->
-      <div class="relative z-20 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
-        <div>
-          <h2 class="text-lg font-semibold flex items-center gap-2">
-            <Download :size="20" class="text-primary" />
+      <div class="relative z-20 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2.5">
+          <Download :size="18" class="text-primary shrink-0" />
+          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
             {{ $t('settings.general.downloadSourceTitle') }}
+            <DTooltip :content="$t('settings.general.downloadSourceDesc')">
+              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                <CircleHelp :size="15" />
+              </span>
+            </DTooltip>
           </h2>
-          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.downloadSourceDesc') }}</p>
         </div>
         <DSelect 
           v-model="downloadSource"
           :options="downloadSourceOptions"
           @update:model-value="saveLauncherSettings"
-          class="min-w-[120px]"
+          class="min-w-[140px]"
         />
       </div>
 
       <!-- Concurrent Downloads Settings -->
-      <div class="relative z-10 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
-        <h2 class="mb-4 text-lg font-semibold flex items-center gap-2">
-          <Download :size="20" class="text-primary" />
-          {{ $t('settings.general.concurrentDownloadsTitle') }}
-        </h2>
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <label class="text-sm font-medium">{{ $t('settings.general.concurrentDownloadsDesc') }}</label>
-            <span class="text-sm font-mono text-primary">{{ maxConcurrentDownloads }}</span>
+      <div class="relative z-10 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2.5">
+            <Download :size="18" class="text-primary shrink-0" />
+            <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
+              {{ $t('settings.general.concurrentDownloadsTitle') }}
+              <DTooltip :content="$t('settings.general.concurrentDownloadsDesc')">
+                <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                  <CircleHelp :size="15" />
+                </span>
+              </DTooltip>
+            </h2>
           </div>
+          <span class="text-sm font-mono text-primary font-semibold">{{ maxConcurrentDownloads }}</span>
+        </div>
+        <div class="space-y-1.5">
           <input
             v-model.number="maxConcurrentDownloads"
             @change="saveLauncherSettings"
@@ -937,13 +968,17 @@ const clearLogs = () => {
       </div>
 
       <!-- Telemetry Settings -->
-      <div class="relative z-5 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
-        <div>
-          <h2 class="text-lg font-semibold flex items-center gap-2">
-            <Shield :size="20" class="text-primary" />
+      <div class="relative z-5 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+        <div class="flex items-center gap-2.5">
+          <Shield :size="18" class="text-primary shrink-0" />
+          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
             {{ $t('settings.general.telemetryTitle') }}
+            <DTooltip :content="$t('settings.general.telemetryDesc')">
+              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                <CircleHelp :size="15" />
+              </span>
+            </DTooltip>
           </h2>
-          <p class="text-sm text-muted-foreground mt-1">{{ $t('settings.general.telemetryDesc') }}</p>
         </div>
         <label class="relative inline-flex items-center cursor-pointer">
           <input type="checkbox" v-model="enableTelemetry" @change="saveLauncherSettings" class="sr-only peer">
@@ -952,29 +987,32 @@ const clearLogs = () => {
       </div>
 
       <!-- Global Memory Settings -->
-      <div class="relative z-0 rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
-        <h2 class="mb-4 text-lg font-semibold">{{ $t('settings.general.memoryTitle') }}</h2>
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <label class="text-sm font-medium">{{ $t('settings.general.maxMemory') }}</label>
-            <span class="text-sm font-mono text-primary">{{ defaultMaxMemory }} MB</span>
-          </div>
+      <div class="relative z-0 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
+            {{ $t('settings.general.memoryTitle') }}
+            <DTooltip :content="$t('settings.general.recommended', { recommended: systemMemory.recommendedMaxMb })">
+              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                <CircleHelp :size="15" />
+              </span>
+            </DTooltip>
+          </h2>
+          <span class="text-sm font-mono text-primary font-semibold">{{ defaultMaxMemory }} MB</span>
+        </div>
+        <div class="space-y-1.5">
           <input
             v-model.number="defaultMaxMemory"
             type="range"
             min="512"
             :max="systemMemory.totalMb"
             step="512"
-            class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-800 accent-blue-500"
+            class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-zinc-800 accent-primary"
             @change="saveLauncherSettings"
           />
           <div class="flex justify-between text-xs text-muted-foreground">
             <span>512 MB</span>
             <span>{{ $t('settings.general.system') }}: {{ systemMemory.totalMb }} MB</span>
           </div>
-          <p class="text-xs text-muted-foreground">
-            {{ $t('settings.general.recommended', { recommended: systemMemory.recommendedMaxMb }) }}
-          </p>
         </div>
       </div>
     </div>
@@ -1233,13 +1271,17 @@ const clearLogs = () => {
             </div>
 
             <!-- Unlock Context Size Option -->
-            <div class="relative rounded-lg border border-white/20 bg-white/60 p-5 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
-              <div>
-                <h3 class="text-sm font-semibold flex items-center gap-2">
-                  <span class="i-lucide-unlock w-4 h-4 text-orange-500"></span>
+            <div class="relative rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
+              <div class="flex items-center gap-2.5">
+                <span class="i-lucide-unlock w-4 h-4 text-orange-500 shrink-0"></span>
+                <h3 class="text-sm font-semibold flex items-center gap-1.5 text-foreground">
                   {{ $t('settings.ai.unlockContext') }}
+                  <DTooltip :content="$t('settings.ai.unlockContextDesc')">
+                    <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                      <CircleHelp :size="14" />
+                    </span>
+                  </DTooltip>
                 </h3>
-                <p class="text-xs text-muted-foreground mt-1">{{ $t('settings.ai.unlockContextDesc') }}</p>
               </div>
               <label class="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" v-model="aiUnlockContextSize" @change="saveLauncherSettings" class="sr-only peer">
