@@ -7,3 +7,4 @@ export * from './task';
 export * from './server';
 export * from './account';
 export * from './drop';
+export * from './modpack';

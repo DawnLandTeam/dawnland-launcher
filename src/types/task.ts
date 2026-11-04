@@ -2,8 +2,8 @@ export type TaskType =
   | { InstallVanilla: { version_id: string; version_json_url: string; custom_instance_name?: string; is_dependency?: boolean } }
   | { InstallForge: { mc_version: string; loader_version: string; loader_type: string; custom_instance_name: string; is_dependency?: boolean } }
   | { InstallFabric: { mc_version: string; fabric_version: string; custom_instance_name: string; is_dependency?: boolean } }
-  | { InstallModpack: { zip_path: string; instance_name: string; is_update: boolean; project_id?: string } }
-  | { InstallOnlineModpack: { url: string; instance_name: string; is_update: boolean; project_id?: string } }
+  | { InstallModpack: { zip_path: string; instance_name: string; is_update: boolean; project_id?: string | null; server_id?: string | null; pack_version_id?: string | null; pack_file_name?: string | null } }
+  | { InstallOnlineModpack: { url: string; instance_name: string; is_update: boolean; project_id?: string | null; server_id?: string | null; pack_version_id?: string | null; pack_file_name?: string | null } }
   | { InstallMod: { source: string; project_id: string; mod_name: string; instance_id: string; target_dir: string; download_url: string; file_id: string; keep_both: boolean } }
   | { InstallResourcepack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { InstallShaderpack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
