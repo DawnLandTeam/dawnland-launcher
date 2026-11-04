@@ -631,16 +631,28 @@ async function confirmQuickModpackInstall(): Promise<void> {
     return;
   }
 
-  const isSafeDirectoryName = (name: string) => {
-    return (
-      name.length > 0 &&
-      name !== '.' &&
-      name !== '..' &&
-      !name.includes('..') &&
-      !name.includes('/') &&
-      !name.includes('\\') &&
-      !/[<>:"/\\|?*\x00-\x1F]/.test(name)
-    );
+  const WINDOWS_RESERVED_NAMES = new Set([
+    'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$',
+    'COM0', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+    'LPT0', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+  ]);
+
+  const isSafeDirectoryName = (name: string): boolean => {
+    const trimmed = name.trim();
+    if (
+      !trimmed ||
+      trimmed.endsWith('.') ||
+      trimmed.endsWith(' ') ||
+      trimmed.includes('/') ||
+      trimmed.includes('\\') ||
+      trimmed.includes(':') ||
+      /[<>:"/\\|?*\x00-\x1F]/.test(trimmed) ||
+      trimmed.split('').every((c) => c === '.')
+    ) {
+      return false;
+    }
+    const stem = trimmed.split('.')[0]?.trimEnd().toUpperCase() ?? '';
+    return !WINDOWS_RESERVED_NAMES.has(stem);
   };
 
   if (!isSafeDirectoryName(trimmedName)) {

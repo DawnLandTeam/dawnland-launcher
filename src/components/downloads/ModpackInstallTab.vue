@@ -17,6 +17,7 @@ import DInput from "../ui/DInput.vue";
 import DButton from "../ui/DButton.vue";
 import DSelect from "../ui/DSelect.vue";
 import { useFileDrop } from "../../composables/useFileDrop";
+import type { ModpackArchiveInfo } from "../../types";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -129,11 +130,6 @@ const currentHumanVersion = computed(() => {
   }
   return "";
 });
-
-interface ModpackArchiveInfo {
-  name: string;
-  version?: string | null;
-}
 
 const targetDowngradeVersionName = computed(() => {
   const pending = pendingDowngradeVersion.value;
@@ -847,16 +843,28 @@ watch(
   { immediate: true }
 );
 
+const WINDOWS_RESERVED_NAMES = new Set([
+  'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$',
+  'COM0', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+  'LPT0', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+]);
+
 const isSafeDirectoryName = (name: string): boolean => {
-  return (
-    name.length > 0 &&
-    name !== '.' &&
-    name !== '..' &&
-    !name.includes('..') &&
-    !name.includes('/') &&
-    !name.includes('\\') &&
-    !/[<>:"/\\|?*\x00-\x1F]/.test(name)
-  );
+  const trimmed = name.trim();
+  if (
+    !trimmed ||
+    trimmed.endsWith('.') ||
+    trimmed.endsWith(' ') ||
+    trimmed.includes('/') ||
+    trimmed.includes('\\') ||
+    trimmed.includes(':') ||
+    /[<>:"/\\|?*\x00-\x1F]/.test(trimmed) ||
+    trimmed.split('').every((c) => c === '.')
+  ) {
+    return false;
+  }
+  const stem = trimmed.split('.')[0]?.trimEnd().toUpperCase() ?? '';
+  return !WINDOWS_RESERVED_NAMES.has(stem);
 };
 
 watch(
@@ -1105,20 +1113,21 @@ const formatDate = (dateString: string) => {
     
     <!-- Absolute positioned floating button for installing state -->
     <div v-if="isInstalling && currentTask && ['Completed', 'Failed', 'Cancelled'].includes(currentTask.status)" class="absolute top-6 right-6 z-50">
-      <button
+      <DButton
         @click="() => { isInstalling = false; currentTaskId = null; initializeView(); }"
         class="flex items-center gap-2 px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors text-sm font-medium shadow-sm"
       >
         {{ currentTask.status === 'Completed' ? t('install.finish') : t('install.back') }}
-      </button>
+      </DButton>
     </div>
     <div v-else-if="isInstalling && currentTask && ['Running', 'Pending', 'Paused'].includes(currentTask.status)" class="absolute top-6 right-6 z-50">
-      <button
+      <DButton
+        variant="outline"
         @click="showCancelConfirmModal = true; cancelError = null;"
         class="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md transition-colors text-sm font-medium shadow-sm"
       >
         {{ t('install.cancel', 'Cancel Installation') }}
-      </button>
+      </DButton>
     </div>
     
     <!-- Unified Header -->
@@ -1519,20 +1528,22 @@ const formatDate = (dateString: string) => {
           {{ cancelError }}
         </p>
         <div class="flex justify-end gap-3 mt-4">
-          <button
+          <DButton
+            variant="outline"
             class="px-5 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg font-medium transition-colors"
             :disabled="isCanceling"
             @click="showCancelConfirmModal = false; cancelError = null;"
           >
             {{ t('common.cancel', 'Cancel') }}
-          </button>
-          <button
+          </DButton>
+          <DButton
+            variant="danger"
             class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
             :disabled="isCanceling"
             @click="cancelInstallation"
           >
             {{ isCanceling ? t('install.canceling', 'Canceling...') : t('common.confirm', 'Yes, Cancel') }}
-          </button>
+          </DButton>
         </div>
       </div>
     </AlertDialog>

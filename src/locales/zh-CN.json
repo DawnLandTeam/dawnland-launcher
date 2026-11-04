@@ -11,14 +11,23 @@
     "save": "保存",
     "operationFailed": "操作失败",
     "close": "关闭",
-    "link": "绑定"
+    "link": "绑定",
+    "error": "错误",
+    "unknown": "未知",
+    "saveFailed": "保存失败: {error}",
+    "processing": "处理中...",
+    "next": "下一步",
+    "notification": "提示",
+    "ok": "确定",
+    "inputRequired": "请填写必填项"
   },
   "sidebar": {
     "home": "主页",
     "instances": "实例",
     "servers": "服务器",
     "accounts": "账号",
-    "settings": "设置"
+    "settings": "设置",
+    "downloads": "下载中心"
   },
   "home": {
     "playTime": "游玩 {hours} 小时",
@@ -248,8 +257,18 @@
         "cfNoFiles": "该 CurseForge 项目没有任何文件。",
         "invalidJson": "解析返回数据失败。"
       },
-      "autoResolve": "一键自动检索"
-    }
+      "autoResolve": "一键自动检索",
+      "selectVersion": "请选择要导出的版本"
+    },
+    "share": {
+      "copyFailed": "无法复制链接到剪贴板，请检查浏览器权限。"
+    },
+    "updating": "更新中...",
+    "installing": "安装中...",
+    "modpack": "整合包",
+    "manual": "手动添加",
+    "cannotEditRunning": "无法在实例运行时编辑设置",
+    "editPresetDesc": "配置包含在当前预设中的资源"
   },
   "servers": {
     "title": "服务器",
@@ -383,8 +402,11 @@
       "description": "服务器详情 (Description)",
       "modded": "模组 (Modded)",
       "noDescription": "暂无介绍 (No description provided)",
-      "authAuthlib": "验证方式: 外置登录 (Authlib)"
-    }
+      "authAuthlib": "验证方式: 外置登录 (Authlib)",
+      "custom": "自定义",
+      "authOffline": "离线模式"
+    },
+    "publishError": "发布服务器失败: {error}"
   },
   "accounts": {
     "title": "账号管理",
@@ -439,7 +461,8 @@
     "added": "已添加",
     "back": "返回",
     "saving": "保存中...",
-    "confirmAdd": "确认添加"
+    "confirmAdd": "确认添加",
+    "addAccount": "添加账号"
   },
   "errors": {
     "conflictingTask": "有冲突的任务正在运行: {taskName}",
@@ -654,7 +677,14 @@
     "oldVersions": "旧版本",
     "fetchingVersions": "获取版本中...",
     "finish": "完成",
-    "cancelFailed": "取消安装失败，请重试。"
+    "cancelFailed": "取消安装失败，请重试。",
+    "missingOnlineUrl": "缺失在线整合包下载链接",
+    "missingZipPath": "缺失整合包压缩包文件",
+    "emptyInstanceName": "请输入实例名称",
+    "updateButton": "更新整合包",
+    "successTitle": "安装成功",
+    "successDesc": "整合包已成功安装。",
+    "defaultName": "默认名称"
   },
   "mods": {
     "title": "探索 Mod",
@@ -768,12 +798,18 @@
       "downloadEngine": "下载 AI 推理引擎 (仅需一次)",
       "retry": "重试",
       "analyzing": "AI 正在深度分析...",
-      "analyze": "一键 AI 智能分析"
+      "analyze": "一键 AI 智能分析",
+      "noLogContext": "未找到可供分析的崩溃日志。"
     },
     "actions": {
       "searchMod": "搜索模组: {mod}",
       "gotoJava": "前往 Java 设置",
-      "gotoMods": "前往模组管理"
+      "gotoMods": "前往模组管理",
+      "noInstance": "未找到实例",
+      "disableModSuccess": "成功禁用模组: {name}",
+      "disableModFailed": "禁用模组失败: {name}",
+      "installDependency": "安装缺失的依赖: {name}",
+      "disableMod": "禁用冲突的模组: {name}"
     },
     "history": {
       "empty": "暂无崩溃历史",
@@ -781,7 +817,9 @@
       "clearAll": "清空全部",
       "deleted": "已删除",
       "cleared": "已清空"
-    }
+    },
+    "openj9Title": "OpenJ9 兼容性提示",
+    "openj9Desc": "不建议使用 OpenJ9 虚拟机运行 Minecraft，可能会导致渲染异常或模组不兼容。"
   },
   "updater": {
     "title": "发现新版本",
@@ -814,7 +852,8 @@
     "loader": "加载器",
     "publishDate": "发布日期",
     "actions": "操作",
-    "installBtn": "安装"
+    "installBtn": "安装",
+    "noVersions": "该整合包暂无可用版本"
   },
   "task": {
     "actions": {
@@ -895,7 +934,8 @@
     "downgradeAdvice": "请在继续之前确保已做好关键数据备份。",
     "downgradeConfirmBtn": "已知晓风险，继续降级",
     "downloadUrlMissingTitle": "无法获取下载链接",
-    "downloadUrlMissingDesc": "该版本暂无可用的下载地址，请选择其他版本。"
+    "downloadUrlMissingDesc": "该版本暂无可用的下载地址，请选择其他版本。",
+    "noDescription": "暂无描述"
   },
   "modCategories": {
     "adventure": "冒险",
@@ -1056,5 +1096,22 @@
     "overwriteDesc": "以下文件已存在于实例 {instance} 中，是否覆盖已有文件？",
     "overwriteWarning": "覆盖将替换已有文件且不可撤销。",
     "overwriteConfirmBtn": "覆盖已有文件"
+  },
+  "deepLink": {
+    "fetching": "正在获取整合包详情...",
+    "installStarted": "已开始安装整合包",
+    "installStartedDesc": "请在任务中心查看进度",
+    "installFailed": "安装失败",
+    "versionNotFound": "未找到对应的整合包版本",
+    "modpackTitle": "安装整合包",
+    "serverTitle": "加入服务器",
+    "authlibTitle": "添加第三方认证服务器",
+    "modpack": "整合包",
+    "modpackDesc": "接收到整合包安装邀请",
+    "serverDesc": "接收到服务器连接邀请",
+    "authlibDesc": "接收到第三方登录服务器配置",
+    "modpackConfirm": "立即安装",
+    "serverConfirm": "立即连接",
+    "authlibConfirm": "立即添加"
   }
 }

@@ -11,14 +11,23 @@
     "save": "Save",
     "operationFailed": "Operation failed",
     "close": "Close",
-    "link": "Link"
+    "link": "Link",
+    "error": "Error",
+    "unknown": "Unknown",
+    "saveFailed": "Save failed: {error}",
+    "processing": "Processing...",
+    "next": "Next",
+    "notification": "Notification",
+    "ok": "OK",
+    "inputRequired": "Please fill in the required field"
   },
   "sidebar": {
     "home": "Home",
     "instances": "Instances",
     "servers": "Servers",
     "accounts": "Accounts",
-    "settings": "Settings"
+    "settings": "Settings",
+    "downloads": "Downloads"
   },
   "home": {
     "playTime": "{hours}h played",
@@ -248,8 +257,18 @@
         "cfNoFiles": "No files found for this project on CurseForge.",
         "invalidJson": "Failed to parse response data."
       },
-      "autoResolve": "Auto-Search All"
-    }
+      "autoResolve": "Auto-Search All",
+      "selectVersion": "Please select a version to export"
+    },
+    "share": {
+      "copyFailed": "Failed to copy link to clipboard, please check browser permissions."
+    },
+    "updating": "Updating...",
+    "installing": "Installing...",
+    "modpack": "Modpack",
+    "manual": "Manual",
+    "cannotEditRunning": "Cannot edit settings while instance is running",
+    "editPresetDesc": "Configure assets included in this preset"
   },
   "servers": {
     "title": "Servers",
@@ -383,8 +402,11 @@
       "description": "Server Description",
       "modded": "Modded",
       "noDescription": "No description provided",
-      "authAuthlib": "Auth: Authlib"
-    }
+      "authAuthlib": "Auth: Authlib",
+      "custom": "Custom",
+      "authOffline": "Offline Mode"
+    },
+    "publishError": "Failed to publish server: {error}"
   },
   "accounts": {
     "title": "Account Management",
@@ -439,7 +461,8 @@
     "added": "Added",
     "back": "Back",
     "saving": "Saving...",
-    "confirmAdd": "Confirm Add"
+    "confirmAdd": "Confirm Add",
+    "addAccount": "Add Account"
   },
   "errors": {
     "conflictingTask": "Conflicting task is running: {taskName}",
@@ -654,7 +677,14 @@
     "oldVersions": "Old Alpha/Beta",
     "fetchingVersions": "Fetching versions...",
     "finish": "Finish",
-    "cancelFailed": "Failed to cancel installation. Please try again."
+    "cancelFailed": "Failed to cancel installation. Please try again.",
+    "missingOnlineUrl": "Missing online modpack download URL",
+    "missingZipPath": "Missing modpack archive file",
+    "emptyInstanceName": "Please enter an instance name",
+    "updateButton": "Update Modpack",
+    "successTitle": "Installation Succeeded",
+    "successDesc": "Modpack has been installed successfully.",
+    "defaultName": "Default Name"
   },
   "mods": {
     "title": "Discover Mods",
@@ -717,7 +747,8 @@
     "downloadOnly": "Download Only",
     "downloadToDir": "Download to Directory",
     "selectWorldSave": "Select Target World Save",
-    "noWorldsFound": "No world saves found in this instance. Please launch the game and create a world first!"
+    "noWorldsFound": "No world saves found in this instance. Please launch the game and create a world first!",
+    "modsInstallTip": "Due to network conditions, search may take a few seconds, please be patient."
   },
   "instanceMods": {
     "title": "Manage Mods",
@@ -767,12 +798,18 @@
       "downloadEngine": "Download AI Engine (Once only)",
       "retry": "Retry",
       "analyzing": "AI is analyzing deeply...",
-      "analyze": "One-click AI Smart Analysis"
+      "analyze": "One-click AI Smart Analysis",
+      "noLogContext": "No crash log found for analysis."
     },
     "actions": {
       "searchMod": "Search Mod: {mod}",
       "gotoJava": "Go to Java Settings",
-      "gotoMods": "Go to Mod Management"
+      "gotoMods": "Go to Mod Management",
+      "noInstance": "Instance not found",
+      "disableModSuccess": "Successfully disabled mod: {name}",
+      "disableModFailed": "Failed to disable mod: {name}",
+      "installDependency": "Install missing dependency: {name}",
+      "disableMod": "Disable conflicting mod: {name}"
     },
     "history": {
       "empty": "No Crash History",
@@ -780,7 +817,9 @@
       "clearAll": "Clear All",
       "deleted": "Deleted",
       "cleared": "Cleared"
-    }
+    },
+    "openj9Title": "OpenJ9 Incompatibility",
+    "openj9Desc": "OpenJ9 VM is not recommended for Minecraft due to potential rendering and mod incompatibilities."
   },
   "updater": {
     "title": "Update Available",
@@ -813,7 +852,8 @@
     "loader": "Loader",
     "publishDate": "Publish Date",
     "actions": "Actions",
-    "installBtn": "Install"
+    "installBtn": "Install",
+    "noVersions": "No versions available for this modpack"
   },
   "task": {
     "actions": {
@@ -894,7 +934,8 @@
     "downgradeAdvice": "Please ensure you have backed up any critical data before proceeding.",
     "downgradeConfirmBtn": "I understand the risks, Downgrade",
     "downloadUrlMissingTitle": "Missing Download URL",
-    "downloadUrlMissingDesc": "No valid download address is available for this version. Please select another version."
+    "downloadUrlMissingDesc": "No valid download address is available for this version. Please select another version.",
+    "noDescription": "No description"
   },
   "modCategories": {
     "adventure": "Adventure",
@@ -1055,5 +1096,22 @@
     "overwriteDesc": "The following files already exist in {instance}. Do you want to overwrite them?",
     "overwriteWarning": "Overwriting will replace the existing files and cannot be undone.",
     "overwriteConfirmBtn": "Overwrite Existing"
+  },
+  "deepLink": {
+    "fetching": "Fetching modpack details...",
+    "installStarted": "Modpack installation started",
+    "installStartedDesc": "Check progress in the Task Center",
+    "installFailed": "Installation failed",
+    "versionNotFound": "Modpack version not found",
+    "modpackTitle": "Install Modpack",
+    "serverTitle": "Join Server",
+    "authlibTitle": "Add Auth Server",
+    "modpack": "Modpack",
+    "modpackDesc": "Received modpack installation link",
+    "serverDesc": "Received server join link",
+    "authlibDesc": "Received authentication server configuration",
+    "modpackConfirm": "Install Now",
+    "serverConfirm": "Join Now",
+    "authlibConfirm": "Add Server"
   }
 }
