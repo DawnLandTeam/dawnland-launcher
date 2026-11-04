@@ -125,7 +125,7 @@ export function useFileDrop() {
       console.error('Failed to inspect dropped files:', err);
       if (currentSeq === inspectSeq) {
         draggedFiles.value = [];
-        toast.error((i18n.global.t as any)('dropInstall.inspectFailedTitle', 'Failed to inspect dropped files'), getErrorMessage(err));
+        toast.error(i18n.global.t('dropInstall.inspectFailedTitle'), getErrorMessage(err));
       }
       return [];
     } finally {

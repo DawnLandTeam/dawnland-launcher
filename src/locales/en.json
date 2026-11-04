@@ -1009,6 +1009,8 @@
     "kindUnknown": "Unknown File",
     "instanceBusyTitle": "Instance Busy",
     "instanceBusyDesc": "Instance {instance} is currently installing or updating. Please try again later.",
+    "instanceRunningTitle": "Game is Running",
+    "instanceRunningDesc": "Instance {instance} is currently running. Please close the game before importing or replacing resources.",
     "importSuccessTitle": "Drag-and-Drop Import Complete",
     "importSuccessDesc": "Imported {summary} into {instance}",
     "vanillaModWarningTitle": "Vanilla Instance Notice",

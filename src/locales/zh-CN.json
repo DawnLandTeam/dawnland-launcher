@@ -1010,6 +1010,8 @@
     "kindUnknown": "未知文件",
     "instanceBusyTitle": "实例正忙",
     "instanceBusyDesc": "实例 {instance} 正在安装或更新中，请稍后再试。",
+    "instanceRunningTitle": "游戏正在运行",
+    "instanceRunningDesc": "实例 {instance} 正在运行中，请在关闭游戏后再导入或替换资源。",
     "importSuccessTitle": "拖拽导入成功",
     "importSuccessDesc": "已将 {summary} 导入到 {instance}",
     "vanillaModWarningTitle": "原版实例提示",

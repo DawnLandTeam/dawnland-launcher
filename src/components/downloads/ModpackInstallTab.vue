@@ -24,7 +24,7 @@ const taskStore = useTaskStore();
 const currentTaskId = ref<string | null>(null);
 const currentTask = computed(() => {
   if (!currentTaskId.value) return null;
-  return taskStore.tasks.value.find((t: any) => t.id === currentTaskId.value) || null;
+  return taskStore.tasks.value.find((t) => t.id === currentTaskId.value) || null;
 });
 const route = useRoute();
 
@@ -41,7 +41,27 @@ const emit = defineEmits(['cancel-update']);
 // Modes: 'online' or 'local'
 const installMode = ref<'online' | 'local'>('online');
 
-const installedInstances = shallowRef<any[]>([]);
+interface InstalledInstance {
+  id: string;
+  name?: string;
+  serverId?: string;
+  packVersionId?: string;
+  modpackVersion?: string;
+  mcVersion?: string;
+  loaderType?: string;
+}
+
+interface ModpackVersionTarget {
+  id?: string | number | null;
+  version_id?: string | null;
+  version?: string | null;
+  version_number?: string | null;
+  name?: string | null;
+  download_url?: string | null;
+  [key: string]: unknown;
+}
+
+const installedInstances = shallowRef<InstalledInstance[]>([]);
 
 const isUpdate = computed(() => {
   if (props.updateId) return true;
@@ -59,12 +79,12 @@ const onlineUrl = ref("");
 const selectedVersionName = ref<string | null>(null);
 const selectedVersionId = ref<string | null>(null);
 const showDowngradeConfirmModal = ref(false);
-const pendingDowngradeVersion = ref<any>(null);
+const pendingDowngradeVersion = ref<ModpackVersionTarget | string | null>(null);
 const isDowngradeConfirmed = ref(false);
 const confirmedDowngradeVersionId = ref<string | null>(null);
 const localArchiveVersion = ref<string | null>(null);
 
-const getVersionKey = (target: any): string => {
+const getVersionKey = (target: ModpackVersionTarget | string | null | undefined): string => {
   if (!target) return "";
   if (typeof target === 'string') return target.trim();
   return String(target.id || target.version_id || target.version || target.name || "").trim();
@@ -79,7 +99,7 @@ const currentDisplayVersion = computed(() => {
   }
   const targetInstanceName = instanceName.value || instanceNameInput.value;
   const existingInst = installedInstances.value.find(
-    (i: any) => (targetInstanceName && i.id.toLowerCase() === targetInstanceName.toLowerCase()) || (route.query.server_id && i.serverId === String(route.query.server_id))
+    (i: InstalledInstance) => (targetInstanceName && i.id.toLowerCase() === targetInstanceName.toLowerCase()) || (route.query.server_id && i.serverId === String(route.query.server_id))
   );
   if (existingInst) {
     return String(existingInst.packVersionId || existingInst.modpackVersion || "").trim();
@@ -90,7 +110,7 @@ const currentDisplayVersion = computed(() => {
 const currentHumanVersion = computed(() => {
   const targetInstanceName = instanceName.value || instanceNameInput.value;
   const existingInst = installedInstances.value.find(
-    (i: any) => (targetInstanceName && i.id.toLowerCase() === targetInstanceName.toLowerCase()) || (route.query.server_id && i.serverId === String(route.query.server_id))
+    (i: InstalledInstance) => (targetInstanceName && i.id.toLowerCase() === targetInstanceName.toLowerCase()) || (route.query.server_id && i.serverId === String(route.query.server_id))
   );
   if (existingInst?.modpackVersion) {
     return String(existingInst.modpackVersion).trim();
@@ -116,8 +136,10 @@ interface ModpackArchiveInfo {
 }
 
 const targetDowngradeVersionName = computed(() => {
-  if (pendingDowngradeVersion.value) {
-    return pendingDowngradeVersion.value.name || pendingDowngradeVersion.value.version_number || pendingDowngradeVersion.value.version || pendingDowngradeVersion.value.id || (typeof pendingDowngradeVersion.value === 'string' ? pendingDowngradeVersion.value : "Unknown");
+  const pending = pendingDowngradeVersion.value;
+  if (pending) {
+    if (typeof pending === 'string') return pending;
+    return pending.name || pending.version_number || pending.version || (pending.id ? String(pending.id) : "") || "Unknown";
   }
   if (selectedVersionName.value) {
     return selectedVersionName.value;
@@ -148,7 +170,7 @@ function compareSemver(v1: string, v2: string): number {
   return 0;
 }
 
-const isDowngradeTarget = (targetVersion?: any): boolean => {
+const isDowngradeTarget = (targetVersion?: ModpackVersionTarget | string | null): boolean => {
   const cv = currentDisplayVersion.value?.trim();
   if (!cv) return false;
 
@@ -170,8 +192,9 @@ const isDowngradeTarget = (targetVersion?: any): boolean => {
     });
 
     if (currentVersionIndex !== -1) {
+      const targetKey = getVersionKey(targetVersion);
       const targetIndex = modpackVersions.value.findIndex(
-        v => v === targetVersion || String(v.id) === String(targetVersion.id)
+        v => v === targetVersion || getVersionKey(v) === targetKey
       );
       if (targetIndex !== -1) {
         return targetIndex > currentVersionIndex;
@@ -180,7 +203,7 @@ const isDowngradeTarget = (targetVersion?: any): boolean => {
   }
 
   const targetVerStr = targetVersion
-    ? (targetVersion.name || targetVersion.id || targetVersion.version || (typeof targetVersion === 'string' ? targetVersion : ""))
+    ? (typeof targetVersion === 'string' ? targetVersion : (targetVersion.name || (targetVersion.id ? String(targetVersion.id) : '') || targetVersion.version || ""))
     : (localArchiveVersion.value || "");
   
   if (targetVerStr) {
@@ -251,7 +274,7 @@ const initializeView = async () => {
   lastProcessedQueryStr.value = currentQueryStr;
 
   try {
-    installedInstances.value = await invoke<any[]>("scan_installed_instances");
+    installedInstances.value = await invoke<InstalledInstance[]>("scan_installed_instances");
     scanError.value = null;
   } catch (e) {
     console.error("Failed to fetch installed instances:", e);
@@ -263,7 +286,7 @@ const initializeView = async () => {
 
   // Restore if task is already running
   if (currentTaskId.value) {
-     const task = taskStore.tasks.value.find((t: any) => t.id === currentTaskId.value);
+     const task = taskStore.tasks.value.find((t) => t.id === currentTaskId.value);
      if (task && (task.status === 'Running' || task.status === 'Pending')) {
         isInstalling.value = true;
         return;
@@ -606,14 +629,14 @@ const getVersionUpgradeStatus = (index: number) => {
   return { action: 'downgrade', text: t('modpack.downgrade', 'Downgrade'), disabled: false, class: 'bg-zinc-600 hover:bg-zinc-700 text-white' };
 };
 
-const handleSelectVersion = (version: any, index: number) => {
+const handleSelectVersion = (version: ModpackVersionTarget, index: number) => {
   const status = getVersionUpgradeStatus(index);
   if (status.action === 'downgrade') {
     const versionKey = getVersionKey(version);
     if (!isDowngradeConfirmed.value || confirmedDowngradeVersionId.value !== versionKey) {
-      onlineUrl.value = version.download_url;
+      onlineUrl.value = version.download_url || '';
       installMode.value = 'online';
-      selectedVersionName.value = version.name;
+      selectedVersionName.value = version.name ?? null;
       selectedVersionId.value = version.id ? String(version.id) : (version.version_id ? String(version.version_id) : null);
       pendingDowngradeVersion.value = version;
       showDowngradeConfirmModal.value = true;
@@ -665,7 +688,7 @@ const loadLocalArchiveInfo = async (path: string) => {
   }
 };
 
-const checkDowngrade = async (targetVersion?: any): Promise<boolean> => {
+const checkDowngrade = async (targetVersion?: ModpackVersionTarget | string | null): Promise<boolean> => {
   if (!isUpdate.value) {
     return true;
   }
@@ -701,7 +724,7 @@ const checkDowngrade = async (targetVersion?: any): Promise<boolean> => {
   }
 
   if (isDowngradeTarget(effectiveTarget)) {
-    pendingDowngradeVersion.value = effectiveTarget;
+    pendingDowngradeVersion.value = effectiveTarget || null;
     showDowngradeConfirmModal.value = true;
     return false;
   }
@@ -731,17 +754,21 @@ const cancelDowngrade = () => {
   isInstalling.value = false;
 };
 
-const selectOnlineVersion = async (version: any) => {
+const selectOnlineVersion = async (version: ModpackVersionTarget | string) => {
   if (!instanceNameInput.value.trim()) {
     alert(t('install.emptyInstanceName', 'Please enter an instance name'));
     return;
   }
+
+  const vObj: ModpackVersionTarget = typeof version === 'string'
+    ? { name: version, download_url: onlineUrl.value }
+    : version;
   
   // Set installation parameters
-  onlineUrl.value = version.download_url;
+  onlineUrl.value = vObj.download_url || onlineUrl.value || '';
   installMode.value = 'online';
-  selectedVersionName.value = version.name;
-  selectedVersionId.value = version.id ? String(version.id) : (version.version_id ? String(version.version_id) : null);
+  selectedVersionName.value = vObj.name ?? null;
+  selectedVersionId.value = vObj.id ? String(vObj.id) : (vObj.version_id ? String(vObj.version_id) : null);
   
   if (!await checkDowngrade(version)) {
     return;
@@ -889,7 +916,7 @@ const installModpack = async () => {
 
   if (scanError.value) {
     try {
-      installedInstances.value = await invoke<any[]>("scan_installed_instances");
+      installedInstances.value = await invoke<InstalledInstance[]>("scan_installed_instances");
       scanError.value = null;
       localNameError.value = null;
     } catch (e) {
@@ -905,9 +932,9 @@ const installModpack = async () => {
 
   if (!isUpdate.value) {
     try {
-      const scannedInstances = await invoke<any[]>("scan_installed_instances");
+      const scannedInstances = await invoke<InstalledInstance[]>("scan_installed_instances");
       scanError.value = null;
-      const exists = scannedInstances.some((i: any) => i.id.toLowerCase() === finalInstanceName.trim().toLowerCase());
+      const exists = scannedInstances.some((i: InstalledInstance) => i.id.toLowerCase() === finalInstanceName.trim().toLowerCase());
       if (exists) {
         isInstalling.value = false;
         if (targetMode === 'online') {
@@ -945,7 +972,7 @@ const installModpack = async () => {
     // Event tracking removed: trackEvent("modpack_install_started", { type: onlineUrl.value ? "online" : "local", isUpdate: isUpdate.value });
     const targetInstanceName = finalInstanceName;
     const existingInst = installedInstances.value.find(
-      (i: any) => i.id.toLowerCase() === targetInstanceName.toLowerCase() || (route.query.server_id && i.serverId === String(route.query.server_id))
+      (i: InstalledInstance) => i.id.toLowerCase() === targetInstanceName.toLowerCase() || (route.query.server_id && i.serverId === String(route.query.server_id))
     );
     const effectiveServerId = route.query.server_id ? String(route.query.server_id) : (existingInst?.serverId || null);
     // Explicitly selected version ID takes priority over route query

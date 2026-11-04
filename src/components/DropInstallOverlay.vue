@@ -20,6 +20,7 @@ import DInput from './ui/DInput.vue';
 import DSelect from './ui/DSelect.vue';
 import { useFileDrop } from '../composables/useFileDrop';
 import { useInstances } from '../composables/useInstances';
+import { runningInstances } from '../composables/useLaunchState';
 import { useTaskStore } from '../composables/useTaskStore';
 import { toast } from '../composables/useToast';
 import { getErrorMessage } from '../utils/error';
@@ -88,7 +89,7 @@ function processNextQueuedModpack() {
 
 const availableInstanceOptions = computed(() =>
   instances.value
-    .filter((i) => !i.isInstalling && !i.isUpdating)
+    .filter((i) => !i.isInstalling && !i.isUpdating && !runningInstances.value.has(i.id))
     .map((i) => ({
       label: i.name,
       sublabel: `${i.mcVersion} · ${i.loaderType}`,
@@ -368,6 +369,13 @@ async function executeImportAndNotify(
     );
     return;
   }
+  if (runningInstances.value.has(instanceId)) {
+    toast.error(
+      t('dropInstall.instanceRunningTitle', 'Game is running'),
+      t('dropInstall.instanceRunningDesc', { instance: targetInstance?.name || instanceId }),
+    );
+    return;
+  }
 
   // Ask for confirmation before importing incompatible mods
   let filesToImport = files;
@@ -446,8 +454,16 @@ async function executeImportAndNotify(
         report.failed.map((f) => `${f.filename}: ${f.error}`).join('; '),
       );
     }
-  } catch (err) {
-    toast.error(t('dropInstall.importFailedTitle', 'Import failed'), getErrorMessage(err));
+  } catch (err: unknown) {
+    const errorMsg = getErrorMessage(err);
+    if (errorMsg.includes('GAME_IS_RUNNING') || errorMsg.includes('正在运行')) {
+      toast.error(
+        t('dropInstall.instanceRunningTitle', 'Game is running'),
+        t('dropInstall.instanceRunningDesc', { instance: targetInstance?.name || instanceId }),
+      );
+    } else {
+      toast.error(t('dropInstall.importFailedTitle', 'Import failed'), errorMsg);
+    }
   }
 }
 
@@ -511,6 +527,14 @@ async function onFilesDropped(
       (route.path === '/' && homeSelectedInstanceId.value ? homeSelectedInstanceId.value : null);
 
     if (resolvedInstanceId) {
+      if (runningInstances.value.has(resolvedInstanceId)) {
+        const targetInstance = instances.value.find((i) => i.id === resolvedInstanceId);
+        toast.error(
+          t('dropInstall.instanceRunningTitle', 'Game is running'),
+          t('dropInstall.instanceRunningDesc', { instance: targetInstance?.name || resolvedInstanceId }),
+        );
+        return;
+      }
       const hasDatapack = resourceFiles.some((f) => f.kind === 'Datapack');
       if (hasDatapack) {
         const currentWorld =
@@ -556,7 +580,7 @@ async function onFilesDropped(
     }
 
     // No target instance in context -> open instance selection modal
-    const readyInstances = instances.value.filter((i) => !i.isInstalling && !i.isUpdating);
+    const readyInstances = instances.value.filter((i) => !i.isInstalling && !i.isUpdating && !runningInstances.value.has(i.id));
     if (readyInstances.length === 0) {
       toast.error(
         t('dropInstall.noInstancesTitle', 'No instances available'),

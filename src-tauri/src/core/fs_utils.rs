@@ -151,10 +151,8 @@ fn is_safe_path_component(comp: &str) -> bool {
     if comp.is_empty() {
         return false;
     }
-    if comp.contains('/')
-        || comp.contains('\\')
-        || comp.contains(':')
-        || comp.contains('\0')
+    if comp.contains(['/', '\\', ':', '\0', '<', '>', '"', '|', '?', '*'])
+        || comp.chars().any(|c| (c as u32) <= 31)
     {
         return false;
     }
@@ -322,6 +320,12 @@ mod tests {
         assert!(!is_safe_single_name("LPT9"));
         assert!(!is_safe_single_name("a/b"));
         assert!(!is_safe_single_name("a\\b"));
+        assert!(!is_safe_single_name("mod*name"));
+        assert!(!is_safe_single_name("mod?name"));
+        assert!(!is_safe_single_name("mod<name>"));
+        assert!(!is_safe_single_name("mod|name"));
+        assert!(!is_safe_single_name("mod\"name"));
+        assert!(!is_safe_single_name("mod\x01name"));
 
         assert!(is_safe_relative_path("mods/sodium.jar"));
         assert!(is_safe_relative_path("config/sub/options.json"));
