@@ -162,4 +162,30 @@ describe('useFileDrop helpers & state', () => {
       window.removeEventListener(INSTANCE_ASSETS_UPDATED_EVENT, listener);
     }
   });
+
+  it('immediately unlistens if destroyed while onDragDropEvent is still pending', async () => {
+    const unlistenMock = vi.fn();
+    let resolveListener: (fn: () => void) => void = () => {};
+    const pendingPromise = new Promise<() => void>((resolve) => {
+      resolveListener = resolve;
+    });
+
+    const webviewModule = await import('@tauri-apps/api/webview');
+    const spy = vi.spyOn(webviewModule, 'getCurrentWebview').mockReturnValue({
+      onDragDropEvent: vi.fn().mockReturnValue(pendingPromise),
+    } as never);
+
+    const { initFileDropListener, destroyFileDropListener } = useFileDrop();
+    const initPromise = initFileDropListener(async () => {});
+
+    // Destroy while the promise is pending
+    destroyFileDropListener();
+
+    // Now resolve the promise
+    resolveListener(unlistenMock);
+    await initPromise;
+
+    expect(unlistenMock).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
 });

@@ -53,7 +53,8 @@ pub async fn retry_task(
             is_dependency,
         } => {
             let base_dir = crate::core::mojang::get_minecraft_base();
-            let version_dir = base_dir.join("versions").join(&version_id);
+            let target_name = custom_instance_name.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or(&version_id);
+            let version_dir = base_dir.join("versions").join(target_name);
             let _ = tokio::fs::create_dir_all(&version_dir).await;
             crate::core::launcher::InstanceConfig::ensure_installing(
                 &version_dir,

@@ -108,7 +108,7 @@ impl TaskType {
     pub fn name(&self) -> String {
         match self {
             TaskType::InstallVanilla { version_id, custom_instance_name, .. } => {
-                let id = custom_instance_name.clone().unwrap_or(version_id.clone());
+                let id = custom_instance_name.clone().filter(|s| !s.trim().is_empty()).unwrap_or(version_id.clone());
                 format!("Installing Vanilla {}", id)
             }
             TaskType::InstallForge {
@@ -196,7 +196,7 @@ impl TaskType {
     pub fn instance_id(&self) -> Option<String> {
         match self {
             TaskType::InstallVanilla { version_id, custom_instance_name, .. } => {
-                Some(custom_instance_name.clone().unwrap_or(version_id.clone()))
+                Some(custom_instance_name.clone().filter(|s| !s.trim().is_empty()).unwrap_or(version_id.clone()))
             }
             TaskType::InstallForge {
                 custom_instance_name,
@@ -492,6 +492,33 @@ mod tests {
         assert!(generic_1.conflicts_with(&generic_2));
         assert!(!generic_1.conflicts_with(&generic_3));
         assert!(!vanilla_1.conflicts_with(&generic_1));
+    }
+
+    #[test]
+    fn test_vanilla_custom_instance_id_resolution() {
+        let vanilla_default = TaskType::InstallVanilla {
+            version_id: "1.20.1".to_string(),
+            version_json_url: "url".to_string(),
+            custom_instance_name: None,
+            is_dependency: None,
+        };
+        assert_eq!(vanilla_default.instance_id(), Some("1.20.1".to_string()));
+
+        let vanilla_custom = TaskType::InstallVanilla {
+            version_id: "1.20.1".to_string(),
+            version_json_url: "url".to_string(),
+            custom_instance_name: Some("MyCustomVanilla".to_string()),
+            is_dependency: None,
+        };
+        assert_eq!(vanilla_custom.instance_id(), Some("MyCustomVanilla".to_string()));
+
+        let vanilla_empty = TaskType::InstallVanilla {
+            version_id: "1.20.1".to_string(),
+            version_json_url: "url".to_string(),
+            custom_instance_name: Some("   ".to_string()),
+            is_dependency: None,
+        };
+        assert_eq!(vanilla_empty.instance_id(), Some("1.20.1".to_string()));
     }
 
     #[test]

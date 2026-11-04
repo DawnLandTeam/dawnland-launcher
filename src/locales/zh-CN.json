@@ -694,6 +694,7 @@
     "allCategories": "所有分类",
     "clearSelection": "清除已选",
     "selectedItems": "已选择 {count} 项",
+    "noModLoaderInstalled": "无模组加载器",
     "modsInstallTip": "由于网络原因，搜索可能需要几秒钟时间，请耐心等待。",
     "search": "搜索",
     "searchPlaceholder": "搜索...",
@@ -751,6 +752,7 @@
     "keepBoth": "保留两者"
   },
   "crash": {
+    "title": "游戏崩溃",
     "warning": "游戏意外崩溃",
     "exitCode": "退出代码",
     "viewLog": "查看崩溃日志",
