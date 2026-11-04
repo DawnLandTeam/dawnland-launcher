@@ -490,8 +490,11 @@ where
             }
         }
         if let Some(err) = chunk_err {
-            for h in spawn_handles {
+            for h in &spawn_handles {
                 h.abort();
+            }
+            for h in spawn_handles {
+                let _ = h.await;
             }
             for part in &parts {
                 let _ = tokio::fs::remove_file(part).await;
