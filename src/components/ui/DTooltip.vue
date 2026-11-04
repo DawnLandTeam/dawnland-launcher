@@ -38,19 +38,17 @@ const calculatePosition = () => {
 
   let top = 0;
   let left = 0;
-  let activePlacement = props.placement;
 
   // Decide position based on preferred placement with viewport bounds fallback
-  if (activePlacement === 'top') {
+  if (props.placement === 'top') {
     top = triggerRect.top - tooltipRect.height - offset;
     left = triggerRect.left + (triggerRect.width - tooltipRect.width) / 2;
 
     // Flip to bottom if clipping top
     if (top < viewportPadding) {
-      activePlacement = 'bottom';
       top = triggerRect.bottom + offset;
     }
-  } else if (activePlacement === 'bottom') {
+  } else if (props.placement === 'bottom') {
     top = triggerRect.bottom + offset;
     left = triggerRect.left + (triggerRect.width - tooltipRect.width) / 2;
 
@@ -58,14 +56,14 @@ const calculatePosition = () => {
     if (top + tooltipRect.height > winHeight - viewportPadding) {
       top = triggerRect.top - tooltipRect.height - offset;
     }
-  } else if (activePlacement === 'left') {
+  } else if (props.placement === 'left') {
     left = triggerRect.left - tooltipRect.width - offset;
     top = triggerRect.top + (triggerRect.height - tooltipRect.height) / 2;
 
     if (left < viewportPadding) {
       left = triggerRect.right + offset;
     }
-  } else if (activePlacement === 'right') {
+  } else if (props.placement === 'right') {
     left = triggerRect.right + offset;
     top = triggerRect.top + (triggerRect.height - tooltipRect.height) / 2;
 
