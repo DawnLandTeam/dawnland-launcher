@@ -207,6 +207,7 @@ pub struct TaskWorkerHandle {
     pub cancel_token: Arc<CancellationToken>,
     pub done_rx: tokio::sync::watch::Receiver<bool>,
     pub instance_id: Option<String>,
+    pub task_type: TaskType,
 }
 
 pub struct TaskManager {
@@ -450,6 +451,7 @@ impl TaskManager {
             cancel_token: task_token.clone(),
             done_rx,
             instance_id,
+            task_type: state.task_type.clone(),
         });
 
         self.active_tasks
@@ -663,6 +665,7 @@ impl TaskManager {
             handle.cancel_token.cancel();
 
             let instance_id_opt = handle.instance_id.clone();
+            let task_type = handle.task_type.clone();
 
             // Eagerly update the state to Cancelled to provide instant feedback in UI.
             // Cleanup of directories is performed safely by the task worker after execution stops.
@@ -673,13 +676,22 @@ impl TaskManager {
             }
 
             if let Some(ref inst_id) = instance_id_opt {
-                if crate::core::fs_utils::is_safe_single_name(inst_id) {
+                let is_install_or_update = task_type.is_core_installation() || task_type.is_update();
+                let is_update = task_type.is_update();
+
+                if is_install_or_update && crate::core::fs_utils::is_safe_single_name(inst_id) {
                     let base_dir = crate::core::mojang::get_minecraft_base();
                     let inst_dir = base_dir.join("versions").join(inst_id);
                     let config_path = inst_dir.join("dlml.json");
                     if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
                         let _ = crate::core::launcher::update_instance_config(&inst_dir, |config| {
-                            if config.effective_status() == crate::core::launcher::InstanceStatus::Updating {
+                            let current_status = config.effective_status();
+                            if current_status == crate::core::launcher::InstanceStatus::CancellingUpdate
+                                || current_status == crate::core::launcher::InstanceStatus::CancellingInstall
+                            {
+                                return;
+                            }
+                            if is_update || current_status == crate::core::launcher::InstanceStatus::Updating {
                                 config.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
                             } else {
                                 config.set_status(crate::core::launcher::InstanceStatus::CancellingInstall);
@@ -932,5 +944,96 @@ mod tests {
         let content = tokio::fs::read_to_string(inst_dir.join("dlml.json")).await.unwrap();
         let loaded: crate::core::launcher::InstanceConfig = serde_json::from_str(&content).unwrap();
         assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_status_transition_rules() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("test_cancel_instance");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create inst dir");
+
+        // Case 1: Initial status is Updating -> cancel updates it to CancellingUpdate
+        let mut config = crate::core::launcher::InstanceConfig {
+            status: crate::core::launcher::InstanceStatus::Updating,
+            ..Default::default()
+        };
+        crate::core::launcher::write_instance_config_atomic(&inst_dir.join("dlml.json"), &config).await.unwrap();
+
+        // Simulate cancel logic for update task
+        let is_update = true;
+        let _ = crate::core::launcher::update_instance_config(&inst_dir, |cfg| {
+            let current = cfg.effective_status();
+            if current == crate::core::launcher::InstanceStatus::CancellingUpdate
+                || current == crate::core::launcher::InstanceStatus::CancellingInstall
+            {
+                return;
+            }
+            if is_update || current == crate::core::launcher::InstanceStatus::Updating {
+                cfg.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
+            } else {
+                cfg.set_status(crate::core::launcher::InstanceStatus::CancellingInstall);
+            }
+        }).await.unwrap();
+
+        let loaded = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::CancellingUpdate);
+
+        // Case 2: Repeated cancellation call must PRESERVE CancellingUpdate and NOT overwrite to CancellingInstall
+        let is_update = false;
+        let _ = crate::core::launcher::update_instance_config(&inst_dir, |cfg| {
+            let current = cfg.effective_status();
+            if current == crate::core::launcher::InstanceStatus::CancellingUpdate
+                || current == crate::core::launcher::InstanceStatus::CancellingInstall
+            {
+                return;
+            }
+            if is_update || current == crate::core::launcher::InstanceStatus::Updating {
+                cfg.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
+            } else {
+                cfg.set_status(crate::core::launcher::InstanceStatus::CancellingInstall);
+            }
+        }).await.unwrap();
+
+        let loaded_again = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
+        assert_eq!(loaded_again.status, crate::core::launcher::InstanceStatus::CancellingUpdate);
+    }
+
+    #[test]
+    fn test_task_types_eligible_for_instance_cancellation() {
+        let vanilla = TaskType::InstallVanilla {
+            version_id: "1.20.1".into(),
+            version_json_url: "".into(),
+            custom_instance_name: None,
+            is_dependency: None,
+        };
+        assert!(vanilla.is_core_installation() || vanilla.is_update());
+
+        let modpack_update = TaskType::InstallModpack {
+            zip_path: "p.zip".into(),
+            instance_name: "inst".into(),
+            is_update: true,
+            project_id: None,
+            server_id: None,
+            pack_version_id: None,
+            pack_file_name: None,
+        };
+        assert!(modpack_update.is_core_installation() || modpack_update.is_update());
+        assert!(modpack_update.is_update());
+
+        let mod_download = TaskType::InstallMod {
+            source: "modrinth".into(),
+            project_id: "proj".into(),
+            file_id: "file1".into(),
+            mod_name: Some("testmod".into()),
+            download_url: "url".into(),
+            instance_id: Some("inst".into()),
+            target_dir: None,
+            dependencies: None,
+            keep_both: None,
+        };
+        // Mod task has an instance_id, but must NOT be treated as core installation or update
+        assert!(!(mod_download.is_core_installation() || mod_download.is_update()));
     }
 }

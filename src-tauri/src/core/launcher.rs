@@ -501,6 +501,33 @@ impl Default for InstanceConfig {
 static INSTANCE_CONFIG_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+/// Atomically commits instance config to disk via temporary file and atomic rename.
+pub async fn write_instance_config_atomic(
+    config_path: &Path,
+    config: &InstanceConfig,
+) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
+    let parent = config_path
+        .parent()
+        .ok_or_else(|| "Invalid config path".to_string())?;
+    let temp_file = parent.join(format!(
+        "{}.tmp.{}",
+        CONFIG_FILENAME,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    tokio::fs::write(&temp_file, &json)
+        .await
+        .map_err(|e| format!("Failed to write temp instance config: {}", e))?;
+    crate::core::fs_utils::atomic_move(&temp_file, config_path, true)
+        .await
+        .map_err(|e| format!("Failed to commit instance config atomically: {}", e))?;
+    Ok(())
+}
+
 /// Atomically reads, mutates, and writes `dlml.json` in `instance_dir` under a
 /// process-wide lock so concurrent settings saves and installer completion
 /// steps never clobber each other.
@@ -538,11 +565,7 @@ where
 
     mutate(&mut config);
 
-    let json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
-    tokio::fs::write(&config_path, json)
-        .await
-        .map_err(|e| format!("Failed to write instance config: {}", e))?;
+    write_instance_config_atomic(&config_path, &config).await?;
 
     Ok(config)
 }
@@ -575,11 +598,7 @@ where
 
     mutate(&mut config);
 
-    let json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
-    tokio::fs::write(&config_path, json)
-        .await
-        .map_err(|e| format!("Failed to write instance config: {}", e))?;
+    write_instance_config_atomic(&config_path, &config).await?;
 
     Ok(config)
 }
@@ -723,9 +742,7 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, A
     }
 
     if has_legacy_fields {
-        if let Ok(clean_json) = serde_json::to_string_pretty(&config) {
-            let _ = tokio::fs::write(&config_path, clean_json).await;
-        }
+        let _ = write_instance_config_atomic(&config_path, &config).await;
     }
 
     tracing::info!("Loaded config for {}: {:?}", version_id, config);
@@ -3781,6 +3798,25 @@ mod tests {
 
         let cfg: InstanceConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.status, InstanceStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_write_instance_config_atomic() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("atomic_test");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let config_path = inst_dir.join("dlml.json");
+        let mut config = InstanceConfig::default();
+        config.set_status(InstanceStatus::Ready);
+        write_instance_config_atomic(&config_path, &config).await.expect("atomic write");
+
+        assert!(config_path.exists());
+        let content = tokio::fs::read_to_string(&config_path).await.unwrap();
+        let loaded: InstanceConfig = serde_json::from_str(&content).unwrap();
+        assert_eq!(loaded.status, InstanceStatus::Ready);
     }
 
     #[test]

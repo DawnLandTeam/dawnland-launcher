@@ -168,12 +168,12 @@ pub async fn scan_installed_instances_internal(
                 if config_path.exists() {
                     if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
                         let has_legacy_fields = crate::core::launcher::InstanceConfig::has_legacy_status_in_json(&content);
-                        if let Ok(config) =
+                        if let Ok(mut config) =
                             serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
                         {
                             if has_legacy_fields {
-                                if let Ok(clean_json) = serde_json::to_string_pretty(&config) {
-                                    let _ = tokio::fs::write(&config_path, clean_json).await;
+                                if let Ok(cleaned) = crate::core::launcher::update_instance_config(&path, |_| {}).await {
+                                    config = cleaned;
                                 }
                             }
                             is_hidden = config.hidden;
@@ -194,18 +194,24 @@ pub async fn scan_installed_instances_internal(
                 for task in task_ctx.tasks {
                     if let Some(tid) = task.task_type.instance_id() {
                         if tid == id {
-                            if matches!(task.status, crate::core::task::TaskStatus::Pending | crate::core::task::TaskStatus::Running | crate::core::task::TaskStatus::Paused) {
+                            let is_active_task = matches!(
+                                task.status,
+                                crate::core::task::TaskStatus::Pending
+                                    | crate::core::task::TaskStatus::Running
+                                    | crate::core::task::TaskStatus::Paused
+                            );
+                            if is_active_task {
                                 has_valid_task = true;
                             }
                             if task.task_type.is_update() {
                                 if task.status == crate::core::task::TaskStatus::Cancelled && (task_ctx.is_starting(&id) || task_ctx.is_busy(&id).await) {
                                     status = crate::models::instance::InstanceStatus::CancellingUpdate;
-                                } else if status == crate::models::instance::InstanceStatus::Ready {
+                                } else if status == crate::models::instance::InstanceStatus::Ready && is_active_task {
                                     status = crate::models::instance::InstanceStatus::Updating;
                                 }
                             } else if task.status == crate::core::task::TaskStatus::Cancelled && (task_ctx.is_starting(&id) || task_ctx.is_busy(&id).await) {
                                 status = crate::models::instance::InstanceStatus::CancellingInstall;
-                            } else if status == crate::models::instance::InstanceStatus::Ready && matches!(task.status, crate::core::task::TaskStatus::Pending | crate::core::task::TaskStatus::Running | crate::core::task::TaskStatus::Paused) {
+                            } else if status == crate::models::instance::InstanceStatus::Ready && is_active_task {
                                 status = crate::models::instance::InstanceStatus::Installing;
                             }
                             break;
@@ -665,12 +671,13 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
     if config_path.exists() {
         if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
             let has_legacy_fields = crate::core::launcher::InstanceConfig::has_legacy_status_in_json(&content);
-            if let Ok(config) =
+            if let Ok(mut config) =
                 serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
             {
                 if has_legacy_fields {
-                    if let Ok(clean_json) = serde_json::to_string_pretty(&config) {
-                        let _ = tokio::fs::write(&config_path, clean_json).await;
+                    let inst_dir = get_instance_dir(&version_id);
+                    if let Ok(cleaned) = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await {
+                        config = cleaned;
                     }
                 }
                 status = config.effective_status();
@@ -2792,6 +2799,116 @@ mod tests {
 
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].status, crate::models::instance::InstanceStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_scan_installed_instances_completed_update_task_does_not_promote_ready() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let inst_id = "ReadyPackWithDoneUpdate";
+        let inst_dir = versions_dir.join(inst_id);
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let version_json = r#"{
+            "id": "ReadyPackWithDoneUpdate",
+            "inheritsFrom": "1.20.1"
+        }"#;
+        tokio::fs::write(inst_dir.join(format!("{}.json", inst_id)), version_json)
+            .await
+            .expect("write version json");
+
+        let dlml_json = r#"{
+            "status": "ready"
+        }"#;
+        tokio::fs::write(inst_dir.join("dlml.json"), dlml_json)
+            .await
+            .expect("write dlml.json");
+
+        let mut completed_task = crate::core::task::TaskState::new(
+            "task_update_done".to_string(),
+            crate::core::task::TaskType::InstallModpack {
+                zip_path: "test.zip".to_string(),
+                instance_name: inst_id.to_string(),
+                is_update: true,
+                project_id: None,
+                server_id: None,
+                pack_version_id: None,
+                pack_file_name: None,
+            },
+        );
+        completed_task.status = crate::core::task::TaskStatus::Completed;
+
+        let tasks = vec![completed_task];
+        let task_ctx = InstanceTaskContext {
+            starting_instances: None,
+            active_tasks: None,
+            tasks: &tasks,
+            running_instances: None,
+        };
+
+        let (instances, _) = scan_installed_instances_internal(&versions_dir, &task_ctx)
+            .await
+            .expect("scan instances");
+
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].status, crate::models::instance::InstanceStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_scan_installed_instances_active_update_task_promotes_ready() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let inst_id = "ReadyPackWithRunningUpdate";
+        let inst_dir = versions_dir.join(inst_id);
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let version_json = r#"{
+            "id": "ReadyPackWithRunningUpdate",
+            "inheritsFrom": "1.20.1"
+        }"#;
+        tokio::fs::write(inst_dir.join(format!("{}.json", inst_id)), version_json)
+            .await
+            .expect("write version json");
+
+        let dlml_json = r#"{
+            "status": "ready"
+        }"#;
+        tokio::fs::write(inst_dir.join("dlml.json"), dlml_json)
+            .await
+            .expect("write dlml.json");
+
+        let mut running_task = crate::core::task::TaskState::new(
+            "task_update_running".to_string(),
+            crate::core::task::TaskType::InstallModpack {
+                zip_path: "test.zip".to_string(),
+                instance_name: inst_id.to_string(),
+                is_update: true,
+                project_id: None,
+                server_id: None,
+                pack_version_id: None,
+                pack_file_name: None,
+            },
+        );
+        running_task.status = crate::core::task::TaskStatus::Running;
+
+        let tasks = vec![running_task];
+        let task_ctx = InstanceTaskContext {
+            starting_instances: None,
+            active_tasks: None,
+            tasks: &tasks,
+            running_instances: None,
+        };
+
+        let (instances, _) = scan_installed_instances_internal(&versions_dir, &task_ctx)
+            .await
+            .expect("scan instances");
+
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].status, crate::models::instance::InstanceStatus::Updating);
     }
 }
 
