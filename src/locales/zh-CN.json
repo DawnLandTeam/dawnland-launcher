@@ -861,6 +861,8 @@
     "noVersions": "该整合包暂无可用版本"
   },
   "task": {
+    "goToPage": "前往任务页面",
+    "viewTask": "查看页面",
     "actions": {
       "retryTask": "重试任务"
     },

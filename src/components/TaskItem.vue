@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Clock, Loader2, Pause, CheckCircle, XCircle, Ban, X, RotateCcw } from '@lucide/vue';
+import { useRouter } from 'vue-router';
+import { Clock, Loader2, Pause, CheckCircle, XCircle, Ban, X, RotateCcw, ExternalLink } from '@lucide/vue';
 import type { TaskState } from '../types/task';
-import { getTaskName } from '../types/task';
+import { getTaskName, getTaskTargetRoute } from '../types/task';
 import { useTaskStore } from '../composables/useTaskStore';
 
 const props = defineProps<{
   task: TaskState
 }>();
 
+const router = useRouter();
 const taskStore = useTaskStore();
+const targetRoute = computed(() => getTaskTargetRoute(props.task.task_type));
 
 const percentage = computed(() => {
   if (props.task.status === 'Completed') return 100;
@@ -69,6 +72,18 @@ function handleRetry(e: Event) {
     taskStore.retryTask(props.task.id);
   }
 }
+
+function handleNavigate(e: Event) {
+  e.stopPropagation();
+  if (!targetRoute.value) return;
+  router.push(targetRoute.value);
+  if (taskStore.isTaskCenterOpen.value) {
+    taskStore.toggleTaskCenter();
+  }
+  if (taskStore.isTaskDetailOpen.value) {
+    taskStore.closeTaskDetail();
+  }
+}
 </script>
 
 <template>
@@ -122,6 +137,14 @@ function handleRetry(e: Event) {
       <!-- Action Buttons -->
       <div class="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
            :class="{'!opacity-100': task.status === 'Failed' || task.status === 'Cancelled'}">
+        <button 
+          v-if="targetRoute"
+          @click="handleNavigate"
+          class="p-1.5 rounded-md hover:bg-black/10 dark:hover:bg-white/10 text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-white transition-colors"
+          :title="$t('task.goToPage', 'Go to Task Page')"
+        >
+          <ExternalLink class="w-4 h-4" />
+        </button>
         <button 
           v-if="task.status === 'Failed' || task.status === 'Cancelled'"
           @click="handleRetry"

@@ -861,6 +861,8 @@
     "noVersions": "No versions available for this modpack"
   },
   "task": {
+    "goToPage": "Go to Task Page",
+    "viewTask": "View Page",
     "actions": {
       "retryTask": "Retry Task"
     },

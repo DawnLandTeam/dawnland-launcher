@@ -33,14 +33,36 @@ import InstanceStatisticsTab from "../components/instances/InstanceStatisticsTab
 import ModpackInstallTab from "../components/downloads/ModpackInstallTab.vue";
 import CrashHistoryPanel from "../components/CrashHistoryPanel.vue";
 import { isInstanceBusy } from "../types";
+import { useTaskStore } from "../composables/useTaskStore";
+import { useModpackInstallState } from "../composables/useModpackInstallState";
+import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive } from "../types/task";
 
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
 const { instances, fetchInstances } = useInstances();
+const taskStore = useTaskStore();
+const { instanceUpdateTaskIds, isTaskDismissed } = useModpackInstallState();
 
 const instanceId = computed(() => route.params.id as string);
 const currentInstance = computed(() => instances.value.find(i => i.id === instanceId.value));
+
+const hasOngoingUpdateTask = computed(() => {
+  if (!currentInstance.value) return false;
+  const name = currentInstance.value.name;
+  const trackedId = instanceUpdateTaskIds.value[name];
+  if (trackedId) {
+    const t = taskStore.tasks.value.find(task => task.id === trackedId);
+    if (t && isModpackUpdateTask(t.task_type) && !isTaskDismissed(t.id)) return true;
+  }
+  return taskStore.tasks.value.some(t =>
+    isModpackTask(t.task_type) &&
+    isModpackUpdateTask(t.task_type) &&
+    getModpackTaskInstanceName(t.task_type) === name &&
+    !isTaskDismissed(t.id) &&
+    (isTaskActive(t.status) || t.status === 'Completed' || t.status === 'Failed')
+  );
+});
 
 // Patch icons cached in the background without rescanning all instances
 useInstanceIconUpdates(({ instanceId: updatedId, iconPath }) => {
@@ -78,12 +100,13 @@ const translatedTabs = computed(() => {
   const additionalTabs = [];
   
   if (currentInstance.value?.modpackType) {
+    const isUpdatingThisInstance = currentInstance.value?.status === 'updating' || hasOngoingUpdateTask.value;
     additionalTabs.push({
       id: 'update_modpack',
       name: t('install.updateModpackTitle'),
       icon: RefreshCw,
-      action: () => { activeTab.value = 'update_modpack'; },
-      disabled: isInstanceBusy(currentInstance.value)
+      hasDot: isUpdatingThisInstance,
+      disabled: isInstanceBusy(currentInstance.value) && !isUpdatingThisInstance
     });
   }
   
@@ -92,10 +115,16 @@ const translatedTabs = computed(() => {
   return result;
 });
 
+const validTabIds = computed(() => {
+  const ids = tabs.map(t => t.id);
+  ids.push('update_modpack');
+  return ids;
+});
+
 const activeTab = ref('settings');
 
 watch(() => route.query.tab, (newTab) => {
-  if (newTab && typeof newTab === 'string' && tabs.some(t => t.id === newTab)) {
+  if (newTab && typeof newTab === 'string' && validTabIds.value.includes(newTab)) {
     activeTab.value = newTab;
   }
 }, { immediate: true });
@@ -104,6 +133,13 @@ function switchTab(tabId: string) {
   activeTab.value = tabId;
   router.replace({ query: { ...route.query, tab: tabId } });
 }
+
+watch(currentInstance, (inst) => {
+  if (!inst) return;
+  if (!route.query.tab && hasOngoingUpdateTask.value) {
+    switchTab('update_modpack');
+  }
+}, { immediate: true });
 
 watch(instanceId, async (newId) => {
   if (!newId) return;
@@ -183,7 +219,7 @@ watch(instanceId, async (newId) => {
             :update-project-id="currentInstance.modpackProjectId"
             :update-source="currentInstance.modpackType?.toLowerCase() || ''"
             :update-current-version="currentInstance.modpackVersion"
-            @cancel-update="activeTab = 'settings'"
+            @cancel-update="switchTab('settings')"
           />
         </keep-alive>
       </div>

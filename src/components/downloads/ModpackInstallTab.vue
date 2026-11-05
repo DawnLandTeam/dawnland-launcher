@@ -18,10 +18,20 @@ import DButton from "../ui/DButton.vue";
 import DSelect from "../ui/DSelect.vue";
 import { useFileDrop } from "../../composables/useFileDrop";
 import type { ModpackArchiveInfo } from "../../types";
+import { useModpackInstallState } from "../../composables/useModpackInstallState";
+import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive, type TaskState } from "../../types/task";
 
 const { t } = useI18n();
 const router = useRouter();
 const taskStore = useTaskStore();
+const {
+  downloadsModpackTaskId,
+  instanceUpdateTaskIds,
+  setDownloadsModpackTaskId,
+  setInstanceUpdateTaskId,
+  dismissTask,
+  isTaskDismissed,
+} = useModpackInstallState();
 const currentTaskId = ref<string | null>(null);
 const currentTask = computed(() => {
   if (!currentTaskId.value) return null;
@@ -280,25 +290,72 @@ const initializeView = async () => {
     toast.error(t('common.error', 'Error'), errMsg);
   }
 
-  // Restore if task is already running
-  if (currentTaskId.value) {
-     const task = taskStore.tasks.value.find((t) => t.id === currentTaskId.value);
-     if (task && (task.status === 'Running' || task.status === 'Pending')) {
-        isInstalling.value = true;
-        return;
-     }
-  }
+  // Restore task if one exists for this view
+  const isValidRestorableTask = (t: TaskState): boolean => {
+    if (isTaskDismissed(t.id)) return false;
+    if (isTaskActive(t.status)) return true;
+    if (t.status === 'Completed' || t.status === 'Failed' || t.status === 'Cancelled') {
+      return true;
+    }
+    return false;
+  };
 
-  const activeTask = taskStore.tasks.value.find((t) => 
-    (t.status === 'Running' || t.status === 'Pending') &&
-    typeof t.task_type === 'object' &&
-    t.task_type !== null &&
-    ('InstallModpack' in t.task_type || 'InstallOnlineModpack' in t.task_type)
-  );
-  if (activeTask) {
-    currentTaskId.value = activeTask.id;
-    isInstalling.value = true;
-    return;
+  const isModal = Boolean(props.isModalUpdate || props.updateId);
+  const targetInstanceName = props.updateId || (route.query.update_id as string | undefined);
+
+  if (isModal && targetInstanceName) {
+    let matchedTask: TaskState | null = null;
+    const trackedId = instanceUpdateTaskIds.value[targetInstanceName] || currentTaskId.value;
+    if (trackedId) {
+      const found = taskStore.tasks.value.find((t) => t.id === trackedId);
+      if (found && isModpackUpdateTask(found.task_type) && isValidRestorableTask(found)) {
+        matchedTask = found;
+      }
+    }
+    if (!matchedTask) {
+      const found = taskStore.tasks.value.find((t) =>
+        isModpackTask(t.task_type) &&
+        isModpackUpdateTask(t.task_type) &&
+        getModpackTaskInstanceName(t.task_type) === targetInstanceName &&
+        isValidRestorableTask(t)
+      );
+      if (found) {
+        matchedTask = found;
+      }
+    }
+
+    if (matchedTask) {
+      currentTaskId.value = matchedTask.id;
+      setInstanceUpdateTaskId(targetInstanceName, matchedTask.id);
+      isInstalling.value = true;
+      return;
+    }
+  } else if (!isModal) {
+    let matchedTask: TaskState | null = null;
+    const trackedId = downloadsModpackTaskId.value || currentTaskId.value;
+    if (trackedId) {
+      const found = taskStore.tasks.value.find((t) => t.id === trackedId);
+      if (found && !isModpackUpdateTask(found.task_type) && isValidRestorableTask(found)) {
+        matchedTask = found;
+      }
+    }
+    if (!matchedTask) {
+      const found = taskStore.tasks.value.find((t) =>
+        isModpackTask(t.task_type) &&
+        !isModpackUpdateTask(t.task_type) &&
+        isValidRestorableTask(t)
+      );
+      if (found) {
+        matchedTask = found;
+      }
+    }
+
+    if (matchedTask) {
+      currentTaskId.value = matchedTask.id;
+      setDownloadsModpackTaskId(matchedTask.id);
+      isInstalling.value = true;
+      return;
+    }
   }
 
   // Clear previous installation state in case user returns from a cancelled installation
@@ -540,9 +597,7 @@ watch(() => route.query, () => {
 }, { deep: true });
 
 onDeactivated(() => {
-  searchQuery.value = "";
-  modpacks.value = [];
-  lastProcessedQueryStr.value = "";
+  // Preserve search and install state on tab deactivation so returning restores view seamlessly
 });
 
 /* const progressPercent = computed(() => {
@@ -1040,6 +1095,14 @@ const installModpack = async () => {
       });
     }
     
+    if (currentTaskId.value) {
+      if (props.isModalUpdate || isUpdate.value) {
+        setInstanceUpdateTaskId(props.updateId || finalInstanceName, currentTaskId.value);
+      } else {
+        setDownloadsModpackTaskId(currentTaskId.value);
+      }
+    }
+
     console.log("Installation task submitted successfully.");
     isDowngradeConfirmed.value = false;
     confirmedDowngradeVersionId.value = null;
@@ -1062,7 +1125,10 @@ const installModpack = async () => {
     trackEvent("Error Occurred", { context: "modpack_install", error_type: getErrorType(error) });
     statusMessage.value = `Installation failed: ${getErrorMessage(error)}`;
     isInstalling.value = false;
-    currentTaskId.value = null;
+    if (currentTaskId.value) {
+      dismissTask(currentTaskId.value);
+      currentTaskId.value = null;
+    }
     
     if (getErrorMessage(error).includes("cancelled by user") && route.query.server_id) {
       router.push("/servers");
@@ -1097,6 +1163,19 @@ const cancelInstallation = async () => {
   }
 };
 
+const handleFinishOrDismiss = () => {
+  if (currentTaskId.value) {
+    dismissTask(currentTaskId.value);
+  }
+  isInstalling.value = false;
+  currentTaskId.value = null;
+  if (props.isModalUpdate) {
+    emit('cancel-update');
+  } else {
+    initializeView();
+  }
+};
+
 const handleSuccessConfirm = () => {
   showSuccessModal.value = false;
   router.push("/instances");
@@ -1114,7 +1193,7 @@ const formatDate = (dateString: string) => {
     <!-- Absolute positioned floating button for installing state -->
     <div v-if="isInstalling && currentTask && ['Completed', 'Failed', 'Cancelled'].includes(currentTask.status)" class="absolute top-6 right-6 z-50">
       <DButton
-        @click="() => { isInstalling = false; currentTaskId = null; initializeView(); }"
+        @click="handleFinishOrDismiss"
         class="flex items-center gap-2 px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors text-sm font-medium shadow-sm"
       >
         {{ currentTask.status === 'Completed' ? t('install.finish') : t('install.back') }}
