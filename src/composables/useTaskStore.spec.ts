@@ -164,6 +164,38 @@ describe('useTaskStore composable', () => {
     expect(store.tasks.value[0].id).toBe('2');
   });
 
+  it('treats Cancelling as active task and preserves it during clearHistory', async () => {
+    const store = useTaskStore();
+    store.tasks.value = [
+      { id: '1', status: 'Completed', task_type: { Generic: { name: '1' } } },
+      { id: '2', status: 'Cancelling', task_type: { Generic: { name: '2' } } }
+    ] as any;
+
+    expect(store.activeTasks.value).toHaveLength(1);
+    expect(store.activeTasks.value[0].id).toBe('2');
+
+    await store.clearHistory();
+    expect(invoke).toHaveBeenCalledWith('clear_task_history');
+    expect(store.tasks.value).toHaveLength(1);
+    expect(store.tasks.value[0].id).toBe('2');
+  });
+
+  it('blocks retryTask when task is Cancelling', async () => {
+    const store = useTaskStore();
+    store.tasks.value = [{ id: 'task-cancelling', status: 'Cancelling', task_type: { Generic: { name: 'Cancelling' } } }] as any;
+
+    await store.retryTask('task-cancelling');
+    expect(invoke).not.toHaveBeenCalledWith('retry_task', expect.anything());
+    expect(store.tasks.value).toHaveLength(1);
+  });
+
+  it('handles forceCancelTask', async () => {
+    const store = useTaskStore();
+    const result = await store.forceCancelTask('task-force');
+    expect(invoke).toHaveBeenCalledWith('force_cancel_task', { taskId: 'task-force' });
+    expect(result).toBe(true);
+  });
+
   it('handles retryTask', async () => {
     const store = useTaskStore();
     store.tasks.value = [{ id: 'task-retry', status: 'Failed', task_type: { Generic: { name: 'Retry' } } }] as any;

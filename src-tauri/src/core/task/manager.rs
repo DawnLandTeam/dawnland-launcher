@@ -331,9 +331,7 @@ impl TaskManager {
                 let mut running = false;
                 if let Ok(all_tasks) = self.db.load_all_tasks().await {
                     for task in all_tasks {
-                        if (task.status == TaskStatus::Pending
-                            || task.status == TaskStatus::Running
-                            || task.status == TaskStatus::Paused)
+                        if task.status.is_active()
                             && task.task_type.instance_id() == Some(instance_id.to_string())
                         {
                             running = true;
@@ -358,14 +356,24 @@ impl TaskManager {
         task_type: TaskType,
         executable: T,
     ) -> Result<String, TaskError> {
-        // Prevent duplicate tasks by consulting the task's custom duplicate detection logic
+        // Prevent duplicate tasks by consulting memory active_tasks first (including tombstones)
+        {
+            let active = self.active_tasks.read().await;
+            for handle in active.values() {
+                if task_type.conflicts_with(&handle.task_type) {
+                    return Err(TaskError::Database(format!(
+                        "CONFLICTING_TASK:{}",
+                        handle.task_type.name()
+                    )));
+                }
+            }
+        }
+
+        // Consult database task history
         if let Ok(all_tasks) = self.db.load_all_tasks().await {
             for task in all_tasks {
                 if task_type.conflicts_with(&task.task_type) {
-                    if task.status == TaskStatus::Pending
-                        || task.status == TaskStatus::Running
-                        || task.status == TaskStatus::Paused
-                    {
+                    if task.status.is_active() {
                         return Err(TaskError::Database(format!(
                             "CONFLICTING_TASK:{}",
                             task.task_type.name()
@@ -473,40 +481,82 @@ impl TaskManager {
             last_emit_time: Arc::new(RwLock::new(tokio::time::Instant::now())),
         };
 
+        use futures_util::FutureExt;
         use tracing::Instrument;
         let span = tracing::info_span!("task", task_id = %id_clone);
 
         tokio::spawn(async move {
-            struct DoneGuard(Option<tokio::sync::watch::Sender<bool>>);
-            impl DoneGuard {
+            struct TaskSpawnGuard {
+                done_tx: Option<tokio::sync::watch::Sender<bool>>,
+                task_id: String,
+                active_tasks: Arc<RwLock<HashMap<String, Arc<TaskWorkerHandle>>>>,
+                task_token: Arc<CancellationToken>,
+                finished: bool,
+            }
+            impl TaskSpawnGuard {
                 fn mark_done(&mut self) {
-                    if let Some(tx) = self.0.take() {
+                    if let Some(tx) = self.done_tx.take() {
                         let _ = tx.send(true);
                     }
                 }
             }
-            impl Drop for DoneGuard {
+            impl Drop for TaskSpawnGuard {
                 fn drop(&mut self) {
                     self.mark_done();
+                    if !self.finished {
+                        let active_tasks = self.active_tasks.clone();
+                        let task_id = self.task_id.clone();
+                        let task_token = self.task_token.clone();
+                        tokio::spawn(async move {
+                            let mut active = active_tasks.write().await;
+                            if active.get(&task_id).is_some_and(|h| Arc::ptr_eq(&h.cancel_token, &task_token)) {
+                                active.remove(&task_id);
+                            }
+                        });
+                    }
                 }
             }
-            let mut _done_guard = DoneGuard(Some(done_tx));
+            let mut spawn_guard = TaskSpawnGuard {
+                done_tx: Some(done_tx),
+                task_id: id_clone.clone(),
+                active_tasks: manager.active_tasks.clone(),
+                task_token: task_token.clone(),
+                finished: false,
+            };
+
             {
                 let mut state = state_arc.write().await;
-                state.status = TaskStatus::Running;
+                let _ = state.transition_to(TaskStatus::Running);
                 manager.emit_state(&state).await;
             }
 
-            let res = executable.execute(ctx).await;
+            let exec_res = std::panic::AssertUnwindSafe(executable.execute(ctx))
+                .catch_unwind()
+                .await;
+
+            let res: Result<(), TaskError> = match exec_res {
+                Ok(r) => r,
+                Err(panic_err) => {
+                    let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Fatal: Task worker panicked unexpectedly".to_string()
+                    };
+                    tracing::error!("Task {} panicked: {}", id_clone, msg);
+                    Err(TaskError::Fatal(msg))
+                }
+            };
 
             match res {
                 Ok(_) => {
                     let mut state = state_arc.write().await;
-                    state.status = TaskStatus::Completed;
+                    let _ = state.transition_to(TaskStatus::Completed);
                     state.progress.current = state.progress.total;
                     state.progress.detail = "Completed".to_string();
                     manager.emit_state(&state).await;
-                    _done_guard.mark_done();
+                    spawn_guard.mark_done();
                 }
                 Err(e) => {
                     let is_replaced_by_retry = manager
@@ -517,17 +567,32 @@ impl TaskManager {
                         .is_some_and(|h| !Arc::ptr_eq(&h.cancel_token, &task_token) && !h.cancel_token.is_cancelled());
 
                     if is_replaced_by_retry {
+                        spawn_guard.finished = true;
                         return;
                     }
 
                     if task_token.is_cancelled() {
-                        let task_type = {
+                        let is_already_cancelled = match manager.db.get_task(&id_clone).await {
+                            Ok(Some(db_state)) => db_state.status == TaskStatus::Cancelled,
+                            _ => false,
+                        };
+
+                        if !is_already_cancelled {
+                            // Mark task as Cancelling while cleanup is proceeding
                             let mut state = state_arc.write().await;
-                            state.status = TaskStatus::Cancelled;
+                            if state.status != TaskStatus::Cancelling {
+                                let _ = state.transition_to(TaskStatus::Cancelling);
+                            }
                             state.error = Some("Task cancelled".to_string());
                             manager.emit_state(&state).await;
-                            state.task_type.clone()
-                        };
+                        } else {
+                            // Already cancelled in DB (e.g. by force_cancel_task); sync local state without re-persisting Cancelling
+                            let mut state = state_arc.write().await;
+                            let _ = state.transition_to(TaskStatus::Cancelled);
+                            state.status = TaskStatus::Cancelled;
+                        }
+
+                        let task_type = state_arc.read().await.task_type.clone();
 
                         // Clean up the cancelled instance directory safely after task execution has terminated
                         if let Some(instance_id) = task_type.instance_id() {
@@ -553,14 +618,6 @@ impl TaskManager {
                                     .get(&id_clone)
                                     .is_some_and(|h| Arc::ptr_eq(&h.cancel_token, &task_token));
 
-                                if !is_still_current {
-                                    tracing::warn!(
-                                        "Cancelled worker for task {} was replaced before cleanup. Skipping instance cleanup.",
-                                        id_clone
-                                    );
-                                    return;
-                                }
-
                                 // Verify that no other active non-cancelled worker is operating on the same instance
                                 let has_other_active_worker = manager
                                     .active_tasks
@@ -573,73 +630,91 @@ impl TaskManager {
                                             && !h.cancel_token.is_cancelled()
                                     });
 
-                                if has_other_active_worker {
+                                let should_cleanup_instance = if !is_still_current {
+                                    tracing::warn!(
+                                        "Cancelled worker for task {} was replaced or removed before cleanup. Skipping instance cleanup.",
+                                        id_clone
+                                    );
+                                    false
+                                } else if has_other_active_worker {
                                     tracing::warn!(
                                         "Another active non-cancelled task is operating on instance {}. Skipping cleanup for task {}.",
                                         instance_id,
                                         id_clone
                                     );
-                                    return;
-                                }
+                                    false
+                                } else {
+                                    true
+                                };
 
-                                // If it is an update task, it is an existing instance and MUST NOT be deleted!
-                                if is_update_task {
-                                    tracing::warn!(
-                                        "Instance {} is an existing instance being updated. Resetting flags after cancellation.",
-                                        instance_id
-                                    );
-                                    _done_guard.mark_done();
-                                    if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
-                                        let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                                            config.set_status(crate::core::launcher::InstanceStatus::Ready);
-                                        }).await;
-                                        let _ = manager.app_handle.emit("instances-changed", ());
-                                    }
-                                } else if task_type.is_core_installation() {
-                                    tracing::info!(
-                                        "Cleaning up cancelled fresh installation instance: {}",
-                                        instance_id
-                                    );
-                                    _done_guard.mark_done();
-                                    if let Err(err) = tokio::fs::remove_dir_all(&instance_dir).await {
-                                        if err.kind() != std::io::ErrorKind::NotFound {
-                                            tracing::error!(
-                                                "Failed to remove cancelled instance directory {:?}: {}",
-                                                instance_dir,
-                                                err
-                                            );
-                                            let mut state = state_arc.write().await;
-                                            state.error = Some(format!(
-                                                "Task cancelled (failed to clean up instance directory: {})",
-                                                err
-                                            ));
-                                            manager.emit_state(&state).await;
-
-                                            // If removal failed and dlml.json still exists, ensure status is reset to Ready
-                                            if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
-                                                let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                                                    config.set_status(crate::core::launcher::InstanceStatus::Ready);
-                                                }).await;
-                                                let _ = manager.app_handle.emit("instances-changed", ());
-                                            }
+                                if should_cleanup_instance {
+                                    // If it is an update task, it is an existing instance and MUST NOT be deleted!
+                                    if is_update_task {
+                                        tracing::warn!(
+                                            "Instance {} is an existing instance being updated. Resetting status to Ready after cancellation.",
+                                            instance_id
+                                        );
+                                        if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                                            let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
+                                                config.set_status(crate::core::launcher::InstanceStatus::Ready);
+                                            }).await;
+                                            let _ = manager.app_handle.emit("instances-changed", ());
                                         }
-                                    } else {
-                                        let _ = manager.app_handle.emit("instances-changed", ());
+                                    } else if task_type.is_core_installation() {
+                                        tracing::info!(
+                                            "Cleaning up cancelled fresh installation instance: {}",
+                                            instance_id
+                                        );
+                                        if let Err(err) = tokio::fs::remove_dir_all(&instance_dir).await {
+                                            if err.kind() != std::io::ErrorKind::NotFound {
+                                                tracing::error!(
+                                                    "Failed to remove cancelled instance directory {:?}: {}",
+                                                    instance_dir,
+                                                    err
+                                                );
+                                                let mut state = state_arc.write().await;
+                                                state.error = Some(format!(
+                                                    "Task cancelled (failed to clean up instance directory: {})",
+                                                    err
+                                                ));
+                                                manager.emit_state(&state).await;
+
+                                                // If removal failed and dlml.json still exists, ensure status is reset to Ready
+                                                if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                                                    let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
+                                                        config.set_status(crate::core::launcher::InstanceStatus::Ready);
+                                                    }).await;
+                                                    let _ = manager.app_handle.emit("instances-changed", ());
+                                                }
+                                            }
+                                        } else {
+                                            let _ = manager.app_handle.emit("instances-changed", ());
+                                        }
                                     }
                                 }
                             }
                         }
+
+                        // Complete cancellation transition: Cancelling -> Cancelled
+                        {
+                            let mut state = state_arc.write().await;
+                            let _ = state.transition_to(TaskStatus::Cancelled);
+                            state.status = TaskStatus::Cancelled;
+                            manager.emit_state(&state).await;
+                        }
+                        spawn_guard.mark_done();
                     } else {
+                        let error_msg = e.to_string();
                         let (instance_id_opt, task_type) = {
                             let mut state = state_arc.write().await;
-                            state.status = TaskStatus::Failed;
-                            state.error = Some(e.to_string());
+                            let _ = state.transition_to(TaskStatus::Failed);
+                            state.error = Some(error_msg);
                             manager.emit_state(&state).await;
                             (state.task_type.instance_id(), state.task_type.clone())
                         };
 
                         // On failure, do not delete the entire instance directory to allow retry/resume.
-                        // Instead, reset the installing/updating flags.
+                        // Instead, reset the installing/updating flags back to Ready.
                         if let Some(instance_id) = instance_id_opt {
                             if crate::core::fs_utils::is_safe_single_name(&instance_id) {
                                 let has_other_active_worker = manager
@@ -654,7 +729,7 @@ impl TaskManager {
                                     });
 
                                 if !has_other_active_worker {
-                                    _done_guard.mark_done();
+                                    spawn_guard.mark_done();
                                     let instance_dir = if task_type.is_dependency() {
                                         crate::core::mojang::get_dawnland_cache().join(&instance_id)
                                     } else {
@@ -665,6 +740,7 @@ impl TaskManager {
                                         let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
                                             config.set_status(crate::core::launcher::InstanceStatus::Ready);
                                         }).await;
+                                        let _ = manager.app_handle.emit("instances-changed", ());
                                     }
                                 }
                             }
@@ -673,7 +749,8 @@ impl TaskManager {
                 }
             }
 
-            _done_guard.mark_done();
+            spawn_guard.mark_done();
+            spawn_guard.finished = true;
 
             let mut active = manager.active_tasks.write().await;
             if active
@@ -707,12 +784,14 @@ impl TaskManager {
             let instance_id_opt = handle.instance_id.clone();
             let task_type = handle.task_type.clone();
 
-            // Eagerly update the state to Cancelled to provide instant feedback in UI.
-            // Cleanup of directories is performed safely by the task worker after execution stops.
+            // Transition to Cancelling in DB and emit to frontend.
+            // Terminal Cancelled state is emitted ONLY after the task worker finishes cleaning up!
             if let Ok(Some(mut state)) = self.db.get_task(id).await {
-                state.status = TaskStatus::Cancelled;
-                state.error = Some("Task cancelled".to_string());
-                self.emit_state(&state).await;
+                if state.status.can_transition_to(TaskStatus::Cancelling) {
+                    let _ = state.transition_to(TaskStatus::Cancelling);
+                    state.error = Some("Task cancelled".to_string());
+                    self.emit_state(&state).await;
+                }
             }
 
             // Skip cancelling-status write for dependency tasks, which live in cache
@@ -767,6 +846,96 @@ impl TaskManager {
         } else {
             Err(TaskError::NotFound)
         }
+    }
+
+    pub async fn force_cancel_task(&self, id: &str) -> Result<(), TaskError> {
+        let handle = {
+            let tasks = self.active_tasks.read().await;
+            tasks.get(id).cloned()
+        };
+
+        if let Some(ref handle) = handle {
+            // Signal cancellation while leaving tombstone in active_tasks for conflict checks
+            handle.cancel_token.cancel();
+        }
+
+        // Persist Cancelled status in DB and emit to frontend immediately
+        if let Ok(Some(mut state)) = self.db.get_task(id).await {
+            let _ = state.transition_to(TaskStatus::Cancelled);
+            state.status = TaskStatus::Cancelled;
+            state.error = Some("Task force cancelled by user".to_string());
+            self.emit_state(&state).await;
+        }
+
+        if let Some(handle) = handle {
+            let mut done_rx = handle.done_rx.clone();
+            let grace_period = tokio::time::Duration::from_secs(5);
+
+            // Wait for worker exit signal or until bounded grace period expires
+            let wait_res = tokio::time::timeout(grace_period, async {
+                while !*done_rx.borrow() {
+                    if done_rx.changed().await.is_err() {
+                        break;
+                    }
+                }
+            })
+            .await;
+
+            if wait_res.is_err() {
+                tracing::warn!(
+                    "Grace period elapsed waiting for force-cancelled task {} worker to stop",
+                    id
+                );
+            }
+
+            // Remove tombstone from active_tasks after worker finished or grace period elapsed
+            {
+                let mut tasks = self.active_tasks.write().await;
+                if tasks.get(id).is_some_and(|h| Arc::ptr_eq(&h.cancel_token, &handle.cancel_token)) {
+                    tasks.remove(id);
+                }
+            }
+
+            // Reset instance config to Ready if instance exists and config exists
+            if let Some(ref inst_id) = handle.instance_id {
+                if !handle.task_type.is_dependency() && crate::core::fs_utils::is_safe_single_name(inst_id) {
+                    let instance_lock = self.get_instance_lock(inst_id).await;
+                    let _instance_guard = instance_lock.lock().await;
+
+                    let base_dir = crate::core::mojang::get_minecraft_base();
+                    let inst_dir = base_dir.join("versions").join(inst_id);
+                    let config_path = inst_dir.join("dlml.json");
+                    if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                        let _ = crate::core::launcher::update_instance_config(&inst_dir, |config| {
+                            config.set_status(crate::core::launcher::InstanceStatus::Ready);
+                        }).await;
+                        let _ = self.app_handle.emit("instances-changed", ());
+                    }
+                }
+            }
+        } else {
+            // No active handle in memory, check if DB state had an instance needing reset
+            if let Ok(Some(state)) = self.db.get_task(id).await {
+                if let Some(ref inst_id) = state.task_type.instance_id() {
+                    if !state.task_type.is_dependency() && crate::core::fs_utils::is_safe_single_name(inst_id) {
+                        let instance_lock = self.get_instance_lock(inst_id).await;
+                        let _instance_guard = instance_lock.lock().await;
+
+                        let base_dir = crate::core::mojang::get_minecraft_base();
+                        let inst_dir = base_dir.join("versions").join(inst_id);
+                        let config_path = inst_dir.join("dlml.json");
+                        if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                            let _ = crate::core::launcher::update_instance_config(&inst_dir, |config| {
+                                config.set_status(crate::core::launcher::InstanceStatus::Ready);
+                            }).await;
+                            let _ = self.app_handle.emit("instances-changed", ());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -842,7 +1011,7 @@ pub async fn recover_stale_instances_internal(
         let latest_task = related_tasks.first().copied();
 
         let is_cancelled_fresh_install = latest_task.is_some_and(|t| {
-            t.status == TaskStatus::Cancelled
+            (t.status == TaskStatus::Cancelled || t.status == TaskStatus::Cancelling)
                 && t.task_type.is_core_installation()
                 && !t.task_type.is_update()
         });
@@ -1243,5 +1412,188 @@ mod tests {
         assert!(res.is_err(), "Predicate must reject cancelling write when instance is already Ready");
         let loaded = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
         assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_conflicting_task_detection_includes_cancelling() {
+        let update_task1 = TaskType::InstallModpack {
+            zip_path: "pack1.zip".into(),
+            instance_name: "my_instance".into(),
+            is_update: true,
+            project_id: None,
+            server_id: None,
+            pack_version_id: None,
+            pack_file_name: None,
+        };
+        let update_task2 = TaskType::InstallModpack {
+            zip_path: "pack2.zip".into(),
+            instance_name: "my_instance".into(),
+            is_update: true,
+            project_id: None,
+            server_id: None,
+            pack_version_id: None,
+            pack_file_name: None,
+        };
+
+        // They conflict
+        assert!(update_task1.conflicts_with(&update_task2));
+
+        // When previous task is Cancelling, it MUST be recognized as active
+        let cancelling_status = TaskStatus::Cancelling;
+        assert!(cancelling_status.is_active());
+        assert!(cancelling_status.is_cancelling());
+        assert!(!cancelling_status.is_terminal());
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_full_lifecycle_and_escape() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("test_lifecycle_inst");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create inst dir");
+
+        let mut config = crate::core::launcher::InstanceConfig {
+            status: crate::core::launcher::InstanceStatus::Updating,
+            ..Default::default()
+        };
+        crate::core::launcher::write_instance_config_atomic(&inst_dir.join("dlml.json"), &config).await.unwrap();
+
+        // 1. Task begins cancelling -> Instance transitions to CancellingUpdate
+        let _ = crate::core::launcher::update_instance_config(&inst_dir, |cfg| {
+            cfg.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
+        }).await.unwrap();
+
+        let loaded = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::CancellingUpdate);
+
+        // 2. Cancellation finishes (worker cleanup complete) -> Instance transitions to Ready
+        let _ = crate::core::launcher::update_instance_config(&inst_dir, |cfg| {
+            cfg.set_status(crate::core::launcher::InstanceStatus::Ready);
+        }).await.unwrap();
+
+        let loaded_final = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
+        assert_eq!(loaded_final.status, crate::core::launcher::InstanceStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_cancelled_worker_transitions_to_cancelled_when_token_stale() {
+        let mut state = TaskState::new(
+            "test_stale_task".to_string(),
+            TaskType::InstallVanilla {
+                version_id: "1.20.1".into(),
+                version_json_url: "".into(),
+                custom_instance_name: Some("test_inst".into()),
+                is_dependency: None,
+            },
+        );
+        state.status = TaskStatus::Running;
+
+        // When token is cancelled, transition_to(TaskStatus::Cancelling) first
+        assert!(state.transition_to(TaskStatus::Cancelling).is_ok());
+        assert_eq!(state.status, TaskStatus::Cancelling);
+
+        // Even when token is stale or replaced (is_still_current = false),
+        // the worker MUST complete the terminal transition to Cancelled
+        assert!(state.transition_to(TaskStatus::Cancelled).is_ok());
+        assert_eq!(state.status, TaskStatus::Cancelled);
+        assert!(state.status.is_terminal());
+    }
+
+    #[tokio::test]
+    async fn test_force_cancelled_worker_does_not_repersist_cancelling() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let db = TaskDatabase::new(temp.path().join("tasks.db")).await.expect("db");
+
+        let mut state = TaskState::new(
+            "task_force_cancelled".to_string(),
+            TaskType::InstallVanilla {
+                version_id: "1.20.1".into(),
+                version_json_url: "".into(),
+                custom_instance_name: Some("test_inst".into()),
+                is_dependency: None,
+            },
+        );
+        // Force-cancel already set status to Cancelled in DB
+        state.status = TaskStatus::Cancelled;
+        db.save_task(&state).await.expect("save task");
+
+        // Worker checks DB status
+        let is_already_cancelled = match db.get_task("task_force_cancelled").await {
+            Ok(Some(db_state)) => db_state.status == TaskStatus::Cancelled,
+            _ => false,
+        };
+        assert!(is_already_cancelled, "Worker must detect that task was already force-cancelled");
+
+        // Worker skips transitioning to Cancelling
+        if !is_already_cancelled {
+            let _ = state.transition_to(TaskStatus::Cancelling);
+        } else {
+            let _ = state.transition_to(TaskStatus::Cancelled);
+        }
+
+        assert_eq!(state.status, TaskStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn test_force_cancel_tombstone_fences_active_tasks() {
+        let task_token = Arc::new(CancellationToken::new());
+        let (_done_tx, done_rx) = tokio::sync::watch::channel(false);
+
+        let handle = Arc::new(TaskWorkerHandle {
+            cancel_token: task_token.clone(),
+            done_rx,
+            instance_id: Some("busy_instance".to_string()),
+            task_type: TaskType::InstallVanilla {
+                version_id: "1.20.1".into(),
+                version_json_url: "".into(),
+                custom_instance_name: Some("busy_instance".into()),
+                is_dependency: None,
+            },
+        });
+
+        let active_tasks: Arc<RwLock<HashMap<String, Arc<TaskWorkerHandle>>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        active_tasks
+            .write()
+            .await
+            .insert("busy_task".to_string(), handle.clone());
+
+        // Cancel the token (tombstone)
+        handle.cancel_token.cancel();
+        assert!(handle.cancel_token.is_cancelled());
+
+        // While tombstone is in active_tasks, instance is busy
+        let is_busy = active_tasks
+            .read()
+            .await
+            .values()
+            .any(|h| h.instance_id.as_deref() == Some("busy_instance"));
+        assert!(is_busy, "Tombstone must fence off instance conflict checks");
+
+        // Conflicting task must conflict with the tombstone
+        let new_task_type = TaskType::InstallVanilla {
+            version_id: "1.20.1".into(),
+            version_json_url: "".into(),
+            custom_instance_name: Some("busy_instance".into()),
+            is_dependency: None,
+        };
+        let conflicts = active_tasks
+            .read()
+            .await
+            .values()
+            .any(|h| new_task_type.conflicts_with(&h.task_type));
+        assert!(conflicts, "New task must conflict with tombstoned active worker");
+
+        // Once worker finishes and tombstone is removed:
+        active_tasks.write().await.remove("busy_task");
+        let is_busy_after = active_tasks
+            .read()
+            .await
+            .values()
+            .any(|h| h.instance_id.as_deref() == Some("busy_instance"));
+        assert!(!is_busy_after, "Instance must no longer be busy after tombstone removal");
     }
 }

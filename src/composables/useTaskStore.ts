@@ -68,6 +68,15 @@ export function useTaskStore() {
                 status: 'unread',
                 transient: false
               });
+            } else if (updatedTask.status === 'Cancelling') {
+              const title = i18n.global.t('task.cancellingTitle', { name: getTaskName(updatedTask.task_type) }) || `Cancelling: ${getTaskName(updatedTask.task_type)}`;
+              notificationStore.updateNotification(updatedTask.id, {
+                title,
+                description: i18n.global.t('task.cancellingDesc', 'Safely terminating task processes...'),
+                type: 'info',
+                isPopup: false,
+                status: 'read'
+              });
             }
           } else if (updatedTask.status === 'Running') {
             // Silent update for running tasks - no download details in description to avoid spam
@@ -115,7 +124,7 @@ export function useTaskStore() {
   }
 
   const activeTasks = computed(() => {
-    return tasks.value.filter(t => t.status === 'Pending' || t.status === 'Running' || t.status === 'Paused');
+    return tasks.value.filter(t => t.status === 'Pending' || t.status === 'Running' || t.status === 'Paused' || t.status === 'Cancelling');
   });
 
   const hasActiveTasks = computed(() => activeTasks.value.length > 0);
@@ -127,6 +136,8 @@ export function useTaskStore() {
 
   async function cancelTask(id: string): Promise<boolean> {
     if (processingCancels.has(id)) return false;
+    const task = tasks.value.find(t => t.id === id);
+    if (task && task.status === 'Cancelling') return true;
     
     try {
       processingCancels.add(id);
@@ -140,10 +151,20 @@ export function useTaskStore() {
     }
   }
 
+  async function forceCancelTask(id: string): Promise<boolean> {
+    try {
+      await invoke('force_cancel_task', { taskId: id });
+      return true;
+    } catch (e) {
+      console.error('Failed to force cancel task:', e);
+      return false;
+    }
+  }
+
   async function clearHistory() {
     try {
       await invoke('clear_task_history');
-      tasks.value = tasks.value.filter(t => t.status === 'Pending' || t.status === 'Running' || t.status === 'Paused');
+      tasks.value = tasks.value.filter(t => t.status === 'Pending' || t.status === 'Running' || t.status === 'Paused' || t.status === 'Cancelling');
     } catch (e) {
       console.error('Failed to clear task history:', e);
     }
@@ -153,6 +174,11 @@ export function useTaskStore() {
 
   async function retryTask(id: string) {
     if (processingRetries.has(id)) return;
+    const task = tasks.value.find(t => t.id === id);
+    if (task && (task.status === 'Pending' || task.status === 'Running' || task.status === 'Cancelling' || task.status === 'Paused')) {
+      console.warn('Cannot retry an active or cancelling task:', id);
+      return;
+    }
     
     try {
       processingRetries.add(id);
@@ -202,6 +228,7 @@ export function useTaskStore() {
     selectedTaskId,
     init,
     cancelTask,
+    forceCancelTask,
     retryTask,
     clearHistory,
     toggleTaskCenter,

@@ -56,13 +56,17 @@ function getSubTaskPercentage(sub: any) {
           </span>
           <Clock v-if="task.status === 'Pending'" class="w-5 h-5 text-neutral-400" />
           <Loader2 v-else-if="task.status === 'Running'" class="w-5 h-5 text-emerald-400 animate-spin" />
+          <Loader2 v-else-if="task.status === 'Cancelling'" class="w-5 h-5 text-amber-500 animate-spin" />
           <Pause v-else-if="task.status === 'Paused'" class="w-5 h-5 text-yellow-400" />
           <CheckCircle v-else-if="task.status === 'Completed'" class="w-5 h-5 text-emerald-500" />
           <XCircle v-else-if="task.status === 'Failed'" class="w-5 h-5 text-red-500" />
           <Ban v-else-if="task.status === 'Cancelled'" class="w-5 h-5 text-orange-400" />
         </div>
       </div>
-      <p v-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 line-clamp-2 mt-1">
+      <p v-if="task.status === 'Cancelling'" class="text-xs text-amber-500 dark:text-amber-400 line-clamp-2 mt-1">
+        {{ $t('task.cancellingDesc', 'Safely terminating task processes...') }}
+      </p>
+      <p v-else-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 line-clamp-2 mt-1">
         {{ task.error === 'Task cancelled' ? $t('task.cancelledError') : task.error }}
       </p>
       <div v-else-if="!task.progress.sub_tasks || task.progress.sub_tasks.length === 0" class="flex items-center gap-2 mt-1">
@@ -124,13 +128,29 @@ function getSubTaskPercentage(sub: any) {
     </div>
 
     <!-- Footer Action -->
-    <div v-if="isCancelable" class="p-4 border-t border-black/10 dark:border-white/10 shrink-0">
+    <div v-if="isCancelable || task.status === 'Cancelling'" class="p-4 border-t border-black/10 dark:border-white/10 shrink-0">
       <button 
+        v-if="isCancelable"
         @click="handleCancel"
         class="w-full py-2 rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium text-sm transition-colors"
       >
         {{ $t('task.cancel') }}
       </button>
+      <div v-else-if="task.status === 'Cancelling'" class="flex items-center gap-2">
+        <button 
+          disabled
+          class="flex-1 py-2 rounded-lg bg-neutral-500/10 text-neutral-400 font-medium text-sm cursor-not-allowed text-center"
+        >
+          {{ $t('task.cancellingDesc', 'Cancelling...') }}
+        </button>
+        <button
+          @click="taskStore.forceCancelTask(task.id)"
+          class="py-2 px-3 rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium text-xs transition-colors whitespace-nowrap"
+          title="Force Reset"
+        >
+          {{ $t('task.forceCancel', 'Force Reset') }}
+        </button>
+      </div>
     </div>
   </div>
 </template>

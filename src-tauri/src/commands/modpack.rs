@@ -1110,11 +1110,7 @@ pub async fn install_modpack(
     // Reject duplicate tasks for the same instance before touching any files or flags
     if let Ok(all_tasks) = task_manager.load_history().await {
         for t in all_tasks {
-            if (t.status == crate::core::task::TaskStatus::Pending
-                || t.status == crate::core::task::TaskStatus::Running
-                || t.status == crate::core::task::TaskStatus::Paused)
-                && t.task_type.instance_id().as_deref() == Some(&instance_name)
-            {
+            if t.status.is_active() && t.task_type.instance_id().as_deref() == Some(&instance_name) {
                 return Err(DawnlandError::Unknown(format!(
                     "CONFLICTING_TASK:{}",
                     t.task_type.name()
@@ -1124,7 +1120,7 @@ pub async fn install_modpack(
         }
     }
 
-    if task_manager.is_instance_starting(&instance_name) {
+    if task_manager.is_instance_starting(&instance_name) || task_manager.is_instance_busy(&instance_name).await {
         return Err(DawnlandError::Unknown(format!(
             "CONFLICTING_TASK:{}",
             instance_name
@@ -1211,11 +1207,7 @@ pub async fn download_and_install_online_modpack(
     // Reject duplicate tasks for the same instance before touching any files or flags
     if let Ok(all_tasks) = task_manager.load_history().await {
         for t in all_tasks {
-            if (t.status == crate::core::task::TaskStatus::Pending
-                || t.status == crate::core::task::TaskStatus::Running
-                || t.status == crate::core::task::TaskStatus::Paused)
-                && t.task_type.instance_id().as_deref() == Some(&instance_name)
-            {
+            if t.status.is_active() && t.task_type.instance_id().as_deref() == Some(&instance_name) {
                 return Err(DawnlandError::Unknown(format!(
                     "CONFLICTING_TASK:{}",
                     t.task_type.name()
@@ -1225,7 +1217,7 @@ pub async fn download_and_install_online_modpack(
         }
     }
 
-    if task_manager.is_instance_starting(&instance_name) {
+    if task_manager.is_instance_starting(&instance_name) || task_manager.is_instance_busy(&instance_name).await {
         return Err(DawnlandError::Unknown(format!(
             "CONFLICTING_TASK:{}",
             instance_name

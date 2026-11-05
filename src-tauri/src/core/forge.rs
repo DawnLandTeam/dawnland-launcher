@@ -1174,7 +1174,7 @@ impl ExecutableTask for InstallForgeTask {
                     res.map_err(|e| TaskError::ExecutionError(format!("Failed to wait on Forge installer: {}", e)))?
                 }
                 _ = ctx_install.wait_cancelled() => {
-                    let _ = child.kill().await;
+                    crate::core::utils::kill_process_tree(&mut child).await;
                     return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
                 }
             };

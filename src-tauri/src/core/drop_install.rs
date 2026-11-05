@@ -1136,14 +1136,7 @@ async fn verify_instance_idle(
         .await
         .map_err(|e| DawnlandError::Unknown(format!("Failed to verify instance tasks: {}", e)))?;
     for t in &tasks {
-        if t.task_type.instance_id().as_deref() == Some(instance_id)
-            && matches!(
-                t.status,
-                crate::core::task::TaskStatus::Pending
-                    | crate::core::task::TaskStatus::Running
-                    | crate::core::task::TaskStatus::Paused
-            )
-        {
+        if t.task_type.instance_id().as_deref() == Some(instance_id) && t.status.is_active() {
             return Err(DawnlandError::Unknown(
                 "Instance has an active background task".to_string(),
             ));

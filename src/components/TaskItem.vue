@@ -82,6 +82,7 @@ function handleRetry(e: Event) {
         <div class="shrink-0 flex items-center justify-center">
           <Clock v-if="task.status === 'Pending'" class="w-5 h-5 text-neutral-400" />
           <Loader2 v-else-if="task.status === 'Running'" class="w-5 h-5 text-emerald-400 animate-spin" />
+          <Loader2 v-else-if="task.status === 'Cancelling'" class="w-5 h-5 text-amber-500 animate-spin" />
           <Pause v-else-if="task.status === 'Paused'" class="w-5 h-5 text-yellow-400" />
           <CheckCircle v-else-if="task.status === 'Completed'" class="w-5 h-5 text-emerald-500" />
           <XCircle v-else-if="task.status === 'Failed'" class="w-5 h-5 text-red-500" />
@@ -97,7 +98,10 @@ function handleRetry(e: Event) {
             </span>
           </span>
           <div class="flex items-center gap-2 mt-0.5">
-            <span v-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 truncate" :title="task.error || ''">
+            <span v-if="task.status === 'Cancelling'" class="text-xs text-amber-500 dark:text-amber-400 truncate">
+              {{ $t('task.cancellingDesc', 'Safely terminating task processes...') }}
+            </span>
+            <span v-else-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 truncate" :title="task.error || ''">
               {{ task.error === 'Task cancelled' ? $t('task.cancelledError') : task.error }}
             </span>
             <template v-else>
@@ -145,14 +149,15 @@ function handleRetry(e: Event) {
           task.status === 'Completed' ? 'bg-emerald-500' :
           task.status === 'Failed' ? 'bg-red-500' :
           task.status === 'Cancelled' ? 'bg-orange-400' :
+          task.status === 'Cancelling' ? 'bg-amber-500' :
           task.status === 'Paused' ? 'bg-yellow-400' :
           'bg-emerald-400 overflow-hidden'
         ]"
         :style="{ width: `${percentage}%` }"
       >
-        <!-- Animated stripes for running tasks -->
+        <!-- Animated stripes for running or cancelling tasks -->
         <div 
-          v-if="task.status === 'Running'"
+          v-if="task.status === 'Running' || task.status === 'Cancelling'"
           class="absolute inset-0 bg-[length:1rem_1rem]"
           style="background-image: linear-gradient(45deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent); animation: progress-stripes 1s linear infinite;"
         ></div>

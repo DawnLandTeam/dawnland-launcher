@@ -110,6 +110,18 @@ pub fn create_hidden_std_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::
     std_cmd
 }
 
+/// Kill a spawned child process, terminating its entire process tree on Windows to prevent orphaned processes.
+pub async fn kill_process_tree(child: &mut tokio::process::Child) {
+    #[cfg(target_os = "windows")]
+    if let Some(pid) = child.id() {
+        let _ = create_hidden_command("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .output()
+            .await;
+    }
+    let _ = child.kill().await;
+}
+
 pub async fn flatten_instance_json_recursive(
     parent_id: &str,
     child_obj: &mut serde_json::Map<String, serde_json::Value>,

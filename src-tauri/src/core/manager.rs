@@ -207,16 +207,8 @@ pub async fn scan_installed_instances_internal(
                 let mut has_valid_task = is_starting || is_busy;
 
                 for task in task_ctx.tasks {
-                    if task.task_type.instance_id().as_deref() == Some(&id) {
-                        let is_active_task = matches!(
-                            task.status,
-                            crate::core::task::TaskStatus::Pending
-                                | crate::core::task::TaskStatus::Running
-                                | crate::core::task::TaskStatus::Paused
-                        );
-                        if is_active_task {
-                            has_valid_task = true;
-                        }
+                    if task.task_type.instance_id().as_deref() == Some(&id) && task.status.is_active() {
+                        has_valid_task = true;
                     }
                 }
 
@@ -233,43 +225,26 @@ pub async fn scan_installed_instances_internal(
                 // Sort by latest (updated_at, then created_at) descending
                 core_tasks.sort_by_key(|t| std::cmp::Reverse((t.updated_at, t.created_at)));
 
-                // Derive status from the most relevant (latest active or cancelling) core task
+                // Derive status from the most relevant (latest active) core task
                 let mut matched_core_task = None;
                 for t in &core_tasks {
-                    if matches!(
-                        t.status,
-                        crate::core::task::TaskStatus::Pending
-                            | crate::core::task::TaskStatus::Running
-                            | crate::core::task::TaskStatus::Paused
-                    ) {
+                    if t.status.is_active() {
                         matched_core_task = Some(*t);
                         break;
-                    } else if t.status == crate::core::task::TaskStatus::Cancelled {
-                        let is_worker_active =
-                            is_starting || task_ctx.is_task_worker_active(&t.id, &id).await;
-                        if is_worker_active {
-                            matched_core_task = Some(*t);
-                            break;
-                        }
                     }
                 }
 
                 if let Some(task) = matched_core_task {
-                    let is_active_task = matches!(
-                        task.status,
-                        crate::core::task::TaskStatus::Pending
-                            | crate::core::task::TaskStatus::Running
-                            | crate::core::task::TaskStatus::Paused
-                    );
+                    let is_active_task = task.status.is_active();
                     if task.task_type.is_update() {
-                        if task.status == crate::core::task::TaskStatus::Cancelled {
+                        if task.status == crate::core::task::TaskStatus::Cancelling {
                             status = crate::models::instance::InstanceStatus::CancellingUpdate;
                         } else if status == crate::models::instance::InstanceStatus::Ready
                             && is_active_task
                         {
                             status = crate::models::instance::InstanceStatus::Updating;
                         }
-                    } else if task.status == crate::core::task::TaskStatus::Cancelled {
+                    } else if task.status == crate::core::task::TaskStatus::Cancelling {
                         status = crate::models::instance::InstanceStatus::CancellingInstall;
                     } else if status == crate::models::instance::InstanceStatus::Ready
                         && is_active_task
@@ -892,7 +867,7 @@ async fn check_instance_busy(
     let tasks = task_manager.load_history().await.unwrap_or_default();
     for task in &tasks {
         if let Some(tid) = task.task_type.instance_id() {
-            if tid == version_id && matches!(task.status, crate::core::task::TaskStatus::Pending | crate::core::task::TaskStatus::Running | crate::core::task::TaskStatus::Paused) {
+            if tid == version_id && task.status.is_active() {
                 return true;
             }
         }
