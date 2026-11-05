@@ -92,6 +92,16 @@ export function isModpackTask(taskType: TaskType): boolean {
   return 'InstallModpack' in taskType || 'InstallOnlineModpack' in taskType;
 }
 
+export function isModpackUpdateTask(taskType: TaskType): boolean {
+  if ('InstallModpack' in taskType) {
+    return taskType.InstallModpack.is_update;
+  }
+  if ('InstallOnlineModpack' in taskType) {
+    return taskType.InstallOnlineModpack.is_update;
+  }
+  return false;
+}
+
 export function getModpackTaskInstanceName(taskType: TaskType): string | null {
   if ('InstallModpack' in taskType) {
     return taskType.InstallModpack.instance_name;

@@ -35,7 +35,7 @@ import CrashHistoryPanel from "../components/CrashHistoryPanel.vue";
 import { isInstanceBusy } from "../types";
 import { useTaskStore } from "../composables/useTaskStore";
 import { useModpackInstallState } from "../composables/useModpackInstallState";
-import { isModpackTask, getModpackTaskInstanceName, isTaskActive } from "../types/task";
+import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive } from "../types/task";
 
 const route = useRoute();
 const router = useRouter();
@@ -53,10 +53,11 @@ const hasOngoingUpdateTask = computed(() => {
   const trackedId = instanceUpdateTaskIds.value[name];
   if (trackedId) {
     const t = taskStore.tasks.value.find(task => task.id === trackedId);
-    if (t && !isTaskDismissed(t.id)) return true;
+    if (t && isModpackUpdateTask(t.task_type) && !isTaskDismissed(t.id)) return true;
   }
   return taskStore.tasks.value.some(t =>
     isModpackTask(t.task_type) &&
+    isModpackUpdateTask(t.task_type) &&
     getModpackTaskInstanceName(t.task_type) === name &&
     !isTaskDismissed(t.id) &&
     (isTaskActive(t.status) || t.status === 'Completed' || t.status === 'Failed')

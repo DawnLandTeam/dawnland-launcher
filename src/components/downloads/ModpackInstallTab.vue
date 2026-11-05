@@ -19,7 +19,7 @@ import DSelect from "../ui/DSelect.vue";
 import { useFileDrop } from "../../composables/useFileDrop";
 import type { ModpackArchiveInfo } from "../../types";
 import { useModpackInstallState } from "../../composables/useModpackInstallState";
-import { isModpackTask, getModpackTaskInstanceName, isTaskActive, type TaskState } from "../../types/task";
+import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive, type TaskState } from "../../types/task";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -308,13 +308,14 @@ const initializeView = async () => {
     const trackedId = instanceUpdateTaskIds.value[targetInstanceName] || currentTaskId.value;
     if (trackedId) {
       const found = taskStore.tasks.value.find((t) => t.id === trackedId);
-      if (found && isValidRestorableTask(found)) {
+      if (found && isModpackUpdateTask(found.task_type) && isValidRestorableTask(found)) {
         matchedTask = found;
       }
     }
     if (!matchedTask) {
       const found = taskStore.tasks.value.find((t) =>
         isModpackTask(t.task_type) &&
+        isModpackUpdateTask(t.task_type) &&
         getModpackTaskInstanceName(t.task_type) === targetInstanceName &&
         isValidRestorableTask(t)
       );
@@ -334,15 +335,14 @@ const initializeView = async () => {
     const trackedId = downloadsModpackTaskId.value || currentTaskId.value;
     if (trackedId) {
       const found = taskStore.tasks.value.find((t) => t.id === trackedId);
-      if (found && isValidRestorableTask(found)) {
+      if (found && !isModpackUpdateTask(found.task_type) && isValidRestorableTask(found)) {
         matchedTask = found;
       }
     }
     if (!matchedTask) {
       const found = taskStore.tasks.value.find((t) =>
         isModpackTask(t.task_type) &&
-        !('InstallModpack' in t.task_type && t.task_type.InstallModpack.is_update) &&
-        !('InstallOnlineModpack' in t.task_type && t.task_type.InstallOnlineModpack.is_update) &&
+        !isModpackUpdateTask(t.task_type) &&
         isValidRestorableTask(t)
       );
       if (found) {

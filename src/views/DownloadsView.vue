@@ -14,7 +14,7 @@ import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
 import { trackEvent } from "../utils/analytics";
 import { useTaskStore } from "../composables/useTaskStore";
 import { useModpackInstallState } from "../composables/useModpackInstallState";
-import { isModpackTask, isTaskActive } from "../types/task";
+import { isModpackTask, isModpackUpdateTask, isTaskActive } from "../types/task";
 
 const route = useRoute();
 const router = useRouter();
@@ -41,8 +41,7 @@ const hasActiveDownloadsModpackTask = computed(() => {
   }
   return taskStore.tasks.value.some(t =>
     isModpackTask(t.task_type) &&
-    !('InstallModpack' in t.task_type && t.task_type.InstallModpack.is_update) &&
-    !('InstallOnlineModpack' in t.task_type && t.task_type.InstallOnlineModpack.is_update) &&
+    !isModpackUpdateTask(t.task_type) &&
     !isTaskDismissed(t.id) &&
     (isTaskActive(t.status) || t.status === 'Completed' || t.status === 'Failed')
   );

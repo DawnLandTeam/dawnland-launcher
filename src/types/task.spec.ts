@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getTaskTargetRoute,
   isModpackTask,
+  isModpackUpdateTask,
   getModpackTaskInstanceName,
   type TaskType,
 } from './task';
@@ -16,6 +17,7 @@ describe('task route and helper functions', () => {
       },
     };
     expect(isModpackTask(task)).toBe(true);
+    expect(isModpackUpdateTask(task)).toBe(false);
     expect(getModpackTaskInstanceName(task)).toBe('MyModpack');
     expect(getTaskTargetRoute(task)).toEqual({
       path: '/downloads',
@@ -32,6 +34,7 @@ describe('task route and helper functions', () => {
       },
     };
     expect(isModpackTask(task)).toBe(true);
+    expect(isModpackUpdateTask(task)).toBe(true);
     expect(getModpackTaskInstanceName(task)).toBe('MyUpdatedInstance');
     expect(getTaskTargetRoute(task)).toEqual({
       path: '/instances/MyUpdatedInstance',
