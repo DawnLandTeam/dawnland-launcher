@@ -1398,7 +1398,9 @@ pub async fn install_forge_instance(
         ..Default::default()
     };
     pre_config.set_status(crate::core::launcher::InstanceStatus::Installing);
-    let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
+    crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config)
+        .await
+        .map_err(|e| crate::error::DawnlandError::Unknown(e))?;
 
     let task = InstallForgeTask {
         options: InstallForgeOptions {

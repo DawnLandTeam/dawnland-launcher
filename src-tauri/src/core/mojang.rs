@@ -878,9 +878,7 @@ pub async fn install_vanilla_version(
         ..Default::default()
     };
     pre_config.set_status(crate::core::launcher::InstanceStatus::Installing);
-    if let Ok(json_str) = serde_json::to_string_pretty(&pre_config) {
-        let _ = tokio::fs::write(&config_path, json_str).await;
-    }
+    crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config).await?;
 
     let task = InstallVanillaTask {
         options: VanillaInstallOptions {

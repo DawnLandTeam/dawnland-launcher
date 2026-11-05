@@ -1152,7 +1152,9 @@ pub async fn install_modpack(
             status: crate::models::instance::InstanceStatus::Installing,
             ..Default::default()
         };
-        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
+        crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config)
+            .await
+            .map_err(|e| crate::error::DawnlandError::Unknown(e))?;
     } else {
         protect_existing_instance(&instance_dir).await;
     }
@@ -1251,7 +1253,9 @@ pub async fn download_and_install_online_modpack(
             status: crate::models::instance::InstanceStatus::Installing,
             ..Default::default()
         };
-        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
+        crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config)
+            .await
+            .map_err(|e| crate::error::DawnlandError::Unknown(e))?;
     } else {
         protect_existing_instance(&instance_dir).await;
     }

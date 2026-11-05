@@ -664,7 +664,14 @@ impl TaskManager {
                 active.remove(&id_clone);
             }
             drop(active);
-            let _ = manager.app_handle.emit("instances-changed", ());
+
+            let is_instance_mutating = {
+                let state = state_arc.read().await;
+                state.task_type.is_core_installation() || state.task_type.is_update()
+            };
+            if is_instance_mutating {
+                let _ = manager.app_handle.emit("instances-changed", ());
+            }
         }.instrument(span));
 
         Ok(id)
