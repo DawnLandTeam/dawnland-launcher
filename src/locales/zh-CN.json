@@ -263,8 +263,13 @@
     "share": {
       "copyFailed": "无法复制链接到剪贴板，请检查浏览器权限。"
     },
+    "cancelling": "取消中...",
+    "cancellingUpdate": "取消更新中...",
+    "cancellingInstall": "取消安装中...",
     "updating": "更新中...",
     "installing": "安装中...",
+    "running": "运行中",
+    "ready": "就绪",
     "modpack": "整合包",
     "manual": "手动添加",
     "cannotEditRunning": "无法在实例运行时编辑设置",

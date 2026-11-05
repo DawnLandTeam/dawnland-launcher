@@ -41,8 +41,7 @@ pub struct InstallModpackOptions {
 
 async fn protect_existing_instance(instance_dir: &std::path::Path) {
     if let Err(e) = crate::core::launcher::update_instance_config(instance_dir, |config| {
-        config.is_updating = true;
-        config.is_installing = false;
+        config.set_status(crate::core::launcher::InstanceStatus::Updating);
     })
     .await
     {
@@ -698,8 +697,7 @@ impl ExecutableTask for InstallModpackTask {
             let pack_file_name = self.options.pack_file_name.clone();
 
             let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                config.is_installing = false;
-                config.is_updating = false;
+                config.set_status(crate::core::launcher::InstanceStatus::Ready);
                 config.mc_version = Some(mc_version.clone());
                 config.loader_type = loader_enum;
                 config.modpack_project_id = project_id.clone();
@@ -1151,11 +1149,12 @@ pub async fn install_modpack(
     );
     if !is_update {
         let pre_config = crate::core::launcher::InstanceConfig {
-            is_installing: true,
-            is_updating: false,
+            status: crate::models::instance::InstanceStatus::Installing,
             ..Default::default()
         };
-        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
+        crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config)
+            .await
+            .map_err(crate::error::DawnlandError::Unknown)?;
     } else {
         protect_existing_instance(&instance_dir).await;
     }
@@ -1251,11 +1250,12 @@ pub async fn download_and_install_online_modpack(
     );
     if !is_update {
         let pre_config = crate::core::launcher::InstanceConfig {
-            is_installing: true,
-            is_updating: false,
+            status: crate::models::instance::InstanceStatus::Installing,
             ..Default::default()
         };
-        let _ = tokio::fs::write(&config_path, serde_json::to_string_pretty(&pre_config)?).await;
+        crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config)
+            .await
+            .map_err(crate::error::DawnlandError::Unknown)?;
     } else {
         protect_existing_instance(&instance_dir).await;
     }

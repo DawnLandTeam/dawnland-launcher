@@ -263,8 +263,13 @@
     "share": {
       "copyFailed": "Failed to copy link to clipboard, please check browser permissions."
     },
+    "cancelling": "Cancelling...",
+    "cancellingUpdate": "Cancelling update...",
+    "cancellingInstall": "Cancelling installation...",
     "updating": "Updating...",
     "installing": "Installing...",
+    "running": "Running",
+    "ready": "Ready",
     "modpack": "Modpack",
     "manual": "Manual",
     "cannotEditRunning": "Cannot edit settings while instance is running",

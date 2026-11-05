@@ -32,6 +32,7 @@ import InstanceCustomResourcepacksTab from "../components/instances/InstanceCust
 import InstanceStatisticsTab from "../components/instances/InstanceStatisticsTab.vue";
 import ModpackInstallTab from "../components/downloads/ModpackInstallTab.vue";
 import CrashHistoryPanel from "../components/CrashHistoryPanel.vue";
+import { isInstanceBusy } from "../types";
 
 const route = useRoute();
 const router = useRouter();
@@ -71,7 +72,7 @@ const translatedTabs = computed(() => {
     ...tab,
     name: t(tab.name),
     group: tab.group ? t(tab.group) : undefined,
-    disabled: tab.id !== 'settings' && (currentInstance.value?.isInstalling || currentInstance.value?.isUpdating)
+    disabled: tab.id !== 'settings' && isInstanceBusy(currentInstance.value)
   }));
   
   const additionalTabs = [];
@@ -82,7 +83,7 @@ const translatedTabs = computed(() => {
       name: t('install.updateModpackTitle'),
       icon: RefreshCw,
       action: () => { activeTab.value = 'update_modpack'; },
-      disabled: currentInstance.value?.isInstalling || currentInstance.value?.isUpdating
+      disabled: isInstanceBusy(currentInstance.value)
     });
   }
   
@@ -180,7 +181,7 @@ watch(instanceId, async (newId) => {
             :is-modal-update="true"
             :update-id="currentInstance.name"
             :update-project-id="currentInstance.modpackProjectId"
-            :update-source="currentInstance.modpackType.toLowerCase()"
+            :update-source="currentInstance.modpackType?.toLowerCase() || ''"
             :update-current-version="currentInstance.modpackVersion"
             @cancel-update="activeTab = 'settings'"
           />

@@ -205,8 +205,10 @@ pub struct LaunchConfig {
     pub window_height: u32,
 }
 
+pub use crate::models::instance::InstanceStatus;
+
 /// Instance-specific configuration stored in versions/<id>/dlml.json
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -259,9 +261,7 @@ pub struct InstanceConfig {
     pub pack_file_name: Option<String>,
 
     #[serde(default)]
-    pub is_installing: bool,
-    #[serde(default)]
-    pub is_updating: bool,
+    pub status: InstanceStatus,
     #[serde(default)]
     pub play_time: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -273,6 +273,209 @@ pub struct InstanceConfig {
 
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawInstanceConfig {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub mc_version: Option<String>,
+    #[serde(default)]
+    pub loader_type: Option<crate::models::instance::LoaderType>,
+    #[serde(default)]
+    pub loader_version: Option<String>,
+    #[serde(default)]
+    pub modpack_version: Option<String>,
+    #[serde(default)]
+    pub modpack_type: Option<String>,
+    #[serde(default)]
+    pub modpack_project_id: Option<String>,
+
+    #[serde(default)]
+    pub java_path: Option<String>,
+    #[serde(default)]
+    pub max_memory: Option<u32>,
+    #[serde(default)]
+    pub jvm_args_extra: Option<Vec<String>>,
+    #[serde(default)]
+    pub jvm_tuner_mode: crate::core::jvm_tuner::JvmTunerMode,
+    #[serde(
+        default = "default_window_width",
+        deserialize_with = "deserialize_window_width"
+    )]
+    pub window_width: u32,
+    #[serde(
+        default = "default_window_height",
+        deserialize_with = "deserialize_window_height"
+    )]
+    pub window_height: u32,
+    #[serde(default = "default_window_behavior")]
+    pub window_behavior: String,
+    #[serde(default)]
+    pub show_game_log: bool,
+    #[serde(default)]
+    pub hidden: bool,
+
+    #[serde(default)]
+    pub server_id: Option<String>,
+    #[serde(default)]
+    pub pack_version_id: Option<String>,
+    #[serde(default)]
+    pub pack_file_name: Option<String>,
+
+    #[serde(default)]
+    pub status: InstanceStatus,
+    #[serde(default)]
+    pub play_time: u64,
+    #[serde(default)]
+    pub last_played_at: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl<'de> serde::Deserialize<'de> for InstanceConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawInstanceConfig::deserialize(deserializer)?;
+        let mut config = InstanceConfig {
+            name: raw.name,
+            icon: raw.icon,
+            group: raw.group,
+            mc_version: raw.mc_version,
+            loader_type: raw.loader_type,
+            loader_version: raw.loader_version,
+            modpack_version: raw.modpack_version,
+            modpack_type: raw.modpack_type,
+            modpack_project_id: raw.modpack_project_id,
+            java_path: raw.java_path,
+            max_memory: raw.max_memory,
+            jvm_args_extra: raw.jvm_args_extra,
+            jvm_tuner_mode: raw.jvm_tuner_mode,
+            window_width: raw.window_width,
+            window_height: raw.window_height,
+            window_behavior: raw.window_behavior,
+            show_game_log: raw.show_game_log,
+            hidden: raw.hidden,
+            server_id: raw.server_id,
+            pack_version_id: raw.pack_version_id,
+            pack_file_name: raw.pack_file_name,
+            status: raw.status,
+            play_time: raw.play_time,
+            last_played_at: raw.last_played_at,
+            created_at: raw.created_at,
+            extra: raw.extra,
+        };
+        config.cleanup_legacy_status_fields();
+        Ok(config)
+    }
+}
+
+impl InstanceConfig {
+    pub fn effective_status(&self) -> InstanceStatus {
+        self.status
+    }
+
+    pub fn set_status(&mut self, status: InstanceStatus) {
+        self.status = status;
+        self.remove_legacy_status_fields();
+    }
+
+    /// Removes all legacy boolean status keys from `extra`.
+    pub fn remove_legacy_status_fields(&mut self) -> bool {
+        let mut removed = false;
+        for key in &[
+            "isInstalling",
+            "is_installing",
+            "isUpdating",
+            "is_updating",
+            "isCancelling",
+            "is_cancelling",
+        ] {
+            if self.extra.remove(*key).is_some() {
+                removed = true;
+            }
+        }
+        removed
+    }
+
+    /// Migrates any legacy status flags in `extra` to `status` if `status` is `Ready`,
+    /// and removes them from `extra` so they are not preserved in serialized JSON.
+    pub fn cleanup_legacy_status_fields(&mut self) -> bool {
+        let legacy_cancelling = self
+            .extra
+            .remove("isCancelling")
+            .or_else(|| self.extra.remove("is_cancelling"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let legacy_updating = self
+            .extra
+            .remove("isUpdating")
+            .or_else(|| self.extra.remove("is_updating"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let legacy_installing = self
+            .extra
+            .remove("isInstalling")
+            .or_else(|| self.extra.remove("is_installing"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let had_active_legacy_flags = legacy_cancelling || legacy_updating || legacy_installing;
+
+        if self.status == InstanceStatus::Ready && had_active_legacy_flags {
+            if legacy_cancelling {
+                if legacy_updating {
+                    self.status = InstanceStatus::CancellingUpdate;
+                } else {
+                    self.status = InstanceStatus::CancellingInstall;
+                }
+            } else if legacy_updating {
+                self.status = InstanceStatus::Updating;
+            } else if legacy_installing {
+                self.status = InstanceStatus::Installing;
+            }
+        }
+
+        let removed_others = self.remove_legacy_status_fields();
+
+        had_active_legacy_flags || removed_others
+    }
+
+    /// Checks if a raw JSON string contains any legacy status field keys or legacy "idle" status value.
+    pub fn has_legacy_status_in_json(content: &str) -> bool {
+        if content.contains("\"isInstalling\"")
+            || content.contains("\"isUpdating\"")
+            || content.contains("\"isCancelling\"")
+            || content.contains("\"is_installing\"")
+            || content.contains("\"is_updating\"")
+            || content.contains("\"is_cancelling\"")
+        {
+            return true;
+        }
+
+        if content.contains("\"idle\"") {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(content) {
+                if val.get("status").and_then(|s| s.as_str()) == Some("idle") {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }
 
 impl Default for InstanceConfig {
@@ -299,8 +502,7 @@ impl Default for InstanceConfig {
             server_id: None,
             pack_version_id: None,
             pack_file_name: None,
-            is_installing: false,
-            is_updating: false,
+            status: InstanceStatus::Ready,
             play_time: 0,
             last_played_at: None,
             created_at: None,
@@ -311,6 +513,33 @@ impl Default for InstanceConfig {
 
 static INSTANCE_CONFIG_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// Atomically commits instance config to disk via temporary file and atomic rename.
+pub async fn write_instance_config_atomic(
+    config_path: &Path,
+    config: &InstanceConfig,
+) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
+    let parent = config_path
+        .parent()
+        .ok_or_else(|| "Invalid config path".to_string())?;
+    let temp_file = parent.join(format!(
+        "{}.tmp.{}",
+        CONFIG_FILENAME,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    tokio::fs::write(&temp_file, &json)
+        .await
+        .map_err(|e| format!("Failed to write temp instance config: {}", e))?;
+    crate::core::fs_utils::atomic_move(&temp_file, config_path, true)
+        .await
+        .map_err(|e| format!("Failed to commit instance config atomically: {}", e))?;
+    Ok(())
+}
 
 /// Atomically reads, mutates, and writes `dlml.json` in `instance_dir` under a
 /// process-wide lock so concurrent settings saves and installer completion
@@ -332,8 +561,9 @@ where
     let mut config: InstanceConfig = if config_path.exists() {
         let content = tokio::fs::read_to_string(&config_path)
             .await
-            .unwrap_or_else(|_| "{}".to_string());
-        serde_json::from_str(&content).unwrap_or_default()
+            .map_err(|e| format!("Failed to read instance config: {}", e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse instance config: {}", e))?
     } else {
         InstanceConfig::default()
     };
@@ -349,11 +579,7 @@ where
 
     mutate(&mut config);
 
-    let json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
-    tokio::fs::write(&config_path, json)
-        .await
-        .map_err(|e| format!("Failed to write instance config: {}", e))?;
+    write_instance_config_atomic(&config_path, &config).await?;
 
     Ok(config)
 }
@@ -386,11 +612,7 @@ where
 
     mutate(&mut config);
 
-    let json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
-    tokio::fs::write(&config_path, json)
-        .await
-        .map_err(|e| format!("Failed to write instance config: {}", e))?;
+    write_instance_config_atomic(&config_path, &config).await?;
 
     Ok(config)
 }
@@ -406,7 +628,7 @@ impl InstanceConfig {
             }
         }
         update_instance_config(instance_dir, |config| {
-            config.is_installing = true;
+            config.set_status(InstanceStatus::Installing);
             if is_dependency {
                 config.hidden = true;
             }
@@ -523,6 +745,7 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, A
         .await
         .map_err(|e| format!("Failed to read config: {}", e))?;
 
+    let has_legacy_fields = InstanceConfig::has_legacy_status_in_json(&content);
     let mut config: InstanceConfig =
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
     if config.window_width == 0 {
@@ -530,6 +753,10 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, A
     }
     if config.window_height == 0 {
         config.window_height = DEFAULT_WINDOW_HEIGHT;
+    }
+
+    if has_legacy_fields {
+        let _ = write_instance_config_atomic(&config_path, &config).await;
     }
 
     tracing::info!("Loaded config for {}: {:?}", version_id, config);
@@ -566,7 +793,7 @@ pub async fn save_instance_config(
         };
         final_config.window_behavior = config.window_behavior;
         final_config.show_game_log = config.show_game_log;
-        // We intentionally do NOT copy hidden, server_id, pack_version_id, pack_file_name, or is_installing here!
+        // We intentionally do NOT copy hidden, server_id, pack_version_id, pack_file_name, or status here!
     })
     .await?;
 
@@ -3509,6 +3736,165 @@ mod tests {
         .expect("should clamp oversized dimensions");
         assert_eq!(oversized_cfg.window_width, u32::MAX);
         assert_eq!(oversized_cfg.window_height, 1080);
+    }
+
+    #[test]
+    fn test_instance_config_cleans_legacy_status_fields_on_deserialization() {
+        let json = r#"{
+            "mcVersion": "26.1.2",
+            "loaderType": "NeoForge",
+            "modpackVersion": "0.13.0-beta",
+            "modpackType": "CurseForge",
+            "modpackProjectId": "1148445",
+            "isInstalling": false,
+            "isUpdating": true
+        }"#;
+
+        let cfg: InstanceConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.status, InstanceStatus::Updating);
+        assert!(!cfg.extra.contains_key("isUpdating"));
+        assert!(!cfg.extra.contains_key("isInstalling"));
+
+        let serialized = serde_json::to_string_pretty(&cfg).unwrap();
+        assert!(serialized.contains("\"status\": \"updating\""));
+        assert!(!serialized.contains("isUpdating"));
+        assert!(!serialized.contains("isInstalling"));
+    }
+
+    #[test]
+    fn test_instance_config_migrates_cancelling_update_legacy_fields() {
+        let json = r#"{
+            "isUpdating": true,
+            "isCancelling": true
+        }"#;
+
+        let cfg: InstanceConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.status, InstanceStatus::CancellingUpdate);
+        assert!(!cfg.extra.contains_key("isUpdating"));
+        assert!(!cfg.extra.contains_key("isCancelling"));
+    }
+
+    #[test]
+    fn test_instance_config_migrates_cancelling_install_legacy_fields() {
+        let json = r#"{
+            "isInstalling": true,
+            "isCancelling": true
+        }"#;
+
+        let cfg: InstanceConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.status, InstanceStatus::CancellingInstall);
+        assert!(!cfg.extra.contains_key("isInstalling"));
+        assert!(!cfg.extra.contains_key("isCancelling"));
+    }
+
+    #[test]
+    fn test_instance_config_preserves_unrelated_extra_fields() {
+        let json = r#"{
+            "status": "ready",
+            "isUpdating": false,
+            "customPluginKey": "plugin_value"
+        }"#;
+
+        let cfg: InstanceConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.status, InstanceStatus::Ready);
+        assert!(!cfg.extra.contains_key("isUpdating"));
+        assert_eq!(
+            cfg.extra.get("customPluginKey").and_then(|v| v.as_str()),
+            Some("plugin_value")
+        );
+    }
+
+    #[test]
+    fn test_instance_config_deserializes_legacy_idle_as_ready() {
+        let json = r#"{
+            "status": "idle"
+        }"#;
+
+        let cfg: InstanceConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.status, InstanceStatus::Ready);
+    }
+
+    #[test]
+    fn test_has_legacy_status_in_json_detects_legacy_idle() {
+        let json_with_idle = r#"{ "status": "idle" }"#;
+        assert!(InstanceConfig::has_legacy_status_in_json(json_with_idle));
+
+        let json_with_ready = r#"{ "status": "ready" }"#;
+        assert!(!InstanceConfig::has_legacy_status_in_json(json_with_ready));
+
+        // Substring "idle" in unrelated field must not trigger
+        let json_with_unrelated_idle = r#"{ "status": "ready", "name": "my-idle-server" }"#;
+        assert!(!InstanceConfig::has_legacy_status_in_json(json_with_unrelated_idle));
+    }
+
+    #[tokio::test]
+    async fn test_write_instance_config_atomic() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("atomic_test");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let config_path = inst_dir.join("dlml.json");
+        let mut config = InstanceConfig::default();
+        config.set_status(InstanceStatus::Ready);
+        write_instance_config_atomic(&config_path, &config).await.expect("atomic write");
+
+        assert!(config_path.exists());
+        let content = tokio::fs::read_to_string(&config_path).await.unwrap();
+        let loaded: InstanceConfig = serde_json::from_str(&content).unwrap();
+        assert_eq!(loaded.status, InstanceStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_update_instance_config_preserves_config_on_unknown_status() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("unknown_status_test");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let raw_json = r#"{
+            "status": "someWeirdState",
+            "javaPath": "C:\\custom\\java.exe",
+            "maxMemory": 8192
+        }"#;
+        tokio::fs::write(inst_dir.join("dlml.json"), raw_json).await.unwrap();
+
+        // Mutating a field under update_instance_config must succeed, preserving existing fields
+        let updated = update_instance_config(&inst_dir, |cfg| {
+            cfg.window_width = 1280;
+        })
+        .await
+        .expect("update config should succeed");
+
+        assert_eq!(updated.status, InstanceStatus::Ready);
+        assert_eq!(updated.java_path.as_deref(), Some("C:\\custom\\java.exe"));
+        assert_eq!(updated.max_memory, Some(8192));
+        assert_eq!(updated.window_width, 1280);
+    }
+
+    #[tokio::test]
+    async fn test_update_instance_config_fails_and_does_not_overwrite_corrupt_json() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("corrupt_json_test");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let corrupt_json = "{ corrupt json without closing brace";
+        tokio::fs::write(inst_dir.join("dlml.json"), corrupt_json).await.unwrap();
+
+        let result = update_instance_config(&inst_dir, |cfg| {
+            cfg.window_width = 1280;
+        })
+        .await;
+
+        assert!(result.is_err());
+
+        // Verify the corrupt file was NOT overwritten with default values
+        let content_on_disk = tokio::fs::read_to_string(inst_dir.join("dlml.json")).await.unwrap();
+        assert_eq!(content_on_disk, corrupt_json);
     }
 
     #[test]

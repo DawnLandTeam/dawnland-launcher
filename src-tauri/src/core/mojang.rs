@@ -826,7 +826,7 @@ impl ExecutableTask for InstallVanillaTask {
         };
         let _ = crate::core::launcher::update_instance_config(&version_dir, |config| {
             config.hidden = is_dependency.unwrap_or(false);
-            config.is_installing = false;
+            config.set_status(crate::core::launcher::InstanceStatus::Ready);
         })
         .await;
 
@@ -873,14 +873,12 @@ pub async fn install_vanilla_version(
     let _startup_guard = task_manager.start_instance_install(&instance_id);
     let _ = tokio::fs::create_dir_all(&version_dir).await;
     let config_path = version_dir.join("dlml.json");
-    let pre_config = crate::core::launcher::InstanceConfig {
-        is_installing: true,
+    let mut pre_config = crate::core::launcher::InstanceConfig {
         hidden: is_dependency.unwrap_or(false),
         ..Default::default()
     };
-    if let Ok(json_str) = serde_json::to_string_pretty(&pre_config) {
-        let _ = tokio::fs::write(&config_path, json_str).await;
-    }
+    pre_config.set_status(crate::core::launcher::InstanceStatus::Installing);
+    crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config).await?;
 
     let task = InstallVanillaTask {
         options: VanillaInstallOptions {

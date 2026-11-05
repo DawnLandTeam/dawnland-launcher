@@ -8,3 +8,4 @@ export * from './server';
 export * from './account';
 export * from './drop';
 export * from './modpack';
+export * from './instance';

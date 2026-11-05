@@ -30,22 +30,7 @@ import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { useStatistics } from "../composables/useStatistics";
 import { applyCachedInstanceIcons, useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
 import { useFileDrop } from "../composables/useFileDrop";
-// Types
-interface InstanceItem {
-  id: string;
-  name: string;
-  mcVersion: string;
-  loaderType: string;
-  modpackVersion?: string;
-  modpackType?: string;
-  modpackProjectId?: string;
-  serverId?: string;
-  packVersionId?: string;
-  packFileName?: string;
-  isInstalling?: boolean;
-  isUpdating?: boolean;
-  iconPath?: string | null;
-}
+import { type InstanceItem, isInstanceBusy, getInstanceStatusLabel } from "../types";
 
 interface GameLog {
   type: string;
@@ -146,7 +131,7 @@ const selectedAccount = computed(() => {
 const isActionDisabled = computed(() => {
   if (!selectedInstanceId.value || !selectedAccountId.value) return true;
   
-  if (selectedInstance.value?.isInstalling || selectedInstance.value?.isUpdating) return true;
+  if (isInstanceBusy(selectedInstance.value)) return true;
   
   if (launchingInstances.value.has(selectedInstanceId.value) || 
       repairingInstances.value.has(selectedInstanceId.value)) {
@@ -240,6 +225,10 @@ onMounted(async () => {
 
     if (status === "running") {
       jvmSpawnedInstances.value.add(versionId);
+      const inst = installedInstances.value.find((i) => i.id === versionId);
+      if (inst) {
+        inst.status = 'running';
+      }
       
       // Fallback: If logs don't match, auto-transition after 8 seconds
       setTimeout(() => {
@@ -261,6 +250,11 @@ onMounted(async () => {
       isRepairing.value = false;
       repairingDependencyName.value = "";
       repairPhase.value = "";
+
+      const inst = installedInstances.value.find((i) => i.id === versionId);
+      if (inst) {
+        inst.status = 'ready';
+      }
 
       // Check if this was an intentional kill
       const wasIntentionallyKilled = intentionallyKilledInstances.value.has(versionId);
@@ -462,7 +456,7 @@ async function loadInstances() {
     installedInstances.value = instances;
     // Auto-select first non-installing instance if none selected
     if (!selectedInstanceId.value && instances.length > 0) {
-      const validInstance = instances.find(i => !(i.isInstalling || i.isUpdating));
+      const validInstance = instances.find(i => !isInstanceBusy(i));
       if (validInstance) {
         selectedInstanceId.value = validInstance.id;
       }
@@ -774,10 +768,25 @@ function loaderBadgeClass(loaderType: string): string {
                   </button>
                 </template>
                 <div class="max-h-60 overflow-y-auto">
-                  <DropdownMenuItem v-for="instance in installedInstances" :key="instance.id" @click="!(instance.isInstalling || instance.isUpdating) && (selectedInstanceId = instance.id)" class="flex items-center gap-3 p-2 rounded-lg" :class="(instance.isInstalling || instance.isUpdating) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'" :disabled="instance.isInstalling || instance.isUpdating">
+                  <DropdownMenuItem
+                    v-for="instance in installedInstances"
+                    :key="instance.id"
+                    @click="!isInstanceBusy(instance) && (selectedInstanceId = instance.id)"
+                    class="flex items-center gap-3 p-2 rounded-lg"
+                    :class="isInstanceBusy(instance) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
+                    :disabled="isInstanceBusy(instance)"
+                    :title="isInstanceBusy(instance) ? $t(getInstanceStatusLabel(instance.status) || 'instances.processing') : undefined"
+                  >
                     <InstanceIcon :icon-path="instance.iconPath" :alt="instance.name" class="h-6 w-6 rounded shrink-0" />
                     <span class="truncate font-medium flex-1 text-left">{{ instance.name }}</span>
-                    <Loader2 v-if="instance.isInstalling || instance.isUpdating" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+                    <span v-if="isInstanceBusy(instance)" class="text-xs text-muted-foreground shrink-0">
+                      {{ $t(getInstanceStatusLabel(instance.status) || 'instances.processing') }}
+                    </span>
+                    <Loader2 v-if="isInstanceBusy(instance)" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+                    <span v-else-if="instance.status === 'running'" class="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0">
+                      <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      {{ $t('instances.running') }}
+                    </span>
                   </DropdownMenuItem>
 
                   <div v-if="installedInstances.length > 0" class="h-px bg-border my-1 mx-2"></div>
@@ -840,7 +849,7 @@ function loaderBadgeClass(loaderType: string): string {
 
             <!-- Action Buttons -->
             <div class="flex items-center justify-center gap-3 mt-6">
-              <button @click="openInstanceSettings" :disabled="!selectedInstanceId || selectedInstance?.isInstalling || selectedInstance?.isUpdating" class="flex items-center gap-2 px-4 py-3 border border-white/20 dark:border-zinc-700 bg-white/40 dark:bg-zinc-800/40 rounded-xl hover:bg-white/60 dark:hover:bg-zinc-700/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shadow-sm shrink-0" title="Configure instance">
+              <button @click="openInstanceSettings" :disabled="!selectedInstanceId || isInstanceBusy(selectedInstance)" class="flex items-center gap-2 px-4 py-3 border border-white/20 dark:border-zinc-700 bg-white/40 dark:bg-zinc-800/40 rounded-xl hover:bg-white/60 dark:hover:bg-zinc-700/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium shadow-sm shrink-0" title="Configure instance">
                 <Settings class="h-5 w-5" />
               </button>
               <button @click="handlePrimaryAction" :disabled="isActionDisabled" 
