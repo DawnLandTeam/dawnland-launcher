@@ -945,7 +945,9 @@
     "downgradeConfirmBtn": "已知晓风险，继续降级",
     "downloadUrlMissingTitle": "无法获取下载链接",
     "downloadUrlMissingDesc": "该版本暂无可用的下载地址，请选择其他版本。",
-    "noDescription": "暂无描述"
+    "noDescription": "暂无描述",
+    "instanceRunningWarning": "实例当前正在运行中，无法进行安装、重装、升级或降级操作。请先关闭游戏。",
+    "instanceRunningBanner": "该实例当前正在运行中，所有安装与更新操作已被锁定。请先退出游戏。"
   },
   "modCategories": {
     "adventure": "冒险",

@@ -36,6 +36,7 @@ import { isInstanceBusy } from "../types";
 import { useTaskStore } from "../composables/useTaskStore";
 import { useModpackInstallState } from "../composables/useModpackInstallState";
 import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive } from "../types/task";
+import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../composables/useLaunchState";
 
 const route = useRoute();
 const router = useRouter();
@@ -87,6 +88,21 @@ const tabs = [
 
 const showExportModal = ref(false);
 
+const isRunning = computed(() => {
+  if (!instanceId.value) return false;
+  const idLower = instanceId.value.toLowerCase();
+  for (const id of runningInstances.value) {
+    if (id.toLowerCase() === idLower) return true;
+  }
+  for (const id of launchingInstances.value) {
+    if (id.toLowerCase() === idLower) return true;
+  }
+  for (const id of jvmSpawnedInstances.value) {
+    if (id.toLowerCase() === idLower) return true;
+  }
+  return currentInstance.value?.status === 'running';
+});
+
 const translatedTabs = computed(() => {
   if (!currentInstance.value) return [];
 
@@ -106,7 +122,7 @@ const translatedTabs = computed(() => {
       name: t('install.updateModpackTitle'),
       icon: RefreshCw,
       hasDot: isUpdatingThisInstance,
-      disabled: isInstanceBusy(currentInstance.value) && !isUpdatingThisInstance
+      disabled: (isInstanceBusy(currentInstance.value) && !isUpdatingThisInstance) || isRunning.value
     });
   }
   

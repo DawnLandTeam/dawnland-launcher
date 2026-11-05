@@ -10,6 +10,7 @@ import { Server, Gamepad2, Search, Copy, Check, Loader2, Download, Users, Star, 
 import { getErrorMessage } from "../utils/error";
 import { EXTERNAL_URLS } from "../utils/constants";
 import { trackEvent } from "../utils/analytics";
+import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../composables/useLaunchState";
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -510,6 +511,18 @@ async function installClient(server: ServerInfo) {
   
   // Route to ModpackInstallView with appropriate query params
   const matchedInst = installedInstances.value.find(i => (i.serverId && i.serverId === String(server.id)) || (!i.serverId && (i.name === server.name || i.id === server.name)));
+  if (matchedInst) {
+    const instIdLower = matchedInst.id.toLowerCase();
+    const isInstRunning =
+      Array.from(runningInstances.value).some(id => id.toLowerCase() === instIdLower) ||
+      Array.from(launchingInstances.value).some(id => id.toLowerCase() === instIdLower) ||
+      Array.from(jvmSpawnedInstances.value).some(id => id.toLowerCase() === instIdLower) ||
+      matchedInst.status === 'running';
+    if (isInstRunning) {
+      showAlert(t('modpack.instanceRunningWarning'));
+      return;
+    }
+  }
   const queryParams: Record<string, string> = {
     server_id: String(server.id),
     is_update: (matchedInst ? 'true' : 'false'),

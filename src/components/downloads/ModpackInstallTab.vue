@@ -20,6 +20,7 @@ import { useFileDrop } from "../../composables/useFileDrop";
 import type { ModpackArchiveInfo } from "../../types";
 import { useModpackInstallState } from "../../composables/useModpackInstallState";
 import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive, type TaskState } from "../../types/task";
+import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../../composables/useLaunchState";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -60,6 +61,7 @@ interface InstalledInstance {
   modpackVersion?: string;
   mcVersion?: string;
   loaderType?: string;
+  status?: string;
 }
 
 interface ModpackVersionTarget {
@@ -244,6 +246,41 @@ const localNameError = ref<string | null>(null);
 const onlineNameError = ref<string | null>(null);
 const scanError = ref<string | null>(null);
 const isInstanceNameDirty = ref(false);
+
+const targetInstanceId = computed(() => {
+  if (props.updateId) return props.updateId;
+  if (route.query.update_id) return String(route.query.update_id);
+  const raw = installMode.value === 'online' ? (instanceNameInput.value || instanceName.value) : instanceName.value;
+  if (raw?.trim()) return raw.trim();
+  if (route.query.server_id) {
+    const existing = installedInstances.value.find(i => i.serverId === String(route.query.server_id));
+    if (existing) return existing.id;
+  }
+  return "";
+});
+
+const isTargetInstanceRunning = computed(() => {
+  const targetId = targetInstanceId.value;
+  if (!targetId) return false;
+  const targetIdLower = targetId.toLowerCase();
+
+  for (const id of runningInstances.value) {
+    if (id.toLowerCase() === targetIdLower) return true;
+  }
+  for (const id of launchingInstances.value) {
+    if (id.toLowerCase() === targetIdLower) return true;
+  }
+  for (const id of jvmSpawnedInstances.value) {
+    if (id.toLowerCase() === targetIdLower) return true;
+  }
+
+  const existing = installedInstances.value.find(
+    (i) => i.id.toLowerCase() === targetIdLower || (route.query.server_id && i.serverId === String(route.query.server_id))
+  );
+  if (existing?.status === 'running') return true;
+
+  return false;
+});
 
 const onLocalNameInput = (val: string) => {
   localNameError.value = null;
@@ -650,9 +687,15 @@ const openVersionsModal = async (modpack: any) => {
 };
 
 const getVersionUpgradeStatus = (index: number) => {
+  const isRunning = isTargetInstanceRunning.value;
   const cv = currentDisplayVersion.value;
   if (!cv || cv === "undefined" || cv === "null") {
-    return { action: 'install', text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+    return {
+      action: 'install',
+      text: t('modpacks.installBtn'),
+      disabled: isRunning,
+      class: isRunning ? 'bg-zinc-500/50 cursor-not-allowed opacity-60 text-white' : 'bg-emerald-600 hover:bg-emerald-700'
+    };
   }
   
   const cvLower = cv.toLowerCase();
@@ -680,15 +723,43 @@ const getVersionUpgradeStatus = (index: number) => {
   });
   
   if (currentVersionIndex === -1) {
-    return { action: 'install', text: t('modpacks.installBtn'), disabled: false, class: 'bg-emerald-600 hover:bg-emerald-700' };
+    return {
+      action: 'install',
+      text: t('modpacks.installBtn'),
+      disabled: isRunning,
+      class: isRunning ? 'bg-zinc-500/50 cursor-not-allowed opacity-60 text-white' : 'bg-emerald-600 hover:bg-emerald-700'
+    };
   }
   
-  if (index < currentVersionIndex) return { action: 'upgrade', text: t('modpack.upgrade'), disabled: false, class: 'bg-blue-600 hover:bg-blue-700' };
-  if (index === currentVersionIndex) return { action: 'reinstall', text: t('modpack.reinstall'), disabled: false, class: 'bg-amber-600 hover:bg-amber-700' };
-  return { action: 'downgrade', text: t('modpack.downgrade', 'Downgrade'), disabled: false, class: 'bg-zinc-600 hover:bg-zinc-700 text-white' };
+  if (index < currentVersionIndex) {
+    return {
+      action: 'upgrade',
+      text: t('modpack.upgrade'),
+      disabled: isRunning,
+      class: isRunning ? 'bg-zinc-500/50 cursor-not-allowed opacity-60 text-white' : 'bg-blue-600 hover:bg-blue-700'
+    };
+  }
+  if (index === currentVersionIndex) {
+    return {
+      action: 'reinstall',
+      text: t('modpack.reinstall'),
+      disabled: isRunning,
+      class: isRunning ? 'bg-zinc-500/50 cursor-not-allowed opacity-60 text-white' : 'bg-amber-600 hover:bg-amber-700'
+    };
+  }
+  return {
+    action: 'downgrade',
+    text: t('modpack.downgrade', 'Downgrade'),
+    disabled: isRunning,
+    class: isRunning ? 'bg-zinc-500/50 cursor-not-allowed opacity-60 text-white' : 'bg-zinc-600 hover:bg-zinc-700 text-white'
+  };
 };
 
 const handleSelectVersion = (version: ModpackVersionTarget, index: number) => {
+  if (isTargetInstanceRunning.value) {
+    toast.error(t('common.error', 'Error'), t('modpack.instanceRunningWarning'));
+    return;
+  }
   if (!version.download_url) {
     toast.error(
       t('modpack.downloadUrlMissingTitle', 'Cannot get download link'),
@@ -943,6 +1014,10 @@ watch(
 
 const installModpack = async () => {
   if (isInstalling.value) return;
+  if (isTargetInstanceRunning.value) {
+    toast.error(t('common.error', 'Error'), t('modpack.instanceRunningWarning'));
+    return;
+  }
   if (installMode.value === 'online') {
     if (!onlineUrl.value) return;
     instanceNameInput.value = instanceNameInput.value.trim();
@@ -1123,7 +1198,13 @@ const installModpack = async () => {
     pendingDowngradeVersion.value = null;
     console.error("Installation failed:", error);
     trackEvent("Error Occurred", { context: "modpack_install", error_type: getErrorType(error) });
-    statusMessage.value = `Installation failed: ${getErrorMessage(error)}`;
+    const errMsg = getErrorMessage(error);
+    statusMessage.value = `Installation failed: ${errMsg}`;
+    if (errMsg.includes("GAME_IS_RUNNING")) {
+      toast.error(t('common.error', 'Error'), t('modpack.instanceRunningWarning'));
+    } else {
+      toast.error(t('common.error', 'Error'), errMsg);
+    }
     isInstalling.value = false;
     if (currentTaskId.value) {
       dismissTask(currentTaskId.value);
@@ -1240,6 +1321,12 @@ const formatDate = (dateString: string) => {
           {{ t('modpacks.uploadLocal') }}
         </button>
       </div>
+    </div>
+
+    <!-- Running Instance Warning Banner -->
+    <div v-if="isTargetInstanceRunning && !isInstalling" class="p-3.5 mb-2 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 rounded-xl flex items-center gap-3 text-amber-700 dark:text-amber-300 text-sm shrink-0">
+      <AlertTriangle class="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+      <span class="font-medium">{{ t('modpack.instanceRunningBanner') }}</span>
     </div>
     <!-- ONLINE MODE UI -->
     <template v-if="!isInstalling && installMode === 'online' && !props.isModalUpdate">
@@ -1391,7 +1478,7 @@ const formatDate = (dateString: string) => {
           <div class="flex justify-end pt-4">
             <button
               class="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-              :disabled="!zipPath || !instanceName"
+              :disabled="!zipPath || !instanceName || isTargetInstanceRunning"
               @click="installModpack"
             >
               {{ isUpdate ? t('install.updateButton', 'Update Modpack') : t('install.installButton', 'Install Local Archive') }}
@@ -1441,6 +1528,12 @@ const formatDate = (dateString: string) => {
                 {{ onlineNameError }}
               </p>
             </div>
+          </div>
+
+          <!-- Running Instance Warning Banner -->
+          <div v-if="isTargetInstanceRunning" class="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 rounded-xl flex items-center gap-2.5 text-amber-700 dark:text-amber-300 text-xs shrink-0">
+            <AlertTriangle class="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span class="font-medium">{{ t('modpack.instanceRunningBanner') }}</span>
           </div>
 
           <div class="flex-1 overflow-hidden border rounded-xl bg-background/50 flex flex-col">

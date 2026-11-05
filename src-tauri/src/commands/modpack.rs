@@ -142,6 +142,12 @@ impl ExecutableTask for InstallModpackTask {
         let has_version_json = json_path.exists();
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
+        if let Some(running_state) = ctx.app_handle.try_state::<crate::core::launcher::RunningInstances>() {
+            let map = running_state.0.lock().await;
+            if map.contains_key(instance_name) {
+                return Err(TaskError::ExecutionError("GAME_IS_RUNNING".to_string()));
+            }
+        }
         if is_update {
             protect_existing_instance(&instance_dir).await;
         } else {
@@ -764,6 +770,12 @@ impl ExecutableTask for InstallOnlineModpackTask {
         let instance_dir = base_dir.join("versions").join(instance_name);
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
+        if let Some(running_state) = ctx.app_handle.try_state::<crate::core::launcher::RunningInstances>() {
+            let map = running_state.0.lock().await;
+            if map.contains_key(instance_name) {
+                return Err(TaskError::ExecutionError("GAME_IS_RUNNING".to_string()));
+            }
+        }
         if is_update {
             protect_existing_instance(&instance_dir).await;
         } else {
@@ -1105,6 +1117,13 @@ pub async fn install_modpack(
         return Err(DawnlandError::Unknown("Invalid instance name".to_string()).into());
     }
 
+    if let Some(running_state) = app.try_state::<crate::core::launcher::RunningInstances>() {
+        let map = running_state.0.lock().await;
+        if map.contains_key(&instance_name) {
+            return Err(DawnlandError::Unknown("GAME_IS_RUNNING".to_string()).into());
+        }
+    }
+
     let task_manager = app.state::<TaskManager>().inner().clone();
 
     // Reject duplicate tasks for the same instance before touching any files or flags
@@ -1200,6 +1219,13 @@ pub async fn download_and_install_online_modpack(
 ) -> Result<String, AppError> {
     if !crate::core::fs_utils::is_safe_single_name(&instance_name) {
         return Err(DawnlandError::Unknown("Invalid instance name".to_string()).into());
+    }
+
+    if let Some(running_state) = app.try_state::<crate::core::launcher::RunningInstances>() {
+        let map = running_state.0.lock().await;
+        if map.contains_key(&instance_name) {
+            return Err(DawnlandError::Unknown("GAME_IS_RUNNING".to_string()).into());
+        }
     }
 
     let task_manager = app.state::<TaskManager>().inner().clone();
