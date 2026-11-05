@@ -67,7 +67,7 @@ const route = useRoute();
 const installedInstances = ref<InstanceItem[]>([]);
 const { t } = useI18n();
 const accounts = ref<Account[]>([]);
-const selectedInstanceId = ref<string>("");
+const selectedInstanceId = useStorage<string>('selectedInstanceId', '');
 const { setHomeSelectedInstanceId } = useFileDrop();
 watch(selectedInstanceId, (id) => setHomeSelectedInstanceId(id || ""), { immediate: true });
 const selectedAccountId = useStorage<string>('selectedAccountId', '');
@@ -454,12 +454,15 @@ async function loadInstances() {
       await invoke<InstanceItem[]>("scan_installed_instances"),
     );
     installedInstances.value = instances;
-    // Auto-select first non-installing instance if none selected
-    if (!selectedInstanceId.value && instances.length > 0) {
-      const validInstance = instances.find(i => !isInstanceBusy(i));
-      if (validInstance) {
-        selectedInstanceId.value = validInstance.id;
+    if (instances.length > 0) {
+      // Check if previously selected instance still exists
+      const exists = instances.some((i) => i.id === selectedInstanceId.value);
+      if (!exists) {
+        const validInstance = instances.find((i) => !isInstanceBusy(i));
+        selectedInstanceId.value = validInstance ? validInstance.id : instances[0].id;
       }
+    } else {
+      selectedInstanceId.value = "";
     }
   } catch (e) {
     console.error("Failed to load instances:", e);
@@ -469,8 +472,14 @@ async function loadInstances() {
 async function loadAccounts() {
   try {
     accounts.value = await invoke<Account[]>("get_accounts");
-    if (accounts.value.length > 0 && !selectedAccountId.value) {
-      selectedAccountId.value = accounts.value[0].id;
+    if (accounts.value.length > 0) {
+      // Check if previously selected account still exists
+      const exists = accounts.value.some((a) => a.id === selectedAccountId.value);
+      if (!exists) {
+        selectedAccountId.value = accounts.value[0].id;
+      }
+    } else {
+      selectedAccountId.value = "";
     }
   } catch (e) {
     console.error("Failed to load accounts:", e);
