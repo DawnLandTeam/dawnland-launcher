@@ -142,6 +142,18 @@ impl ExecutableTask for InstallModpackTask {
         let has_version_json = json_path.exists();
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
+        macro_rules! check_not_running {
+            () => {
+                if let Some(running_state) = ctx.app_handle.try_state::<crate::core::launcher::RunningInstances>() {
+                    if running_state.is_instance_running(instance_name).await {
+                        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+                        return Err(TaskError::ExecutionError("GAME_IS_RUNNING".to_string()));
+                    }
+                }
+            };
+        }
+
+        check_not_running!();
         if is_update {
             protect_existing_instance(&instance_dir).await;
         } else {
@@ -194,6 +206,8 @@ impl ExecutableTask for InstallModpackTask {
                 ctx_extract
                     .update_progress(0, 100, "Extracting modpack archive...")
                     .await;
+
+                check_not_running!();
 
                 let zip = PathBuf::from(zip_path);
                 let temp = temp_dir.clone();
@@ -473,6 +487,7 @@ impl ExecutableTask for InstallModpackTask {
 
         // 4. Batch Download Mods
         check_cancel!();
+        check_not_running!();
 
         let ctx_download_mods = ctx.with_sub_task("download_mods");
 
@@ -569,6 +584,7 @@ impl ExecutableTask for InstallModpackTask {
         }
 
         check_cancel!();
+        check_not_running!();
 
         // 5. Apply Overrides
         let ctx_overrides = ctx.with_sub_task("apply_overrides");
@@ -590,6 +606,7 @@ impl ExecutableTask for InstallModpackTask {
             .await;
 
         check_cancel!();
+        check_not_running!();
 
         // Perform smart cleanup only AFTER all installation steps and overrides succeed
         // to prevent deleting working mods on failure
@@ -762,20 +779,33 @@ impl ExecutableTask for InstallOnlineModpackTask {
 
         let base_dir = crate::core::mojang::get_minecraft_base();
         let instance_dir = base_dir.join("versions").join(instance_name);
-
+        let temp_dir = base_dir
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(".dawnland")
+            .join("temp");
+        let temp_zip_path = temp_dir.join(format!("{}.zip", ctx.id));
+        let _ = tokio::fs::create_dir_all(&temp_dir).await;
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
+
+        macro_rules! check_not_running {
+            () => {
+                if let Some(running_state) = ctx.app_handle.try_state::<crate::core::launcher::RunningInstances>() {
+                    if running_state.is_instance_running(instance_name).await {
+                        let _ = tokio::fs::remove_file(&temp_zip_path).await;
+                        return Err(TaskError::ExecutionError("GAME_IS_RUNNING".to_string()));
+                    }
+                }
+            };
+        }
+
+        check_not_running!();
         if is_update {
             protect_existing_instance(&instance_dir).await;
         } else {
             crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| TaskError::ExecutionError(e.to_string()))?;
         }
 
-        let temp_dir = base_dir
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .join(".dawnland")
-            .join("temp");
-        let _ = tokio::fs::create_dir_all(&temp_dir).await;
         let mut sub_tasks = vec![crate::core::task::state::SubTaskState {
             key: "download_modpack_zip".to_string(),
             name: "Download modpack archive".to_string(),
@@ -788,8 +818,6 @@ impl ExecutableTask for InstallOnlineModpackTask {
 
         ctx.init_sub_tasks(sub_tasks).await;
         ctx.set_context_data(&SubTasksInitialized).await;
-
-        let temp_zip_path = temp_dir.join(format!("{}.zip", ctx.id));
 
         let ctx_zip = ctx.with_sub_task("download_modpack_zip");
         ctx_zip
@@ -826,6 +854,7 @@ impl ExecutableTask for InstallOnlineModpackTask {
         }
 
         if !skip_download {
+            check_not_running!();
             let mut task = crate::downloader::DownloadTask::new(
                 url.clone(),
                 temp_zip_path.to_string_lossy().to_string(),
@@ -890,6 +919,8 @@ impl ExecutableTask for InstallOnlineModpackTask {
                 pack_file_name: self.options.pack_file_name.clone(),
             },
         };
+
+        check_not_running!();
 
         // Release outer instance mutex before calling inner task to prevent non-reentrant deadlock
         drop(_instance_guard);
@@ -1105,6 +1136,12 @@ pub async fn install_modpack(
         return Err(DawnlandError::Unknown("Invalid instance name".to_string()).into());
     }
 
+    if let Some(running_state) = app.try_state::<crate::core::launcher::RunningInstances>() {
+        if running_state.is_instance_running(&instance_name).await {
+            return Err(DawnlandError::Unknown("GAME_IS_RUNNING".to_string()).into());
+        }
+    }
+
     let task_manager = app.state::<TaskManager>().inner().clone();
 
     // Reject duplicate tasks for the same instance before touching any files or flags
@@ -1200,6 +1237,12 @@ pub async fn download_and_install_online_modpack(
 ) -> Result<String, AppError> {
     if !crate::core::fs_utils::is_safe_single_name(&instance_name) {
         return Err(DawnlandError::Unknown("Invalid instance name".to_string()).into());
+    }
+
+    if let Some(running_state) = app.try_state::<crate::core::launcher::RunningInstances>() {
+        if running_state.is_instance_running(&instance_name).await {
+            return Err(DawnlandError::Unknown("GAME_IS_RUNNING".to_string()).into());
+        }
     }
 
     let task_manager = app.state::<TaskManager>().inner().clone();

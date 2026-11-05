@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useTaskStore } from '../composables/useTaskStore';
 import { Clock, Loader2, CheckCircle, Pause, XCircle, Ban, ArrowRight } from '@lucide/vue';
-import { getTaskName, type TaskState } from '../types/task';
+import { getTaskName, formatTaskErrorMessage, type TaskState } from '../types/task';
 
 const props = defineProps<{
   task: TaskState;
@@ -67,7 +67,7 @@ function getSubTaskPercentage(sub: any) {
         {{ $t('task.cancellingDesc', 'Safely terminating task processes...') }}
       </p>
       <p v-else-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 line-clamp-2 mt-1">
-        {{ task.error === 'Task cancelled' ? $t('task.cancelledError') : task.error }}
+        {{ formatTaskErrorMessage(task.error, t) }}
       </p>
       <div v-else-if="!task.progress.sub_tasks || task.progress.sub_tasks.length === 0" class="flex items-center gap-2 mt-1">
         <span class="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2">

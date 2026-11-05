@@ -945,7 +945,9 @@
     "downgradeConfirmBtn": "I understand the risks, Downgrade",
     "downloadUrlMissingTitle": "Missing Download URL",
     "downloadUrlMissingDesc": "No valid download address is available for this version. Please select another version.",
-    "noDescription": "No description"
+    "noDescription": "No description",
+    "instanceRunningWarning": "The instance is currently running. Cannot install, reinstall, upgrade, or downgrade while playing. Please close the game first.",
+    "instanceRunningBanner": "This instance is currently running. All installation and update actions are locked. Please exit the game first."
   },
   "modCategories": {
     "adventure": "Adventure",

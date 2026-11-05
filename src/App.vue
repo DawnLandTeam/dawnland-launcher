@@ -23,6 +23,7 @@ import { parseDeepLinkUrl } from "./utils/deepLink";
 import { trackEvent, sanitizeTrackingUrl, getErrorType } from "./utils/analytics";
 import { getUpdateChannelQuery } from "./utils/updateChannel";
 import { fetchApi } from "./utils/api";
+import { initGlobalLaunchState } from "./composables/useLaunchState";
 
 const isUpdateModalOpen = ref(false);
 const updateInfo = shallowRef<CustomUpdate | null>(null);
@@ -53,6 +54,7 @@ onMounted(async () => {
 
   // Initialize task center
   await taskStore.init();
+  await initGlobalLaunchState();
 
   // Initialize log center
   await logStore.init();

@@ -36,6 +36,7 @@ import { isInstanceBusy } from "../types";
 import { useTaskStore } from "../composables/useTaskStore";
 import { useModpackInstallState } from "../composables/useModpackInstallState";
 import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive } from "../types/task";
+import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../composables/useLaunchState";
 
 const route = useRoute();
 const router = useRouter();
@@ -87,6 +88,21 @@ const tabs = [
 
 const showExportModal = ref(false);
 
+const isRunning = computed(() => {
+  if (!instanceId.value) return false;
+  const idLower = instanceId.value.toLowerCase();
+  for (const id of runningInstances.value) {
+    if (id.toLowerCase() === idLower) return true;
+  }
+  for (const id of launchingInstances.value) {
+    if (id.toLowerCase() === idLower) return true;
+  }
+  for (const id of jvmSpawnedInstances.value) {
+    if (id.toLowerCase() === idLower) return true;
+  }
+  return currentInstance.value?.status === 'running';
+});
+
 const translatedTabs = computed(() => {
   if (!currentInstance.value) return [];
 
@@ -106,7 +122,7 @@ const translatedTabs = computed(() => {
       name: t('install.updateModpackTitle'),
       icon: RefreshCw,
       hasDot: isUpdatingThisInstance,
-      disabled: isInstanceBusy(currentInstance.value) && !isUpdatingThisInstance
+      disabled: (isInstanceBusy(currentInstance.value) && !isUpdatingThisInstance) || isRunning.value
     });
   }
   
@@ -122,16 +138,30 @@ const validTabIds = computed(() => {
 });
 
 const activeTab = ref('settings');
+const previousTab = ref('settings');
 
 watch(() => route.query.tab, (newTab) => {
   if (newTab && typeof newTab === 'string' && validTabIds.value.includes(newTab)) {
+    if (activeTab.value !== 'update_modpack' && newTab === 'update_modpack') {
+      previousTab.value = activeTab.value;
+    }
     activeTab.value = newTab;
   }
 }, { immediate: true });
 
 function switchTab(tabId: string) {
+  if (activeTab.value !== 'update_modpack' && tabId === 'update_modpack') {
+    previousTab.value = activeTab.value;
+  }
   activeTab.value = tabId;
   router.replace({ query: { ...route.query, tab: tabId } });
+}
+
+function handleCancelUpdate() {
+  const targetTab = (previousTab.value && previousTab.value !== 'update_modpack')
+    ? previousTab.value
+    : 'settings';
+  switchTab(targetTab);
 }
 
 watch(currentInstance, (inst) => {
@@ -219,7 +249,7 @@ watch(instanceId, async (newId) => {
             :update-project-id="currentInstance.modpackProjectId"
             :update-source="currentInstance.modpackType?.toLowerCase() || ''"
             :update-current-version="currentInstance.modpackVersion"
-            @cancel-update="switchTab('settings')"
+            @cancel-update="handleCancelUpdate"
           />
         </keep-alive>
       </div>
