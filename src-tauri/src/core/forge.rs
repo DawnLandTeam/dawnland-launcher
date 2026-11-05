@@ -1400,7 +1400,7 @@ pub async fn install_forge_instance(
     pre_config.set_status(crate::core::launcher::InstanceStatus::Installing);
     crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config)
         .await
-        .map_err(|e| crate::error::DawnlandError::Unknown(e))?;
+        .map_err(crate::error::DawnlandError::Unknown)?;
 
     let task = InstallForgeTask {
         options: InstallForgeOptions {

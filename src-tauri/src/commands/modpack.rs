@@ -1154,7 +1154,7 @@ pub async fn install_modpack(
         };
         crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config)
             .await
-            .map_err(|e| crate::error::DawnlandError::Unknown(e))?;
+            .map_err(crate::error::DawnlandError::Unknown)?;
     } else {
         protect_existing_instance(&instance_dir).await;
     }
@@ -1255,7 +1255,7 @@ pub async fn download_and_install_online_modpack(
         };
         crate::core::launcher::write_instance_config_atomic(&config_path, &pre_config)
             .await
-            .map_err(|e| crate::error::DawnlandError::Unknown(e))?;
+            .map_err(crate::error::DawnlandError::Unknown)?;
     } else {
         protect_existing_instance(&instance_dir).await;
     }
