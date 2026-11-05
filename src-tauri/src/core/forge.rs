@@ -1305,7 +1305,7 @@ impl ExecutableTask for InstallForgeTask {
         // ========== Step 5: Update dlml.json config atomically ==========
         crate::core::launcher::update_instance_config(&version_dir, |config| {
             config.hidden = is_dependency.unwrap_or(false);
-            config.set_status(crate::core::launcher::InstanceStatus::Idle);
+            config.set_status(crate::core::launcher::InstanceStatus::Ready);
         })
         .await
         .map_err(TaskError::ExecutionError)?;

@@ -106,12 +106,19 @@ pub struct InstanceTaskContext<'a> {
     pub starting_instances: Option<&'a std::sync::RwLock<std::collections::HashSet<String>>>,
     pub active_tasks: Option<&'a tokio::sync::RwLock<std::collections::HashMap<String, std::sync::Arc<crate::core::task::manager::TaskWorkerHandle>>>>,
     pub tasks: &'a [crate::core::task::TaskState],
+    pub running_instances: Option<&'a std::collections::HashSet<String>>,
 }
 
 impl<'a> InstanceTaskContext<'a> {
     pub fn is_starting(&self, id: &str) -> bool {
         self.starting_instances
             .and_then(|s| s.read().ok())
+            .map(|set| set.contains(id))
+            .unwrap_or(false)
+    }
+
+    pub fn is_running(&self, id: &str) -> bool {
+        self.running_instances
             .map(|set| set.contains(id))
             .unwrap_or(false)
     }
@@ -151,7 +158,7 @@ pub async fn scan_installed_instances_internal(
             if json_path.exists() || config_path.exists() {
                 // Check if instance is hidden via dlml.json
                 let mut is_hidden = false;
-                let mut status = crate::models::instance::InstanceStatus::Idle;
+                let mut status = crate::models::instance::InstanceStatus::Ready;
                 let mut server_id = None;
                 let mut pack_version_id = None;
                 let mut pack_file_name = None;
@@ -193,17 +200,21 @@ pub async fn scan_installed_instances_internal(
                             if task.task_type.is_update() {
                                 if task.status == crate::core::task::TaskStatus::Cancelled && (task_ctx.is_starting(&id) || task_ctx.is_busy(&id).await) {
                                     status = crate::models::instance::InstanceStatus::CancellingUpdate;
-                                } else if status == crate::models::instance::InstanceStatus::Idle {
+                                } else if status == crate::models::instance::InstanceStatus::Ready {
                                     status = crate::models::instance::InstanceStatus::Updating;
                                 }
                             } else if task.status == crate::core::task::TaskStatus::Cancelled && (task_ctx.is_starting(&id) || task_ctx.is_busy(&id).await) {
                                 status = crate::models::instance::InstanceStatus::CancellingInstall;
-                            } else if status == crate::models::instance::InstanceStatus::Idle && matches!(task.status, crate::core::task::TaskStatus::Pending | crate::core::task::TaskStatus::Running | crate::core::task::TaskStatus::Paused) {
+                            } else if status == crate::models::instance::InstanceStatus::Ready && matches!(task.status, crate::core::task::TaskStatus::Pending | crate::core::task::TaskStatus::Running | crate::core::task::TaskStatus::Paused) {
                                 status = crate::models::instance::InstanceStatus::Installing;
                             }
                             break;
                         }
                     }
+                }
+
+                if status == crate::models::instance::InstanceStatus::Ready && task_ctx.is_running(&id) {
+                    status = crate::models::instance::InstanceStatus::Running;
                 }
 
                 // If it is installing, updating, or cancelling, check if its corresponding task exists and is not cancelled
@@ -229,12 +240,12 @@ pub async fn scan_installed_instances_internal(
                             tracing::warn!("Instance {} is marked as {:?} without active task. Skipping zombie auto-cleanup and resetting status.", id, status);
                             if config_path.exists()
                                 && crate::core::launcher::update_instance_config(&path, |config| {
-                                    config.set_status(crate::models::instance::InstanceStatus::Idle);
+                                    config.set_status(crate::models::instance::InstanceStatus::Ready);
                                 })
                                 .await
                                 .is_ok()
                             {
-                                status = crate::models::instance::InstanceStatus::Idle;
+                                status = crate::models::instance::InstanceStatus::Ready;
                             }
                         }
                     }
@@ -419,9 +430,19 @@ pub async fn scan_installed_instances(
         return Ok(Vec::new());
     }
 
+    // Load running instances from launcher state
+    let running_instances_set: std::collections::HashSet<String> =
+        if let Some(state) = app.try_state::<crate::core::launcher::RunningInstances>() {
+            let map = state.0.lock().await;
+            map.keys().cloned().collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+
     // Load all tasks from DB once to avoid locking inside loop
     let tasks = task_manager.load_history().await.unwrap_or_default();
-    let task_ctx = task_manager.task_context(&tasks);
+    let mut task_ctx = task_manager.task_context(&tasks);
+    task_ctx.running_instances = Some(&running_instances_set);
 
     let (instances, icon_backfill) =
         scan_installed_instances_internal(&versions_dir, &task_ctx).await?;
@@ -638,7 +659,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
     let mut server_id = None;
     let mut pack_version_id = None;
     let mut pack_file_name = None;
-    let mut status = crate::models::instance::InstanceStatus::Idle;
+    let mut status = crate::models::instance::InstanceStatus::Ready;
     let mut icon_name = None;
 
     if config_path.exists() {
@@ -2642,6 +2663,7 @@ mod tests {
             starting_instances: None,
             active_tasks: None,
             tasks: &tasks,
+            running_instances: None,
         };
 
         let (instances, _) = scan_installed_instances_internal(&versions_dir, &task_ctx)
@@ -2705,6 +2727,7 @@ mod tests {
             starting_instances: None,
             active_tasks: None,
             tasks: &tasks,
+            running_instances: None,
         };
 
         let (instances, _) = scan_installed_instances_internal(&versions_dir, &task_ctx)
@@ -2722,6 +2745,53 @@ mod tests {
         assert!(updated_dlml.contains("\"status\": \"cancellingUpdate\""));
         assert!(!updated_dlml.contains("isUpdating"));
         assert!(!updated_dlml.contains("isCancelling"));
+    }
+
+    #[tokio::test]
+    async fn test_scan_installed_instances_detects_running_status() {
+        use std::collections::HashSet;
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let inst_id = "RunningPack";
+        let inst_dir = versions_dir.join(inst_id);
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let version_json = r#"{
+            "id": "RunningPack",
+            "inheritsFrom": "1.20.1"
+        }"#;
+        tokio::fs::write(inst_dir.join(format!("{}.json", inst_id)), version_json)
+            .await
+            .expect("write version json");
+
+        let dlml_json = r#"{
+            "mcVersion": "1.20.1",
+            "loaderType": "Vanilla",
+            "status": "ready"
+        }"#;
+        tokio::fs::write(inst_dir.join("dlml.json"), dlml_json)
+            .await
+            .expect("write dlml.json");
+
+        let mut running_set = HashSet::new();
+        running_set.insert(inst_id.to_string());
+
+        let tasks = vec![];
+        let task_ctx = InstanceTaskContext {
+            starting_instances: None,
+            active_tasks: None,
+            tasks: &tasks,
+            running_instances: Some(&running_set),
+        };
+
+        let (instances, _) = scan_installed_instances_internal(&versions_dir, &task_ctx)
+            .await
+            .expect("scan instances");
+
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].status, crate::models::instance::InstanceStatus::Running);
     }
 }
 

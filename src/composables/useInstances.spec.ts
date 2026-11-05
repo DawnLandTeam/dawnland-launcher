@@ -16,7 +16,7 @@ describe('useInstances composable', () => {
   });
 
   it('fetches instances and sets isLoaded to true', async () => {
-    const mockData = [{ id: '1', name: 'Instance 1', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'idle' as const }];
+    const mockData = [{ id: '1', name: 'Instance 1', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }];
     vi.mocked(invoke).mockResolvedValueOnce(mockData);
 
     const { fetchInstances, instances, isLoaded } = useInstances();
@@ -36,26 +36,26 @@ describe('useInstances composable', () => {
     
     // Setup initial state
     isLoaded.value = true;
-    instances.value = [{ id: '1', name: 'Cached', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'idle' as const }];
+    instances.value = [{ id: '1', name: 'Cached', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }];
     
-    vi.mocked(invoke).mockResolvedValueOnce([{ id: '2', name: 'New', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'idle' as const }]);
+    vi.mocked(invoke).mockResolvedValueOnce([{ id: '2', name: 'New', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
 
     // Call without force
     const result1 = await fetchInstances();
     
     // It returns cached immediately and does a background fetch
-    expect(result1).toEqual([{ id: '1', name: 'Cached', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'idle' as const }]);
+    expect(result1).toEqual([{ id: '1', name: 'Cached', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
     expect(invoke).toHaveBeenCalledTimes(1);
     
     // Wait for the background promise to resolve (macro task tick)
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(instances.value).toEqual([{ id: '2', name: 'New', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'idle' as const }]);
+    expect(instances.value).toEqual([{ id: '2', name: 'New', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
     
     // Call with force
-    vi.mocked(invoke).mockResolvedValueOnce([{ id: '3', name: 'Forced', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'idle' as const }]);
+    vi.mocked(invoke).mockResolvedValueOnce([{ id: '3', name: 'Forced', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
     const result2 = await fetchInstances(true);
     
     expect(invoke).toHaveBeenCalledTimes(2);
-    expect(result2).toEqual([{ id: '3', name: 'Forced', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'idle' as const }]);
+    expect(result2).toEqual([{ id: '3', name: 'Forced', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
   });
 });

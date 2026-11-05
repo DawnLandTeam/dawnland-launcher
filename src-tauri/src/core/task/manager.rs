@@ -292,6 +292,7 @@ impl TaskManager {
             starting_instances: Some(&self.starting_instances),
             active_tasks: Some(&self.active_tasks),
             tasks,
+            running_instances: None,
         }
     }
 
@@ -576,7 +577,7 @@ impl TaskManager {
                                     );
                                     if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
                                         let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                                            config.set_status(crate::core::launcher::InstanceStatus::Idle);
+                                            config.set_status(crate::core::launcher::InstanceStatus::Ready);
                                         }).await;
                                     }
                                 } else if task_type.is_core_installation() {
@@ -632,7 +633,7 @@ impl TaskManager {
                                     let config_path = instance_dir.join("dlml.json");
                                     if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
                                         let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                                            config.set_status(crate::core::launcher::InstanceStatus::Idle);
+                                            config.set_status(crate::core::launcher::InstanceStatus::Ready);
                                         }).await;
                                     }
                                 }
@@ -791,7 +792,7 @@ pub async fn recover_stale_instances_internal(
                 instance_id
             );
             let _ = crate::core::launcher::update_instance_config(&path, |cfg| {
-                cfg.set_status(crate::core::launcher::InstanceStatus::Idle);
+                cfg.set_status(crate::core::launcher::InstanceStatus::Ready);
             })
             .await;
         }
@@ -889,10 +890,10 @@ mod tests {
         // Directory must still exist!
         assert!(tokio::fs::try_exists(&inst_dir).await.unwrap_or(false));
 
-        // Config must have status reset to Idle
+        // Config must have status reset to Ready
         let content = tokio::fs::read_to_string(inst_dir.join("dlml.json")).await.unwrap();
         let loaded: crate::core::launcher::InstanceConfig = serde_json::from_str(&content).unwrap();
-        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Idle);
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
     }
 
     #[tokio::test]
@@ -930,6 +931,6 @@ mod tests {
 
         let content = tokio::fs::read_to_string(inst_dir.join("dlml.json")).await.unwrap();
         let loaded: crate::core::launcher::InstanceConfig = serde_json::from_str(&content).unwrap();
-        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Idle);
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
     }
 }

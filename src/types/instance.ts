@@ -1,5 +1,6 @@
 export type InstanceStatus =
-  | 'idle'
+  | 'ready'
+  | 'running'
   | 'installing'
   | 'cancellingInstall'
   | 'updating'
@@ -21,6 +22,13 @@ export interface InstanceItem {
   iconPath?: string | null;
 }
 
+export const BUSY_INSTANCE_STATUSES: readonly InstanceStatus[] = [
+  'installing',
+  'cancellingInstall',
+  'updating',
+  'cancellingUpdate',
+];
+
 export function isInstanceBusy(
   instance:
     | {
@@ -29,11 +37,35 @@ export function isInstanceBusy(
     | null
     | undefined,
 ): boolean {
-  return Boolean(instance?.status && instance.status !== 'idle');
+  if (!instance?.status) return false;
+  return BUSY_INSTANCE_STATUSES.includes(instance.status);
+}
+
+export function isInstanceRunning(
+  instance:
+    | {
+        status?: InstanceStatus;
+      }
+    | null
+    | undefined,
+): boolean {
+  return instance?.status === 'running';
+}
+
+export function isInstanceReady(
+  instance:
+    | {
+        status?: InstanceStatus;
+      }
+    | null
+    | undefined,
+): boolean {
+  return instance?.status === 'ready';
 }
 
 export const INSTANCE_STATUS_LABELS: Record<InstanceStatus, string> = {
-  idle: '',
+  ready: '',
+  running: 'instances.running',
   installing: 'instances.installing',
   cancellingInstall: 'instances.cancellingInstall',
   updating: 'instances.updating',

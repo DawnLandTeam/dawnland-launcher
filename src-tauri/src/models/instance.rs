@@ -5,7 +5,9 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase")]
 pub enum InstanceStatus {
     #[default]
-    Idle,
+    #[serde(alias = "idle")]
+    Ready,
+    Running,
     Installing,
     CancellingInstall,
     Updating,
@@ -13,25 +15,39 @@ pub enum InstanceStatus {
 }
 
 impl InstanceStatus {
+    /// Returns true if the instance is actively undergoing an installation, update, or cancellation task.
     pub fn is_busy(&self) -> bool {
-        !matches!(self, Self::Idle)
+        matches!(
+            self,
+            Self::Installing | Self::CancellingInstall | Self::Updating | Self::CancellingUpdate
+        )
+    }
+
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Running)
+    }
+
+    pub fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready)
     }
 
     pub fn can_transition_to(&self, next: InstanceStatus) -> bool {
         match (*self, next) {
             (a, b) if a == b => true,
-            // From Idle: can start installing or updating
-            (Self::Idle, Self::Installing | Self::Updating) => true,
-            // From Installing: can finish to Idle, or cancel to CancellingInstall
-            (Self::Installing, Self::Idle | Self::CancellingInstall) => true,
-            // From CancellingInstall: can finish cleanup to Idle
-            (Self::CancellingInstall, Self::Idle) => true,
-            // From Updating: can finish to Idle, or cancel to CancellingUpdate
-            (Self::Updating, Self::Idle | Self::CancellingUpdate) => true,
-            // From CancellingUpdate: can finish rollback to Idle
-            (Self::CancellingUpdate, Self::Idle) => true,
-            // Recovery/Reset: any state can be recovered to Idle
-            (_, Self::Idle) => true,
+            // From Ready: can launch to Running, or start installing/updating
+            (Self::Ready, Self::Running | Self::Installing | Self::Updating) => true,
+            // From Running: can exit back to Ready
+            (Self::Running, Self::Ready) => true,
+            // From Installing: can finish to Ready, or cancel to CancellingInstall
+            (Self::Installing, Self::Ready | Self::CancellingInstall) => true,
+            // From CancellingInstall: can finish cleanup to Ready
+            (Self::CancellingInstall, Self::Ready) => true,
+            // From Updating: can finish to Ready, or cancel to CancellingUpdate
+            (Self::Updating, Self::Ready | Self::CancellingUpdate) => true,
+            // From CancellingUpdate: can finish rollback to Ready
+            (Self::CancellingUpdate, Self::Ready) => true,
+            // Recovery/Reset: any state can be recovered to Ready
+            (_, Self::Ready) => true,
             _ => false,
         }
     }
@@ -163,26 +179,35 @@ mod tests {
 
     #[test]
     fn test_instance_status_transitions() {
-        let mut status = InstanceStatus::Idle;
+        let mut status = InstanceStatus::Ready;
         assert!(!status.is_busy());
+        assert!(status.is_ready());
+        assert!(!status.is_running());
 
-        // Idle -> Installing -> Idle
+        // Ready -> Running -> Ready
+        assert!(status.transition_to(InstanceStatus::Running).is_ok());
+        assert!(status.is_running());
+        assert!(!status.is_busy());
+        assert!(status.transition_to(InstanceStatus::Ready).is_ok());
+        assert!(status.is_ready());
+
+        // Ready -> Installing -> Ready
         assert!(status.transition_to(InstanceStatus::Installing).is_ok());
         assert!(status.is_busy());
-        assert!(status.transition_to(InstanceStatus::Idle).is_ok());
+        assert!(status.transition_to(InstanceStatus::Ready).is_ok());
         assert!(!status.is_busy());
 
-        // Idle -> Installing -> CancellingInstall -> Idle
+        // Ready -> Installing -> CancellingInstall -> Ready
         assert!(status.transition_to(InstanceStatus::Installing).is_ok());
         assert!(status.transition_to(InstanceStatus::CancellingInstall).is_ok());
         assert!(status.is_busy());
-        assert!(status.transition_to(InstanceStatus::Idle).is_ok());
+        assert!(status.transition_to(InstanceStatus::Ready).is_ok());
 
-        // Idle -> Updating -> CancellingUpdate -> Idle
+        // Ready -> Updating -> CancellingUpdate -> Ready
         assert!(status.transition_to(InstanceStatus::Updating).is_ok());
         assert!(status.transition_to(InstanceStatus::CancellingUpdate).is_ok());
         assert!(status.is_busy());
-        assert!(status.transition_to(InstanceStatus::Idle).is_ok());
+        assert!(status.transition_to(InstanceStatus::Ready).is_ok());
 
         // Invalid transitions
         assert!(status.transition_to(InstanceStatus::CancellingUpdate).is_err());

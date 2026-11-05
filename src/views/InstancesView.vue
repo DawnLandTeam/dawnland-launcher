@@ -319,6 +319,13 @@ function normalizedModpackVersion(version: string): string {
               <div class="min-w-0 flex-1 flex flex-col">
                 <h3 class="font-bold truncate text-[15px]" :title="instance.name">{{ instance.name }}</h3>
                 <div class="flex items-center gap-1.5 mt-1.5 flex-wrap overflow-hidden max-h-[40px]">
+                  <span
+                    v-if="instance.status === 'running'"
+                    class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold leading-none bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 shrink-0 border border-emerald-200 dark:border-emerald-800"
+                  >
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    {{ $t('instances.running') }}
+                  </span>
                   <span class="text-[10px] text-muted-foreground font-mono shrink-0 bg-neutral-200/50 dark:bg-zinc-800/50 px-1.5 py-0.5 rounded-md">
                     {{ instance.mcVersion }}
                   </span>

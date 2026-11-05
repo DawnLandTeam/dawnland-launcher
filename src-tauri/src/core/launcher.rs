@@ -435,7 +435,7 @@ impl InstanceConfig {
 
         let had_active_legacy_flags = legacy_cancelling || legacy_updating || legacy_installing;
 
-        if self.status == InstanceStatus::Idle && had_active_legacy_flags {
+        if self.status == InstanceStatus::Ready && had_active_legacy_flags {
             if legacy_cancelling {
                 if legacy_updating {
                     self.status = InstanceStatus::CancellingUpdate;
@@ -489,7 +489,7 @@ impl Default for InstanceConfig {
             server_id: None,
             pack_version_id: None,
             pack_file_name: None,
-            status: InstanceStatus::Idle,
+            status: InstanceStatus::Ready,
             play_time: 0,
             last_played_at: None,
             created_at: None,
@@ -3759,18 +3759,28 @@ mod tests {
     #[test]
     fn test_instance_config_preserves_unrelated_extra_fields() {
         let json = r#"{
-            "status": "idle",
+            "status": "ready",
             "isUpdating": false,
             "customPluginKey": "plugin_value"
         }"#;
 
         let cfg: InstanceConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(cfg.status, InstanceStatus::Idle);
+        assert_eq!(cfg.status, InstanceStatus::Ready);
         assert!(!cfg.extra.contains_key("isUpdating"));
         assert_eq!(
             cfg.extra.get("customPluginKey").and_then(|v| v.as_str()),
             Some("plugin_value")
         );
+    }
+
+    #[test]
+    fn test_instance_config_deserializes_legacy_idle_as_ready() {
+        let json = r#"{
+            "status": "idle"
+        }"#;
+
+        let cfg: InstanceConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.status, InstanceStatus::Ready);
     }
 
     #[test]

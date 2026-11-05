@@ -697,7 +697,7 @@ impl ExecutableTask for InstallModpackTask {
             let pack_file_name = self.options.pack_file_name.clone();
 
             let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                config.set_status(crate::core::launcher::InstanceStatus::Idle);
+                config.set_status(crate::core::launcher::InstanceStatus::Ready);
                 config.mc_version = Some(mc_version.clone());
                 config.loader_type = loader_enum;
                 config.modpack_project_id = project_id.clone();

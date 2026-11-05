@@ -225,6 +225,10 @@ onMounted(async () => {
 
     if (status === "running") {
       jvmSpawnedInstances.value.add(versionId);
+      const inst = installedInstances.value.find((i) => i.id === versionId);
+      if (inst) {
+        inst.status = 'running';
+      }
       
       // Fallback: If logs don't match, auto-transition after 8 seconds
       setTimeout(() => {
@@ -246,6 +250,11 @@ onMounted(async () => {
       isRepairing.value = false;
       repairingDependencyName.value = "";
       repairPhase.value = "";
+
+      const inst = installedInstances.value.find((i) => i.id === versionId);
+      if (inst) {
+        inst.status = 'ready';
+      }
 
       // Check if this was an intentional kill
       const wasIntentionallyKilled = intentionallyKilledInstances.value.has(versionId);
@@ -774,6 +783,10 @@ function loaderBadgeClass(loaderType: string): string {
                       {{ $t(getInstanceStatusLabel(instance.status) || 'instances.processing') }}
                     </span>
                     <Loader2 v-if="isInstanceBusy(instance)" class="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+                    <span v-else-if="instance.status === 'running'" class="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0">
+                      <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      {{ $t('instances.running') }}
+                    </span>
                   </DropdownMenuItem>
 
                   <div v-if="installedInstances.length > 0" class="h-px bg-border my-1 mx-2"></div>
