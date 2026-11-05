@@ -409,7 +409,7 @@ impl InstanceConfig {
         removed
     }
 
-    /// Migrates any legacy status flags in `extra` to `status` if `status` is `Idle`,
+    /// Migrates any legacy status flags in `extra` to `status` if `status` is `Ready`,
     /// and removes them from `extra` so they are not preserved in serialized JSON.
     pub fn cleanup_legacy_status_fields(&mut self) -> bool {
         let legacy_cancelling = self
@@ -454,14 +454,27 @@ impl InstanceConfig {
         had_active_legacy_flags || removed_others
     }
 
-    /// Checks if a raw JSON string contains any legacy status field keys.
+    /// Checks if a raw JSON string contains any legacy status field keys or legacy "idle" status value.
     pub fn has_legacy_status_in_json(content: &str) -> bool {
-        content.contains("\"isInstalling\"")
+        if content.contains("\"isInstalling\"")
             || content.contains("\"isUpdating\"")
             || content.contains("\"isCancelling\"")
             || content.contains("\"is_installing\"")
             || content.contains("\"is_updating\"")
             || content.contains("\"is_cancelling\"")
+        {
+            return true;
+        }
+
+        if content.contains("\"idle\"") {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(content) {
+                if val.get("status").and_then(|s| s.as_str()) == Some("idle") {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -548,8 +561,9 @@ where
     let mut config: InstanceConfig = if config_path.exists() {
         let content = tokio::fs::read_to_string(&config_path)
             .await
-            .unwrap_or_else(|_| "{}".to_string());
-        serde_json::from_str(&content).unwrap_or_default()
+            .map_err(|e| format!("Failed to read instance config: {}", e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse instance config: {}", e))?
     } else {
         InstanceConfig::default()
     };
@@ -3800,6 +3814,19 @@ mod tests {
         assert_eq!(cfg.status, InstanceStatus::Ready);
     }
 
+    #[test]
+    fn test_has_legacy_status_in_json_detects_legacy_idle() {
+        let json_with_idle = r#"{ "status": "idle" }"#;
+        assert!(InstanceConfig::has_legacy_status_in_json(json_with_idle));
+
+        let json_with_ready = r#"{ "status": "ready" }"#;
+        assert!(!InstanceConfig::has_legacy_status_in_json(json_with_ready));
+
+        // Substring "idle" in unrelated field must not trigger
+        let json_with_unrelated_idle = r#"{ "status": "ready", "name": "my-idle-server" }"#;
+        assert!(!InstanceConfig::has_legacy_status_in_json(json_with_unrelated_idle));
+    }
+
     #[tokio::test]
     async fn test_write_instance_config_atomic() {
         use tempfile::tempdir;
@@ -3817,6 +3844,57 @@ mod tests {
         let content = tokio::fs::read_to_string(&config_path).await.unwrap();
         let loaded: InstanceConfig = serde_json::from_str(&content).unwrap();
         assert_eq!(loaded.status, InstanceStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_update_instance_config_preserves_config_on_unknown_status() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("unknown_status_test");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let raw_json = r#"{
+            "status": "someWeirdState",
+            "javaPath": "C:\\custom\\java.exe",
+            "maxMemory": 8192
+        }"#;
+        tokio::fs::write(inst_dir.join("dlml.json"), raw_json).await.unwrap();
+
+        // Mutating a field under update_instance_config must succeed, preserving existing fields
+        let updated = update_instance_config(&inst_dir, |cfg| {
+            cfg.window_width = 1280;
+        })
+        .await
+        .expect("update config should succeed");
+
+        assert_eq!(updated.status, InstanceStatus::Ready);
+        assert_eq!(updated.java_path.as_deref(), Some("C:\\custom\\java.exe"));
+        assert_eq!(updated.max_memory, Some(8192));
+        assert_eq!(updated.window_width, 1280);
+    }
+
+    #[tokio::test]
+    async fn test_update_instance_config_fails_and_does_not_overwrite_corrupt_json() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("corrupt_json_test");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let corrupt_json = "{ corrupt json without closing brace";
+        tokio::fs::write(inst_dir.join("dlml.json"), corrupt_json).await.unwrap();
+
+        let result = update_instance_config(&inst_dir, |cfg| {
+            cfg.window_width = 1280;
+        })
+        .await;
+
+        assert!(result.is_err());
+
+        // Verify the corrupt file was NOT overwritten with default values
+        let content_on_disk = tokio::fs::read_to_string(inst_dir.join("dlml.json")).await.unwrap();
+        assert_eq!(content_on_disk, corrupt_json);
     }
 
     #[test]

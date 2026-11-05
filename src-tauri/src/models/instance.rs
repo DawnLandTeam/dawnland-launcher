@@ -1,17 +1,64 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum InstanceStatus {
     #[default]
-    #[serde(alias = "idle")]
     Ready,
     Running,
     Installing,
     CancellingInstall,
     Updating,
     CancellingUpdate,
+}
+
+impl<'de> Deserialize<'de> for InstanceStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct InstanceStatusVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for InstanceStatusVisitor {
+            type Value = InstanceStatus;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a valid or fallback instance status string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<InstanceStatus, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    "ready" | "idle" => Ok(InstanceStatus::Ready),
+                    "running" => Ok(InstanceStatus::Running),
+                    "installing" => Ok(InstanceStatus::Installing),
+                    "cancellingInstall" => Ok(InstanceStatus::CancellingInstall),
+                    "updating" => Ok(InstanceStatus::Updating),
+                    "cancellingUpdate" => Ok(InstanceStatus::CancellingUpdate),
+                    _ => Ok(InstanceStatus::Ready),
+                }
+            }
+
+            fn visit_unit<E>(self) -> Result<InstanceStatus, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(InstanceStatus::Ready)
+            }
+
+            fn visit_none<E>(self) -> Result<InstanceStatus, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(InstanceStatus::Ready)
+            }
+        }
+
+        deserializer.deserialize_any(InstanceStatusVisitor)
+    }
 }
 
 impl InstanceStatus {
@@ -212,5 +259,20 @@ mod tests {
         // Invalid transitions
         assert!(status.transition_to(InstanceStatus::CancellingUpdate).is_err());
         assert!(status.transition_to(InstanceStatus::CancellingInstall).is_err());
+    }
+
+    #[test]
+    fn test_instance_status_lenient_deserialization() {
+        let parsed_unknown: InstanceStatus = serde_json::from_str("\"someUnknownStatus\"").unwrap();
+        assert_eq!(parsed_unknown, InstanceStatus::Ready);
+
+        let parsed_idle: InstanceStatus = serde_json::from_str("\"idle\"").unwrap();
+        assert_eq!(parsed_idle, InstanceStatus::Ready);
+
+        let parsed_null: InstanceStatus = serde_json::from_str("null").unwrap();
+        assert_eq!(parsed_null, InstanceStatus::Ready);
+
+        let parsed_updating: InstanceStatus = serde_json::from_str("\"updating\"").unwrap();
+        assert_eq!(parsed_updating, InstanceStatus::Updating);
     }
 }

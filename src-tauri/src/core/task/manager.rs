@@ -581,6 +581,7 @@ impl TaskManager {
                                         let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
                                             config.set_status(crate::core::launcher::InstanceStatus::Ready);
                                         }).await;
+                                        let _ = manager.app_handle.emit("instances-changed", ());
                                     }
                                 } else if task_type.is_core_installation() {
                                     tracing::info!(
@@ -600,7 +601,17 @@ impl TaskManager {
                                                 err
                                             ));
                                             manager.emit_state(&state).await;
+
+                                            // If removal failed and dlml.json still exists, ensure status is reset to Ready
+                                            if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                                                let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
+                                                    config.set_status(crate::core::launcher::InstanceStatus::Ready);
+                                                }).await;
+                                                let _ = manager.app_handle.emit("instances-changed", ());
+                                            }
                                         }
+                                    } else {
+                                        let _ = manager.app_handle.emit("instances-changed", ());
                                     }
                                 }
                             }
@@ -680,24 +691,32 @@ impl TaskManager {
                 let is_update = task_type.is_update();
 
                 if is_install_or_update && crate::core::fs_utils::is_safe_single_name(inst_id) {
-                    let base_dir = crate::core::mojang::get_minecraft_base();
-                    let inst_dir = base_dir.join("versions").join(inst_id);
-                    let config_path = inst_dir.join("dlml.json");
-                    if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
-                        let _ = crate::core::launcher::update_instance_config(&inst_dir, |config| {
-                            let current_status = config.effective_status();
-                            if current_status == crate::core::launcher::InstanceStatus::CancellingUpdate
-                                || current_status == crate::core::launcher::InstanceStatus::CancellingInstall
-                            {
-                                return;
-                            }
-                            if is_update || current_status == crate::core::launcher::InstanceStatus::Updating {
-                                config.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
-                            } else {
-                                config.set_status(crate::core::launcher::InstanceStatus::CancellingInstall);
-                            }
-                        }).await;
-                        let _ = self.app_handle.emit("instances-changed", ());
+                    let mut done_rx = handle.done_rx.clone();
+                    // Re-check whether the worker is still executing before persisting cancelling status
+                    if !*done_rx.borrow() {
+                        let base_dir = crate::core::mojang::get_minecraft_base();
+                        let inst_dir = base_dir.join("versions").join(inst_id);
+                        let config_path = inst_dir.join("dlml.json");
+                        if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                            let _ = crate::core::launcher::update_instance_config(&inst_dir, |config| {
+                                // If the worker finished or cleaned up while acquiring the lock, do not overwrite terminal status
+                                if *done_rx.borrow() {
+                                    return;
+                                }
+                                let current_status = config.effective_status();
+                                if current_status == crate::core::launcher::InstanceStatus::CancellingUpdate
+                                    || current_status == crate::core::launcher::InstanceStatus::CancellingInstall
+                                {
+                                    return;
+                                }
+                                if is_update || current_status == crate::core::launcher::InstanceStatus::Updating {
+                                    config.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
+                                } else {
+                                    config.set_status(crate::core::launcher::InstanceStatus::CancellingInstall);
+                                }
+                            }).await;
+                            let _ = self.app_handle.emit("instances-changed", ());
+                        }
                     }
                 }
             }
@@ -998,6 +1017,41 @@ mod tests {
 
         let loaded_again = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
         assert_eq!(loaded_again.status, crate::core::launcher::InstanceStatus::CancellingUpdate);
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_worker_terminal_write_wins_over_cancelling_status() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("test_terminal_wins");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create inst dir");
+
+        // The worker has finished and its terminal write set status to Ready
+        let mut config = crate::core::launcher::InstanceConfig {
+            status: crate::core::launcher::InstanceStatus::Ready,
+            ..Default::default()
+        };
+        crate::core::launcher::write_instance_config_atomic(&inst_dir.join("dlml.json"), &config).await.unwrap();
+
+        // Channel simulating finished worker
+        let (done_tx, done_rx) = tokio::sync::watch::channel(false);
+        done_tx.send(true).unwrap(); // worker is done!
+
+        // If cancel_task attempts to update status when worker is done:
+        let is_update = true;
+        if !*done_rx.borrow() {
+            let _ = crate::core::launcher::update_instance_config(&inst_dir, |cfg| {
+                if *done_rx.borrow() {
+                    return;
+                }
+                cfg.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
+            }).await;
+        }
+
+        let loaded = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
+        // Worker's terminal Ready status MUST be preserved!
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
     }
 
     #[test]
