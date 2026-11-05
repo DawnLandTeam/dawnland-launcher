@@ -24,6 +24,17 @@ pub async fn cancel_task(
 }
 
 #[tauri::command]
+pub async fn force_cancel_task(
+    task_id: String,
+    task_manager: State<'_, TaskManager>,
+) -> Result<(), AppError> {
+    task_manager
+        .force_cancel_task(&task_id)
+        .await
+        .map_err(|e| DawnlandError::Unknown(e.to_string()).into())
+}
+
+#[tauri::command]
 pub async fn clear_task_history(task_manager: State<'_, TaskManager>) -> Result<(), AppError> {
     task_manager
         .clear_history()
@@ -42,6 +53,14 @@ pub async fn retry_task(
         .await
         .map_err(|e| DawnlandError::Unknown(e.to_string()))?
         .ok_or_else(|| DawnlandError::Unknown("Task not found".to_string()))?;
+
+    // Block retrying if the task is currently active (e.g. Cancelling or Running)
+    if task.status.is_active() {
+        return Err(DawnlandError::Unknown(format!(
+            "Cannot retry task while it is still active (status: {:?})",
+            task.status
+        )).into());
+    }
 
     use crate::core::task::TaskType;
 

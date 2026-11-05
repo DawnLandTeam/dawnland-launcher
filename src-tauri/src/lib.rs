@@ -448,6 +448,7 @@ pub fn run() {
             commands::task::get_task_history,
             commands::task::task_create,
             commands::task::cancel_task,
+            commands::task::force_cancel_task,
             commands::task::clear_task_history,
             commands::task::delete_task,
             commands::task::retry_task,

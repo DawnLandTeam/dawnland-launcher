@@ -16,9 +16,22 @@ export type TaskStatus =
   | 'Pending'
   | 'Running'
   | 'Paused'
+  | 'Cancelling'
   | 'Completed'
   | 'Failed'
   | 'Cancelled';
+
+export function isTaskActive(status: TaskStatus): boolean {
+  return status === 'Pending' || status === 'Running' || status === 'Paused' || status === 'Cancelling';
+}
+
+export function isTaskCancelling(status: TaskStatus): boolean {
+  return status === 'Cancelling';
+}
+
+export function isTaskTerminal(status: TaskStatus): boolean {
+  return status === 'Completed' || status === 'Failed' || status === 'Cancelled';
+}
 
 export interface TaskProgress {
   current: number;

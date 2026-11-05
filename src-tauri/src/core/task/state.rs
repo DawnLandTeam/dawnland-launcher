@@ -322,14 +322,58 @@ pub enum TaskMutex {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskStatus {
     Pending,
     Running,
     Paused,
+    Cancelling,
     Completed,
     Failed,
     Cancelled,
+}
+
+impl TaskStatus {
+    pub fn is_active(&self) -> bool {
+        matches!(
+            self,
+            Self::Pending | Self::Running | Self::Paused | Self::Cancelling
+        )
+    }
+
+    pub fn is_cancelling(&self) -> bool {
+        matches!(self, Self::Cancelling)
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
+
+    pub fn can_transition_to(&self, next: TaskStatus) -> bool {
+        match (*self, next) {
+            (a, b) if a == b => true,
+            // Pending -> Running, Cancelling, Cancelled
+            (Self::Pending, Self::Running | Self::Cancelling | Self::Cancelled) => true,
+            // Running -> Paused, Cancelling, Completed, Failed
+            (Self::Running, Self::Paused | Self::Cancelling | Self::Completed | Self::Failed) => true,
+            // Paused -> Running, Cancelling, Failed
+            (Self::Paused, Self::Running | Self::Cancelling | Self::Failed) => true,
+            // Cancelling -> Cancelled (terminal on completion) or Failed (on secondary fatal error)
+            (Self::Cancelling, Self::Cancelled | Self::Failed) => true,
+            // Terminal states can transition to Pending / Running on retry/re-queue
+            (Self::Completed | Self::Failed | Self::Cancelled, Self::Pending | Self::Running) => true,
+            _ => false,
+        }
+    }
+
+    pub fn transition_to(&mut self, next: TaskStatus) -> Result<(), TaskError> {
+        if self.can_transition_to(next) {
+            *self = next;
+            Ok(())
+        } else {
+            Err(TaskError::InvalidStateTransition)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -412,18 +456,13 @@ impl TaskState {
     }
 
     pub fn can_transition_to(&self, new_status: &TaskStatus) -> bool {
-        use TaskStatus::*;
-        matches!(
-            (&self.status, new_status),
-            (Pending, Running)
-                | (Pending, Cancelled)
-                | (Running, Paused)
-                | (Running, Completed)
-                | (Running, Failed)
-                | (Running, Cancelled)
-                | (Paused, Running)
-                | (Paused, Cancelled)
-        )
+        self.status.can_transition_to(*new_status)
+    }
+
+    pub fn transition_to(&mut self, new_status: TaskStatus) -> Result<(), TaskError> {
+        self.status.transition_to(new_status)?;
+        self.updated_at = chrono::Utc::now().timestamp();
+        Ok(())
     }
 }
 
@@ -439,6 +478,8 @@ pub enum TaskError {
     ExecutionError(String),
     #[error("Internal error: {0}")]
     Internal(String),
+    #[error("Fatal task error: {0}")]
+    Fatal(String),
 }
 
 #[cfg(test)]
@@ -534,16 +575,19 @@ mod tests {
     fn test_task_state_transitions() {
         use TaskStatus::*;
 
-        let task = TaskState::new(
+        let mut task = TaskState::new(
             "test-id".to_string(),
             TaskType::Generic {
                 name: "test".to_string(),
             },
         );
         assert_eq!(task.status, Pending);
+        assert!(task.status.is_active());
+        assert!(!task.status.is_terminal());
 
-        // Pending -> Running, Cancelled (valid)
+        // Pending -> Running, Cancelling, Cancelled (valid)
         assert!(task.can_transition_to(&Running));
+        assert!(task.can_transition_to(&Cancelling));
         assert!(task.can_transition_to(&Cancelled));
 
         // Pending -> Completed, Failed, Paused (invalid)
@@ -551,23 +595,41 @@ mod tests {
         assert!(!task.can_transition_to(&Failed));
         assert!(!task.can_transition_to(&Paused));
 
-        let mut running_task = task.clone();
-        running_task.status = Running;
-        assert!(running_task.can_transition_to(&Paused));
-        assert!(running_task.can_transition_to(&Completed));
-        assert!(running_task.can_transition_to(&Failed));
-        assert!(running_task.can_transition_to(&Cancelled));
-        assert!(!running_task.can_transition_to(&Pending));
+        // Test transition_to
+        assert!(task.transition_to(Running).is_ok());
+        assert_eq!(task.status, Running);
+        assert!(task.status.is_active());
 
-        let mut paused_task = task.clone();
-        paused_task.status = Paused;
-        assert!(paused_task.can_transition_to(&Running));
-        assert!(paused_task.can_transition_to(&Cancelled));
-        assert!(!paused_task.can_transition_to(&Completed));
+        // Running -> Paused, Cancelling, Completed, Failed
+        assert!(task.can_transition_to(&Paused));
+        assert!(task.can_transition_to(&Cancelling));
+        assert!(task.can_transition_to(&Completed));
+        assert!(task.can_transition_to(&Failed));
+        assert!(!task.can_transition_to(&Pending));
 
-        let mut completed_task = task.clone();
-        completed_task.status = Completed;
-        assert!(!completed_task.can_transition_to(&Running));
-        assert!(!completed_task.can_transition_to(&Pending));
+        // Running -> Cancelling
+        assert!(task.transition_to(Cancelling).is_ok());
+        assert_eq!(task.status, Cancelling);
+        assert!(task.status.is_active());
+        assert!(task.status.is_cancelling());
+        assert!(!task.status.is_terminal());
+
+        // Cancelling can only transition to Cancelled (normal) or Failed (fatal cleanup error)
+        assert!(task.can_transition_to(&Cancelled));
+        assert!(task.can_transition_to(&Failed));
+        assert!(!task.can_transition_to(&Running));
+        assert!(!task.can_transition_to(&Pending));
+        assert!(!task.can_transition_to(&Completed));
+
+        // Cancelling -> Cancelled
+        assert!(task.transition_to(Cancelled).is_ok());
+        assert_eq!(task.status, Cancelled);
+        assert!(!task.status.is_active());
+        assert!(task.status.is_terminal());
+
+        // Retrying terminal task -> Pending
+        assert!(task.can_transition_to(&Pending));
+        assert!(task.transition_to(Pending).is_ok());
+        assert_eq!(task.status, Pending);
     }
 }

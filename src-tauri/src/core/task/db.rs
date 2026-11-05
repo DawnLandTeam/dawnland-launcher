@@ -53,13 +53,14 @@ impl TaskDatabase {
         // Cleanup interrupted tasks (tasks that were running when the app was closed)
         conn.call(|conn| -> ::rusqlite::Result<()> {
             conn.execute(
-                "UPDATE tasks SET status = ?1, error = ?2 WHERE status IN (?3, ?4, ?5)",
+                "UPDATE tasks SET status = ?1, error = ?2 WHERE status IN (?3, ?4, ?5, ?6)",
                 (
                     "\"Failed\"",
                     "Task interrupted by application exit",
                     "\"Pending\"",
                     "\"Running\"",
                     "\"Paused\"",
+                    "\"Cancelling\"",
                 ),
             )?;
             Ok(())
