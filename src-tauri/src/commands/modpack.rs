@@ -1120,7 +1120,7 @@ pub async fn install_modpack(
         }
     }
 
-    if task_manager.is_instance_starting(&instance_name) {
+    if task_manager.is_instance_starting(&instance_name) || task_manager.is_instance_busy(&instance_name).await {
         return Err(DawnlandError::Unknown(format!(
             "CONFLICTING_TASK:{}",
             instance_name
@@ -1217,7 +1217,7 @@ pub async fn download_and_install_online_modpack(
         }
     }
 
-    if task_manager.is_instance_starting(&instance_name) {
+    if task_manager.is_instance_starting(&instance_name) || task_manager.is_instance_busy(&instance_name).await {
         return Err(DawnlandError::Unknown(format!(
             "CONFLICTING_TASK:{}",
             instance_name
