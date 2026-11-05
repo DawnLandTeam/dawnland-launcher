@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTaskStore } from '../composables/useTaskStore';
-import { X, Clock, Loader2, CheckCircle, Pause, XCircle, Ban, ArrowRight } from '@lucide/vue';
-import { getTaskName } from '../types/task';
+import { X, Clock, Loader2, CheckCircle, Pause, XCircle, Ban, ArrowRight, ExternalLink } from '@lucide/vue';
+import { getTaskName, getTaskTargetRoute } from '../types/task';
 import AiAnalysisPanel from './ai/AiAnalysisPanel.vue';
 import { useLogStore } from '../composables/useLogStore';
 
 const { t, te } = useI18n();
+const router = useRouter();
 const taskStore = useTaskStore();
 const logStore = useLogStore();
 
@@ -42,6 +44,17 @@ const isCancelable = computed(() => {
   if (!task.value) return false;
   return ['Pending', 'Running', 'Paused'].includes(task.value.status);
 });
+
+const targetRoute = computed(() => task.value ? getTaskTargetRoute(task.value.task_type) : null);
+
+function handleNavigate() {
+  if (!targetRoute.value) return;
+  router.push(targetRoute.value);
+  taskStore.closeTaskDetail();
+  if (taskStore.isTaskCenterOpen.value) {
+    taskStore.toggleTaskCenter();
+  }
+}
 
 function handleClose() {
   taskStore.closeTaskDetail();
@@ -119,12 +132,22 @@ function getInstanceId(taskType: any): string | undefined {
         </div>
         
         
-        <button 
-          @click="handleClose"
-          class="absolute top-4 right-4 p-1.5 rounded-lg text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-        >
-          <X class="w-4 h-4" />
-        </button>
+        <div class="absolute top-4 right-4 flex items-center gap-1">
+          <button 
+            v-if="targetRoute"
+            @click="handleNavigate"
+            class="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+            :title="$t('task.goToPage', 'Go to Task Page')"
+          >
+            <ExternalLink class="w-4 h-4" />
+          </button>
+          <button 
+            @click="handleClose"
+            class="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+          >
+            <X class="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <!-- Sub-Tasks List -->
@@ -189,15 +212,23 @@ function getInstanceId(taskType: any): string | undefined {
       </div>
 
       <!-- Footer Action -->
-      <div v-if="isCancelable || task.status === 'Cancelling'" class="p-4 border-t border-black/10 dark:border-white/10 shrink-0">
+      <div v-if="targetRoute || isCancelable || task.status === 'Cancelling'" class="p-4 border-t border-black/10 dark:border-white/10 shrink-0 flex items-center gap-2">
+        <button 
+          v-if="targetRoute"
+          @click="handleNavigate"
+          class="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 font-medium text-sm transition-colors"
+        >
+          <ExternalLink class="w-4 h-4" />
+          {{ $t('task.viewTask', 'View Page') }}
+        </button>
         <button 
           v-if="isCancelable"
           @click="handleCancel"
-          class="w-full py-2 rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium text-sm transition-colors"
+          class="flex-1 py-2 rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium text-sm transition-colors"
         >
           {{ $t('task.cancel') }}
         </button>
-        <div v-else-if="task.status === 'Cancelling'" class="flex items-center gap-2">
+        <div v-else-if="task.status === 'Cancelling'" class="flex items-center gap-2 flex-1">
           <button 
             disabled
             class="flex-1 py-2 rounded-lg bg-neutral-500/10 text-neutral-400 font-medium text-sm cursor-not-allowed text-center"

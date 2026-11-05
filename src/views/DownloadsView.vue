@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { Box, Package, Puzzle, FileJson, Sparkles, Globe } from "@lucide/vue";
@@ -11,12 +11,18 @@ import ShaderpackInstallTab from "../components/downloads/ShaderpackInstallTab.v
 import WorldInstallTab from "../components/downloads/WorldInstallTab.vue";
 import DatapackInstallTab from "../components/downloads/DatapackInstallTab.vue";
 import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
-import { computed, onMounted } from "vue";
 import { trackEvent } from "../utils/analytics";
+import { useTaskStore } from "../composables/useTaskStore";
+import { useModpackInstallState } from "../composables/useModpackInstallState";
+import { isModpackTask, isTaskActive } from "../types/task";
 
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
+const taskStore = useTaskStore();
+const { downloadsModpackTaskId, isTaskDismissed } = useModpackInstallState();
+
+const lastTabKey = 'downloads_active_tab';
 
 const tabs = [
   { id: 'instance', name: 'downloadsCenter.tabs.instance', icon: Box, group: 'downloadsCenter.groups.game' },
@@ -28,13 +34,42 @@ const tabs = [
   { id: 'datapack', name: 'downloadsCenter.tabs.datapack', icon: Package, group: 'downloadsCenter.groups.resources' },
 ];
 
+const hasActiveDownloadsModpackTask = computed(() => {
+  if (downloadsModpackTaskId.value) {
+    const task = taskStore.tasks.value.find(t => t.id === downloadsModpackTaskId.value);
+    if (task && !isTaskDismissed(task.id)) return true;
+  }
+  return taskStore.tasks.value.some(t =>
+    isModpackTask(t.task_type) &&
+    !('InstallModpack' in t.task_type && t.task_type.InstallModpack.is_update) &&
+    !('InstallOnlineModpack' in t.task_type && t.task_type.InstallOnlineModpack.is_update) &&
+    !isTaskDismissed(t.id) &&
+    (isTaskActive(t.status) || t.status === 'Completed' || t.status === 'Failed')
+  );
+});
+
 const translatedTabs = computed(() => tabs.map(tab => ({
   ...tab,
   name: t(tab.name),
-  group: t(tab.group)
+  group: t(tab.group),
+  hasDot: tab.id === 'modpack' && hasActiveDownloadsModpackTask.value
 })));
 
-const activeTab = ref('instance');
+function getInitialTab(): string {
+  if (route.query.tab && typeof route.query.tab === 'string' && tabs.some(t => t.id === route.query.tab)) {
+    return route.query.tab;
+  }
+  if (hasActiveDownloadsModpackTask.value) {
+    return 'modpack';
+  }
+  const saved = sessionStorage.getItem(lastTabKey);
+  if (saved && tabs.some(t => t.id === saved)) {
+    return saved;
+  }
+  return 'instance';
+}
+
+const activeTab = ref(getInitialTab());
 
 // Handle deep-link or routing
 watch(
@@ -42,6 +77,16 @@ watch(
   (newTab) => {
     if (newTab && typeof newTab === 'string' && tabs.some(t => t.id === newTab)) {
       activeTab.value = newTab;
+      sessionStorage.setItem(lastTabKey, newTab);
+    } else if (!newTab) {
+      if (hasActiveDownloadsModpackTask.value) {
+        switchTab('modpack');
+      } else {
+        const saved = sessionStorage.getItem(lastTabKey);
+        if (saved && saved !== activeTab.value && tabs.some(t => t.id === saved)) {
+          switchTab(saved);
+        }
+      }
     }
   },
   { immediate: true }
@@ -49,7 +94,8 @@ watch(
 
 function switchTab(tabId: string) {
   activeTab.value = tabId;
-  router.replace({ query: { tab: tabId } });
+  sessionStorage.setItem(lastTabKey, tabId);
+  router.replace({ query: { ...route.query, tab: tabId } });
 }
 
 onMounted(() => {

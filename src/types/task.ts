@@ -82,3 +82,98 @@ export function getTaskName(taskType: TaskType): string {
   if ('Generic' in taskType) return taskType.Generic.name;
   return t('task.unknown');
 }
+
+export interface TaskTargetRoute {
+  path: string;
+  query?: Record<string, string>;
+}
+
+export function isModpackTask(taskType: TaskType): boolean {
+  return 'InstallModpack' in taskType || 'InstallOnlineModpack' in taskType;
+}
+
+export function getModpackTaskInstanceName(taskType: TaskType): string | null {
+  if ('InstallModpack' in taskType) {
+    return taskType.InstallModpack.instance_name;
+  }
+  if ('InstallOnlineModpack' in taskType) {
+    return taskType.InstallOnlineModpack.instance_name;
+  }
+  return null;
+}
+
+export function getTaskTargetRoute(taskType: TaskType): TaskTargetRoute | null {
+  if ('InstallModpack' in taskType) {
+    if (taskType.InstallModpack.is_update) {
+      return {
+        path: `/instances/${encodeURIComponent(taskType.InstallModpack.instance_name)}`,
+        query: { tab: 'update_modpack' }
+      };
+    }
+    return {
+      path: '/downloads',
+      query: { tab: 'modpack' }
+    };
+  }
+  if ('InstallOnlineModpack' in taskType) {
+    if (taskType.InstallOnlineModpack.is_update) {
+      return {
+        path: `/instances/${encodeURIComponent(taskType.InstallOnlineModpack.instance_name)}`,
+        query: { tab: 'update_modpack' }
+      };
+    }
+    return {
+      path: '/downloads',
+      query: { tab: 'modpack' }
+    };
+  }
+  if ('InstallVanilla' in taskType) {
+    return {
+      path: '/downloads',
+      query: { tab: 'instance', install_version: taskType.InstallVanilla.version_id }
+    };
+  }
+  if ('InstallForge' in taskType) {
+    return {
+      path: '/downloads',
+      query: { tab: 'instance', install_version: taskType.InstallForge.mc_version, install_loader: 'forge' }
+    };
+  }
+  if ('InstallFabric' in taskType) {
+    return {
+      path: '/downloads',
+      query: { tab: 'instance', install_version: taskType.InstallFabric.mc_version, install_loader: 'fabric' }
+    };
+  }
+  if ('InstallMod' in taskType) {
+    return {
+      path: `/instances/${encodeURIComponent(taskType.InstallMod.instance_id)}`,
+      query: { tab: 'mods' }
+    };
+  }
+  if ('InstallResourcepack' in taskType && taskType.InstallResourcepack.instance_id) {
+    return {
+      path: `/instances/${encodeURIComponent(taskType.InstallResourcepack.instance_id)}`,
+      query: { tab: 'resourcepacks' }
+    };
+  }
+  if ('InstallShaderpack' in taskType && taskType.InstallShaderpack.instance_id) {
+    return {
+      path: `/instances/${encodeURIComponent(taskType.InstallShaderpack.instance_id)}`,
+      query: { tab: 'shaders' }
+    };
+  }
+  if ('InstallDatapack' in taskType && taskType.InstallDatapack.instance_id) {
+    return {
+      path: `/instances/${encodeURIComponent(taskType.InstallDatapack.instance_id)}`,
+      query: { tab: 'datapacks' }
+    };
+  }
+  if ('InstallWorld' in taskType && taskType.InstallWorld.instance_id) {
+    return {
+      path: `/instances/${encodeURIComponent(taskType.InstallWorld.instance_id)}`,
+      query: { tab: 'worlds' }
+    };
+  }
+  return null;
+}
