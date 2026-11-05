@@ -131,6 +131,18 @@ impl<'a> InstanceTaskContext<'a> {
             false
         }
     }
+
+    pub async fn is_task_worker_active(&self, task_id: &str, instance_id: &str) -> bool {
+        if let Some(active) = self.active_tasks {
+            let active = active.read().await;
+            active.get(task_id).is_some_and(|h| {
+                h.instance_id.as_deref() == Some(instance_id)
+                    && (h.task_type.is_core_installation() || h.task_type.is_update())
+            })
+        } else {
+            false
+        }
+    }
 }
 
 pub async fn scan_installed_instances_internal(
@@ -222,15 +234,27 @@ pub async fn scan_installed_instances_internal(
                 core_tasks.sort_by_key(|t| std::cmp::Reverse((t.updated_at, t.created_at)));
 
                 // Derive status from the most relevant (latest active or cancelling) core task
-                if let Some(task) = core_tasks.iter().find(|t| {
-                    matches!(
+                let mut matched_core_task = None;
+                for t in &core_tasks {
+                    if matches!(
                         t.status,
                         crate::core::task::TaskStatus::Pending
                             | crate::core::task::TaskStatus::Running
                             | crate::core::task::TaskStatus::Paused
-                    ) || (t.status == crate::core::task::TaskStatus::Cancelled
-                        && (is_starting || is_busy))
-                }) {
+                    ) {
+                        matched_core_task = Some(*t);
+                        break;
+                    } else if t.status == crate::core::task::TaskStatus::Cancelled {
+                        let is_worker_active =
+                            is_starting || task_ctx.is_task_worker_active(&t.id, &id).await;
+                        if is_worker_active {
+                            matched_core_task = Some(*t);
+                            break;
+                        }
+                    }
+                }
+
+                if let Some(task) = matched_core_task {
                     let is_active_task = matches!(
                         task.status,
                         crate::core::task::TaskStatus::Pending
@@ -238,18 +262,14 @@ pub async fn scan_installed_instances_internal(
                             | crate::core::task::TaskStatus::Paused
                     );
                     if task.task_type.is_update() {
-                        if task.status == crate::core::task::TaskStatus::Cancelled
-                            && (is_starting || is_busy)
-                        {
+                        if task.status == crate::core::task::TaskStatus::Cancelled {
                             status = crate::models::instance::InstanceStatus::CancellingUpdate;
                         } else if status == crate::models::instance::InstanceStatus::Ready
                             && is_active_task
                         {
                             status = crate::models::instance::InstanceStatus::Updating;
                         }
-                    } else if task.status == crate::core::task::TaskStatus::Cancelled
-                        && (is_starting || is_busy)
-                    {
+                    } else if task.status == crate::core::task::TaskStatus::Cancelled {
                         status = crate::models::instance::InstanceStatus::CancellingInstall;
                     } else if status == crate::models::instance::InstanceStatus::Ready
                         && is_active_task
@@ -3126,6 +3146,94 @@ mod tests {
         assert_eq!(instances.len(), 1);
         // Must derive status from new active update task (Updating), not stopping at old completed task
         assert_eq!(instances[0].status, crate::models::instance::InstanceStatus::Updating);
+    }
+
+    #[tokio::test]
+    async fn test_scan_installed_instances_cancelled_update_with_running_mod_stays_ready() {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use tempfile::tempdir;
+        use tokio::sync::RwLock;
+        use tokio_util::sync::CancellationToken;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let inst_id = "ReadyPackCancelledUpdateRunningMod";
+        let inst_dir = versions_dir.join(inst_id);
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let version_json = r#"{
+            "id": "ReadyPackCancelledUpdateRunningMod",
+            "inheritsFrom": "1.20.1"
+        }"#;
+        tokio::fs::write(inst_dir.join(format!("{}.json", inst_id)), version_json)
+            .await
+            .expect("write version json");
+
+        let dlml_json = r#"{ "status": "ready" }"#;
+        tokio::fs::write(inst_dir.join("dlml.json"), dlml_json)
+            .await
+            .expect("write dlml.json");
+
+        // Old cancelled update task in DB history
+        let mut cancelled_update = crate::core::task::TaskState::new(
+            "old_cancelled_update".to_string(),
+            crate::core::task::TaskType::InstallModpack {
+                zip_path: "p.zip".into(),
+                instance_name: inst_id.to_string(),
+                is_update: true,
+                project_id: None,
+                server_id: None,
+                pack_version_id: None,
+                pack_file_name: None,
+            },
+        );
+        cancelled_update.status = crate::core::task::TaskStatus::Cancelled;
+
+        // Currently running mod download task on the same instance
+        let mut running_mod = crate::core::task::TaskState::new(
+            "running_mod".to_string(),
+            crate::core::task::TaskType::InstallMod {
+                source: "modrinth".into(),
+                project_id: "mod1".into(),
+                file_id: "f1".into(),
+                mod_name: Some("testmod".into()),
+                download_url: "http://example.com/mod.jar".into(),
+                instance_id: Some(inst_id.to_string()),
+                target_dir: None,
+                dependencies: None,
+                keep_both: None,
+            },
+        );
+        running_mod.status = crate::core::task::TaskStatus::Running;
+
+        let (_, done_rx) = tokio::sync::watch::channel(false);
+        let active_tasks_map = HashMap::from([(
+            "running_mod".to_string(),
+            Arc::new(crate::core::task::manager::TaskWorkerHandle {
+                cancel_token: Arc::new(CancellationToken::new()),
+                done_rx,
+                instance_id: Some(inst_id.to_string()),
+                task_type: running_mod.task_type.clone(),
+            }),
+        )]);
+        let active_tasks_lock = RwLock::new(active_tasks_map);
+
+        let tasks = vec![cancelled_update, running_mod];
+        let task_ctx = InstanceTaskContext {
+            starting_instances: None,
+            active_tasks: Some(&active_tasks_lock),
+            tasks: &tasks,
+            running_instances: None,
+        };
+
+        let (instances, _) = scan_installed_instances_internal(&versions_dir, &task_ctx)
+            .await
+            .expect("scan instances");
+
+        assert_eq!(instances.len(), 1);
+        // Reported status must stay Ready, NOT CancellingUpdate!
+        assert_eq!(instances[0].status, crate::models::instance::InstanceStatus::Ready);
     }
 }
 

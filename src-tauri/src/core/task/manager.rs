@@ -477,13 +477,20 @@ impl TaskManager {
         let span = tracing::info_span!("task", task_id = %id_clone);
 
         tokio::spawn(async move {
-            struct DoneGuard(tokio::sync::watch::Sender<bool>);
-            impl Drop for DoneGuard {
-                fn drop(&mut self) {
-                    let _ = self.0.send(true);
+            struct DoneGuard(Option<tokio::sync::watch::Sender<bool>>);
+            impl DoneGuard {
+                fn mark_done(&mut self) {
+                    if let Some(tx) = self.0.take() {
+                        let _ = tx.send(true);
+                    }
                 }
             }
-            let _done_guard = DoneGuard(done_tx);
+            impl Drop for DoneGuard {
+                fn drop(&mut self) {
+                    self.mark_done();
+                }
+            }
+            let mut _done_guard = DoneGuard(Some(done_tx));
             {
                 let mut state = state_arc.write().await;
                 state.status = TaskStatus::Running;
@@ -499,6 +506,7 @@ impl TaskManager {
                     state.progress.current = state.progress.total;
                     state.progress.detail = "Completed".to_string();
                     manager.emit_state(&state).await;
+                    _done_guard.mark_done();
                 }
                 Err(e) => {
                     let is_replaced_by_retry = manager
@@ -580,6 +588,7 @@ impl TaskManager {
                                         "Instance {} is an existing instance being updated. Resetting flags after cancellation.",
                                         instance_id
                                     );
+                                    _done_guard.mark_done();
                                     if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
                                         let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
                                             config.set_status(crate::core::launcher::InstanceStatus::Ready);
@@ -591,6 +600,7 @@ impl TaskManager {
                                         "Cleaning up cancelled fresh installation instance: {}",
                                         instance_id
                                     );
+                                    _done_guard.mark_done();
                                     if let Err(err) = tokio::fs::remove_dir_all(&instance_dir).await {
                                         if err.kind() != std::io::ErrorKind::NotFound {
                                             tracing::error!(
@@ -644,6 +654,7 @@ impl TaskManager {
                                     });
 
                                 if !has_other_active_worker {
+                                    _done_guard.mark_done();
                                     let instance_dir = if task_type.is_dependency() {
                                         crate::core::mojang::get_dawnland_cache().join(&instance_id)
                                     } else {
@@ -662,7 +673,7 @@ impl TaskManager {
                 }
             }
 
-            drop(_done_guard);
+            _done_guard.mark_done();
 
             let mut active = manager.active_tasks.write().await;
             if active
@@ -723,18 +734,20 @@ impl TaskManager {
                         if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
                             let res = crate::core::launcher::update_instance_config_if(
                                 &inst_dir,
-                                |_config| {
+                                |config| {
                                     // Re-check done_rx under the instance config lock:
-                                    // if worker has finished, abort the status write
-                                    !*done_rx.borrow()
+                                    // if worker has finished, abort the status write.
+                                    // Also abort if the instance config is already Ready or already Cancelling!
+                                    if *done_rx.borrow() {
+                                        return false;
+                                    }
+                                    let current_status = config.effective_status();
+                                    current_status != crate::core::launcher::InstanceStatus::Ready
+                                        && current_status != crate::core::launcher::InstanceStatus::CancellingUpdate
+                                        && current_status != crate::core::launcher::InstanceStatus::CancellingInstall
                                 },
                                 |config| {
                                     let current_status = config.effective_status();
-                                    if current_status == crate::core::launcher::InstanceStatus::CancellingUpdate
-                                        || current_status == crate::core::launcher::InstanceStatus::CancellingInstall
-                                    {
-                                        return;
-                                    }
                                     if is_update || current_status == crate::core::launcher::InstanceStatus::Updating {
                                         config.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
                                     } else {
@@ -1191,6 +1204,43 @@ mod tests {
         ).await;
 
         assert!(res.is_err(), "Predicate must reject status update when worker is already done");
+        let loaded = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_aborts_status_write_if_instance_is_ready() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("test_ready_preserved");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create inst dir");
+
+        let config = crate::core::launcher::InstanceConfig {
+            status: crate::core::launcher::InstanceStatus::Ready,
+            ..Default::default()
+        };
+        crate::core::launcher::write_instance_config_atomic(&inst_dir.join("dlml.json"), &config).await.unwrap();
+
+        let (_done_tx, done_rx) = tokio::sync::watch::channel(false);
+
+        let res = crate::core::launcher::update_instance_config_if(
+            &inst_dir,
+            |config| {
+                if *done_rx.borrow() {
+                    return false;
+                }
+                let current_status = config.effective_status();
+                current_status != crate::core::launcher::InstanceStatus::Ready
+                    && current_status != crate::core::launcher::InstanceStatus::CancellingUpdate
+                    && current_status != crate::core::launcher::InstanceStatus::CancellingInstall
+            },
+            |cfg| {
+                cfg.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
+            },
+        ).await;
+
+        assert!(res.is_err(), "Predicate must reject cancelling write when instance is already Ready");
         let loaded = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
         assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
     }
