@@ -226,6 +226,15 @@ impl TaskType {
         }
     }
 
+    pub fn is_dependency(&self) -> bool {
+        match self {
+            TaskType::InstallVanilla { is_dependency, .. } => is_dependency.unwrap_or(false),
+            TaskType::InstallForge { is_dependency, .. } => is_dependency.unwrap_or(false),
+            TaskType::InstallFabric { is_dependency, .. } => is_dependency.unwrap_or(false),
+            _ => false,
+        }
+    }
+
     pub fn is_core_installation(&self) -> bool {
         matches!(
             self,

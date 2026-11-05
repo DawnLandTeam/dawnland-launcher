@@ -525,8 +525,11 @@ impl TaskManager {
                         if let Some(instance_id) = task_type.instance_id() {
                             if crate::core::fs_utils::is_safe_single_name(&instance_id) {
                                 let is_update_task = task_type.is_update();
-                                let base_dir = crate::core::mojang::get_minecraft_base();
-                                let instance_dir = base_dir.join("versions").join(&instance_id);
+                                let instance_dir = if task_type.is_dependency() {
+                                    crate::core::mojang::get_dawnland_cache().join(&instance_id)
+                                } else {
+                                    crate::core::mojang::get_minecraft_base().join("versions").join(&instance_id)
+                                };
                                 let config_path = instance_dir.join("dlml.json");
 
                                 // Acquire exclusive per-instance lock and startup guard before cleanup
@@ -617,12 +620,12 @@ impl TaskManager {
                             }
                         }
                     } else {
-                        let instance_id_opt = {
+                        let (instance_id_opt, task_type) = {
                             let mut state = state_arc.write().await;
                             state.status = TaskStatus::Failed;
                             state.error = Some(e.to_string());
                             manager.emit_state(&state).await;
-                            state.task_type.instance_id()
+                            (state.task_type.instance_id(), state.task_type.clone())
                         };
 
                         // On failure, do not delete the entire instance directory to allow retry/resume.
@@ -641,8 +644,11 @@ impl TaskManager {
                                     });
 
                                 if !has_other_active_worker {
-                                    let base_dir = crate::core::mojang::get_minecraft_base();
-                                    let instance_dir = base_dir.join("versions").join(&instance_id);
+                                    let instance_dir = if task_type.is_dependency() {
+                                        crate::core::mojang::get_dawnland_cache().join(&instance_id)
+                                    } else {
+                                        crate::core::mojang::get_minecraft_base().join("versions").join(&instance_id)
+                                    };
                                     let config_path = instance_dir.join("dlml.json");
                                     if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
                                         let _ = crate::core::launcher::update_instance_config(&instance_dir, |config| {
@@ -655,6 +661,8 @@ impl TaskManager {
                     }
                 }
             }
+
+            drop(_done_guard);
 
             let mut active = manager.active_tasks.write().await;
             if active
@@ -678,8 +686,11 @@ impl TaskManager {
     }
 
     pub async fn cancel_task(&self, id: &str) -> Result<(), TaskError> {
-        let tasks = self.active_tasks.read().await;
-        if let Some(handle) = tasks.get(id) {
+        let handle = {
+            let tasks = self.active_tasks.read().await;
+            tasks.get(id).cloned()
+        };
+        if let Some(handle) = handle {
             handle.cancel_token.cancel();
 
             let instance_id_opt = handle.instance_id.clone();
@@ -691,6 +702,11 @@ impl TaskManager {
                 state.status = TaskStatus::Cancelled;
                 state.error = Some("Task cancelled".to_string());
                 self.emit_state(&state).await;
+            }
+
+            // Skip cancelling-status write for dependency tasks, which live in cache
+            if task_type.is_dependency() {
+                return Ok(());
             }
 
             if let Some(ref inst_id) = instance_id_opt {
@@ -705,24 +721,30 @@ impl TaskManager {
                         let inst_dir = base_dir.join("versions").join(inst_id);
                         let config_path = inst_dir.join("dlml.json");
                         if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
-                            let _ = crate::core::launcher::update_instance_config(&inst_dir, |config| {
-                                // If the worker finished or cleaned up while acquiring the lock, do not overwrite terminal status
-                                if *done_rx.borrow() {
-                                    return;
-                                }
-                                let current_status = config.effective_status();
-                                if current_status == crate::core::launcher::InstanceStatus::CancellingUpdate
-                                    || current_status == crate::core::launcher::InstanceStatus::CancellingInstall
-                                {
-                                    return;
-                                }
-                                if is_update || current_status == crate::core::launcher::InstanceStatus::Updating {
-                                    config.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
-                                } else {
-                                    config.set_status(crate::core::launcher::InstanceStatus::CancellingInstall);
-                                }
-                            }).await;
-                            let _ = self.app_handle.emit("instances-changed", ());
+                            let res = crate::core::launcher::update_instance_config_if(
+                                &inst_dir,
+                                |_config| {
+                                    // Re-check done_rx under the instance config lock:
+                                    // if worker has finished, abort the status write
+                                    !*done_rx.borrow()
+                                },
+                                |config| {
+                                    let current_status = config.effective_status();
+                                    if current_status == crate::core::launcher::InstanceStatus::CancellingUpdate
+                                        || current_status == crate::core::launcher::InstanceStatus::CancellingInstall
+                                    {
+                                        return;
+                                    }
+                                    if is_update || current_status == crate::core::launcher::InstanceStatus::Updating {
+                                        config.set_status(crate::core::launcher::InstanceStatus::CancellingUpdate);
+                                    } else {
+                                        config.set_status(crate::core::launcher::InstanceStatus::CancellingInstall);
+                                    }
+                                },
+                            ).await;
+                            if res.is_ok() {
+                                let _ = self.app_handle.emit("instances-changed", ());
+                            }
                         }
                     }
                 }
@@ -1096,5 +1118,80 @@ mod tests {
         };
         // Mod task has an instance_id, but must NOT be treated as core installation or update
         assert!(!(mod_download.is_core_installation() || mod_download.is_update()));
+    }
+
+    #[test]
+    fn test_task_type_is_dependency() {
+        let vanilla_dep = TaskType::InstallVanilla {
+            version_id: "1.20.1".into(),
+            version_json_url: "".into(),
+            custom_instance_name: None,
+            is_dependency: Some(true),
+        };
+        assert!(vanilla_dep.is_dependency());
+
+        let vanilla_user = TaskType::InstallVanilla {
+            version_id: "1.20.1".into(),
+            version_json_url: "".into(),
+            custom_instance_name: None,
+            is_dependency: Some(false),
+        };
+        assert!(!vanilla_user.is_dependency());
+
+        let vanilla_default = TaskType::InstallVanilla {
+            version_id: "1.20.1".into(),
+            version_json_url: "".into(),
+            custom_instance_name: None,
+            is_dependency: None,
+        };
+        assert!(!vanilla_default.is_dependency());
+
+        let forge_dep = TaskType::InstallForge {
+            mc_version: "1.20.1".into(),
+            loader_version: "47.1.0".into(),
+            loader_type: "forge".into(),
+            custom_instance_name: "test".into(),
+            is_dependency: Some(true),
+        };
+        assert!(forge_dep.is_dependency());
+
+        let fabric_dep = TaskType::InstallFabric {
+            mc_version: "1.20.1".into(),
+            fabric_version: "0.14.21".into(),
+            custom_instance_name: "test".into(),
+            is_dependency: Some(true),
+        };
+        assert!(fabric_dep.is_dependency());
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_aborts_status_write_if_worker_done_under_lock() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("test_abort_under_lock");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create inst dir");
+
+        let config = crate::core::launcher::InstanceConfig {
+            status: crate::core::launcher::InstanceStatus::Ready,
+            ..Default::default()
+        };
+        crate::core::launcher::write_instance_config_atomic(&inst_dir.join("dlml.json"), &config).await.unwrap();
+
+        let (done_tx, done_rx) = tokio::sync::watch::channel(false);
+        // Worker marks done before lock check
+        let _ = done_tx.send(true);
+
+        let res = crate::core::launcher::update_instance_config_if(
+            &inst_dir,
+            |_| !*done_rx.borrow(),
+            |cfg| {
+                cfg.set_status(crate::core::launcher::InstanceStatus::CancellingInstall);
+            },
+        ).await;
+
+        assert!(res.is_err(), "Predicate must reject status update when worker is already done");
+        let loaded = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await.unwrap();
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
     }
 }
