@@ -589,6 +589,7 @@ impl TaskManager {
                             // Already cancelled in DB (e.g. by force_cancel_task); sync local state without re-persisting Cancelling
                             let mut state = state_arc.write().await;
                             let _ = state.transition_to(TaskStatus::Cancelled);
+                            state.status = TaskStatus::Cancelled;
                         }
 
                         let task_type = state_arc.read().await.task_type.clone();
@@ -698,6 +699,7 @@ impl TaskManager {
                         {
                             let mut state = state_arc.write().await;
                             let _ = state.transition_to(TaskStatus::Cancelled);
+                            state.status = TaskStatus::Cancelled;
                             manager.emit_state(&state).await;
                         }
                         spawn_guard.mark_done();
@@ -860,6 +862,7 @@ impl TaskManager {
         // Persist Cancelled status in DB and emit to frontend immediately
         if let Ok(Some(mut state)) = self.db.get_task(id).await {
             let _ = state.transition_to(TaskStatus::Cancelled);
+            state.status = TaskStatus::Cancelled;
             state.error = Some("Task force cancelled by user".to_string());
             self.emit_state(&state).await;
         }
@@ -895,7 +898,7 @@ impl TaskManager {
 
             // Reset instance config to Ready if instance exists and config exists
             if let Some(ref inst_id) = handle.instance_id {
-                if crate::core::fs_utils::is_safe_single_name(inst_id) {
+                if !handle.task_type.is_dependency() && crate::core::fs_utils::is_safe_single_name(inst_id) {
                     let instance_lock = self.get_instance_lock(inst_id).await;
                     let _instance_guard = instance_lock.lock().await;
 
@@ -914,7 +917,7 @@ impl TaskManager {
             // No active handle in memory, check if DB state had an instance needing reset
             if let Ok(Some(state)) = self.db.get_task(id).await {
                 if let Some(ref inst_id) = state.task_type.instance_id() {
-                    if crate::core::fs_utils::is_safe_single_name(inst_id) {
+                    if !state.task_type.is_dependency() && crate::core::fs_utils::is_safe_single_name(inst_id) {
                         let instance_lock = self.get_instance_lock(inst_id).await;
                         let _instance_guard = instance_lock.lock().await;
 

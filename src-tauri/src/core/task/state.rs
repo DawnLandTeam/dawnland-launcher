@@ -354,10 +354,10 @@ impl TaskStatus {
             (a, b) if a == b => true,
             // Pending -> Running, Cancelling, Cancelled
             (Self::Pending, Self::Running | Self::Cancelling | Self::Cancelled) => true,
-            // Running -> Paused, Cancelling, Completed, Failed
-            (Self::Running, Self::Paused | Self::Cancelling | Self::Completed | Self::Failed) => true,
-            // Paused -> Running, Cancelling, Failed
-            (Self::Paused, Self::Running | Self::Cancelling | Self::Failed) => true,
+            // Running -> Paused, Cancelling, Cancelled, Completed, Failed
+            (Self::Running, Self::Paused | Self::Cancelling | Self::Cancelled | Self::Completed | Self::Failed) => true,
+            // Paused -> Running, Cancelling, Cancelled, Failed
+            (Self::Paused, Self::Running | Self::Cancelling | Self::Cancelled | Self::Failed) => true,
             // Cancelling -> Cancelled (terminal on completion) or Failed (on secondary fatal error)
             (Self::Cancelling, Self::Cancelled | Self::Failed) => true,
             // Terminal states can transition to Pending / Running on retry/re-queue
@@ -600,9 +600,10 @@ mod tests {
         assert_eq!(task.status, Running);
         assert!(task.status.is_active());
 
-        // Running -> Paused, Cancelling, Completed, Failed
+        // Running -> Paused, Cancelling, Cancelled, Completed, Failed
         assert!(task.can_transition_to(&Paused));
         assert!(task.can_transition_to(&Cancelling));
+        assert!(task.can_transition_to(&Cancelled));
         assert!(task.can_transition_to(&Completed));
         assert!(task.can_transition_to(&Failed));
         assert!(!task.can_transition_to(&Pending));
