@@ -118,8 +118,9 @@ impl<'a> InstanceTaskContext<'a> {
     }
 
     pub fn is_running(&self, id: &str) -> bool {
+        let id_lower = id.to_lowercase();
         self.running_instances
-            .map(|set| set.contains(id))
+            .map(|set| set.iter().any(|k| k.to_lowercase() == id_lower))
             .unwrap_or(false)
     }
 
@@ -473,8 +474,7 @@ pub async fn scan_installed_instances(
     // Load running instances from launcher state
     let running_instances_set: std::collections::HashSet<String> =
         if let Some(state) = app.try_state::<crate::core::launcher::RunningInstances>() {
-            let map = state.0.lock().await;
-            map.keys().cloned().collect()
+            state.get_running_instances().await
         } else {
             std::collections::HashSet::new()
         };

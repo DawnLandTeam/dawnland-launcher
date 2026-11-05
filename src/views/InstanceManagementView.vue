@@ -138,16 +138,30 @@ const validTabIds = computed(() => {
 });
 
 const activeTab = ref('settings');
+const previousTab = ref('settings');
 
 watch(() => route.query.tab, (newTab) => {
   if (newTab && typeof newTab === 'string' && validTabIds.value.includes(newTab)) {
+    if (activeTab.value !== 'update_modpack' && newTab === 'update_modpack') {
+      previousTab.value = activeTab.value;
+    }
     activeTab.value = newTab;
   }
 }, { immediate: true });
 
 function switchTab(tabId: string) {
+  if (activeTab.value !== 'update_modpack' && tabId === 'update_modpack') {
+    previousTab.value = activeTab.value;
+  }
   activeTab.value = tabId;
   router.replace({ query: { ...route.query, tab: tabId } });
+}
+
+function handleCancelUpdate() {
+  const targetTab = (previousTab.value && previousTab.value !== 'update_modpack')
+    ? previousTab.value
+    : 'settings';
+  switchTab(targetTab);
 }
 
 watch(currentInstance, (inst) => {
@@ -235,7 +249,7 @@ watch(instanceId, async (newId) => {
             :update-project-id="currentInstance.modpackProjectId"
             :update-source="currentInstance.modpackType?.toLowerCase() || ''"
             :update-current-version="currentInstance.modpackVersion"
-            @cancel-update="switchTab('settings')"
+            @cancel-update="handleCancelUpdate"
           />
         </keep-alive>
       </div>

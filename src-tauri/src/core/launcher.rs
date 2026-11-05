@@ -23,6 +23,51 @@ use tokio::sync::Mutex;
 
 pub struct RunningInstances(pub Arc<Mutex<HashMap<String, u32>>>);
 
+impl RunningInstances {
+    /// Checks if an instance is running, and validates that the PID is actually still alive in the OS.
+    /// If the process has already exited or crashed, it automatically purges the stale entry.
+    pub async fn is_instance_running(&self, instance_name: &str) -> bool {
+        let name_lower = instance_name.to_lowercase();
+        let mut map = self.0.lock().await;
+        let matched_key = map.keys().find(|k| k.to_lowercase() == name_lower).cloned();
+        if let Some(key) = matched_key {
+            let pid = map.get(&key).copied().unwrap_or(0);
+            if pid > 0 {
+                let mut sys = sysinfo::System::new();
+                let pid_obj = sysinfo::Pid::from_u32(pid);
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid_obj]), true);
+                if sys.process(pid_obj).is_some() {
+                    return true;
+                }
+            }
+            // Process is dead; clean up zombie entry
+            map.remove(&key);
+        }
+        false
+    }
+
+    /// Returns all currently running instance names, cleaning up any dead processes.
+    pub async fn get_running_instances(&self) -> std::collections::HashSet<String> {
+        let mut map = self.0.lock().await;
+        let pids: Vec<(String, u32)> = map.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut dead = Vec::new();
+        if !pids.is_empty() {
+            let pid_objs: Vec<sysinfo::Pid> = pids.iter().map(|(_, p)| sysinfo::Pid::from_u32(*p)).collect();
+            let mut sys = sysinfo::System::new();
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&pid_objs), true);
+            for (name, pid) in pids {
+                if pid == 0 || sys.process(sysinfo::Pid::from_u32(pid)).is_none() {
+                    dead.push(name);
+                }
+            }
+        }
+        for name in dead {
+            map.remove(&name);
+        }
+        map.keys().cloned().collect()
+    }
+}
+
 #[tauri::command]
 pub async fn kill_instance(
     version_id: String,
@@ -88,8 +133,7 @@ pub async fn is_instance_running(
     if !validate_instance_id_for_launcher(&version_id).await {
         return Ok(false);
     }
-    let map = state.0.lock().await;
-    Ok(map.contains_key(&version_id))
+    Ok(state.is_instance_running(&version_id).await)
 }
 
 // ============ Constants ============
@@ -2453,6 +2497,24 @@ pub async fn launch_instance(
         account_uuid
     );
 
+    // Reject launching while an install, update, or other mutating task is active for this instance
+    if let Some(task_manager) = app.try_state::<crate::core::task::TaskManager>() {
+        if task_manager.is_instance_busy(&version_id).await || task_manager.is_instance_starting(&version_id) {
+            return Err(DawnlandError::Unknown("INSTANCE_BUSY".to_string()).into());
+        }
+    }
+
+    // Acquire per-instance lock shared with modpack install/update tasks
+    let instance_lock = crate::core::drop_install::get_instance_lock(&version_id);
+    let _instance_guard = instance_lock.lock().await;
+
+    // Re-verify that no install task began while waiting for the lock
+    if let Some(task_manager) = app.try_state::<crate::core::task::TaskManager>() {
+        if task_manager.is_instance_busy(&version_id).await || task_manager.is_instance_starting(&version_id) {
+            return Err(DawnlandError::Unknown("INSTANCE_BUSY".to_string()).into());
+        }
+    }
+
     let base_dir = get_minecraft_base();
 
     // Version isolation: Use instance-specific directory for game data
@@ -3314,6 +3376,7 @@ pub async fn launch_instance(
         let mut map = state.0.lock().await;
         map.insert(version_id.clone(), pid);
     }
+    drop(_instance_guard);
 
     // Record launch count and time
     if let Some(stats_db) = app.try_state::<crate::core::statistics::StatisticsDb>() {

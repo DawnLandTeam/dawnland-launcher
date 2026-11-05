@@ -310,8 +310,13 @@ const activeDownloads = ref(new Map<string, any>());
 const lastProcessedQueryStr = ref("");
 
 const initializeView = async () => {
+  if (props.isModalUpdate && route.query.tab !== 'update_modpack') {
+    showVersionsModal.value = false;
+    return;
+  }
+
   const currentQueryStr = JSON.stringify(route.query);
-  if (lastProcessedQueryStr.value === currentQueryStr && !props.isModalUpdate) {
+  if (lastProcessedQueryStr.value === currentQueryStr) {
     return;
   }
   lastProcessedQueryStr.value = currentQueryStr;
@@ -624,17 +629,30 @@ onUnmounted(() => {
 });
 
 onActivated(() => {
+  if (props.isModalUpdate && route.query.tab !== 'update_modpack') {
+    showVersionsModal.value = false;
+    return;
+  }
+  lastProcessedQueryStr.value = "";
   initializeView();
 });
 
-watch(() => route.query, () => {
-  if (route.path === '/downloads' || route.path.startsWith('/instances/')) {
+watch(() => route.query, (newQuery) => {
+  if (route.path === '/downloads') {
     initializeView();
+  } else if (route.path.startsWith('/instances/')) {
+    if (newQuery.tab === 'update_modpack') {
+      initializeView();
+    } else {
+      showVersionsModal.value = false;
+    }
   }
 }, { deep: true });
 
 onDeactivated(() => {
-  // Preserve search and install state on tab deactivation so returning restores view seamlessly
+  if (props.isModalUpdate) {
+    showVersionsModal.value = false;
+  }
 });
 
 /* const progressPercent = computed(() => {
@@ -663,6 +681,11 @@ const searchModpacks = async () => {
 const openVersionsModal = async (modpack: any) => {
   selectedModpack.value = modpack;
   onlineNameError.value = null;
+  try {
+    installedInstances.value = await invoke<InstalledInstance[]>("scan_installed_instances");
+  } catch (e) {
+    console.error("Failed to refresh installed instances:", e);
+  }
   if (isUpdate.value) {
     instanceNameInput.value = instanceName.value;
   } else {
@@ -1498,7 +1521,7 @@ const formatDate = (dateString: string) => {
     <!-- Modpack Versions Modal -->
     <DialogContent 
       :open="showVersionsModal" 
-      @update:open="val => { showVersionsModal = val; if (!val && props.isModalUpdate) emit('cancel-update'); }"
+      @update:open="val => { showVersionsModal = val; if (!val && props.isModalUpdate) { lastProcessedQueryStr = ''; emit('cancel-update'); } }"
       class="max-w-4xl max-h-[85vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-950 border-neutral-200 dark:border-zinc-800 shadow-2xl p-6 text-neutral-900 dark:text-zinc-100"
     >
         <div class="flex flex-col space-y-1.5 text-center sm:text-left shrink-0">

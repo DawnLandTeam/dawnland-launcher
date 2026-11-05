@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { Clock, Loader2, Pause, CheckCircle, XCircle, Ban, X, RotateCcw, ExternalLink } from '@lucide/vue';
 import type { TaskState } from '../types/task';
-import { getTaskName, getTaskTargetRoute } from '../types/task';
+import { getTaskName, getTaskTargetRoute, formatTaskErrorMessage } from '../types/task';
 import { useTaskStore } from '../composables/useTaskStore';
 
 const props = defineProps<{
   task: TaskState
 }>();
 
+const { t } = useI18n();
 const router = useRouter();
 const taskStore = useTaskStore();
 const targetRoute = computed(() => getTaskTargetRoute(props.task.task_type));
@@ -116,8 +118,8 @@ function handleNavigate(e: Event) {
             <span v-if="task.status === 'Cancelling'" class="text-xs text-amber-500 dark:text-amber-400 truncate">
               {{ $t('task.cancellingDesc', 'Safely terminating task processes...') }}
             </span>
-            <span v-else-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 truncate" :title="task.error || ''">
-              {{ task.error === 'Task cancelled' ? $t('task.cancelledError') : task.error }}
+            <span v-else-if="task.status === 'Failed' || task.status === 'Cancelled'" class="text-xs text-red-500 dark:text-red-400 truncate" :title="formatTaskErrorMessage(task.error, t)">
+              {{ formatTaskErrorMessage(task.error, t) }}
             </span>
             <template v-else>
               <span v-if="task.progress.sub_tasks && task.progress.sub_tasks.length > 0" class="text-xs text-neutral-500 dark:text-neutral-400 truncate">

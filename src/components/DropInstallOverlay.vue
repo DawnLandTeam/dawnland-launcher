@@ -20,7 +20,7 @@ import DInput from './ui/DInput.vue';
 import DSelect from './ui/DSelect.vue';
 import { useFileDrop } from '../composables/useFileDrop';
 import { useInstances } from '../composables/useInstances';
-import { runningInstances } from '../composables/useLaunchState';
+import { isInstanceActive } from '../composables/useLaunchState';
 import { useTaskStore } from '../composables/useTaskStore';
 import { toast } from '../composables/useToast';
 import { getErrorMessage } from '../utils/error';
@@ -89,7 +89,7 @@ function processNextQueuedModpack() {
 
 const availableInstanceOptions = computed(() =>
   instances.value
-    .filter((i) => !isInstanceBusy(i) && !runningInstances.value.has(i.id))
+    .filter((i) => !isInstanceBusy(i) && !isInstanceActive(i.id))
     .map((i) => ({
       label: i.name,
       sublabel: `${i.mcVersion} · ${i.loaderType}`,
@@ -369,7 +369,7 @@ async function executeImportAndNotify(
     );
     return;
   }
-  if (runningInstances.value.has(instanceId)) {
+  if (isInstanceActive(instanceId)) {
     toast.error(
       t('dropInstall.instanceRunningTitle', 'Game is running'),
       t('dropInstall.instanceRunningDesc', { instance: targetInstance?.name || instanceId }),
@@ -527,7 +527,7 @@ async function onFilesDropped(
       (route.path === '/' && homeSelectedInstanceId.value ? homeSelectedInstanceId.value : null);
 
     if (resolvedInstanceId) {
-      if (runningInstances.value.has(resolvedInstanceId)) {
+      if (isInstanceActive(resolvedInstanceId)) {
         const targetInstance = instances.value.find((i) => i.id === resolvedInstanceId);
         toast.error(
           t('dropInstall.instanceRunningTitle', 'Game is running'),
@@ -580,7 +580,7 @@ async function onFilesDropped(
     }
 
     // No target instance in context -> open instance selection modal
-    const readyInstances = instances.value.filter((i) => !isInstanceBusy(i) && !runningInstances.value.has(i.id));
+    const readyInstances = instances.value.filter((i) => !isInstanceBusy(i) && !isInstanceActive(i.id));
     if (readyInstances.length === 0) {
       toast.error(
         t('dropInstall.noInstancesTitle', 'No instances available'),

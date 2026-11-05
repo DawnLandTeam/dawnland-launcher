@@ -6,7 +6,7 @@ import { Save, FolderOpen, Puzzle, Box, Sparkles, Globe } from '@lucide/vue';
 import DInput from '../ui/DInput.vue';
 import DSelect from '../ui/DSelect.vue';
 import { getErrorMessage } from '../../utils/error';
-import { launchingInstances, runningInstances, repairingInstances } from '../../composables/useLaunchState';
+import { repairingInstances, isInstanceActive } from '../../composables/useLaunchState';
 import { toast } from '../../composables/useToast';
 
 const props = defineProps<{
@@ -83,8 +83,8 @@ const jvmTuningPreview = ref<JvmTuningPreview | null>(null);
 const jvmArgsExtraText = ref('');
 
 const isSettingsInstanceRunning = computed(() => {
-  return launchingInstances.value.has(props.instanceId) ||
-         runningInstances.value.has(props.instanceId) ||
+  return isInstanceActive(props.instanceId) ||
+
          repairingInstances.value.has(props.instanceId);
 });
 

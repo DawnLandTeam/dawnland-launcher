@@ -187,3 +187,17 @@ export function getTaskTargetRoute(taskType: TaskType): TaskTargetRoute | null {
   }
   return null;
 }
+
+export function formatTaskErrorMessage(
+  error: string | null | undefined,
+  t: (key: string, defaultMsg?: string) => string
+): string {
+  if (!error) return "";
+  if (error === 'Task cancelled' || error.includes('cancelled by user')) {
+    return t('task.cancelledError', 'Task was cancelled');
+  }
+  if (error.includes('GAME_IS_RUNNING')) {
+    return t('modpack.instanceRunningWarning', 'The instance is currently running. Please close the game first.');
+  }
+  return error;
+}
