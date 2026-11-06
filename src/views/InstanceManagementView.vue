@@ -54,14 +54,18 @@ const hasOngoingUpdateTask = computed(() => {
   const trackedId = instanceUpdateTaskIds.value[name];
   if (trackedId) {
     const t = taskStore.tasks.value.find(task => task.id === trackedId);
-    if (t && isModpackUpdateTask(t.task_type) && !isTaskDismissed(t.id)) return true;
+    if (t && isModpackUpdateTask(t.task_type) && !isTaskDismissed(t.id)) {
+      if (isTaskActive(t.status) || t.status === 'Completed' || t.status === 'Failed') {
+        return true;
+      }
+    }
   }
   return taskStore.tasks.value.some(t =>
     isModpackTask(t.task_type) &&
     isModpackUpdateTask(t.task_type) &&
     getModpackTaskInstanceName(t.task_type) === name &&
     !isTaskDismissed(t.id) &&
-    (isTaskActive(t.status) || t.status === 'Completed' || t.status === 'Failed')
+    isTaskActive(t.status)
   );
 });
 

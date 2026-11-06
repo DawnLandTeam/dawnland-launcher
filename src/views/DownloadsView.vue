@@ -37,13 +37,17 @@ const tabs = [
 const hasActiveDownloadsModpackTask = computed(() => {
   if (downloadsModpackTaskId.value) {
     const task = taskStore.tasks.value.find(t => t.id === downloadsModpackTaskId.value);
-    if (task && !isTaskDismissed(task.id)) return true;
+    if (task && !isTaskDismissed(task.id)) {
+      if (isTaskActive(task.status) || task.status === 'Completed' || task.status === 'Failed') {
+        return true;
+      }
+    }
   }
   return taskStore.tasks.value.some(t =>
     isModpackTask(t.task_type) &&
     !isModpackUpdateTask(t.task_type) &&
     !isTaskDismissed(t.id) &&
-    (isTaskActive(t.status) || t.status === 'Completed' || t.status === 'Failed')
+    isTaskActive(t.status)
   );
 });
 

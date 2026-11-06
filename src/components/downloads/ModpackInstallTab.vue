@@ -359,7 +359,8 @@ const initializeView = async () => {
         isModpackTask(t.task_type) &&
         isModpackUpdateTask(t.task_type) &&
         getModpackTaskInstanceName(t.task_type) === targetInstanceName &&
-        isValidRestorableTask(t)
+        !isTaskDismissed(t.id) &&
+        isTaskActive(t.status)
       );
       if (found) {
         matchedTask = found;
@@ -385,7 +386,8 @@ const initializeView = async () => {
       const found = taskStore.tasks.value.find((t) =>
         isModpackTask(t.task_type) &&
         !isModpackUpdateTask(t.task_type) &&
-        isValidRestorableTask(t)
+        !isTaskDismissed(t.id) &&
+        isTaskActive(t.status)
       );
       if (found) {
         matchedTask = found;
@@ -628,18 +630,25 @@ onUnmounted(() => {
   }
 });
 
+let wasDeactivated = false;
+
 onActivated(() => {
   if (props.isModalUpdate && route.query.tab !== 'update_modpack') {
     showVersionsModal.value = false;
     return;
   }
-  lastProcessedQueryStr.value = "";
-  initializeView();
+  if (wasDeactivated) {
+    wasDeactivated = false;
+    lastProcessedQueryStr.value = "";
+    initializeView();
+  }
 });
 
 watch(() => route.query, (newQuery) => {
   if (route.path === '/downloads') {
-    initializeView();
+    if (!newQuery.tab || newQuery.tab === 'modpack') {
+      initializeView();
+    }
   } else if (route.path.startsWith('/instances/')) {
     if (newQuery.tab === 'update_modpack') {
       initializeView();
@@ -650,6 +659,7 @@ watch(() => route.query, (newQuery) => {
 }, { deep: true });
 
 onDeactivated(() => {
+  wasDeactivated = true;
   if (props.isModalUpdate) {
     showVersionsModal.value = false;
   }
@@ -1273,6 +1283,7 @@ const handleFinishOrDismiss = () => {
   }
   isInstalling.value = false;
   currentTaskId.value = null;
+  lastProcessedQueryStr.value = "";
   if (props.isModalUpdate) {
     emit('cancel-update');
   } else {
