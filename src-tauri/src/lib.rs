@@ -403,6 +403,7 @@ pub fn run() {
             core::manager::get_preset_details,
             core::manager::update_preset,
             core::manager::open_custom_asset_folder,
+            core::manager::apply_custom_asset_to_instance,
             commands::install_mod_to_instance,
             core::manager::import_local_mod_to_instance,
             core::drop_install::inspect_dropped_files,

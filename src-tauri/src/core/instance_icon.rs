@@ -215,7 +215,7 @@ fn validate_icon_url(url: &reqwest::Url) -> Result<(), String> {
     Ok(())
 }
 
-fn is_disallowed_ipv4(ip: Ipv4Addr) -> bool {
+pub(crate) fn is_disallowed_ipv4(ip: Ipv4Addr) -> bool {
     ip.is_private()
         || ip.is_loopback()
         || ip.is_link_local()
@@ -225,7 +225,7 @@ fn is_disallowed_ipv4(ip: Ipv4Addr) -> bool {
         || ip.octets()[0] == 100 && (ip.octets()[1] & 0b1100_0000) == 64 // CGNAT 100.64.0.0/10
 }
 
-fn is_disallowed_ipv6(ip: Ipv6Addr) -> bool {
+pub(crate) fn is_disallowed_ipv6(ip: Ipv6Addr) -> bool {
     ip.is_loopback()
         || ip.is_unspecified()
         || ip.is_multicast()

@@ -46,14 +46,26 @@
           class="flex items-center gap-4 p-3 rounded-lg border bg-card text-card-foreground shadow-sm transition-all hover:shadow-md"
         >
           <div class="w-12 h-12 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0 border">
-            <FolderArchive v-if="asset.filename.endsWith('.zip')" class="w-6 h-6 text-muted-foreground" />
+            <Layers v-if="asset.filename.endsWith('.json')" class="w-6 h-6 text-primary" />
+            <FolderArchive v-else-if="asset.filename.endsWith('.zip')" class="w-6 h-6 text-muted-foreground" />
             <Folder v-else class="w-6 h-6 text-muted-foreground" />
           </div>
           
           <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm truncate" :title="asset.filename">{{ asset.filename }}</div>
+            <div class="flex items-center gap-2">
+              <span class="font-medium text-sm truncate" :title="asset.filename">
+                {{ asset.filename.endsWith('.json') ? asset.filename.replace(/\.json$/, '') : asset.filename }}
+              </span>
+              <span v-if="asset.filename.endsWith('.json')" class="bg-primary/10 text-primary text-[10px] px-1.5 py-0.5 rounded border border-primary/20 flex-shrink-0 font-medium">
+                {{ $t('instances.presetGroup', 'Preset Group') }}
+              </span>
+              <span v-else class="bg-secondary text-secondary-foreground text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0">
+                {{ $t('instances.singleAsset', 'Single File') }}
+              </span>
+            </div>
             <div class="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-              <span v-if="asset.isDir" :title="$t('instances.folderSizeSkipped')" class="cursor-help underline decoration-dotted decoration-muted-foreground underline-offset-2">{{ $t('instances.folder') }}</span>
+              <span v-if="asset.filename.endsWith('.json')">{{ $t('instances.presetGroupHint', 'Online preset pack') }}</span>
+              <span v-else-if="asset.isDir" :title="$t('instances.folderSizeSkipped')" class="cursor-help underline decoration-dotted decoration-muted-foreground underline-offset-2">{{ $t('instances.folder') }}</span>
               <span v-else>{{ formatSize(asset.size) }}</span>
             </div>
           </div>
@@ -145,7 +157,7 @@
 import { ref, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
-import { Box, Search, Trash2, FolderArchive, Folder, ArrowRight, FolderOpen, RefreshCw, Edit } from '@lucide/vue';
+import { Box, Search, Trash2, FolderArchive, Folder, ArrowRight, FolderOpen, RefreshCw, Edit, Layers } from '@lucide/vue';
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from '../ui/alert-dialog';
 import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
@@ -257,17 +269,29 @@ async function applyAsset(asset: LocalAssetItem) {
   
   applyingAsset.value = asset.filename;
   try {
-    const result = await invoke('resolve_preset_for_instance', {
-      versionId: props.instanceId,
-      assetType: ASSET_TYPE,
-      presetName: asset.filename
-    });
-    
-    resolvedData.value = result;
-    assetToApply.value = asset.filename;
-    showResolveDialog.value = true;
+    if (!asset.isDir && asset.filename.toLowerCase().endsWith('.json')) {
+      const result = await invoke('resolve_preset_for_instance', {
+        versionId: props.instanceId,
+        assetType: ASSET_TYPE,
+        presetName: asset.filename
+      });
+      
+      resolvedData.value = result;
+      assetToApply.value = asset.filename;
+      showResolveDialog.value = true;
+    } else {
+      await invoke('apply_custom_asset_to_instance', {
+        versionId: props.instanceId,
+        assetType: ASSET_TYPE,
+        filename: asset.filename
+      });
+      toast.success(
+        t('common.success', 'Success'),
+        t('instances.assetAppliedSuccess', 'Resource applied to instance successfully')
+      );
+    }
   } catch (error) {
-    console.error('Failed to resolve preset:', error);
+    console.error('Failed to apply asset:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
