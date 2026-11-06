@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { TaskState } from '../types/task';
 import { getTaskName } from '../types/task';
 import { notificationStore } from './useNotificationStore';
+import { emitInstanceAssetsUpdated } from './useFileDrop';
 import i18n from '../i18n';
 
 // Global state
@@ -58,6 +59,20 @@ export function useTaskStore() {
                 status: 'unread',
                 transient: isTransient
               });
+
+              // Notify instance tabs to refresh when an asset installation task completes
+              const tt = updatedTask.task_type;
+              if ('InstallShaderpack' in tt && tt.InstallShaderpack.instance_id) {
+                emitInstanceAssetsUpdated(tt.InstallShaderpack.instance_id, ['ShaderPack']);
+              } else if ('InstallResourcepack' in tt && tt.InstallResourcepack.instance_id) {
+                emitInstanceAssetsUpdated(tt.InstallResourcepack.instance_id, ['ResourcePack']);
+              } else if ('InstallMod' in tt && tt.InstallMod.instance_id) {
+                emitInstanceAssetsUpdated(tt.InstallMod.instance_id, ['Mod']);
+              } else if ('InstallPreset' in tt && tt.InstallPreset.instance_id) {
+                const assetType = (tt.InstallPreset as any).asset_type;
+                const kind = assetType === 'shaderpacks' ? 'ShaderPack' : (assetType === 'resourcepacks' ? 'ResourcePack' : 'Mod');
+                emitInstanceAssetsUpdated(tt.InstallPreset.instance_id, [kind]);
+              }
             } else if (updatedTask.status === 'Cancelled') {
               const title = i18n.global.t('task.cancelledTitle', { name: getTaskName(updatedTask.task_type) }) || 'Task Cancelled';
               notificationStore.updateNotification(updatedTask.id, {

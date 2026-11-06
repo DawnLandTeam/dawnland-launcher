@@ -19,6 +19,10 @@
           </template>
         </DInput>
         
+        <DButton variant="outline" @click="loadMods" class="px-3" :disabled="loading">
+          <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': loading }" />
+        </DButton>
+        
         <DButton variant="primary" @click="handleDownloadMore">
           <Download class="w-4 h-4 mr-2" />
           {{ $t('instances.downloadMoreMods', 'Download More Mods') }}
@@ -87,13 +91,12 @@
 
     <!-- Delete Confirmation Alert Dialog -->
     <AlertDialog :open="showDeleteConfirm" @update:open="showDeleteConfirm = $event">
-      <div class="fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" v-if="showDeleteConfirm"></div>
-      <div class="fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg" v-if="showDeleteConfirm">
+      <div class="space-y-4">
         <AlertDialogTitle>{{ $t('instances.deleteModConfirm', 'Are you sure you want to delete this mod?') }}</AlertDialogTitle>
         <AlertDialogDescription>
           {{ $t('instances.deleteModConfirmDesc', 'This action cannot be undone. The mod file will be permanently deleted.') }}
           <br/><br/>
-          <strong class="text-foreground">{{ modToDelete?.name || modToDelete?.filename }}</strong>
+          <strong class="text-foreground break-all">{{ modToDelete?.name || modToDelete?.filename }}</strong>
         </AlertDialogDescription>
         <div class="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 mt-4">
           <DButton variant="outline" @click="showDeleteConfirm = false">{{ $t('instances.cancel', 'Cancel') }}</DButton>
@@ -110,11 +113,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { Package, Search, Puzzle, Download, Trash2 } from '@lucide/vue';
+import { Package, Search, Puzzle, Download, Trash2, RefreshCw } from '@lucide/vue';
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from '../ui/alert-dialog';
 import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
@@ -191,6 +194,10 @@ function handleAssetsUpdated(event: Event) {
 
 onMounted(() => {
   window.addEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+});
+
+onActivated(() => {
+  loadMods();
 });
 
 onUnmounted(() => {
