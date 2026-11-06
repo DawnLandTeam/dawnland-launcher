@@ -13,6 +13,85 @@ use tauri::Manager;
 
 pub static MANIFEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+static PATH_LOCKS: LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Get an asynchronous lock for a specific filesystem destination to serialize concurrent writes.
+pub fn get_path_lock(path: &std::path::Path) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    let mut map = PATH_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    map.entry(path.to_path_buf())
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
+
+const ALLOWED_PRESET_DOWNLOAD_HOST_SUFFIXES: [&str; 3] = [
+    "forgecdn.net",
+    "curseforge.com",
+    "modrinth.com",
+];
+
+/// Validates that a preset download URL is strictly HTTPS and targets approved provider hosts.
+pub fn validate_preset_download_url(url: &reqwest::Url) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err(format!("Unsupported download scheme: {}", url.scheme()));
+    }
+    let Some(raw_host) = url.host_str() else {
+        return Err("Download URL is missing a host".to_string());
+    };
+    let host_unbracketed = raw_host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(raw_host);
+
+    if let Ok(ip) = host_unbracketed.parse::<std::net::IpAddr>() {
+        match ip {
+            std::net::IpAddr::V4(v4) if crate::core::instance_icon::is_disallowed_ipv4(v4) => {
+                return Err("Download URL points to a disallowed IPv4 address".to_string());
+            }
+            std::net::IpAddr::V6(v6) if crate::core::instance_icon::is_disallowed_ipv6(v6) => {
+                return Err("Download URL points to a disallowed IPv6 address".to_string());
+            }
+            _ => return Err("Direct IP download URLs are not allowed for presets".to_string()),
+        }
+    }
+
+    let d = host_unbracketed.trim_end_matches('.').to_ascii_lowercase();
+    if d == "localhost"
+        || d.ends_with(".localhost")
+        || d.ends_with(".local")
+        || d.ends_with(".internal")
+    {
+        return Err("Download URL points to a local domain".to_string());
+    }
+
+    let allowed = ALLOWED_PRESET_DOWNLOAD_HOST_SUFFIXES
+        .iter()
+        .any(|suffix| d == *suffix || d.ends_with(&format!(".{}", suffix)));
+    if !allowed {
+        return Err(format!("Download host '{}' is not in approved provider list", d));
+    }
+    Ok(())
+}
+
+/// HTTP client configured for preset downloads that validates host/scheme on each redirect.
+pub static PRESET_DOWNLOAD_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 {
+            return attempt.error("Too many redirects while downloading preset asset");
+        }
+        if let Err(reason) = validate_preset_download_url(attempt.url()) {
+            return attempt.error(reason);
+        }
+        attempt.follow()
+    });
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .redirect(policy)
+        .user_agent("Dawnland-Launcher/1.0")
+        .build()
+        .unwrap_or_default()
+});
+
 /// Represents a scanned installed instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -968,6 +1047,18 @@ pub async fn delete_instance(
         return Err(format!("Cannot delete instance {} while it is installing or updating", version_id));
     }
 
+    // Coordinate instance deletion with asset applications via per-instance lock
+    let instance_lock = crate::core::drop_install::get_instance_lock(&version_id);
+    let _instance_guard = instance_lock.lock().await;
+
+    if check_instance_busy(&version_id, &instance_dir, &task_manager).await {
+        return Err(format!("Cannot delete instance {} while it is installing or updating", version_id));
+    }
+
+    if !instance_dir.exists() {
+        return Ok(());
+    }
+
     // Use blocking remove_dir_all since the recursive directory removal
     // doesn't work well with async
     tokio::task::spawn_blocking(move || {
@@ -1272,6 +1363,10 @@ pub struct ResolvedPresetMod {
     pub file_id: String,
     pub filename: String,
     pub download_url: String,
+    #[serde(default)]
+    pub hash: Option<String>,
+    #[serde(default)]
+    pub file_size: Option<u64>,
     pub dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
 }
 
@@ -1293,27 +1388,58 @@ pub async fn get_custom_assets(asset_type: String) -> Result<Vec<LocalAssetItem>
     let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
     
     while let Ok(Some(entry)) = entries.next_entry().await {
+        let file_type = match entry.file_type().await {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        let filename = entry.file_name().to_string_lossy().to_string();
+        if filename.starts_with('.') {
+            continue;
+        }
+
+        let is_dir = file_type.is_dir();
         let path = entry.path();
-        let is_valid = match asset_type.as_str() {
-            "mod_groups" => path.extension().is_some_and(|e| e == "json"),
-            "resourcepacks" | "shaderpacks" => path.extension().is_some_and(|e| e == "zip"),
-            _ => false,
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let is_valid = if is_dir {
+            // Directories ending in .json are not valid presets or asset folders
+            if ext == "json" {
+                false
+            } else {
+                matches!(asset_type.as_str(), "shaderpacks" | "resourcepacks")
+            }
+        } else {
+            match asset_type.as_str() {
+                "mod_groups" => ext == "json" || ext == "jar",
+                "shaderpacks" | "resourcepacks" => ext == "json" || ext == "zip",
+                _ => false,
+            }
         };
 
-        if path.is_file() && is_valid {
-            let filename = entry.file_name().to_string_lossy().to_string();
-            
-            let metadata = entry.metadata().await.ok();
-            let size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
-            
+        if is_valid {
+            let size_bytes = if is_dir {
+                0
+            } else {
+                entry.metadata().await.map(|m| m.len()).unwrap_or(0)
+            };
+
             results.push(LocalAssetItem {
                 filename,
-                is_dir: false,
+                is_dir,
                 size: size_bytes,
                 managed_by_modpack: false,
             });
         }
     }
+
+    results.sort_by(|a, b| {
+        let a_is_json = a.filename.ends_with(".json");
+        let b_is_json = b.filename.ends_with(".json");
+        match (a_is_json, b_is_json) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.filename.to_lowercase().cmp(&b.filename.to_lowercase()),
+        }
+    });
     
     Ok(results)
 }
@@ -1373,6 +1499,130 @@ pub async fn open_custom_asset_folder(asset_type: String) -> Result<(), String> 
 }
 
 #[tauri::command]
+pub async fn apply_custom_asset_to_instance(
+    version_id: String,
+    asset_type: String,
+    filename: String,
+) -> Result<(), String> {
+    if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
+        return Err("Invalid asset type".to_string());
+    }
+    if !crate::core::fs_utils::is_safe_single_name(&version_id) || !crate::core::fs_utils::is_safe_single_name(&filename) {
+        return Err("Invalid instance ID or filename".to_string());
+    }
+
+    let base_dir = get_minecraft_base();
+    let src_path = base_dir.join("global_assets").join(&asset_type).join(&filename);
+    if !src_path.exists() {
+        return Err(format!("Source asset '{}' not found in global_assets/{}", filename, asset_type));
+    }
+
+    let is_dir = tokio::fs::metadata(&src_path).await.map(|m| m.is_dir()).unwrap_or(false);
+    let ext = std::path::Path::new(&filename).extension().and_then(|e| e.to_str()).unwrap_or("");
+    if !is_dir && ext.eq_ignore_ascii_case("json") {
+        return Err("Preset configuration files cannot be applied as raw assets; use resolve_preset_for_instance".to_string());
+    }
+
+    // Coordinate apply operations with instance deletion via per-instance lock
+    let instance_lock = crate::core::drop_install::get_instance_lock(&version_id);
+    let _instance_guard = instance_lock.lock().await;
+
+    let instance_dir = base_dir.join("versions").join(&version_id);
+    if !instance_dir.exists() {
+        return Err(format!("Instance '{}' not found", version_id));
+    }
+
+    let (folder_name, category) = match asset_type.as_str() {
+        "shaderpacks" => ("shaderpacks", crate::models::instance::AssetCategory::ShaderPack),
+        "resourcepacks" => ("resourcepacks", crate::models::instance::AssetCategory::ResourcePack),
+        "mod_groups" => ("mods", crate::models::instance::AssetCategory::Mod),
+        _ => return Err("Unsupported asset type".to_string()),
+    };
+
+    let target_dir = instance_dir.join(folder_name);
+    tokio::fs::create_dir_all(&target_dir).await.map_err(|e| e.to_string())?;
+    let target_path = target_dir.join(&filename);
+
+    if !target_path.starts_with(&target_dir) {
+        return Err("Target path escapes asset directory".to_string());
+    }
+
+    // Reject destination symlinks
+    if let Ok(meta) = tokio::fs::symlink_metadata(&target_path).await {
+        if meta.file_type().is_symlink() {
+            return Err(format!("Destination '{}' is a symlink and cannot be overwritten", filename));
+        }
+    }
+
+    // Serialize concurrent writes to target_path across local applies and installs
+    let path_lock = get_path_lock(&target_path);
+    let _path_guard = path_lock.lock().await;
+
+    if is_dir {
+        let temp_dir = target_dir.join(format!(".dir_tmp_{}_{}", filename, uuid::Uuid::new_v4().simple()));
+        crate::core::utils::copy_dir_all(&src_path, &temp_dir).await
+            .map_err(|e| format!("Failed to copy directory: {}", e))?;
+        if target_path.exists() {
+            if let Err(e) = tokio::fs::remove_dir_all(&target_path).await {
+                let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+                return Err(format!("Failed to clean existing directory before replace: {}", e));
+            }
+        }
+        if let Err(e) = tokio::fs::rename(&temp_dir, &target_path).await {
+            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+            return Err(format!("Failed to commit replaced directory: {}", e));
+        }
+    } else {
+        if target_path.is_dir() {
+            tokio::fs::remove_dir_all(&target_path).await
+                .map_err(|e| format!("Failed to remove directory conflicting with target file: {}", e))?;
+        }
+        let temp_file = target_dir.join(format!(".file_tmp_{}_{}", filename, uuid::Uuid::new_v4().simple()));
+        tokio::fs::copy(&src_path, &temp_file).await
+            .map_err(|e| format!("Failed to copy file: {}", e))?;
+        if target_path.exists() {
+            let _ = tokio::fs::remove_file(&target_path).await;
+        }
+        if let Err(e) = tokio::fs::rename(&temp_file, &target_path).await {
+            let _ = tokio::fs::remove_file(&temp_file).await;
+            return Err(format!("Failed to commit copied file: {}", e));
+        }
+    }
+
+    // Register into assets.json
+    let rel_key = format!("{}/{}", folder_name, filename);
+    let size = if !is_dir {
+        tokio::fs::metadata(&target_path).await.map(|m| m.len()).ok()
+    } else {
+        Some(0)
+    };
+    let hash_sha1 = if !is_dir {
+        let p = target_path.clone();
+        tokio::task::spawn_blocking(move || crate::downloader::download::compute_sha1_sync(&p))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+    } else {
+        None
+    };
+
+    save_asset_to_manifest(&version_id, rel_key, crate::models::instance::AssetRecord {
+        category,
+        source_type: crate::models::instance::AssetSourceType::LocalImport,
+        project_id: None,
+        version_id: None,
+        download_url: None,
+        hash_sha1,
+        hash_sha512: None,
+        size,
+        enabled: true,
+        managed_by_modpack: false,
+    }).await?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn resolve_preset_for_instance(preset_name: String, asset_type: String, version_id: String) -> Result<ResolvePresetResult, String> {
     if !["mod_groups", "shaderpacks", "resourcepacks"].contains(&asset_type.as_str()) {
         return Err("Invalid asset type".to_string());
@@ -1383,24 +1633,50 @@ pub async fn resolve_preset_for_instance(preset_name: String, asset_type: String
     let mc_version = instance.mc_version.clone();
     let loader = instance.loader_type.to_lowercase();
     
-    let clean_name = preset_name.replace("/", "").replace("\\", "").replace(".json", "");
-    if !crate::core::fs_utils::is_safe_single_name(&clean_name) {
+    let clean_name = preset_name.replace("/", "").replace("\\", "");
+    let clean_name = if clean_name.to_lowercase().ends_with(".json") {
+        &clean_name[..clean_name.len() - 5]
+    } else {
+        &clean_name
+    };
+    if !crate::core::fs_utils::is_safe_single_name(clean_name) {
         return Err("Invalid preset name".to_string());
     }
     let file_path = get_minecraft_base().join("global_assets").join(&asset_type).join(format!("{}.json", clean_name));
     
+    let meta = tokio::fs::metadata(&file_path).await.map_err(|e| e.to_string())?;
+    if meta.is_dir() {
+        return Err("Preset target is a directory, not a preset JSON file".to_string());
+    }
+
     let preset_content = tokio::fs::read_to_string(&file_path).await.map_err(|e| e.to_string())?;
     let preset: OnlinePreset = serde_json::from_str(&preset_content).map_err(|e| e.to_string())?;
     
     let mut resolved_mods = Vec::new();
     let mut failed_mods = Vec::new();
-    let loaders = vec![loader.clone()];
+    let loaders = if asset_type == "mod_groups" {
+        vec![loader.clone()]
+    } else {
+        vec![]
+    };
 
     for pm in preset.mods {
         let files_result = if pm.source == "modrinth" {
-            crate::core::modrinth::get_modrinth_mod_files(pm.project_id.clone(), mc_version.clone(), loaders.clone()).await
+            let res = crate::core::modrinth::get_modrinth_mod_files(pm.project_id.clone(), mc_version.clone(), loaders.clone()).await;
+            match res {
+                Ok(files) if files.is_empty() && asset_type != "mod_groups" => {
+                    crate::core::modrinth::get_modrinth_mod_files(pm.project_id.clone(), "".to_string(), vec![]).await
+                }
+                other => other,
+            }
         } else if pm.source == "curseforge" {
-            crate::core::curseforge::get_cf_mod_files(pm.project_id.clone(), mc_version.clone(), loaders.clone()).await
+            let res = crate::core::curseforge::get_cf_mod_files(pm.project_id.clone(), mc_version.clone(), loaders.clone()).await;
+            match res {
+                Ok(files) if files.is_empty() && asset_type != "mod_groups" => {
+                    crate::core::curseforge::get_cf_mod_files(pm.project_id.clone(), "".to_string(), vec![]).await
+                }
+                other => other,
+            }
         } else {
             tracing::warn!("Unknown source '{}' for mod '{}', skipping", pm.source, pm.name);
             continue;
@@ -1416,6 +1692,8 @@ pub async fn resolve_preset_for_instance(preset_name: String, asset_type: String
                         file_id: best.id,
                         filename: best.filename,
                         download_url: best.download_url,
+                        hash: best.hash,
+                        file_size: best.file_size,
                         dependencies: Some(best.dependencies),
                     });
                 } else {
@@ -2125,7 +2403,19 @@ pub async fn register_manual_asset_with_metadata(
     source_str: &str,
     project_id: &str,
     download_url: &str,
-) {
+) -> Result<(), String> {
+    register_manual_asset_full(instance_id, path_key, category, source_str, project_id, None, download_url).await
+}
+
+pub async fn register_manual_asset_full(
+    instance_id: &str,
+    path_key: &str,
+    category: crate::models::instance::AssetCategory,
+    source_str: &str,
+    project_id: &str,
+    version_id: Option<&str>,
+    download_url: &str,
+) -> Result<(), String> {
     let base_dir = crate::core::mojang::get_minecraft_base();
     let full_path = base_dir.join("versions").join(instance_id).join(path_key);
     
@@ -2152,40 +2442,46 @@ pub async fn register_manual_asset_with_metadata(
         category,
         source_type,
         project_id: Some(project_id.to_string()),
-        version_id: None,
+        version_id: version_id.map(|v| v.to_string()),
         download_url: Some(download_url.to_string()),
         hash_sha1,
         hash_sha512: None,
         size,
         enabled: !filename.ends_with(".disable"),
         managed_by_modpack: false,
-    }).await;
+    }).await
 }
 
-pub async fn save_asset_to_manifest(instance_id: &str, path_key: String, record: crate::models::instance::AssetRecord) {
+pub async fn save_asset_to_manifest(instance_id: &str, path_key: String, record: crate::models::instance::AssetRecord) -> Result<(), String> {
     let _lock = MANIFEST_LOCK.lock().await;
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(instance_id);
     let assets_path = instance_dir.join("assets.json");
     let mut manifest = if assets_path.exists() {
-        if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
-            serde_json::from_str::<crate::models::instance::AssetManifest>(&content).unwrap_or_default()
-        } else {
-            crate::models::instance::AssetManifest::default()
-        }
+        let content = tokio::fs::read_to_string(&assets_path)
+            .await
+            .map_err(|e| format!("Failed to read assets.json: {}", e))?;
+        serde_json::from_str::<crate::models::instance::AssetManifest>(&content)
+            .map_err(|e| format!("Failed to parse assets.json: {}", e))?
     } else {
         crate::models::instance::AssetManifest::default()
     };
     manifest.assets.insert(path_key, record);
-    if let Ok(json) = serde_json::to_string_pretty(&manifest) {
-        let temp_assets_path = instance_dir.join(format!(".assets_{}.json.tmp", uuid::Uuid::new_v4().simple()));
-        if tokio::fs::write(&temp_assets_path, &json).await.is_ok() {
-            let _ = tokio::fs::rename(&temp_assets_path, &assets_path).await;
-        }
+    let json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| format!("Failed to serialize assets.json: {}", e))?;
+    let temp_assets_path = instance_dir.join(format!(".assets_{}.json.tmp", uuid::Uuid::new_v4().simple()));
+    if let Err(e) = tokio::fs::write(&temp_assets_path, &json).await {
+        let _ = tokio::fs::remove_file(&temp_assets_path).await;
+        return Err(format!("Failed to write temp assets.json: {}", e));
     }
+    if let Err(e) = tokio::fs::rename(&temp_assets_path, &assets_path).await {
+        let _ = tokio::fs::remove_file(&temp_assets_path).await;
+        return Err(format!("Failed to commit assets.json: {}", e));
+    }
+    Ok(())
 }
 
-pub async fn delete_asset_from_manifest(instance_id: &str, path_key: &str) {
+pub async fn delete_asset_from_manifest(instance_id: &str, path_key: &str) -> Result<(), String> {
     let _lock = MANIFEST_LOCK.lock().await;
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(instance_id);
@@ -2202,10 +2498,12 @@ pub async fn delete_asset_from_manifest(instance_id: &str, path_key: &str) {
             }
         }
     }
+    Ok(())
 }
 
 /// Helper function to load installed mods mapping from `assets.json`
 async fn load_installed_mods_json(instance_id: &str) -> std::collections::HashMap<String, (String, Option<String>)> {
+    let _lock = MANIFEST_LOCK.lock().await;
     let base_dir = get_minecraft_base();
     let assets_path = base_dir.join("versions").join(instance_id).join("assets.json");
     let mut map = std::collections::HashMap::new();
@@ -2377,8 +2675,28 @@ pub async fn install_mod_to_instance(
 
     let client = reqwest::Client::new();
 
-    let filename = extract_filename_from_url(&download_url, &project_id);
+    let raw_filename = extract_filename_from_url(&download_url, &project_id);
+    let filename = std::path::Path::new(&raw_filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&raw_filename)
+        .to_string();
+    if !crate::core::fs_utils::is_safe_single_name(&filename) {
+        return Err("Invalid mod filename".to_string());
+    }
     let target_path = mods_dir.join(&filename);
+    if !target_path.starts_with(&mods_dir) {
+        return Err("Target path escapes mods directory".to_string());
+    }
+
+    if let Ok(meta) = tokio::fs::symlink_metadata(&target_path).await {
+        if meta.file_type().is_symlink() {
+            return Err(format!("Destination '{}' is a symlink and cannot be overwritten", filename));
+        }
+    }
+
+    let path_lock = get_path_lock(&target_path);
+    let _path_guard = path_lock.lock().await;
 
     let mut installed_map = load_installed_mods_json(&version_id).await;
     let mod_key = format!("{}_{}", mod_source, project_id);
@@ -3274,6 +3592,34 @@ mod tests {
         // Reported status must stay Ready, NOT CancellingUpdate!
         assert_eq!(instances[0].status, crate::models::instance::InstanceStatus::Ready);
     }
+
+    #[test]
+    fn test_validate_preset_download_url() {
+        let ok_mr = reqwest::Url::parse("https://cdn.modrinth.com/data/P7dR8mSH/versions/1.0/mod.jar").unwrap();
+        let ok_cf = reqwest::Url::parse("https://edge.forgecdn.net/files/123/456/mod.jar").unwrap();
+        let ok_cf2 = reqwest::Url::parse("https://media.forgecdn.net/files/123/456/mod.jar").unwrap();
+        let ok_cf3 = reqwest::Url::parse("https://curseforge.com/api/v1/mods/123").unwrap();
+
+        assert!(validate_preset_download_url(&ok_mr).is_ok());
+        assert!(validate_preset_download_url(&ok_cf).is_ok());
+        assert!(validate_preset_download_url(&ok_cf2).is_ok());
+        assert!(validate_preset_download_url(&ok_cf3).is_ok());
+
+        let bad_scheme = reqwest::Url::parse("http://cdn.modrinth.com/data/mod.jar").unwrap();
+        assert!(validate_preset_download_url(&bad_scheme).is_err());
+
+        let bad_host = reqwest::Url::parse("https://evil.com/mod.jar").unwrap();
+        assert!(validate_preset_download_url(&bad_host).is_err());
+
+        let bad_local = reqwest::Url::parse("https://localhost/mod.jar").unwrap();
+        assert!(validate_preset_download_url(&bad_local).is_err());
+
+        let bad_ip = reqwest::Url::parse("https://127.0.0.1/mod.jar").unwrap();
+        assert!(validate_preset_download_url(&bad_ip).is_err());
+
+        let bad_private = reqwest::Url::parse("https://192.168.1.1/mod.jar").unwrap();
+        assert!(validate_preset_download_url(&bad_private).is_err());
+    }
 }
 
 async fn download_mod_file_task(
@@ -3285,11 +3631,18 @@ async fn download_mod_file_task(
     use futures_util::StreamExt;
     use tokio::io::AsyncWriteExt;
 
+    // Validate URL scheme and host
+    let parsed_url = reqwest::Url::parse(url).map_err(|e| format!("Invalid download URL: {}", e))?;
+    validate_preset_download_url(&parsed_url)?;
+
     let mut response = client
-        .get(url)
+        .get(parsed_url)
         .send()
         .await
-        .map_err(|e| format!("Failed to download mod: {}", e))?;
+        .map_err(|e| format!("Failed to download file: {}", e))?;
+
+    // Validate URL after any redirects
+    validate_preset_download_url(response.url())?;
 
     if !response.status().is_success() {
         return Err(format!(
@@ -3302,39 +3655,71 @@ async fn download_mod_file_task(
     ctx.update_progress(0, content_length, "Starting download...")
         .await;
 
-    let mut file = tokio::fs::File::create(target_path)
-        .await
-        .map_err(|e| format!("Failed to create mod file: {}", e))?;
+    let target_dir = target_path.parent().ok_or_else(|| "Invalid target path parent".to_string())?;
+    tokio::fs::create_dir_all(target_dir).await.map_err(|e| e.to_string())?;
+
+    let file_stem = target_path.file_name().unwrap_or_default().to_string_lossy();
+    let temp_path = target_dir.join(format!(".{}_{}.tmp", file_stem, uuid::Uuid::new_v4().simple()));
+
+    let mut file = match tokio::fs::File::create(&temp_path).await {
+        Ok(f) => f,
+        Err(e) => return Err(format!("Failed to create temporary download file: {}", e)),
+    };
 
     let mut downloaded = 0;
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| format!("Chunk error: {}", e))?
-    {
-        if ctx.is_cancelled() {
-            let _ = file.flush().await;
-            let _ = tokio::fs::remove_file(target_path).await;
-            return Err("Cancelled".to_string());
-        }
-        file.write_all(&chunk)
+    let write_res: Result<(), String> = async {
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .map_err(|e| format!("Write error: {}", e))?;
+            .map_err(|e| format!("Chunk error: {}", e))?
+        {
+            if ctx.is_cancelled() {
+                return Err("Cancelled".to_string());
+            }
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Write error: {}", e))?;
 
-        downloaded += chunk.len() as u64;
-        ctx.update_progress(downloaded, content_length, "Downloading...")
-            .await;
+            downloaded += chunk.len() as u64;
+            ctx.update_progress(downloaded, content_length, "Downloading...")
+                .await;
+        }
+
+        file.flush()
+            .await
+            .map_err(|e| format!("Flush error: {}", e))?;
+
+        drop(file);
+        Ok(())
+    }.await;
+
+    if let Err(e) = write_res {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(e);
     }
 
-    file.flush()
-        .await
-        .map_err(|e| format!("Flush error: {}", e))?;
+    if content_length > 0 && downloaded != content_length {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(format!("Download incomplete: expected {} bytes, got {}", content_length, downloaded));
+    }
+
+    if target_path.is_dir() {
+        let _ = tokio::fs::remove_dir_all(target_path).await;
+    } else if target_path.exists() {
+        let _ = tokio::fs::remove_file(target_path).await;
+    }
+
+    if let Err(e) = tokio::fs::rename(&temp_path, target_path).await {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(format!("Failed to finalize download file: {}", e));
+    }
+
     let final_len = if content_length == 0 {
         100
     } else {
         content_length
     };
-    ctx.update_progress(final_len, final_len, "Download finished")
+    ctx.update_progress(final_len, final_len, "Download completed")
         .await;
     Ok(())
 }
@@ -3359,6 +3744,10 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
         ctx: crate::core::task::TaskContext,
     ) -> Result<(), crate::core::task::TaskError> {
         let options = &self.options;
+        if !crate::core::fs_utils::is_safe_single_name(&options.instance_id) {
+            return Err(crate::core::task::TaskError::ExecutionError("Invalid instance ID".to_string()));
+        }
+
         let mut sub_tasks = Vec::new();
         for m in &options.mods {
             let name = if !m.project_name.is_empty() { m.project_name.clone() } else { m.project_id.clone() };
@@ -3377,6 +3766,7 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
         
         let mods = options.mods.clone();
         let instance_id = options.instance_id.clone();
+        let asset_type = options.asset_type.clone();
         let app = self.app.clone();
 
         let results = futures::stream::iter(mods)
@@ -3384,6 +3774,7 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
                 let app = app.clone();
                 let ctx = ctx.with_sub_task(&m.project_id);
                 let instance_id = instance_id.clone();
+                let asset_type = asset_type.clone();
                 async move {
                     ctx.update_progress(0, 100, "Starting download...").await;
 
@@ -3391,25 +3782,160 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
                         return Err(crate::core::task::TaskError::ExecutionError("Cancelled".to_string()));
                     }
 
-                    let result = install_mod_to_instance(
-                        app,
-                        InstallModOptions {
-                            source: m.source.clone(),
-                            project_id: m.project_id.clone(),
-                            mod_name: Some(m.project_name.clone()),
-                            instance_id: Some(instance_id),
-                            target_dir: None,
-                            download_url: m.download_url.clone(),
-                            file_id: m.file_id.clone(),
-                            dependencies: m.dependencies.clone(),
-                            keep_both: Some(false),
-                        },
-                        Some(ctx.clone()),
-                    ).await;
+                    match asset_type.as_str() {
+                        "shaderpacks" | "resourcepacks" => {
+                            let folder_name = if asset_type == "shaderpacks" { "shaderpacks" } else { "resourcepacks" };
+                            let category = if asset_type == "shaderpacks" {
+                                crate::models::instance::AssetCategory::ShaderPack
+                            } else {
+                                crate::models::instance::AssetCategory::ResourcePack
+                            };
+                            let base_dir = crate::core::mojang::get_minecraft_base();
+                            let target_dir = base_dir.join("versions").join(&instance_id).join(folder_name);
+                            if !target_dir.exists() {
+                                tokio::fs::create_dir_all(&target_dir).await.map_err(|e| crate::core::task::TaskError::ExecutionError(e.to_string()))?;
+                            }
+                            let raw_filename = if !m.filename.is_empty() {
+                                m.filename.clone()
+                            } else {
+                                extract_filename_from_url(&m.download_url, &m.project_id)
+                            };
+                            let clean_filename = std::path::Path::new(&raw_filename)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("");
+                            if clean_filename.is_empty() || !crate::core::fs_utils::is_safe_single_name(clean_filename) {
+                                return Err(crate::core::task::TaskError::ExecutionError(format!("Invalid filename '{}'", raw_filename)));
+                            }
+                            let target_path = target_dir.join(clean_filename);
+                            if !target_path.starts_with(&target_dir) {
+                                return Err(crate::core::task::TaskError::ExecutionError("Target path escapes asset directory".to_string()));
+                            }
 
-                    if let Err(e) = result {
-                        tracing::error!("Failed to install preset mod {}: {}", m.project_id, e);
-                        return Err(crate::core::task::TaskError::ExecutionError(format!("Failed to install {}: {}", m.project_id, e)));
+                            if let Ok(meta) = tokio::fs::symlink_metadata(&target_path).await {
+                                if meta.file_type().is_symlink() {
+                                    return Err(crate::core::task::TaskError::ExecutionError(format!("Destination '{}' is a symlink and cannot be overwritten", clean_filename)));
+                                }
+                            }
+
+                            let path_lock = get_path_lock(&target_path);
+                            let _path_guard = path_lock.lock().await;
+
+                            let parsed_download_url = reqwest::Url::parse(&m.download_url)
+                                .map_err(|e| crate::core::task::TaskError::ExecutionError(format!("Invalid download URL: {}", e)))?;
+                            validate_preset_download_url(&parsed_download_url)
+                                .map_err(crate::core::task::TaskError::ExecutionError)?;
+
+                            let mut matches_existing = false;
+                            if target_path.exists() {
+                                let rel_key = format!("{}/{}", folder_name, clean_filename);
+                                let manifest_record = {
+                                    let _manifest_guard = MANIFEST_LOCK.lock().await;
+                                    let manifest_path = base_dir.join("versions").join(&instance_id).join("assets.json");
+                                    if manifest_path.exists() {
+                                        tokio::fs::read_to_string(&manifest_path)
+                                            .await
+                                            .ok()
+                                            .and_then(|content| serde_json::from_str::<crate::models::instance::AssetManifest>(&content).ok())
+                                            .and_then(|manifest| manifest.assets.get(&rel_key).cloned())
+                                    } else {
+                                        None
+                                    }
+                                };
+
+                                let (project_matches, record_size, record_hash) = if let Some(ref record) = manifest_record {
+                                    let p_match = record.project_id.as_deref() == Some(&m.project_id);
+                                    let u_match = record.download_url.as_deref() == Some(&m.download_url);
+                                    let v_match = !m.file_id.is_empty() && record.version_id.as_deref() == Some(&m.file_id);
+                                    (p_match && (u_match || v_match), record.size, record.hash_sha1.clone())
+                                } else {
+                                    (false, None, None)
+                                };
+
+                                let has_verification_criterion = m.file_size.is_some() || record_size.is_some() || m.hash.is_some() || record_hash.is_some();
+
+                                if has_verification_criterion {
+                                    let mut verified = manifest_record.is_none() || project_matches;
+
+                                    if verified {
+                                        let expected_size = m.file_size.or(record_size);
+                                        if let Some(expected_size) = expected_size {
+                                            if let Ok(meta) = tokio::fs::metadata(&target_path).await {
+                                                if meta.len() != expected_size {
+                                                    verified = false;
+                                                }
+                                            } else {
+                                                verified = false;
+                                            }
+                                        }
+                                    }
+
+                                    if verified {
+                                        let expected_hash = m.hash.as_ref().or(record_hash.as_ref());
+                                        if let Some(expected_hash) = expected_hash {
+                                            let p = target_path.clone();
+                                            match tokio::task::spawn_blocking(move || crate::downloader::download::compute_sha1_sync(&p)).await {
+                                                Ok(Ok(actual_hash)) => {
+                                                    if !actual_hash.eq_ignore_ascii_case(expected_hash) {
+                                                        verified = false;
+                                                    }
+                                                }
+                                                _ => {
+                                                    verified = false;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    matches_existing = verified;
+                                }
+                            }
+
+                            if !matches_existing {
+                                download_mod_file_task(&ctx, &PRESET_DOWNLOAD_HTTP_CLIENT, &m.download_url, &target_path)
+                                    .await
+                                    .map_err(crate::core::task::TaskError::ExecutionError)?;
+                            } else {
+                                ctx.update_progress(100, 100, "File already exists and matches").await;
+                            }
+
+                            register_manual_asset_full(
+                                &instance_id,
+                                &format!("{}/{}", folder_name, clean_filename),
+                                category,
+                                &m.source,
+                                &m.project_id,
+                                if m.file_id.is_empty() { None } else { Some(&m.file_id) },
+                                &m.download_url,
+                            ).await.map_err(crate::core::task::TaskError::ExecutionError)?;
+                        }
+                        _ => {
+                            let parsed_download_url = reqwest::Url::parse(&m.download_url)
+                                .map_err(|e| crate::core::task::TaskError::ExecutionError(format!("Invalid download URL: {}", e)))?;
+                            validate_preset_download_url(&parsed_download_url)
+                                .map_err(crate::core::task::TaskError::ExecutionError)?;
+
+                            let result = install_mod_to_instance(
+                                app,
+                                InstallModOptions {
+                                    source: m.source.clone(),
+                                    project_id: m.project_id.clone(),
+                                    mod_name: Some(m.project_name.clone()),
+                                    instance_id: Some(instance_id),
+                                    target_dir: None,
+                                    download_url: m.download_url.clone(),
+                                    file_id: m.file_id.clone(),
+                                    dependencies: m.dependencies.clone(),
+                                    keep_both: Some(false),
+                                },
+                                Some(ctx.clone()),
+                            ).await;
+
+                            if let Err(e) = result {
+                                tracing::error!("Failed to install preset mod {}: {}", m.project_id, e);
+                                return Err(crate::core::task::TaskError::ExecutionError(format!("Failed to install {}: {}", m.project_id, e)));
+                            }
+                        }
                     }
 
                     ctx.update_progress(100, 100, "Completed").await;
