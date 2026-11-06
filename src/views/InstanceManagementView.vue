@@ -35,7 +35,6 @@ import CrashHistoryPanel from "../components/CrashHistoryPanel.vue";
 import { isInstanceBusy } from "../types";
 import { useTaskStore } from "../composables/useTaskStore";
 import { useModpackInstallState } from "../composables/useModpackInstallState";
-import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive } from "../types/task";
 import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../composables/useLaunchState";
 
 const route = useRoute();
@@ -43,30 +42,14 @@ const router = useRouter();
 const { t } = useI18n();
 const { instances, fetchInstances } = useInstances();
 const taskStore = useTaskStore();
-const { instanceUpdateTaskIds, isTaskDismissed } = useModpackInstallState();
+const { hasOngoingInstanceUpdateTask: checkOngoingInstanceUpdateTask } = useModpackInstallState();
 
 const instanceId = computed(() => route.params.id as string);
 const currentInstance = computed(() => instances.value.find(i => i.id === instanceId.value));
 
 const hasOngoingUpdateTask = computed(() => {
   if (!currentInstance.value) return false;
-  const name = currentInstance.value.name;
-  const trackedId = instanceUpdateTaskIds.value[name];
-  if (trackedId) {
-    const t = taskStore.tasks.value.find(task => task.id === trackedId);
-    if (t && isModpackUpdateTask(t.task_type) && !isTaskDismissed(t.id)) {
-      if (isTaskActive(t.status) || t.status === 'Completed' || t.status === 'Failed') {
-        return true;
-      }
-    }
-  }
-  return taskStore.tasks.value.some(t =>
-    isModpackTask(t.task_type) &&
-    isModpackUpdateTask(t.task_type) &&
-    getModpackTaskInstanceName(t.task_type) === name &&
-    !isTaskDismissed(t.id) &&
-    isTaskActive(t.status)
-  );
+  return checkOngoingInstanceUpdateTask(taskStore.tasks.value, currentInstance.value.name);
 });
 
 // Patch icons cached in the background without rescanning all instances

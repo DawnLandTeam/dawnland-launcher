@@ -14,13 +14,12 @@ import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
 import { trackEvent } from "../utils/analytics";
 import { useTaskStore } from "../composables/useTaskStore";
 import { useModpackInstallState } from "../composables/useModpackInstallState";
-import { isModpackTask, isModpackUpdateTask, isTaskActive } from "../types/task";
 
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
 const taskStore = useTaskStore();
-const { downloadsModpackTaskId, isTaskDismissed } = useModpackInstallState();
+const { hasActiveDownloadsModpackTask: checkActiveDownloadsModpackTask } = useModpackInstallState();
 
 const lastTabKey = 'downloads_active_tab';
 
@@ -35,20 +34,7 @@ const tabs = [
 ];
 
 const hasActiveDownloadsModpackTask = computed(() => {
-  if (downloadsModpackTaskId.value) {
-    const task = taskStore.tasks.value.find(t => t.id === downloadsModpackTaskId.value);
-    if (task && !isTaskDismissed(task.id)) {
-      if (isTaskActive(task.status) || task.status === 'Completed' || task.status === 'Failed') {
-        return true;
-      }
-    }
-  }
-  return taskStore.tasks.value.some(t =>
-    isModpackTask(t.task_type) &&
-    !isModpackUpdateTask(t.task_type) &&
-    !isTaskDismissed(t.id) &&
-    isTaskActive(t.status)
-  );
+  return checkActiveDownloadsModpackTask(taskStore.tasks.value);
 });
 
 const translatedTabs = computed(() => tabs.map(tab => ({
