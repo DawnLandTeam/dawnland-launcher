@@ -504,18 +504,18 @@ fn unmark_backfill_attempted(instance_id: &str) {
 }
 
 /// Fetch one icon, emit the update event on success, and return whether it succeeded.
-async fn run_icon_job(app: &AppHandle, candidate: &IconBackfillCandidate, generation: u64) -> bool {
+async fn run_icon_job(app: &AppHandle, candidate: &IconBackfillCandidate, generation: u64) -> Result<(), bool> {
     if !is_generation_current(
         &candidate.instance_id,
         generation,
         &candidate.modpack_type,
         &candidate.project_id,
     ) {
-        return false;
+        return Err(false);
     }
 
     if !try_mark_in_flight(&candidate.instance_id, generation) {
-        return true;
+        return Ok(());
     }
 
     let outcome = cache_modpack_icon(
@@ -544,11 +544,11 @@ async fn run_icon_job(app: &AppHandle, candidate: &IconBackfillCandidate, genera
                     updated_at,
                 },
             );
-            true
+            Ok(())
         }
         Ok(None) => {
             tracing::info!("Modpack of instance {} has no icon", candidate.instance_id);
-            true
+            Ok(())
         }
         Err(e) => {
             tracing::warn!(
@@ -556,9 +556,25 @@ async fn run_icon_job(app: &AppHandle, candidate: &IconBackfillCandidate, genera
                 candidate.instance_id,
                 e
             );
-            false
+            let is_permanent = is_permanent_icon_error(&e);
+            Err(!is_permanent)
         }
     }
+}
+
+fn is_permanent_icon_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("exceeds size limit")
+        || lower.contains("unsupported icon format")
+        || lower.contains("404")
+        || lower.contains("403")
+        || lower.contains("410")
+        || lower.contains("no icon url")
+        || lower.contains("invalid icon url")
+        || lower.contains("unsupported icon url scheme")
+        || lower.contains("disallowed ipv4")
+        || lower.contains("disallowed ipv6")
+        || lower.contains("direct ip icon urls are not allowed")
 }
 
 /// Cache the icon in the background (used during modpack installation / update).
@@ -568,14 +584,17 @@ pub fn spawn_cache_modpack_icon(
     generation: u64,
 ) {
     tauri::async_runtime::spawn(async move {
-        if !run_icon_job(&app, &candidate, generation).await {
-            unmark_backfill_attempted(&candidate.instance_id);
+        if let Err(can_retry) = run_icon_job(&app, &candidate, generation).await {
+            if can_retry {
+                unmark_backfill_attempted(&candidate.instance_id);
+            }
         }
     });
 }
 
 /// Back-fill icons for existing modpack instances, sequentially in one background task.
-/// Failed instances are removed from `BACKFILL_ATTEMPTED` so a subsequent scan can retry.
+/// Transient failures are removed from `BACKFILL_ATTEMPTED` so a subsequent scan can retry,
+/// while permanent failures (e.g. size limits or 404s) remain marked to prevent infinite loops.
 pub fn schedule_icon_backfill(app: AppHandle, candidates: Vec<IconBackfillCandidate>) {
     let pending: Vec<(IconBackfillCandidate, u64)> = match BACKFILL_ATTEMPTED.lock() {
         Ok(mut attempted) => candidates
@@ -599,8 +618,10 @@ pub fn schedule_icon_backfill(app: AppHandle, candidates: Vec<IconBackfillCandid
     tracing::info!("Back-filling icons for {} modpack instance(s)", pending.len());
     tauri::async_runtime::spawn(async move {
         for (candidate, generation) in &pending {
-            if !run_icon_job(&app, candidate, *generation).await {
-                unmark_backfill_attempted(&candidate.instance_id);
+            if let Err(can_retry) = run_icon_job(&app, candidate, *generation).await {
+                if can_retry {
+                    unmark_backfill_attempted(&candidate.instance_id);
+                }
             }
         }
     });

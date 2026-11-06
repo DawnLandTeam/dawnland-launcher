@@ -28,7 +28,8 @@ import { useI18n } from "vue-i18n";
 import { fetchApi } from "../utils/api";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { useStatistics } from "../composables/useStatistics";
-import { applyCachedInstanceIcons, useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
+import { useInstances } from "../composables/useInstances";
+import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
 import { useFileDrop } from "../composables/useFileDrop";
 import { type InstanceItem, isInstanceBusy, getInstanceStatusLabel } from "../types";
 
@@ -162,8 +163,16 @@ const authlibReauthUsername = ref("");
 const authlibReauthPassword = ref("");
 const isReauthingAuthlib = ref(false);
 const authlibReauthError = ref<string | null>(null);
+const { fetchInstances } = useInstances();
+let taskAddedDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const handleTaskAdded = () => {
-  loadInstances();
+  if (taskAddedDebounceTimer) {
+    clearTimeout(taskAddedDebounceTimer);
+  }
+  taskAddedDebounceTimer = setTimeout(() => {
+    taskAddedDebounceTimer = null;
+    loadInstances();
+  }, 250);
 };
 
 const { fetchAllStats, getInstanceStats, formatPlayTime, error: statsError } = useStatistics();
@@ -341,6 +350,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (taskAddedDebounceTimer) {
+    clearTimeout(taskAddedDebounceTimer);
+    taskAddedDebounceTimer = null;
+  }
   window.removeEventListener('task-added', handleTaskAdded);
 });
 
@@ -448,11 +461,9 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
 // ---------------------------------------------------------------------------
 // Data loading
 // ---------------------------------------------------------------------------
-async function loadInstances() {
+async function loadInstances(force = false) {
   try {
-    const instances = applyCachedInstanceIcons(
-      await invoke<InstanceItem[]>("scan_installed_instances"),
-    );
+    const instances = await fetchInstances(force);
     installedInstances.value = instances;
     if (instances.length > 0) {
       // Check if previously selected instance still exists

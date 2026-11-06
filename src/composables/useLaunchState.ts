@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
+import { useInstances } from './useInstances';
 
 // Global singleton states for instances
 export const launchingInstances = ref<Set<string>>(new Set());
@@ -40,7 +40,8 @@ export async function initGlobalLaunchState() {
 
   // Sync initially running instances from backend
   try {
-    const instances = await invoke<{ id: string; status: string }[]>('scan_installed_instances');
+    const { fetchInstances } = useInstances();
+    const instances = await fetchInstances();
     for (const inst of instances) {
       if (inst.status === 'running') {
         runningInstances.value.add(inst.id);
@@ -99,7 +100,8 @@ export async function initGlobalLaunchState() {
   // Keep running state in sync whenever instances change
   await listen('instances-changed', async () => {
     try {
-      const instances = await invoke<{ id: string; status: string }[]>('scan_installed_instances');
+      const { fetchInstances } = useInstances();
+      const instances = await fetchInstances();
       const activeIds = new Set(instances.filter(i => i.status === 'running').map(i => i.id.toLowerCase()));
       for (const id of Array.from(runningInstances.value)) {
         if (!activeIds.has(id.toLowerCase()) && !jvmSpawnedInstances.value.has(id)) {

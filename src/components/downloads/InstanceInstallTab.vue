@@ -12,6 +12,7 @@ import DSelect from "../ui/DSelect.vue";
 import InstallCard from "../InstallCard.vue";
 import TaskDetailView from "../TaskDetailView.vue";
 import { useTaskStore } from "../../composables/useTaskStore";
+import { useInstances } from "../../composables/useInstances";
 import { getErrorMessage } from "../../utils/error";
 
 // Types
@@ -614,7 +615,8 @@ async function installVersion(): Promise<void> {
 
   const finalInstanceName = customInstanceName.value.trim() !== "" ? customInstanceName.value.trim() : selectedVersion.value;
   try {
-    const installedInstances = await invoke<any[]>("scan_installed_instances");
+    const { fetchInstances } = useInstances();
+    const installedInstances = await fetchInstances(true);
     const exists = installedInstances.some((i: any) => i.id.toLowerCase() === finalInstanceName.toLowerCase());
     if (exists) {
       nameError.value = t("install.instanceAlreadyExists", "Instance with this name already exists. Please choose a different name.");

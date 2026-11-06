@@ -21,6 +21,7 @@ import type { ModpackArchiveInfo } from "../../types";
 import { useModpackInstallState } from "../../composables/useModpackInstallState";
 import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive, type TaskState } from "../../types/task";
 import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../../composables/useLaunchState";
+import { useInstances } from "../../composables/useInstances";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -307,9 +308,12 @@ const activeDownloads = ref(new Map<string, any>());
 
 
 
+const { fetchInstances } = useInstances();
 const lastProcessedQueryStr = ref("");
+let isInitializing = false;
 
 const initializeView = async () => {
+  if (isInitializing) return;
   if (props.isModalUpdate && route.query.tab !== 'update_modpack') {
     showVersionsModal.value = false;
     return;
@@ -320,9 +324,10 @@ const initializeView = async () => {
     return;
   }
   lastProcessedQueryStr.value = currentQueryStr;
+  isInitializing = true;
 
   try {
-    installedInstances.value = await invoke<InstalledInstance[]>("scan_installed_instances");
+    installedInstances.value = (await fetchInstances()) as unknown as InstalledInstance[];
     scanError.value = null;
   } catch (e) {
     console.error("Failed to fetch installed instances:", e);
@@ -330,6 +335,8 @@ const initializeView = async () => {
     scanError.value = errMsg;
     localNameError.value = errMsg;
     toast.error(t('common.error', 'Error'), errMsg);
+  } finally {
+    isInitializing = false;
   }
 
   // Restore task if one exists for this view
@@ -692,7 +699,7 @@ const openVersionsModal = async (modpack: any) => {
   selectedModpack.value = modpack;
   onlineNameError.value = null;
   try {
-    installedInstances.value = await invoke<InstalledInstance[]>("scan_installed_instances");
+    installedInstances.value = (await fetchInstances()) as unknown as InstalledInstance[];
   } catch (e) {
     console.error("Failed to refresh installed instances:", e);
   }
@@ -1114,7 +1121,7 @@ const installModpack = async () => {
 
   if (scanError.value) {
     try {
-      installedInstances.value = await invoke<InstalledInstance[]>("scan_installed_instances");
+      installedInstances.value = (await fetchInstances(true)) as unknown as InstalledInstance[];
       scanError.value = null;
       localNameError.value = null;
     } catch (e) {
@@ -1130,9 +1137,9 @@ const installModpack = async () => {
 
   if (!isUpdate.value) {
     try {
-      const scannedInstances = await invoke<InstalledInstance[]>("scan_installed_instances");
+      const scannedInstances = await fetchInstances(true);
       scanError.value = null;
-      const exists = scannedInstances.some((i: InstalledInstance) => i.id.toLowerCase() === finalInstanceName.trim().toLowerCase());
+      const exists = scannedInstances.some((i: any) => i.id.toLowerCase() === finalInstanceName.trim().toLowerCase());
       if (exists) {
         isInstalling.value = false;
         if (targetMode === 'online') {
@@ -1283,11 +1290,28 @@ const handleFinishOrDismiss = () => {
   }
   isInstalling.value = false;
   currentTaskId.value = null;
-  lastProcessedQueryStr.value = "";
+
   if (props.isModalUpdate) {
     emit('cancel-update');
   } else {
-    initializeView();
+    // If the URL has installation parameters (e.g. from deep link or server page),
+    // clear them on finish so initializeView won't re-trigger an auto installation!
+    const query = { ...route.query };
+    let hasInstallParams = false;
+    const installKeys = ['instance_name', 'project_id', 'version_id', 'online_url', 'zip', 'update_id', 'source', 'is_update', 'server_id', 'pack_file_name'];
+    for (const key of installKeys) {
+      if (key in query) {
+        delete query[key];
+        hasInstallParams = true;
+      }
+    }
+
+    if (hasInstallParams) {
+      router.replace({ query });
+    } else {
+      lastProcessedQueryStr.value = JSON.stringify(query);
+      initializeView();
+    }
   }
 };
 
