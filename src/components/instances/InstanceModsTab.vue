@@ -162,28 +162,46 @@ const filteredMods = computed(() => {
   );
 });
 
+let loadSeq = 0;
+
 async function loadMods() {
-  if (!props.instanceId) return;
+  const currentInstanceId = props.instanceId;
+  if (!currentInstanceId) {
+    mods.value = [];
+    return;
+  }
   
+  const seq = ++loadSeq;
   loading.value = true;
   try {
-    const result = await invoke<any[]>('get_installed_mods', { versionId: props.instanceId });
+    const result = await invoke<LocalMod[]>('get_installed_mods', { versionId: currentInstanceId });
+    if (seq !== loadSeq || props.instanceId !== currentInstanceId) {
+      return;
+    }
     mods.value = result.map(mod => ({
       ...mod,
       isToggling: false
     }));
   } catch (error) {
+    if (seq !== loadSeq || props.instanceId !== currentInstanceId) {
+      return;
+    }
     console.error('Failed to load mods:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
     );
   } finally {
-    loading.value = false;
+    if (seq === loadSeq && props.instanceId === currentInstanceId) {
+      loading.value = false;
+    }
   }
 }
 
-watch(() => props.instanceId, loadMods, { immediate: true });
+watch(() => props.instanceId, () => {
+  searchQuery.value = '';
+  loadMods();
+}, { immediate: true });
 
 function handleAssetsUpdated(event: Event) {
   const detail = (event as CustomEvent<InstanceAssetsUpdatedDetail>).detail;

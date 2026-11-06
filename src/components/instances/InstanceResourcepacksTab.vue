@@ -140,21 +140,36 @@ const filteredAssets = computed(() => {
   );
 });
 
+let loadSeq = 0;
+
 async function loadAssets() {
-  if (!props.instanceId) return;
+  const currentInstanceId = props.instanceId;
+  if (!currentInstanceId) {
+    assets.value = [];
+    return;
+  }
   
+  const seq = ++loadSeq;
   loading.value = true;
   try {
-    const result = await invoke<LocalAssetItem[]>('get_installed_resourcepacks', { versionId: props.instanceId });
+    const result = await invoke<LocalAssetItem[]>('get_installed_resourcepacks', { versionId: currentInstanceId });
+    if (seq !== loadSeq || props.instanceId !== currentInstanceId) {
+      return;
+    }
     assets.value = result;
   } catch (error) {
+    if (seq !== loadSeq || props.instanceId !== currentInstanceId) {
+      return;
+    }
     console.error('Failed to load resourcepacks:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
     );
   } finally {
-    loading.value = false;
+    if (seq === loadSeq && props.instanceId === currentInstanceId) {
+      loading.value = false;
+    }
   }
 }
 

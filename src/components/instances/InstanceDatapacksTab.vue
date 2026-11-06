@@ -155,11 +155,25 @@ const filteredDatapacks = computed(() => {
   );
 });
 
+let worldsLoadSeq = 0;
+let datapacksLoadSeq = 0;
+
 async function loadWorlds() {
-  if (!props.instanceId) return;
+  const currentInstanceId = props.instanceId;
+  if (!currentInstanceId) {
+    worldOptions.value = [];
+    selectedWorld.value = '';
+    datapacks.value = [];
+    return;
+  }
+
+  const seq = ++worldsLoadSeq;
   loadingWorlds.value = true;
   try {
-    const saves = await invoke<string[]>('get_instance_saves', { instanceId: props.instanceId });
+    const saves = await invoke<string[]>('get_instance_saves', { instanceId: currentInstanceId });
+    if (seq !== worldsLoadSeq || props.instanceId !== currentInstanceId) {
+      return;
+    }
     worldOptions.value = saves.map(save => ({ label: save, value: save }));
     if (worldOptions.value.length > 0) {
       if (!selectedWorld.value || !saves.includes(selectedWorld.value)) {
@@ -173,36 +187,65 @@ async function loadWorlds() {
       datapacks.value = [];
     }
   } catch (e) {
+    if (seq !== worldsLoadSeq || props.instanceId !== currentInstanceId) {
+      return;
+    }
     console.error('Failed to load worlds:', e);
     worldOptions.value = [];
     selectedWorld.value = '';
+    datapacks.value = [];
     toast.error(t('common.error', 'Error'), getErrorMessage(e));
   } finally {
-    loadingWorlds.value = false;
+    if (seq === worldsLoadSeq && props.instanceId === currentInstanceId) {
+      loadingWorlds.value = false;
+    }
   }
 }
 
 async function loadDatapacks() {
-  if (!props.instanceId || !selectedWorld.value) {
+  const currentInstanceId = props.instanceId;
+  const currentWorld = selectedWorld.value;
+  if (!currentInstanceId || !currentWorld) {
     datapacks.value = [];
     return;
   }
   
+  const seq = ++datapacksLoadSeq;
   loadingDatapacks.value = true;
   try {
     const result = await invoke<LocalDatapackItem[]>('get_installed_datapacks', { 
-      versionId: props.instanceId,
-      worldName: selectedWorld.value
+      versionId: currentInstanceId,
+      worldName: currentWorld
     });
+    if (
+      seq !== datapacksLoadSeq ||
+      props.instanceId !== currentInstanceId ||
+      selectedWorld.value !== currentWorld
+    ) {
+      return;
+    }
     datapacks.value = result;
   } catch (error) {
+    if (
+      seq !== datapacksLoadSeq ||
+      props.instanceId !== currentInstanceId ||
+      selectedWorld.value !== currentWorld
+    ) {
+      return;
+    }
     console.error('Failed to load datapacks:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
     );
   } finally {
-    loadingDatapacks.value = false;
+    if (
+      seq === datapacksLoadSeq &&
+      props.instanceId === currentInstanceId &&
+      selectedWorld.value === currentWorld
+    ) {
+      loadingDatapacks.value = false;
+    }
   }
 }
 
@@ -222,8 +265,7 @@ function handleAssetsUpdated(event: Event) {
   if (!detail || detail.instanceId !== props.instanceId) return;
   if (detail.kinds.includes('World')) {
     loadWorlds();
-  }
-  if (detail.kinds.includes('Datapack')) {
+  } else if (detail.kinds.includes('Datapack')) {
     loadDatapacks();
   }
 }
@@ -236,7 +278,6 @@ onMounted(() => {
 onActivated(() => {
   setActiveDatapackWorld(selectedWorld.value || null);
   loadWorlds();
-  loadDatapacks();
 });
 
 onUnmounted(() => {

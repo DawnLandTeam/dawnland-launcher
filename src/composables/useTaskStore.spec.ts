@@ -236,4 +236,105 @@ describe('useTaskStore composable', () => {
     expect(store.isTaskDetailOpen.value).toBe(false);
     expect(invoke).toHaveBeenCalledWith('delete_task', { taskId: 'auto-clear-id' });
   });
+
+  it('emits asset refresh event when InstallDatapack completes', async () => {
+    const store = useTaskStore();
+    store.tasks.value = [];
+
+    const eventSpy = vi.fn();
+    window.addEventListener('instance-assets-updated', eventSpy);
+
+    const task = {
+      id: 'task-datapack',
+      status: 'Completed',
+      task_type: { InstallDatapack: { instance_id: 'inst-1', pack_name: 'dp1', project_id: 'p1', source: 's', download_url: 'u', file_id: 'f' } }
+    };
+    progressCallback({ payload: task });
+
+    expect(eventSpy).toHaveBeenCalled();
+    const emittedDetail = eventSpy.mock.calls[0][0].detail;
+    expect(emittedDetail).toEqual({ instanceId: 'inst-1', kinds: ['Datapack'] });
+
+    window.removeEventListener('instance-assets-updated', eventSpy);
+  });
+
+  it('emits asset refresh event when InstallWorld completes', async () => {
+    const store = useTaskStore();
+    store.tasks.value = [];
+
+    const eventSpy = vi.fn();
+    window.addEventListener('instance-assets-updated', eventSpy);
+
+    const task = {
+      id: 'task-world',
+      status: 'Completed',
+      task_type: { InstallWorld: { instance_id: 'inst-2', pack_name: 'w1', project_id: 'p1', source: 's', download_url: 'u', file_id: 'f' } }
+    };
+    progressCallback({ payload: task });
+
+    expect(eventSpy).toHaveBeenCalled();
+    const emittedDetail = eventSpy.mock.calls[0][0].detail;
+    expect(emittedDetail).toEqual({ instanceId: 'inst-2', kinds: ['World'] });
+
+    window.removeEventListener('instance-assets-updated', eventSpy);
+  });
+
+  it('emits asset refresh event when InstallPreset fails after partial progress', async () => {
+    const store = useTaskStore();
+    store.tasks.value = [];
+
+    const eventSpy = vi.fn();
+    window.addEventListener('instance-assets-updated', eventSpy);
+
+    const task = {
+      id: 'task-preset-fail',
+      status: 'Failed',
+      task_type: { InstallPreset: { instance_id: 'inst-preset', preset_name: 'MyPreset', asset_type: 'mods' } },
+      progress: {
+        current: 50,
+        total: 100,
+        step: 1,
+        total_steps: 2,
+        sub_tasks: [
+          { key: 'm1', name: 'mod 1', status: 'Completed', current: 100, total: 100, weight: 50 },
+          { key: 'm2', name: 'mod 2', status: 'Failed', current: 0, total: 100, weight: 50 }
+        ]
+      }
+    };
+    progressCallback({ payload: task });
+
+    expect(eventSpy).toHaveBeenCalled();
+    const emittedDetail = eventSpy.mock.calls[0][0].detail;
+    expect(emittedDetail).toEqual({ instanceId: 'inst-preset', kinds: ['Mod'] });
+
+    window.removeEventListener('instance-assets-updated', eventSpy);
+  });
+
+  it('does not emit asset refresh when InstallPreset fails without any progress', async () => {
+    const store = useTaskStore();
+    store.tasks.value = [];
+
+    const eventSpy = vi.fn();
+    window.addEventListener('instance-assets-updated', eventSpy);
+
+    const task = {
+      id: 'task-preset-fail-zero',
+      status: 'Failed',
+      task_type: { InstallPreset: { instance_id: 'inst-preset', preset_name: 'MyPreset', asset_type: 'mods' } },
+      progress: {
+        current: 0,
+        total: 100,
+        step: 0,
+        total_steps: 2,
+        sub_tasks: [
+          { key: 'm1', name: 'mod 1', status: 'Pending', current: 0, total: 100, weight: 50 }
+        ]
+      }
+    };
+    progressCallback({ payload: task });
+
+    expect(eventSpy).not.toHaveBeenCalled();
+
+    window.removeEventListener('instance-assets-updated', eventSpy);
+  });
 });

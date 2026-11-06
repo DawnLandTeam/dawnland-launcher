@@ -13,129 +13,218 @@ const isInitialized = ref(false);
 const isTaskCenterOpen = ref(false);
 const isTaskDetailOpen = ref(false);
 const selectedTaskId = ref<string | null>(null);
+let initPromise: Promise<void> | null = null;
+
+function refreshTaskAssets(task: TaskState) {
+  const tt = task.task_type;
+  if ('InstallShaderpack' in tt && tt.InstallShaderpack.instance_id) {
+    emitInstanceAssetsUpdated(tt.InstallShaderpack.instance_id, ['ShaderPack']);
+  } else if ('InstallResourcepack' in tt && tt.InstallResourcepack.instance_id) {
+    emitInstanceAssetsUpdated(tt.InstallResourcepack.instance_id, ['ResourcePack']);
+  } else if ('InstallMod' in tt && tt.InstallMod.instance_id) {
+    emitInstanceAssetsUpdated(tt.InstallMod.instance_id, ['Mod']);
+  } else if ('InstallDatapack' in tt && tt.InstallDatapack.instance_id) {
+    emitInstanceAssetsUpdated(tt.InstallDatapack.instance_id, ['Datapack']);
+  } else if ('InstallWorld' in tt && tt.InstallWorld.instance_id) {
+    emitInstanceAssetsUpdated(tt.InstallWorld.instance_id, ['World']);
+  } else if ('InstallPreset' in tt && tt.InstallPreset.instance_id) {
+    const assetType = (tt.InstallPreset as any).asset_type;
+    const kind = assetType === 'shaderpacks' ? 'ShaderPack' : (assetType === 'resourcepacks' ? 'ResourcePack' : 'Mod');
+    emitInstanceAssetsUpdated(tt.InstallPreset.instance_id, [kind]);
+  }
+}
+
+function shouldRefreshFailedPreset(task: TaskState): boolean {
+  const tt = task.task_type;
+  if (!('InstallPreset' in tt) || !tt.InstallPreset.instance_id) {
+    return false;
+  }
+  const subTasks = task.progress?.sub_tasks;
+  if (Array.isArray(subTasks) && subTasks.length > 0) {
+    return subTasks.some(st => st.status === 'Completed');
+  }
+  return (task.progress?.current ?? 0) > 0 || (task.progress?.step ?? 0) > 0;
+}
 
 export function useTaskStore() {
   // Init task history from backend
   async function init() {
     if (isInitialized.value) return;
+    if (initPromise) return initPromise;
     
-    try {
-      const history = await invoke<TaskState[]>('get_task_history');
-      tasks.value = history;
-      
-      // Listen for updates
-      await listen<TaskState>('task-progress-update', (event) => {
-        const updatedTask = event.payload;
-        const index = tasks.value.findIndex(t => t.id === updatedTask.id);
-        
-        if (index !== -1) {
-          const oldStatus = tasks.value[index].status;
-          tasks.value[index] = updatedTask;
-          
-          if (oldStatus !== updatedTask.status) {
-            window.dispatchEvent(new CustomEvent('task-status-changed', { detail: updatedTask }));
+    initPromise = (async () => {
+      try {
+        const deletedDuringInit = new Set<string>();
 
-            // Update terminal states with popup
-            if (updatedTask.status === 'Failed') {
-              const title = i18n.global.t('task.failedTitle', { name: getTaskName(updatedTask.task_type) });
-              const desc = updatedTask.error || i18n.global.t('task.failedDesc');
+        // Register listeners before fetching task history to prevent missing completions
+        await listen<TaskState>('task-progress-update', (event) => {
+          const updatedTask = event.payload;
+          const index = tasks.value.findIndex(t => t.id === updatedTask.id);
+          
+          if (index !== -1) {
+            const oldStatus = tasks.value[index].status;
+            tasks.value[index] = updatedTask;
+            
+            if (oldStatus !== updatedTask.status) {
+              window.dispatchEvent(new CustomEvent('task-status-changed', { detail: updatedTask }));
+
+              // Update terminal states with popup
+              if (updatedTask.status === 'Failed') {
+                const title = i18n.global.t('task.failedTitle', { name: getTaskName(updatedTask.task_type) });
+                const desc = updatedTask.error || i18n.global.t('task.failedDesc');
+                notificationStore.updateNotification(updatedTask.id, {
+                  title,
+                  description: desc,
+                  type: 'error',
+                  isPopup: true,
+                  status: 'unread',
+                  transient: false
+                });
+
+                if (shouldRefreshFailedPreset(updatedTask)) {
+                  refreshTaskAssets(updatedTask);
+                }
+              } else if (updatedTask.status === 'Completed') {
+                const title = i18n.global.t('task.completedTitle', { name: getTaskName(updatedTask.task_type) }) || `Completed: ${getTaskName(updatedTask.task_type)}`;
+                const desc = i18n.global.t('task.completedDesc');
+                const isTransient = 'InstallMod' in updatedTask.task_type || 'InstallResourcepack' in updatedTask.task_type;
+                notificationStore.updateNotification(updatedTask.id, {
+                  title,
+                  description: desc,
+                  type: 'success',
+                  isPopup: true,
+                  status: 'unread',
+                  transient: isTransient
+                });
+
+                // Notify instance tabs to refresh when an asset installation task completes
+                refreshTaskAssets(updatedTask);
+              } else if (updatedTask.status === 'Cancelled') {
+                const title = i18n.global.t('task.cancelledTitle', { name: getTaskName(updatedTask.task_type) }) || 'Task Cancelled';
+                notificationStore.updateNotification(updatedTask.id, {
+                  title,
+                  description: '',
+                  type: 'info',
+                  isPopup: true,
+                  status: 'unread',
+                  transient: false
+                });
+
+                if (shouldRefreshFailedPreset(updatedTask)) {
+                  refreshTaskAssets(updatedTask);
+                }
+              } else if (updatedTask.status === 'Cancelling') {
+                const title = i18n.global.t('task.cancellingTitle', { name: getTaskName(updatedTask.task_type) }) || `Cancelling: ${getTaskName(updatedTask.task_type)}`;
+                notificationStore.updateNotification(updatedTask.id, {
+                  title,
+                  description: i18n.global.t('task.cancellingDesc', 'Safely terminating task processes...'),
+                  type: 'info',
+                  isPopup: false,
+                  status: 'read'
+                });
+              }
+            } else if (updatedTask.status === 'Running') {
+              // Silent update for running tasks - no download details in description to avoid spam
+              // We omit isPopup so it doesn't kill the initial "Started" popup or reset its timer
               notificationStore.updateNotification(updatedTask.id, {
-                title,
-                description: desc,
-                type: 'error',
-                isPopup: true,
-                status: 'unread',
-                transient: false
+                title: i18n.global.t('task.runningTitle', { name: getTaskName(updatedTask.task_type) }) || `Running: ${getTaskName(updatedTask.task_type)}`,
+                description: '', // DO NOT UPDATE WITH DOWNLOAD DETAILS
+                type: 'info'
               });
-            } else if (updatedTask.status === 'Completed') {
+            }
+          } else {
+            tasks.value.unshift(updatedTask);
+            window.dispatchEvent(new CustomEvent('task-added', { detail: updatedTask }));
+            
+            if (updatedTask.status === 'Completed') {
               const title = i18n.global.t('task.completedTitle', { name: getTaskName(updatedTask.task_type) }) || `Completed: ${getTaskName(updatedTask.task_type)}`;
               const desc = i18n.global.t('task.completedDesc');
               const isTransient = 'InstallMod' in updatedTask.task_type || 'InstallResourcepack' in updatedTask.task_type;
-              notificationStore.updateNotification(updatedTask.id, {
+              notificationStore.addNotification({
+                id: updatedTask.id,
                 title,
                 description: desc,
                 type: 'success',
                 isPopup: true,
-                status: 'unread',
+                duration: 3000,
                 transient: isTransient
               });
-
-              // Notify instance tabs to refresh when an asset installation task completes
-              const tt = updatedTask.task_type;
-              if ('InstallShaderpack' in tt && tt.InstallShaderpack.instance_id) {
-                emitInstanceAssetsUpdated(tt.InstallShaderpack.instance_id, ['ShaderPack']);
-              } else if ('InstallResourcepack' in tt && tt.InstallResourcepack.instance_id) {
-                emitInstanceAssetsUpdated(tt.InstallResourcepack.instance_id, ['ResourcePack']);
-              } else if ('InstallMod' in tt && tt.InstallMod.instance_id) {
-                emitInstanceAssetsUpdated(tt.InstallMod.instance_id, ['Mod']);
-              } else if ('InstallPreset' in tt && tt.InstallPreset.instance_id) {
-                const assetType = (tt.InstallPreset as any).asset_type;
-                const kind = assetType === 'shaderpacks' ? 'ShaderPack' : (assetType === 'resourcepacks' ? 'ResourcePack' : 'Mod');
-                emitInstanceAssetsUpdated(tt.InstallPreset.instance_id, [kind]);
+              refreshTaskAssets(updatedTask);
+            } else if (updatedTask.status === 'Failed') {
+              const title = i18n.global.t('task.failedTitle', { name: getTaskName(updatedTask.task_type) });
+              const desc = updatedTask.error || i18n.global.t('task.failedDesc');
+              notificationStore.addNotification({
+                id: updatedTask.id,
+                title,
+                description: desc,
+                type: 'error',
+                isPopup: true,
+                duration: 3000,
+                transient: false
+              });
+              if (shouldRefreshFailedPreset(updatedTask)) {
+                refreshTaskAssets(updatedTask);
               }
-            } else if (updatedTask.status === 'Cancelled') {
-              const title = i18n.global.t('task.cancelledTitle', { name: getTaskName(updatedTask.task_type) }) || 'Task Cancelled';
-              notificationStore.updateNotification(updatedTask.id, {
+            } else {
+              const title = i18n.global.t('task.startedTitle', { name: getTaskName(updatedTask.task_type) }) || `Task Started: ${getTaskName(updatedTask.task_type)}`;
+              notificationStore.addNotification({
+                id: updatedTask.id,
                 title,
                 description: '',
                 type: 'info',
                 isPopup: true,
-                status: 'unread',
+                duration: 3000,
                 transient: false
               });
-            } else if (updatedTask.status === 'Cancelling') {
-              const title = i18n.global.t('task.cancellingTitle', { name: getTaskName(updatedTask.task_type) }) || `Cancelling: ${getTaskName(updatedTask.task_type)}`;
-              notificationStore.updateNotification(updatedTask.id, {
-                title,
-                description: i18n.global.t('task.cancellingDesc', 'Safely terminating task processes...'),
-                type: 'info',
-                isPopup: false,
-                status: 'read'
-              });
             }
-          } else if (updatedTask.status === 'Running') {
-            // Silent update for running tasks - no download details in description to avoid spam
-            // We omit isPopup so it doesn't kill the initial "Started" popup or reset its timer
-            notificationStore.updateNotification(updatedTask.id, {
-              title: i18n.global.t('task.runningTitle', { name: getTaskName(updatedTask.task_type) }) || `Running: ${getTaskName(updatedTask.task_type)}`,
-              description: '', // DO NOT UPDATE WITH DOWNLOAD DETAILS
-              type: 'info'
-            });
           }
+        });
+
+        // Listen for task deletions
+        await listen<string>('task-deleted', (event) => {
+          const deletedId = event.payload;
+          deletedDuringInit.add(deletedId);
+          tasks.value = tasks.value.filter(t => t.id !== deletedId);
+        });
+
+        // Listen for instance state or config changes after tasks end
+        await listen('instances-changed', () => {
+          window.dispatchEvent(new CustomEvent('instances-changed'));
+        });
+
+        const history = await invoke<TaskState[]>('get_task_history');
+        if (tasks.value.length === 0) {
+          tasks.value = history.filter(t => !deletedDuringInit.has(t.id));
         } else {
-          tasks.value.unshift(updatedTask);
-          window.dispatchEvent(new CustomEvent('task-added', { detail: updatedTask }));
-          
-          const title = i18n.global.t('task.startedTitle', { name: getTaskName(updatedTask.task_type) }) || `Task Started: ${getTaskName(updatedTask.task_type)}`;
-          
-          // New task started, add to notification center and show popup
-          notificationStore.addNotification({
-            id: updatedTask.id,
-            title,
-            description: '',
-            type: 'info',
-            isPopup: true,
-            duration: 3000,
-            transient: false
-          });
+          const currentTasksMap = new Map(tasks.value.map(t => [t.id, t]));
+          const merged: TaskState[] = [];
+          for (const histTask of history) {
+            if (deletedDuringInit.has(histTask.id)) {
+              continue;
+            }
+            const current = currentTasksMap.get(histTask.id);
+            if (current) {
+              merged.push(current.updated_at >= histTask.updated_at ? current : histTask);
+              currentTasksMap.delete(histTask.id);
+            } else {
+              merged.push(histTask);
+            }
+          }
+          for (const remaining of currentTasksMap.values()) {
+            merged.unshift(remaining);
+          }
+          tasks.value = merged;
         }
-      });
+        
+        isInitialized.value = true;
+      } catch (e) {
+        console.error('Failed to initialize task store:', e);
+      } finally {
+        initPromise = null;
+      }
+    })();
 
-      // Listen for task deletions
-      await listen<string>('task-deleted', (event) => {
-        const deletedId = event.payload;
-        tasks.value = tasks.value.filter(t => t.id !== deletedId);
-      });
-
-      // Listen for instance state or config changes after tasks end
-      await listen('instances-changed', () => {
-        window.dispatchEvent(new CustomEvent('instances-changed'));
-      });
-      
-      isInitialized.value = true;
-    } catch (e) {
-      console.error('Failed to initialize task store:', e);
-    }
+    return initPromise;
   }
 
   const activeTasks = computed(() => {
