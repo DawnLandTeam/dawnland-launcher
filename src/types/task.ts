@@ -9,7 +9,7 @@ export type TaskType =
   | { InstallShaderpack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { InstallWorld: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { InstallDatapack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
-  | { InstallPreset: { preset_name: string; instance_id: string; } }
+  | { InstallPreset: { preset_name: string; asset_type?: string; instance_id: string; } }
   | { Generic: { name: string } };
 
 export type TaskStatus = 

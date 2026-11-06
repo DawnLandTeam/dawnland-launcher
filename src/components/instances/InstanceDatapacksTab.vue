@@ -85,13 +85,12 @@
 
     <!-- Delete Confirmation Alert Dialog -->
     <AlertDialog :open="showDeleteConfirm" @update:open="showDeleteConfirm = $event">
-      <div class="fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" v-if="showDeleteConfirm"></div>
-      <div class="fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg" v-if="showDeleteConfirm">
+      <div class="space-y-4">
         <AlertDialogTitle>{{ $t('instances.deleteDatapackConfirm', 'Are you sure you want to delete this datapack?') }}</AlertDialogTitle>
         <AlertDialogDescription>
           {{ $t('instances.deleteDatapackConfirmDesc', 'This action cannot be undone. The datapack will be permanently deleted.') }}
           <br/><br/>
-          <strong class="text-foreground">{{ packToDelete?.filename }}</strong>
+          <strong class="text-foreground break-all">{{ packToDelete?.filename }}</strong>
         </AlertDialogDescription>
         <div class="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 mt-4">
           <DButton variant="outline" @click="showDeleteConfirm = false">{{ $t('instances.cancel', 'Cancel') }}</DButton>
@@ -108,7 +107,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
@@ -156,11 +155,25 @@ const filteredDatapacks = computed(() => {
   );
 });
 
+let worldsLoadSeq = 0;
+let datapacksLoadSeq = 0;
+
 async function loadWorlds() {
-  if (!props.instanceId) return;
+  const currentInstanceId = props.instanceId;
+  if (!currentInstanceId) {
+    worldOptions.value = [];
+    selectedWorld.value = '';
+    datapacks.value = [];
+    return;
+  }
+
+  const seq = ++worldsLoadSeq;
   loadingWorlds.value = true;
   try {
-    const saves = await invoke<string[]>('get_instance_saves', { instanceId: props.instanceId });
+    const saves = await invoke<string[]>('get_instance_saves', { instanceId: currentInstanceId });
+    if (seq !== worldsLoadSeq || props.instanceId !== currentInstanceId) {
+      return;
+    }
     worldOptions.value = saves.map(save => ({ label: save, value: save }));
     if (worldOptions.value.length > 0) {
       if (!selectedWorld.value || !saves.includes(selectedWorld.value)) {
@@ -174,36 +187,65 @@ async function loadWorlds() {
       datapacks.value = [];
     }
   } catch (e) {
+    if (seq !== worldsLoadSeq || props.instanceId !== currentInstanceId) {
+      return;
+    }
     console.error('Failed to load worlds:', e);
     worldOptions.value = [];
     selectedWorld.value = '';
+    datapacks.value = [];
     toast.error(t('common.error', 'Error'), getErrorMessage(e));
   } finally {
-    loadingWorlds.value = false;
+    if (seq === worldsLoadSeq && props.instanceId === currentInstanceId) {
+      loadingWorlds.value = false;
+    }
   }
 }
 
 async function loadDatapacks() {
-  if (!props.instanceId || !selectedWorld.value) {
+  const currentInstanceId = props.instanceId;
+  const currentWorld = selectedWorld.value;
+  if (!currentInstanceId || !currentWorld) {
     datapacks.value = [];
     return;
   }
   
+  const seq = ++datapacksLoadSeq;
   loadingDatapacks.value = true;
   try {
     const result = await invoke<LocalDatapackItem[]>('get_installed_datapacks', { 
-      versionId: props.instanceId,
-      worldName: selectedWorld.value
+      versionId: currentInstanceId,
+      worldName: currentWorld
     });
+    if (
+      seq !== datapacksLoadSeq ||
+      props.instanceId !== currentInstanceId ||
+      selectedWorld.value !== currentWorld
+    ) {
+      return;
+    }
     datapacks.value = result;
   } catch (error) {
+    if (
+      seq !== datapacksLoadSeq ||
+      props.instanceId !== currentInstanceId ||
+      selectedWorld.value !== currentWorld
+    ) {
+      return;
+    }
     console.error('Failed to load datapacks:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
     );
   } finally {
-    loadingDatapacks.value = false;
+    if (
+      seq === datapacksLoadSeq &&
+      props.instanceId === currentInstanceId &&
+      selectedWorld.value === currentWorld
+    ) {
+      loadingDatapacks.value = false;
+    }
   }
 }
 
@@ -223,8 +265,7 @@ function handleAssetsUpdated(event: Event) {
   if (!detail || detail.instanceId !== props.instanceId) return;
   if (detail.kinds.includes('World')) {
     loadWorlds();
-  }
-  if (detail.kinds.includes('Datapack')) {
+  } else if (detail.kinds.includes('Datapack')) {
     loadDatapacks();
   }
 }
@@ -232,6 +273,11 @@ function handleAssetsUpdated(event: Event) {
 onMounted(() => {
   setActiveDatapackWorld(selectedWorld.value || null);
   window.addEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+});
+
+onActivated(() => {
+  setActiveDatapackWorld(selectedWorld.value || null);
+  loadWorlds();
 });
 
 onUnmounted(() => {
