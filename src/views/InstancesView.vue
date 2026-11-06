@@ -66,7 +66,7 @@ watch(
 watch(
   () => route.query,
   (query) => {
-    if (query.install_version && typeof query.install_version === "string") {
+    if (route.path !== '/downloads' && query.install_version && typeof query.install_version === "string") {
       const newQuery = { ...query, tab: 'instance' };
       router.replace({ path: '/downloads', query: newQuery });
     }
@@ -77,8 +77,15 @@ watch(
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
+let taskAddedDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const handleTaskAdded = () => {
-  loadInstances();
+  if (taskAddedDebounceTimer) {
+    clearTimeout(taskAddedDebounceTimer);
+  }
+  taskAddedDebounceTimer = setTimeout(() => {
+    taskAddedDebounceTimer = null;
+    loadInstances();
+  }, 250);
 };
 
 useTaskStatusReload(async () => {
@@ -120,6 +127,10 @@ onActivated(async () => {
 });
 
 onUnmounted(() => {
+  if (taskAddedDebounceTimer) {
+    clearTimeout(taskAddedDebounceTimer);
+    taskAddedDebounceTimer = null;
+  }
   window.removeEventListener('task-added', handleTaskAdded);
 });
 

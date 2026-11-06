@@ -3341,13 +3341,6 @@ pub async fn launch_instance(
     let should_hide = window_behavior == "hide";
     let should_minimize = window_behavior == "minimize";
 
-    // Apply window behavior before spawning
-    if should_hide {
-        let _ = window.hide();
-    } else if should_minimize {
-        let _ = window.minimize();
-    }
-
     // Spawn the process using the resolved Java executable
     tracing::info!(
         "Spawning process: {} with main class: {}",
@@ -3359,7 +3352,7 @@ pub async fn launch_instance(
     tracing::info!("Game args count: {}", game_args.len());
     tracing::info!("Classpath entries: {}", classpath.len());
 
-    let mut child = crate::core::utils::create_hidden_command(&java_executable)
+    let mut child = match crate::core::utils::create_hidden_command(&java_executable)
         .current_dir(&game_dir)
         .args(&jvm_args)
         .arg(&main_class)
@@ -3367,7 +3360,15 @@ pub async fn launch_instance(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to start JVM: {e}"))?;
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+            return Err(format!("Failed to start JVM: {e}").into());
+        }
+    };
 
     let pid = child.id().unwrap_or(0);
     tracing::info!("Minecraft process spawned with PID: {}", pid);
@@ -3377,6 +3378,13 @@ pub async fn launch_instance(
         map.insert(version_id.clone(), pid);
     }
     drop(_instance_guard);
+
+    // Apply window behavior AFTER process is successfully spawned
+    if should_hide {
+        let _ = window.hide();
+    } else if should_minimize {
+        let _ = window.minimize();
+    }
 
     // Record launch count and time
     if let Some(stats_db) = app.try_state::<crate::core::statistics::StatisticsDb>() {

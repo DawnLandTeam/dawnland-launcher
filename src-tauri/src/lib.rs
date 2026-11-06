@@ -169,13 +169,27 @@ pub fn run() {
             use tauri::{Manager, Emitter};
             let app_handle = app.handle().clone();
 
-            // Set up frontend logger broadcast
+            // Set up frontend logger broadcast with batching to prevent IPC flooding
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             if logger::frontend::LOG_TX.set(tx).is_ok() {
                 let app_handle_clone = app_handle.clone();
                 tokio::spawn(async move {
+                    let mut batch = Vec::with_capacity(32);
                     while let Some(event) = rx.recv().await {
-                        let _ = app_handle_clone.emit("app-log", event);
+                        batch.push(event);
+                        while let Ok(next) = rx.try_recv() {
+                            batch.push(next);
+                            if batch.len() >= 50 {
+                                break;
+                            }
+                        }
+                        if batch.len() == 1 {
+                            let _ = app_handle_clone.emit("app-log", &batch[0]);
+                        } else {
+                            let _ = app_handle_clone.emit("app-logs-batch", &batch);
+                        }
+                        batch.clear();
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     }
                 });
             }

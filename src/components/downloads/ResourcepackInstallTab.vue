@@ -12,6 +12,7 @@ import { useI18n } from "vue-i18n";
 import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from "../../composables/useToast";
 import { useTaskStatusReload } from "../../composables/useTaskStatusReload";
+import { useInstances } from "../../composables/useInstances";
 
 // UI Components
 import { DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
@@ -193,7 +194,9 @@ async function loadCategories() {
 
 async function loadInstances() {
   try {
-    const instances = await invoke<InstanceItem[]>("scan_installed_instances");
+    const { fetchInstances } = useInstances();
+    const fetched = await fetchInstances();
+    const instances = [...fetched];
     
     // Sort instances: vanilla instances go to the bottom
     instances.sort((a, b) => {

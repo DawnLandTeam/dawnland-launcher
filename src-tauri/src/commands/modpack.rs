@@ -1,7 +1,7 @@
 use crate::core::curseforge::get_cf_files_batch;
 use crate::core::fabric::{InstallFabricOptions, InstallFabricTask};
 use crate::core::forge::{InstallForgeOptions, InstallForgeTask};
-use crate::core::modpack::{copy_overrides, extract_zip, parse_modpack_manifest, ModpackType};
+use crate::core::modpack::{copy_overrides, copy_overrides_with_progress, extract_zip, parse_modpack_manifest, ModpackType};
 use crate::core::mojang::{get_minecraft_base, InstallVanillaTask, VanillaInstallOptions};
 use crate::core::task::{ExecutableTask, TaskContext, TaskError, TaskManager, TaskType};
 use crate::downloader::{run_batch_download_task, DownloadTask};
@@ -597,9 +597,22 @@ impl ExecutableTask for InstallModpackTask {
             let src = temp_dir.clone();
             let dst = instance_dir.clone();
             let folder = overrides_folder.clone();
-            copy_overrides(&src, &dst, &folder)
+            let cancel_token = ctx.cancel_token.clone();
+
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<(u64, u64, String)>(64);
+            let ctx_overrides_clone = ctx_overrides.clone();
+            let progress_task = tokio::spawn(async move {
+                while let Some((current, total, detail)) = rx.recv().await {
+                    let msg = format!("Applying overrides ({}/{}) - {}", current, total, detail);
+                    ctx_overrides_clone.update_progress(current, total, &msg).await;
+                }
+            });
+
+            let copied = copy_overrides_with_progress(&src, &dst, &folder, Some(cancel_token), Some(tx))
                 .await
                 .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+            let _ = progress_task.await;
+            tracing::info!("Applied {} override files to {:?}", copied, dst);
         }
         ctx_overrides
             .update_progress(100, 100, "Overrides applied")
@@ -683,6 +696,7 @@ impl ExecutableTask for InstallModpackTask {
         }
         
         // Write the fully updated assets.json atomically with shared MANIFEST_LOCK
+        tracing::info!("Writing updated assets manifest to {:?}", assets_path);
         let _lock = crate::core::manager::MANIFEST_LOCK.lock().await;
         if let Ok(json_str) = serde_json::to_string_pretty(&manifest) {
             let temp_assets_path = instance_dir.join(format!(".assets_{}.json.tmp", uuid::Uuid::new_v4().simple()));
@@ -693,11 +707,13 @@ impl ExecutableTask for InstallModpackTask {
         drop(_lock);
 
         // 6. Cleanup Temp
+        tracing::info!("Cleaning up temporary directory {:?}", temp_dir);
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
         check_cancel!();
 
         if instance_dir.join("dlml.json").exists() {
+            tracing::info!("Updating instance configuration to Ready for: {}", instance_name);
             let loader_enum = if loader.to_lowercase().contains("forge") && !loader.to_lowercase().contains("neoforge") {
                 Some(crate::models::instance::LoaderType::Forge)
             } else if loader.to_lowercase().contains("fabric") {
@@ -735,6 +751,8 @@ impl ExecutableTask for InstallModpackTask {
         }
 
         crate::core::launcher::apply_global_game_settings(&instance_dir).await;
+
+        tracing::info!("Modpack installation completed successfully for: {}", instance_name);
 
         Ok(())
     }

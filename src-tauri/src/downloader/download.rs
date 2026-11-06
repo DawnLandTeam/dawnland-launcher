@@ -779,7 +779,7 @@ pub async fn run_batch_download_task(
                     return Err("Cancelled".to_string());
                 }
 
-                tracing::info!("Downloading: {}", dest_path);
+                tracing::debug!("Downloading: {}", dest_path);
 
                 let mut attempts = 0;
                 let max_attempts = 3;
@@ -796,7 +796,7 @@ pub async fn run_batch_download_task(
                     {
                         Ok(()) => {
                             // Emit completion.
-                            tracing::info!("Emitting completed for task: {}", task_id);
+                            tracing::debug!("Emitting completed for task: {}", task_id);
                             let mut progress = DownloadProgress::completed(task_id);
                             progress.file_name = std::path::Path::new(&dest_path)
                                 .file_name()

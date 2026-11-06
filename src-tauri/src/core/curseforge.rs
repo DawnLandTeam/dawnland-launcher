@@ -166,7 +166,8 @@ pub fn cf_request(
 ) -> Result<reqwest::RequestBuilder, String> {
     let mut req = client
         .request(method, url)
-        .header("Accept", "application/json");
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15));
     if let Some(key) = CURSE_API_KEY.get() {
         req = req.header("x-api-key", key);
         Ok(req)

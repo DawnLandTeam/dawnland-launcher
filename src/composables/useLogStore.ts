@@ -14,37 +14,51 @@ const taskOrder: string[] = [];
 let isInitialized = false;
 
 export function useLogStore() {
+  function appendLog(log: LogEntry) {
+    globalLogs.value.push(log);
+
+    if (log.task_id) {
+      if (!taskLogs.value[log.task_id]) {
+        taskLogs.value[log.task_id] = [];
+        taskOrder.push(log.task_id);
+        // Keep only the logs for the last 20 tasks
+        if (taskOrder.length > 20) {
+          const oldTaskId = taskOrder.shift();
+          if (oldTaskId) {
+            delete taskLogs.value[oldTaskId];
+          }
+        }
+      }
+      taskLogs.value[log.task_id].push(log);
+      
+      // Limit logs per task to 2000 lines efficiently
+      if (taskLogs.value[log.task_id].length > 2000) {
+        taskLogs.value[log.task_id].splice(0, taskLogs.value[log.task_id].length - 2000);
+      }
+    }
+  }
+
+  function trimGlobalLogs() {
+    if (globalLogs.value.length > 1000) {
+      globalLogs.value.splice(0, globalLogs.value.length - 1000);
+    }
+  }
+
   async function init() {
     if (isInitialized) return;
     isInitialized = true;
     
     await listen<LogEntry>('app-log', (event) => {
-      const log = event.payload;
-      globalLogs.value.push(log);
-      // Keep only last 1000 logs to prevent memory leak
-      if (globalLogs.value.length > 1000) {
-        globalLogs.value.shift();
-      }
+      appendLog(event.payload);
+      trimGlobalLogs();
+    });
 
-      if (log.task_id) {
-        if (!taskLogs.value[log.task_id]) {
-          taskLogs.value[log.task_id] = [];
-          taskOrder.push(log.task_id);
-          // Keep only the logs for the last 20 tasks
-          if (taskOrder.length > 20) {
-            const oldTaskId = taskOrder.shift();
-            if (oldTaskId) {
-              delete taskLogs.value[oldTaskId];
-            }
-          }
-        }
-        taskLogs.value[log.task_id].push(log);
-        
-        // Limit logs per task to 2000 lines
-        if (taskLogs.value[log.task_id].length > 2000) {
-          taskLogs.value[log.task_id].shift();
-        }
+    await listen<LogEntry[]>('app-logs-batch', (event) => {
+      const batch = event.payload;
+      for (const log of batch) {
+        appendLog(log);
       }
+      trimGlobalLogs();
     });
   }
 

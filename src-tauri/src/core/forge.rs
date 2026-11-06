@@ -741,6 +741,7 @@ impl ExecutableTask for InstallForgeTask {
             );
             let manifest: serde_json::Value = client
                 .get(&manifest_url)
+                .timeout(std::time::Duration::from_secs(15))
                 .send()
                 .await
                 .map_err(|e| {

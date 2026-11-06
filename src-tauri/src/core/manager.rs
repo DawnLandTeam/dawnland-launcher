@@ -455,11 +455,75 @@ pub async fn scan_installed_instances_internal(
     Ok((instances, icon_backfill))
 }
 
+struct ScanSharedState {
+    in_flight_tx: Option<tokio::sync::broadcast::Sender<Result<Vec<InstanceItem>, String>>>,
+    last_completed_at: Option<std::time::Instant>,
+    last_result: Option<Vec<InstanceItem>>,
+}
+
+static SCAN_STATE: LazyLock<Mutex<ScanSharedState>> = LazyLock::new(|| {
+    Mutex::new(ScanSharedState {
+        in_flight_tx: None,
+        last_completed_at: None,
+        last_result: None,
+    })
+});
+
 /// Scan all locally installed instances from the versions directory.
+/// Protected by Singleflight coalescing and a 200ms throttle cache against concurrent avalanche.
 #[tauri::command]
 pub async fn scan_installed_instances(
     app: tauri::AppHandle,
     task_manager: tauri::State<'_, crate::core::task::TaskManager>,
+) -> Result<Vec<InstanceItem>, String> {
+    let mut rx_opt = None;
+    {
+        let mut state = SCAN_STATE.lock().await;
+        // 1. Throttle / Debounce cache: if completed within last 200ms, return cached
+        if let (Some(completed_at), Some(ref res)) = (state.last_completed_at, &state.last_result) {
+            if completed_at.elapsed() < std::time::Duration::from_millis(200) {
+                return Ok(res.clone());
+            }
+        }
+        // 2. In-flight coalescing: join existing scan if in progress
+        if let Some(ref tx) = state.in_flight_tx {
+            rx_opt = Some(tx.subscribe());
+        } else {
+            let (tx, _) = tokio::sync::broadcast::channel(1);
+            state.in_flight_tx = Some(tx);
+        }
+    }
+
+    if let Some(mut rx) = rx_opt {
+        match rx.recv().await {
+            Ok(res) => return res,
+            Err(_) => {
+                // Sender was dropped or lagged, continue to fresh scan fallback
+            }
+        }
+    }
+
+    // Execute actual scan
+    let res = scan_installed_instances_impl(&app, &task_manager).await;
+
+    // Broadcast result and update cache
+    {
+        let mut state = SCAN_STATE.lock().await;
+        if let Some(tx) = state.in_flight_tx.take() {
+            let _ = tx.send(res.clone());
+        }
+        if let Ok(ref instances) = res {
+            state.last_completed_at = Some(std::time::Instant::now());
+            state.last_result = Some(instances.clone());
+        }
+    }
+
+    res
+}
+
+async fn scan_installed_instances_impl(
+    app: &tauri::AppHandle,
+    task_manager: &crate::core::task::TaskManager,
 ) -> Result<Vec<InstanceItem>, String> {
     tracing::info!("Scanning installed instances...");
 
@@ -487,7 +551,7 @@ pub async fn scan_installed_instances(
     let (instances, icon_backfill) =
         scan_installed_instances_internal(&versions_dir, &task_ctx).await?;
 
-    crate::core::instance_icon::schedule_icon_backfill(app, icon_backfill);
+    crate::core::instance_icon::schedule_icon_backfill(app.clone(), icon_backfill);
 
     tracing::info!("Found {} installed instances", instances.len());
     Ok(instances)

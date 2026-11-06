@@ -11,6 +11,7 @@ import { getErrorMessage } from "../utils/error";
 import { EXTERNAL_URLS } from "../utils/constants";
 import { trackEvent } from "../utils/analytics";
 import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../composables/useLaunchState";
+import { useInstances } from "../composables/useInstances";
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -245,7 +246,8 @@ const accounts = ref<any[]>([]);
 
 async function fetchLocalData() {
   try {
-    installedInstances.value = await invoke("scan_installed_instances");
+    const { fetchInstances } = useInstances();
+    installedInstances.value = await fetchInstances();
     accounts.value = await invoke("get_accounts");
   } catch (error) {
     console.error("Failed to load local data:", error);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useInstances } from './useInstances';
+import { useInstances, _resetStateForTesting } from './useInstances';
 import { invoke } from '@tauri-apps/api/core';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -9,10 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 describe('useInstances composable', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset global state if possible, though instances is module-scoped
-    const { instances, isLoaded } = useInstances();
-    instances.value = [];
-    isLoaded.value = false;
+    _resetStateForTesting();
   });
 
   it('fetches instances and sets isLoaded to true', async () => {

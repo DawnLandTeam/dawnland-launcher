@@ -387,6 +387,7 @@ pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
 
     let response = client
         .get(&url)
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .map_err(|e| format!("Failed to fetch version manifest: {e}"))?;

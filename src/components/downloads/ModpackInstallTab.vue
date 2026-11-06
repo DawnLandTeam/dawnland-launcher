@@ -19,8 +19,8 @@ import DSelect from "../ui/DSelect.vue";
 import { useFileDrop } from "../../composables/useFileDrop";
 import type { ModpackArchiveInfo } from "../../types";
 import { useModpackInstallState } from "../../composables/useModpackInstallState";
-import { isModpackTask, isModpackUpdateTask, getModpackTaskInstanceName, isTaskActive, type TaskState } from "../../types/task";
 import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../../composables/useLaunchState";
+import { useInstances } from "../../composables/useInstances";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -31,7 +31,10 @@ const {
   setDownloadsModpackTaskId,
   setInstanceUpdateTaskId,
   dismissTask,
-  isTaskDismissed,
+  findActiveUntrackedDownloadsModpackTask,
+  findActiveUntrackedInstanceUpdateTask,
+  findRestorableDownloadsModpackTask,
+  findRestorableInstanceUpdateTask,
 } = useModpackInstallState();
 const currentTaskId = ref<string | null>(null);
 const currentTask = computed(() => {
@@ -307,236 +310,231 @@ const activeDownloads = ref(new Map<string, any>());
 
 
 
+const { fetchInstances } = useInstances();
 const lastProcessedQueryStr = ref("");
+let isInitializing = false;
+let queuedInit = false;
+let currentInitToken = 0;
 
 const initializeView = async () => {
-  if (props.isModalUpdate && route.query.tab !== 'update_modpack') {
-    showVersionsModal.value = false;
+  ++currentInitToken;
+  if (isInitializing) {
+    queuedInit = true;
     return;
   }
-
-  const currentQueryStr = JSON.stringify(route.query);
-  if (lastProcessedQueryStr.value === currentQueryStr) {
-    return;
-  }
-  lastProcessedQueryStr.value = currentQueryStr;
+  isInitializing = true;
 
   try {
-    installedInstances.value = await invoke<InstalledInstance[]>("scan_installed_instances");
-    scanError.value = null;
-  } catch (e) {
-    console.error("Failed to fetch installed instances:", e);
-    const errMsg = getErrorMessage(e);
-    scanError.value = errMsg;
-    localNameError.value = errMsg;
-    toast.error(t('common.error', 'Error'), errMsg);
-  }
-
-  // Restore task if one exists for this view
-  const isValidRestorableTask = (t: TaskState): boolean => {
-    if (isTaskDismissed(t.id)) return false;
-    if (isTaskActive(t.status)) return true;
-    if (t.status === 'Completed' || t.status === 'Failed' || t.status === 'Cancelled') {
-      return true;
-    }
-    return false;
-  };
-
-  const isModal = Boolean(props.isModalUpdate || props.updateId);
-  const targetInstanceName = props.updateId || (route.query.update_id as string | undefined);
-
-  if (isModal && targetInstanceName) {
-    let matchedTask: TaskState | null = null;
-    const trackedId = instanceUpdateTaskIds.value[targetInstanceName] || currentTaskId.value;
-    if (trackedId) {
-      const found = taskStore.tasks.value.find((t) => t.id === trackedId);
-      if (found && isModpackUpdateTask(found.task_type) && isValidRestorableTask(found)) {
-        matchedTask = found;
-      }
-    }
-    if (!matchedTask) {
-      const found = taskStore.tasks.value.find((t) =>
-        isModpackTask(t.task_type) &&
-        isModpackUpdateTask(t.task_type) &&
-        getModpackTaskInstanceName(t.task_type) === targetInstanceName &&
-        isValidRestorableTask(t)
-      );
-      if (found) {
-        matchedTask = found;
-      }
-    }
-
-    if (matchedTask) {
-      currentTaskId.value = matchedTask.id;
-      setInstanceUpdateTaskId(targetInstanceName, matchedTask.id);
-      isInstalling.value = true;
-      return;
-    }
-  } else if (!isModal) {
-    let matchedTask: TaskState | null = null;
-    const trackedId = downloadsModpackTaskId.value || currentTaskId.value;
-    if (trackedId) {
-      const found = taskStore.tasks.value.find((t) => t.id === trackedId);
-      if (found && !isModpackUpdateTask(found.task_type) && isValidRestorableTask(found)) {
-        matchedTask = found;
-      }
-    }
-    if (!matchedTask) {
-      const found = taskStore.tasks.value.find((t) =>
-        isModpackTask(t.task_type) &&
-        !isModpackUpdateTask(t.task_type) &&
-        isValidRestorableTask(t)
-      );
-      if (found) {
-        matchedTask = found;
-      }
-    }
-
-    if (matchedTask) {
-      currentTaskId.value = matchedTask.id;
-      setDownloadsModpackTaskId(matchedTask.id);
-      isInstalling.value = true;
-      return;
-    }
-  }
-
-  // Clear previous installation state in case user returns from a cancelled installation
-  zipPath.value = "";
-  onlineUrl.value = "";
-  selectedVersionName.value = null;
-  selectedVersionId.value = null;
-  instanceName.value = "";
-  isInstalling.value = false;
-  isDowngradeConfirmed.value = false;
-  confirmedDowngradeVersionId.value = null;
-  pendingDowngradeVersion.value = null;
-
-  if (props.updateId) {
-    instanceName.value = props.updateId;
-    instanceNameInput.value = props.updateId;
-    installMode.value = 'online';
-    searchQuery.value = props.updateId;
-    source.value = props.updateSource || 'curseforge';
-    
-    if (props.updateProjectId) {
-      const dummyModpack = {
-        project_id: props.updateProjectId,
-        title: props.updateId,
-        source: source.value
-      };
-      try {
-        await openVersionsModal(dummyModpack);
-      } catch (err) {
-        toast.error(t('common.error', 'Error'), getErrorMessage(err));
+    while (true) {
+      const activeToken = currentInitToken;
+      if (props.isModalUpdate && route.query.tab !== 'update_modpack') {
         showVersionsModal.value = false;
-        isInstalling.value = false;
-        emit('cancel-update');
+        return;
       }
-    }
-    return;
-  }
 
-  const targetInstName = (route.query.update_id || route.query.instance_name) as string | undefined;
-  if (targetInstName) {
-    instanceName.value = targetInstName;
-    instanceNameInput.value = targetInstName;
-    
-    if (route.query.zip) {
-      installMode.value = 'local';
-      zipPath.value = route.query.zip as string;
-      isDowngradeConfirmed.value = false;
-      loadLocalArchiveInfo(route.query.zip as string);
-    } else if (route.query.online_url) {
-      // Direct install from a backend server ZIP URL
-      installMode.value = 'online';
-      onlineUrl.value = route.query.online_url as string;
-      
-      // Auto-start installation for server zip
-      nextTick(async () => {
-        if (!await checkDowngrade()) {
+      const currentQueryStr = JSON.stringify(route.query);
+      lastProcessedQueryStr.value = currentQueryStr;
+
+      const isModal = Boolean(props.isModalUpdate || props.updateId);
+      const targetInstanceName = props.updateId || (route.query.update_id as string | undefined);
+
+      // Record candidate task ID before awaiting scan so tasks reaching terminal state in-flight remain tracked
+      const candidateTaskId = isModal && targetInstanceName
+        ? (instanceUpdateTaskIds.value[targetInstanceName] || currentTaskId.value || findActiveUntrackedInstanceUpdateTask(taskStore.tasks.value, targetInstanceName)?.id || null)
+        : (downloadsModpackTaskId.value || currentTaskId.value || findActiveUntrackedDownloadsModpackTask(taskStore.tasks.value)?.id || null);
+
+      if (candidateTaskId) {
+        if (isModal && targetInstanceName) {
+          setInstanceUpdateTaskId(targetInstanceName, candidateTaskId);
+        } else if (!isModal) {
+          setDownloadsModpackTaskId(candidateTaskId);
+        }
+      }
+
+      try {
+        installedInstances.value = (await fetchInstances()) as unknown as InstalledInstance[];
+        scanError.value = null;
+      } catch (e) {
+        console.error("Failed to fetch installed instances:", e);
+        const errMsg = getErrorMessage(e);
+        scanError.value = errMsg;
+        localNameError.value = errMsg;
+        toast.error(t('common.error', 'Error'), errMsg);
+      }
+
+      // If another initialization or route query arrived while scan was in-flight, restart with latest state
+      if (activeToken !== currentInitToken) {
+        queuedInit = false;
+        continue;
+      }
+      if (queuedInit) {
+        queuedInit = false;
+        continue;
+      }
+
+      // Restore task if one exists for this view
+      if (isModal && targetInstanceName) {
+        const matchedTask = findRestorableInstanceUpdateTask(
+          taskStore.tasks.value,
+          targetInstanceName,
+          candidateTaskId
+        );
+        if (matchedTask) {
+          currentTaskId.value = matchedTask.id;
+          isInstalling.value = true;
           return;
         }
-        installModpack();
-      });
-    } else {
-      installMode.value = 'online';
-      searchQuery.value = targetInstName;
-      const sourceQuery = route.query.source as string;
-      if (sourceQuery === 'modrinth' || sourceQuery === 'curseforge') {
-        source.value = sourceQuery;
+      } else if (!isModal) {
+        const matchedTask = findRestorableDownloadsModpackTask(
+          taskStore.tasks.value,
+          candidateTaskId
+        );
+        if (matchedTask) {
+          currentTaskId.value = matchedTask.id;
+          isInstalling.value = true;
+          return;
+        }
       }
-      
-      if (route.query.project_id) {
-        const dummyModpack = {
-          project_id: route.query.project_id as string,
-          title: targetInstName,
-          source: source.value
-        };
-        
-        if (route.query.version_id) {
-          // If we have a specific version ID, fetch versions and auto-install
-          isSearching.value = true;
-          const fetchVersions = source.value === 'modrinth' ? 'get_modrinth_modpack_versions' : 'get_curseforge_modpack_versions';
-          invoke(fetchVersions, { projectId: dummyModpack.project_id })
-            .then((versions: any) => {
-              let targetVersion = versions.find((v: any) => v.id.toString() === route.query.version_id);
-              if (!targetVersion) targetVersion = versions.find((v: any) => v.name === route.query.version_id);
-              if (!targetVersion) targetVersion = versions.find((v: any) => typeof v.name === 'string' && v.name.includes(route.query.version_id as string));
 
-              if (targetVersion) {
-                if (!targetVersion.download_url) {
-                  toast.error(
-                    t('modpack.downloadUrlMissingTitle', 'Cannot get download link'),
-                    t('modpack.downloadUrlMissingDesc', 'No download address is available for this version. Please select another version.')
-                  );
-                  openVersionsModal(dummyModpack);
-                  return;
-                }
-                modpackVersions.value = versions;
-                onlineUrl.value = targetVersion.download_url;
-                selectedVersionName.value = targetVersion.name;
-                selectedVersionId.value = String(targetVersion.id || targetVersion.version_id || route.query.version_id);
-                nextTick(async () => {
-                  if (!await checkDowngrade(targetVersion)) {
-                    return;
-                  }
-                  installModpack();
-                });
-              } else {
-                // Fallback to versions modal if not found
-                openVersionsModal(dummyModpack);
-              }
-            })
-            .catch((e) => {
-              console.error(e);
-              openVersionsModal(dummyModpack);
-            })
-            .finally(() => {
-              isSearching.value = false;
-            });
+      // Clear previous installation state in case user returns from a cancelled installation
+      zipPath.value = "";
+      onlineUrl.value = "";
+      selectedVersionName.value = null;
+      selectedVersionId.value = null;
+      instanceName.value = "";
+      isInstalling.value = false;
+      isDowngradeConfirmed.value = false;
+      confirmedDowngradeVersionId.value = null;
+      pendingDowngradeVersion.value = null;
+
+      if (props.updateId) {
+        instanceName.value = props.updateId;
+        instanceNameInput.value = props.updateId;
+        installMode.value = 'online';
+        searchQuery.value = props.updateId;
+        source.value = props.updateSource || 'curseforge';
+        
+        if (props.updateProjectId) {
+          const dummyModpack = {
+            project_id: props.updateProjectId,
+            title: props.updateId,
+            source: source.value
+          };
+          try {
+            await openVersionsModal(dummyModpack);
+          } catch (err) {
+            toast.error(t('common.error', 'Error'), getErrorMessage(err));
+            showVersionsModal.value = false;
+            isInstalling.value = false;
+            emit('cancel-update');
+          }
+        }
+        return;
+      }
+
+      const targetInstName = (route.query.update_id || route.query.instance_name) as string | undefined;
+      if (targetInstName) {
+        instanceName.value = targetInstName;
+        instanceNameInput.value = targetInstName;
+        
+        if (route.query.zip) {
+          installMode.value = 'local';
+          zipPath.value = route.query.zip as string;
+          isDowngradeConfirmed.value = false;
+          loadLocalArchiveInfo(route.query.zip as string);
+        } else if (route.query.online_url) {
+          // Direct install from a backend server ZIP URL
+          installMode.value = 'online';
+          onlineUrl.value = route.query.online_url as string;
+          
+          // Auto-start installation for server zip
+          nextTick(async () => {
+            if (activeToken !== currentInitToken) return;
+            if (isInstalling.value || isSubmittingInstall) return;
+            if (!await checkDowngrade()) {
+              return;
+            }
+            if (activeToken !== currentInitToken) return;
+            installModpack();
+          });
         } else {
-          // Open versions modal if no specific version
-          openVersionsModal(dummyModpack);
+          installMode.value = 'online';
+          searchQuery.value = targetInstName;
+          const sourceQuery = route.query.source as string;
+          if (sourceQuery === 'modrinth' || sourceQuery === 'curseforge') {
+            source.value = sourceQuery;
+          }
+          
+          if (route.query.project_id) {
+            const dummyModpack = {
+              project_id: route.query.project_id as string,
+              title: targetInstName,
+              source: source.value
+            };
+            
+            if (route.query.version_id) {
+              // If we have a specific version ID, fetch versions and auto-install
+              isSearching.value = true;
+              const fetchVersions = source.value === 'modrinth' ? 'get_modrinth_modpack_versions' : 'get_curseforge_modpack_versions';
+              invoke(fetchVersions, { projectId: dummyModpack.project_id })
+                .then((versions: any) => {
+                  if (activeToken !== currentInitToken) return;
+                  let targetVersion = versions.find((v: any) => v.id.toString() === route.query.version_id);
+                  if (!targetVersion) targetVersion = versions.find((v: any) => v.name === route.query.version_id);
+                  if (!targetVersion) targetVersion = versions.find((v: any) => typeof v.name === 'string' && v.name.includes(route.query.version_id as string));
+
+                  if (targetVersion) {
+                    if (!targetVersion.download_url) {
+                      toast.error(
+                        t('modpack.downloadUrlMissingTitle', 'Cannot get download link'),
+                        t('modpack.downloadUrlMissingDesc', 'No download address is available for this version. Please select another version.')
+                      );
+                      openVersionsModal(dummyModpack);
+                      return;
+                    }
+                    modpackVersions.value = versions;
+                    onlineUrl.value = targetVersion.download_url;
+                    selectedVersionName.value = targetVersion.name;
+                    selectedVersionId.value = String(targetVersion.id || targetVersion.version_id || route.query.version_id);
+                    nextTick(async () => {
+                      if (activeToken !== currentInitToken) return;
+                      if (isInstalling.value || isSubmittingInstall) return;
+                      if (!await checkDowngrade(targetVersion)) {
+                        return;
+                      }
+                      if (activeToken !== currentInitToken) return;
+                      installModpack();
+                    });
+                  } else {
+                    // Fallback to versions modal if not found
+                    openVersionsModal(dummyModpack);
+                  }
+                })
+                .catch((e) => {
+                  if (activeToken !== currentInitToken) return;
+                  console.error(e);
+                  openVersionsModal(dummyModpack);
+                })
+                .finally(() => {
+                  if (activeToken === currentInitToken) {
+                    isSearching.value = false;
+                  }
+                });
+            } else {
+              // Open versions modal if no specific version
+              openVersionsModal(dummyModpack);
+            }
+          }
         }
       } else {
-        isSearching.value = true;
-        modpacks.value = [];
-        invoke(source.value === 'modrinth' ? 'search_modrinth_modpacks' : 'search_curseforge_modpacks', { query: searchQuery.value })
-          .then((res: any) => {
-            modpacks.value = res;
-            if (res && res.length > 0) {
-              openVersionsModal(res[0]);
-            }
-          })
-          .catch(console.error)
-          .finally(() => {
-            isSearching.value = false;
-          });
+        // Normal modpack browser mode
+        searchModpacks();
       }
+
+      break;
     }
-  } else {
-    // Default to fetching trending modpacks if not an update
-    searchModpacks();
+  } finally {
+    isInitializing = false;
   }
 };
 
@@ -628,18 +626,29 @@ onUnmounted(() => {
   }
 });
 
+let isComponentActive = true;
+let isActivating = false;
+
 onActivated(() => {
+  isComponentActive = true;
   if (props.isModalUpdate && route.query.tab !== 'update_modpack') {
     showVersionsModal.value = false;
     return;
   }
-  lastProcessedQueryStr.value = "";
-  initializeView();
+  isActivating = true;
+  nextTick(() => {
+    isActivating = false;
+    if (!isComponentActive) return;
+    initializeView();
+  });
 });
 
 watch(() => route.query, (newQuery) => {
+  if (!isComponentActive || isActivating) return;
   if (route.path === '/downloads') {
-    initializeView();
+    if (!newQuery.tab || newQuery.tab === 'modpack') {
+      initializeView();
+    }
   } else if (route.path.startsWith('/instances/')) {
     if (newQuery.tab === 'update_modpack') {
       initializeView();
@@ -650,6 +659,8 @@ watch(() => route.query, (newQuery) => {
 }, { deep: true });
 
 onDeactivated(() => {
+  isComponentActive = false;
+  isActivating = false;
   if (props.isModalUpdate) {
     showVersionsModal.value = false;
   }
@@ -682,7 +693,7 @@ const openVersionsModal = async (modpack: any) => {
   selectedModpack.value = modpack;
   onlineNameError.value = null;
   try {
-    installedInstances.value = await invoke<InstalledInstance[]>("scan_installed_instances");
+    installedInstances.value = (await fetchInstances()) as unknown as InstalledInstance[];
   } catch (e) {
     console.error("Failed to refresh installed instances:", e);
   }
@@ -1035,12 +1046,16 @@ watch(
   { immediate: true }
 );
 
+let isSubmittingInstall = false;
+
 const installModpack = async () => {
-  if (isInstalling.value) return;
-  if (isTargetInstanceRunning.value) {
-    toast.error(t('common.error', 'Error'), t('modpack.instanceRunningWarning'));
-    return;
-  }
+  if (isInstalling.value || isSubmittingInstall) return;
+  isSubmittingInstall = true;
+  try {
+    if (isTargetInstanceRunning.value) {
+      toast.error(t('common.error', 'Error'), t('modpack.instanceRunningWarning'));
+      return;
+    }
   if (installMode.value === 'online') {
     if (!onlineUrl.value) return;
     instanceNameInput.value = instanceNameInput.value.trim();
@@ -1104,7 +1119,7 @@ const installModpack = async () => {
 
   if (scanError.value) {
     try {
-      installedInstances.value = await invoke<InstalledInstance[]>("scan_installed_instances");
+      installedInstances.value = (await fetchInstances(true)) as unknown as InstalledInstance[];
       scanError.value = null;
       localNameError.value = null;
     } catch (e) {
@@ -1120,9 +1135,9 @@ const installModpack = async () => {
 
   if (!isUpdate.value) {
     try {
-      const scannedInstances = await invoke<InstalledInstance[]>("scan_installed_instances");
+      const scannedInstances = await fetchInstances(true);
       scanError.value = null;
-      const exists = scannedInstances.some((i: InstalledInstance) => i.id.toLowerCase() === finalInstanceName.trim().toLowerCase());
+      const exists = scannedInstances.some((i: any) => i.id.toLowerCase() === finalInstanceName.trim().toLowerCase());
       if (exists) {
         isInstalling.value = false;
         if (targetMode === 'online') {
@@ -1238,6 +1253,9 @@ const installModpack = async () => {
       router.push("/servers");
     }
   }
+} finally {
+  isSubmittingInstall = false;
+}
 };
 
 const cancelInstallation = async () => {
@@ -1273,10 +1291,28 @@ const handleFinishOrDismiss = () => {
   }
   isInstalling.value = false;
   currentTaskId.value = null;
+
   if (props.isModalUpdate) {
     emit('cancel-update');
   } else {
-    initializeView();
+    // If the URL has installation parameters (e.g. from deep link or server page),
+    // clear them on finish so initializeView won't re-trigger an auto installation!
+    const query = { ...route.query };
+    let hasInstallParams = false;
+    const installKeys = ['instance_name', 'project_id', 'version_id', 'online_url', 'zip', 'update_id', 'source', 'is_update', 'server_id', 'pack_file_name'];
+    for (const key of installKeys) {
+      if (key in query) {
+        delete query[key];
+        hasInstallParams = true;
+      }
+    }
+
+    if (hasInstallParams) {
+      router.replace({ query });
+    } else {
+      lastProcessedQueryStr.value = JSON.stringify(query);
+      initializeView();
+    }
   }
 };
 
