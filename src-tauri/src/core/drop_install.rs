@@ -1146,47 +1146,51 @@ async fn verify_instance_idle(
     Ok(())
 }
 
+struct DropImportContext<'a> {
+    pub instance_dir: &'a Path,
+    pub instance_id: &'a str,
+    pub src_path: &'a Path,
+    pub filename: &'a str,
+    pub inspected: &'a InspectedDropFile,
+    pub overwrite: bool,
+    pub task_manager: &'a crate::core::task::TaskManager,
+    pub running_instances: &'a crate::core::launcher::RunningInstances,
+}
+
 async fn import_single_mod(
-    instance_dir: &Path,
-    instance_id: &str,
-    src_path: &Path,
-    filename: &str,
-    inspected: &InspectedDropFile,
-    overwrite: bool,
-    task_manager: &crate::core::task::TaskManager,
-    running_instances: &crate::core::launcher::RunningInstances,
+    ctx: &DropImportContext<'_>,
     report: &mut DropImportReport,
 ) {
-    if inspected.is_dir {
+    if ctx.inspected.is_dir {
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: "Mod cannot be a directory".to_string(),
         });
         return;
     }
 
-    let mods_dir = instance_dir.join("mods");
+    let mods_dir = ctx.instance_dir.join("mods");
     if let Err(e) = tokio::fs::create_dir_all(&mods_dir).await {
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Failed to create mods directory: {}", e),
         });
         return;
     }
 
     // If a mod is dropped with .zip extension, install it as .jar so mod loaders load it
-    let installed_filename = if filename.to_lowercase().ends_with(".zip") {
-        let stem = filename
+    let installed_filename = if ctx.filename.to_lowercase().ends_with(".zip") {
+        let stem = ctx.filename
             .strip_suffix(".zip")
-            .or_else(|| filename.strip_suffix(".ZIP"))
-            .unwrap_or(filename);
+            .or_else(|| ctx.filename.strip_suffix(".ZIP"))
+            .unwrap_or(ctx.filename);
         format!("{}.jar", stem)
     } else {
-        filename.to_string()
+        ctx.filename.to_string()
     };
 
     let target_path = mods_dir.join(&installed_filename);
-    if is_same_file_path(src_path, &target_path) {
+    if is_same_file_path(ctx.src_path, &target_path) {
         let rel_key = format!("mods/{}", installed_filename);
         let hash_sha1 = compute_sha1(&target_path).await.ok();
         let size = tokio::fs::metadata(&target_path)
@@ -1197,7 +1201,7 @@ async fn import_single_mod(
             .strip_suffix(".disable")
             .unwrap_or(&installed_filename);
         let _ = save_asset_to_manifest(
-            instance_id,
+            ctx.instance_id,
             format!("mods/{}", canonical_filename),
             AssetRecord {
                 category: AssetCategory::Mod,
@@ -1214,16 +1218,16 @@ async fn import_single_mod(
         )
         .await;
         report.succeeded.push(ImportedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             kind: DetectedFileKind::Mod,
             target_rel_path: rel_key,
         });
         return;
     }
 
-    if target_path.exists() && !overwrite {
+    if target_path.exists() && !ctx.overwrite {
         report.skipped.push(SkippedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             kind: DetectedFileKind::Mod,
             reason: "FILE_EXISTS".to_string(),
         });
@@ -1231,9 +1235,9 @@ async fn import_single_mod(
     }
 
     // Re-verify instance idle immediately before committing file
-    if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+    if let Err(e) = verify_instance_idle(ctx.instance_dir, ctx.instance_id, ctx.task_manager, ctx.running_instances).await {
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Instance is busy: {}", e),
         });
         return;
@@ -1246,10 +1250,10 @@ async fn import_single_mod(
         installed_filename
     ));
 
-    if let Err(e) = tokio::fs::copy(src_path, &temp_mod_path).await {
+    if let Err(e) = tokio::fs::copy(ctx.src_path, &temp_mod_path).await {
         let _ = tokio::fs::remove_file(&temp_mod_path).await;
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Failed to copy mod file: {}", e),
         });
         return;
@@ -1265,7 +1269,7 @@ async fn import_single_mod(
         if let Err(e) = tokio::fs::rename(&target_path, &b).await {
             let _ = tokio::fs::remove_file(&temp_mod_path).await;
             report.failed.push(FailedFileResult {
-                filename: filename.to_string(),
+                filename: ctx.filename.to_string(),
                 error: format!("Failed to backup existing mod file: {}", e),
             });
             return;
@@ -1282,7 +1286,7 @@ async fn import_single_mod(
         format!("{}.disable", installed_filename)
     };
     let counterpart_path = mods_dir.join(&counterpart_name);
-    let counterpart_backup = if overwrite && counterpart_path.exists() {
+    let counterpart_backup = if ctx.overwrite && counterpart_path.exists() {
         let b = mods_dir.join(format!(
             ".backup_mod_{}_{}",
             uuid::Uuid::new_v4().simple(),
@@ -1307,7 +1311,7 @@ async fn import_single_mod(
             let _ = tokio::fs::rename(b, orig).await;
         }
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Failed to commit mod file: {}", e),
         });
         return;
@@ -1326,7 +1330,7 @@ async fn import_single_mod(
     let rel_key = format!("mods/{}", canonical_filename);
 
     let save_res = save_asset_to_manifest(
-        instance_id,
+        ctx.instance_id,
         rel_key.clone(),
         AssetRecord {
             category: AssetCategory::Mod,
@@ -1352,14 +1356,14 @@ async fn import_single_mod(
             let _ = tokio::fs::rename(b, orig).await;
         }
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Failed to update assets manifest: {}", e),
         });
         return;
     }
 
     if let Some((ref b, _, ref name)) = counterpart_backup {
-        let _ = delete_asset_from_manifest(instance_id, &format!("mods/{}", name)).await;
+        let _ = delete_asset_from_manifest(ctx.instance_id, &format!("mods/{}", name)).await;
         let _ = tokio::fs::remove_file(b).await;
     }
     if let Some(ref b) = backup_mod_path {
@@ -1368,27 +1372,20 @@ async fn import_single_mod(
 
     tracing::info!(
         "Drag-and-drop imported mod '{}' (as '{}') into '{}'",
-        filename,
+        ctx.filename,
         installed_filename,
-        instance_id
+        ctx.instance_id
     );
     report.succeeded.push(ImportedFileResult {
-        filename: filename.to_string(),
+        filename: ctx.filename.to_string(),
         kind: DetectedFileKind::Mod,
         target_rel_path: rel_key,
     });
 }
 
 async fn import_single_pack(
-    instance_dir: &Path,
-    instance_id: &str,
-    src_path: &Path,
-    filename: &str,
-    inspected: &InspectedDropFile,
+    ctx: &DropImportContext<'_>,
     effective_kind: DetectedFileKind,
-    overwrite: bool,
-    task_manager: &crate::core::task::TaskManager,
-    running_instances: &crate::core::launcher::RunningInstances,
     report: &mut DropImportReport,
 ) {
     let (folder_name, category) = if effective_kind == DetectedFileKind::ResourcePack {
@@ -1397,30 +1394,30 @@ async fn import_single_pack(
         ("shaderpacks", AssetCategory::ShaderPack)
     };
 
-    let target_dir = instance_dir.join(folder_name);
+    let target_dir = ctx.instance_dir.join(folder_name);
     if let Err(e) = tokio::fs::create_dir_all(&target_dir).await {
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Failed to create {} directory: {}", folder_name, e),
         });
         return;
     }
 
-    let target_path = target_dir.join(filename);
-    if is_same_file_path(src_path, &target_path) {
-        let rel_key = format!("{}/{}", folder_name, filename);
-        let hash_sha1 = if !inspected.is_dir {
+    let target_path = target_dir.join(ctx.filename);
+    if is_same_file_path(ctx.src_path, &target_path) {
+        let rel_key = format!("{}/{}", folder_name, ctx.filename);
+        let hash_sha1 = if !ctx.inspected.is_dir {
             compute_sha1(&target_path).await.ok()
         } else {
             None
         };
-        let size = if !inspected.is_dir {
+        let size = if !ctx.inspected.is_dir {
             tokio::fs::metadata(&target_path).await.map(|m| m.len()).ok()
         } else {
             Some(0)
         };
         let _ = save_asset_to_manifest(
-            instance_id,
+            ctx.instance_id,
             rel_key.clone(),
             AssetRecord {
                 category,
@@ -1437,16 +1434,16 @@ async fn import_single_pack(
         )
         .await;
         report.succeeded.push(ImportedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             kind: effective_kind,
             target_rel_path: rel_key,
         });
         return;
     }
 
-    if target_path.exists() && !overwrite {
+    if target_path.exists() && !ctx.overwrite {
         report.skipped.push(SkippedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             kind: effective_kind,
             reason: "FILE_EXISTS".to_string(),
         });
@@ -1454,16 +1451,16 @@ async fn import_single_pack(
     }
 
     // Re-verify instance idle immediately before committing file
-    if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+    if let Err(e) = verify_instance_idle(ctx.instance_dir, ctx.instance_id, ctx.task_manager, ctx.running_instances).await {
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Instance is busy: {}", e),
         });
         return;
     }
 
-    let backup_opt = if inspected.is_dir {
-        let s = src_path.to_path_buf();
+    let backup_opt = if ctx.inspected.is_dir {
+        let s = ctx.src_path.to_path_buf();
         let d = target_path.clone();
         let copy_res =
             tokio::task::spawn_blocking(move || copy_dir_recursive_sync(&s, &d))
@@ -1474,21 +1471,21 @@ async fn import_single_pack(
             Ok(b) => b,
             Err(e) => {
                 report.failed.push(FailedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     error: e,
                 });
                 return;
             }
         }
     } else {
-        let s_inspect = src_path.to_path_buf();
+        let s_inspect = ctx.src_path.to_path_buf();
         let wrapper = tokio::task::spawn_blocking(move || {
             detect_zip_wrapper_prefix(&s_inspect)
         })
         .await
         .unwrap_or(None);
 
-        let s = src_path.to_path_buf();
+        let s = ctx.src_path.to_path_buf();
         let d = target_path.clone();
         let copy_res = tokio::task::spawn_blocking(move || {
             install_zip_stripping_wrapper_sync(&s, &d, wrapper.as_deref())
@@ -1501,7 +1498,7 @@ async fn import_single_pack(
             Ok(b) => b,
             Err(e) => {
                 report.failed.push(FailedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     error: e,
                 });
                 return;
@@ -1509,12 +1506,12 @@ async fn import_single_pack(
         }
     };
 
-    let hash_sha1 = if !inspected.is_dir {
+    let hash_sha1 = if !ctx.inspected.is_dir {
         compute_sha1(&target_path).await.ok()
     } else {
         None
     };
-    let size = if !inspected.is_dir {
+    let size = if !ctx.inspected.is_dir {
         tokio::fs::metadata(&target_path)
             .await
             .map(|m| m.len())
@@ -1522,10 +1519,10 @@ async fn import_single_pack(
     } else {
         Some(0)
     };
-    let rel_key = format!("{}/{}", folder_name, filename);
+    let rel_key = format!("{}/{}", folder_name, ctx.filename);
 
     let save_res = save_asset_to_manifest(
-        instance_id,
+        ctx.instance_id,
         rel_key.clone(),
         AssetRecord {
             category,
@@ -1543,7 +1540,7 @@ async fn import_single_pack(
     .await;
 
     if let Err(e) = save_res {
-        if inspected.is_dir {
+        if ctx.inspected.is_dir {
             let _ = tokio::fs::remove_dir_all(&target_path).await;
             if let Some(ref b) = backup_opt {
                 let _ = tokio::fs::rename(b, &target_path).await;
@@ -1555,14 +1552,14 @@ async fn import_single_pack(
             }
         }
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Failed to update assets manifest: {}", e),
         });
         return;
     }
 
     if let Some(ref b) = backup_opt {
-        if inspected.is_dir {
+        if ctx.inspected.is_dir {
             let _ = tokio::fs::remove_dir_all(b).await;
         } else {
             let _ = tokio::fs::remove_file(b).await;
@@ -1572,26 +1569,19 @@ async fn import_single_pack(
     tracing::info!(
         "Drag-and-drop imported {:?} '{}' into '{}'",
         effective_kind,
-        filename,
-        instance_id
+        ctx.filename,
+        ctx.instance_id
     );
     report.succeeded.push(ImportedFileResult {
-        filename: filename.to_string(),
+        filename: ctx.filename.to_string(),
         kind: effective_kind,
         target_rel_path: rel_key,
     });
 }
 
 async fn import_single_datapack(
-    instance_dir: &Path,
-    instance_id: &str,
-    src_path: &Path,
-    filename: &str,
-    inspected: &InspectedDropFile,
+    ctx: &DropImportContext<'_>,
     target_world: Option<&str>,
-    overwrite: bool,
-    task_manager: &crate::core::task::TaskManager,
-    running_instances: &crate::core::launcher::RunningInstances,
     report: &mut DropImportReport,
 ) {
     let resolved_world = match target_world
@@ -1601,7 +1591,7 @@ async fn import_single_datapack(
         Some(w) => {
             if !is_safe_single_name(&w) {
                 report.failed.push(FailedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     error: "Invalid target world name".to_string(),
                 });
                 return;
@@ -1609,12 +1599,12 @@ async fn import_single_datapack(
             w
         }
         None => {
-            let saves = get_instance_saves(instance_id.to_string())
+            let saves = get_instance_saves(ctx.instance_id.to_string())
                 .await
                 .unwrap_or_default();
             if saves.is_empty() {
                 report.skipped.push(SkippedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     kind: DetectedFileKind::Datapack,
                     reason: "NO_WORLD_FOUND".to_string(),
                 });
@@ -1623,7 +1613,7 @@ async fn import_single_datapack(
                 saves[0].clone()
             } else {
                 report.skipped.push(SkippedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     kind: DetectedFileKind::Datapack,
                     reason: "WORLD_SELECTION_REQUIRED".to_string(),
                 });
@@ -1632,13 +1622,13 @@ async fn import_single_datapack(
         }
     };
 
-    let world_dir = instance_dir.join("saves").join(&resolved_world);
+    let world_dir = ctx.instance_dir.join("saves").join(&resolved_world);
     if !world_dir.is_dir() {
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!(
                 "Target world '{}' does not exist in instance '{}'",
-                resolved_world, instance_id
+                resolved_world, ctx.instance_id
             ),
         });
         return;
@@ -1647,27 +1637,27 @@ async fn import_single_datapack(
     let datapacks_dir = world_dir.join("datapacks");
     if let Err(e) = tokio::fs::create_dir_all(&datapacks_dir).await {
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Failed to create datapacks directory: {}", e),
         });
         return;
     }
 
-    let target_path = datapacks_dir.join(filename);
-    if is_same_file_path(src_path, &target_path) {
-        let rel_key = format!("saves/{}/datapacks/{}", resolved_world, filename);
-        let hash_sha1 = if !inspected.is_dir {
+    let target_path = datapacks_dir.join(ctx.filename);
+    if is_same_file_path(ctx.src_path, &target_path) {
+        let rel_key = format!("saves/{}/datapacks/{}", resolved_world, ctx.filename);
+        let hash_sha1 = if !ctx.inspected.is_dir {
             compute_sha1(&target_path).await.ok()
         } else {
             None
         };
-        let size = if !inspected.is_dir {
+        let size = if !ctx.inspected.is_dir {
             tokio::fs::metadata(&target_path).await.map(|m| m.len()).ok()
         } else {
             Some(0)
         };
         let _ = save_asset_to_manifest(
-            instance_id,
+            ctx.instance_id,
             rel_key.clone(),
             AssetRecord {
                 category: AssetCategory::Datapack,
@@ -1684,16 +1674,16 @@ async fn import_single_datapack(
         )
         .await;
         report.succeeded.push(ImportedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             kind: DetectedFileKind::Datapack,
             target_rel_path: rel_key,
         });
         return;
     }
 
-    if target_path.exists() && !overwrite {
+    if target_path.exists() && !ctx.overwrite {
         report.skipped.push(SkippedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             kind: DetectedFileKind::Datapack,
             reason: "FILE_EXISTS".to_string(),
         });
@@ -1701,16 +1691,16 @@ async fn import_single_datapack(
     }
 
     // Re-verify instance idle immediately before committing file
-    if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+    if let Err(e) = verify_instance_idle(ctx.instance_dir, ctx.instance_id, ctx.task_manager, ctx.running_instances).await {
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Instance is busy: {}", e),
         });
         return;
     }
 
-    let backup_opt = if inspected.is_dir {
-        let s = src_path.to_path_buf();
+    let backup_opt = if ctx.inspected.is_dir {
+        let s = ctx.src_path.to_path_buf();
         let d = target_path.clone();
         let copy_res =
             tokio::task::spawn_blocking(move || copy_dir_recursive_sync(&s, &d))
@@ -1721,21 +1711,21 @@ async fn import_single_datapack(
             Ok(b) => b,
             Err(e) => {
                 report.failed.push(FailedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     error: e,
                 });
                 return;
             }
         }
     } else {
-        let s_inspect = src_path.to_path_buf();
+        let s_inspect = ctx.src_path.to_path_buf();
         let wrapper = tokio::task::spawn_blocking(move || {
             detect_zip_wrapper_prefix(&s_inspect)
         })
         .await
         .unwrap_or(None);
 
-        let s = src_path.to_path_buf();
+        let s = ctx.src_path.to_path_buf();
         let d = target_path.clone();
         let copy_res = tokio::task::spawn_blocking(move || {
             install_zip_stripping_wrapper_sync(&s, &d, wrapper.as_deref())
@@ -1748,7 +1738,7 @@ async fn import_single_datapack(
             Ok(b) => b,
             Err(e) => {
                 report.failed.push(FailedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     error: e,
                 });
                 return;
@@ -1756,12 +1746,12 @@ async fn import_single_datapack(
         }
     };
 
-    let hash_sha1 = if !inspected.is_dir {
+    let hash_sha1 = if !ctx.inspected.is_dir {
         compute_sha1(&target_path).await.ok()
     } else {
         None
     };
-    let size = if !inspected.is_dir {
+    let size = if !ctx.inspected.is_dir {
         tokio::fs::metadata(&target_path)
             .await
             .map(|m| m.len())
@@ -1769,10 +1759,10 @@ async fn import_single_datapack(
     } else {
         Some(0)
     };
-    let rel_key = format!("saves/{}/datapacks/{}", resolved_world, filename);
+    let rel_key = format!("saves/{}/datapacks/{}", resolved_world, ctx.filename);
 
     let save_res = save_asset_to_manifest(
-        instance_id,
+        ctx.instance_id,
         rel_key.clone(),
         AssetRecord {
             category: AssetCategory::Datapack,
@@ -1790,7 +1780,7 @@ async fn import_single_datapack(
     .await;
 
     if let Err(e) = save_res {
-        if inspected.is_dir {
+        if ctx.inspected.is_dir {
             let _ = tokio::fs::remove_dir_all(&target_path).await;
             if let Some(ref b) = backup_opt {
                 let _ = tokio::fs::rename(b, &target_path).await;
@@ -1802,14 +1792,14 @@ async fn import_single_datapack(
             }
         }
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Failed to update assets manifest: {}", e),
         });
         return;
     }
 
     if let Some(ref b) = backup_opt {
-        if inspected.is_dir {
+        if ctx.inspected.is_dir {
             let _ = tokio::fs::remove_dir_all(b).await;
         } else {
             let _ = tokio::fs::remove_file(b).await;
@@ -1818,43 +1808,36 @@ async fn import_single_datapack(
 
     tracing::info!(
         "Drag-and-drop imported datapack '{}' into '{}/{}'",
-        filename,
-        instance_id,
+        ctx.filename,
+        ctx.instance_id,
         resolved_world
     );
     report.succeeded.push(ImportedFileResult {
-        filename: filename.to_string(),
+        filename: ctx.filename.to_string(),
         kind: DetectedFileKind::Datapack,
         target_rel_path: rel_key,
     });
 }
 
 async fn import_single_world(
-    instance_dir: &Path,
-    instance_id: &str,
-    src_path: &Path,
-    filename: &str,
-    inspected: &InspectedDropFile,
-    overwrite: bool,
-    task_manager: &crate::core::task::TaskManager,
-    running_instances: &crate::core::launcher::RunningInstances,
+    ctx: &DropImportContext<'_>,
     report: &mut DropImportReport,
 ) {
-    let saves_dir = instance_dir.join("saves");
+    let saves_dir = ctx.instance_dir.join("saves");
     if let Err(e) = tokio::fs::create_dir_all(&saves_dir).await {
         report.failed.push(FailedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             error: format!("Failed to create saves directory: {}", e),
         });
         return;
     }
 
-    if inspected.is_dir {
-        let target_path = saves_dir.join(filename);
-        if is_same_file_path(src_path, &target_path) {
-            let rel_key = format!("saves/{}", filename);
+    if ctx.inspected.is_dir {
+        let target_path = saves_dir.join(ctx.filename);
+        if is_same_file_path(ctx.src_path, &target_path) {
+            let rel_key = format!("saves/{}", ctx.filename);
             let _ = save_asset_to_manifest(
-                instance_id,
+                ctx.instance_id,
                 rel_key.clone(),
                 AssetRecord {
                     category: AssetCategory::Save,
@@ -1871,15 +1854,15 @@ async fn import_single_world(
             )
             .await;
             report.succeeded.push(ImportedFileResult {
-                filename: filename.to_string(),
+                filename: ctx.filename.to_string(),
                 kind: DetectedFileKind::World,
                 target_rel_path: rel_key,
             });
             return;
         }
-        if target_path.exists() && !overwrite {
+        if target_path.exists() && !ctx.overwrite {
             report.skipped.push(SkippedFileResult {
-                filename: filename.to_string(),
+                filename: ctx.filename.to_string(),
                 kind: DetectedFileKind::World,
                 reason: "FILE_EXISTS".to_string(),
             });
@@ -1887,15 +1870,15 @@ async fn import_single_world(
         }
 
         // Re-verify instance idle immediately before committing directory
-        if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+        if let Err(e) = verify_instance_idle(ctx.instance_dir, ctx.instance_id, ctx.task_manager, ctx.running_instances).await {
             report.failed.push(FailedFileResult {
-                filename: filename.to_string(),
+                filename: ctx.filename.to_string(),
                 error: format!("Instance is busy: {}", e),
             });
             return;
         }
 
-        let s = src_path.to_path_buf();
+        let s = ctx.src_path.to_path_buf();
         let d = target_path.clone();
         let copy_res =
             tokio::task::spawn_blocking(move || copy_dir_recursive_sync(&s, &d))
@@ -1906,16 +1889,16 @@ async fn import_single_world(
             Ok(b) => b,
             Err(e) => {
                 report.failed.push(FailedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     error: e,
                 });
                 return;
             }
         };
 
-        let rel_key = format!("saves/{}", filename);
+        let rel_key = format!("saves/{}", ctx.filename);
         let save_res = save_asset_to_manifest(
-            instance_id,
+            ctx.instance_id,
             rel_key.clone(),
             AssetRecord {
                 category: AssetCategory::Save,
@@ -1938,7 +1921,7 @@ async fn import_single_world(
                 let _ = tokio::fs::rename(b, &target_path).await;
             }
             report.failed.push(FailedFileResult {
-                filename: filename.to_string(),
+                filename: ctx.filename.to_string(),
                 error: format!("Failed to update assets manifest: {}", e),
             });
             return;
@@ -1949,28 +1932,29 @@ async fn import_single_world(
         }
 
         report.succeeded.push(ImportedFileResult {
-            filename: filename.to_string(),
+            filename: ctx.filename.to_string(),
             kind: DetectedFileKind::World,
             target_rel_path: rel_key,
         });
     } else {
-        let stem = src_path
+        let stem = ctx.src_path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("World")
             .to_string();
-        let zp = src_path.to_path_buf();
+        let zp = ctx.src_path.to_path_buf();
         let sd = saves_dir.clone();
 
         // Re-verify instance idle immediately before extracting archive
-        if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+        if let Err(e) = verify_instance_idle(ctx.instance_dir, ctx.instance_id, ctx.task_manager, ctx.running_instances).await {
             report.failed.push(FailedFileResult {
-                filename: filename.to_string(),
+                filename: ctx.filename.to_string(),
                 error: format!("Instance is busy: {}", e),
             });
             return;
         }
 
+        let overwrite = ctx.overwrite;
         let extract_res = tokio::task::spawn_blocking(move || {
             extract_world_archive_sync(&zp, &sd, &stem, overwrite)
         })
@@ -1982,7 +1966,7 @@ async fn import_single_world(
             Ok((world_folder, backup_dir)) => {
                 let rel_key = format!("saves/{}", world_folder);
                 let save_res = save_asset_to_manifest(
-                    instance_id,
+                    ctx.instance_id,
                     rel_key.clone(),
                     AssetRecord {
                         category: AssetCategory::Save,
@@ -2006,7 +1990,7 @@ async fn import_single_world(
                         let _ = tokio::fs::rename(b, &committed_dir).await;
                     }
                     report.failed.push(FailedFileResult {
-                        filename: filename.to_string(),
+                        filename: ctx.filename.to_string(),
                         error: format!("Failed to update assets manifest: {}", e),
                     });
                     return;
@@ -2018,26 +2002,26 @@ async fn import_single_world(
 
                 tracing::info!(
                     "Drag-and-drop extracted world '{}' into '{}/saves/{}'",
-                    filename,
-                    instance_id,
+                    ctx.filename,
+                    ctx.instance_id,
                     world_folder
                 );
                 report.succeeded.push(ImportedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     kind: DetectedFileKind::World,
                     target_rel_path: rel_key,
                 });
             }
             Err(reason) if reason == "FILE_EXISTS" => {
                 report.skipped.push(SkippedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     kind: DetectedFileKind::World,
                     reason,
                 });
             }
             Err(e) => {
                 report.failed.push(FailedFileResult {
-                    filename: filename.to_string(),
+                    filename: ctx.filename.to_string(),
                     error: e,
                 });
             }
@@ -2107,64 +2091,29 @@ pub async fn import_dropped_files_to_instance(
             .filter(|k| *k != DetectedFileKind::Unknown)
             .unwrap_or(inspected.kind);
 
+        let ctx = DropImportContext {
+            instance_dir: &instance_dir,
+            instance_id: &instance_id,
+            src_path: &src_path,
+            filename: &filename,
+            inspected: &inspected,
+            overwrite,
+            task_manager: &task_manager,
+            running_instances: &running_instances,
+        };
+
         match effective_kind {
             DetectedFileKind::Mod => {
-                import_single_mod(
-                    &instance_dir,
-                    &instance_id,
-                    &src_path,
-                    &filename,
-                    &inspected,
-                    overwrite,
-                    &task_manager,
-                    &running_instances,
-                    &mut report,
-                )
-                .await;
+                import_single_mod(&ctx, &mut report).await;
             }
             DetectedFileKind::ResourcePack | DetectedFileKind::ShaderPack => {
-                import_single_pack(
-                    &instance_dir,
-                    &instance_id,
-                    &src_path,
-                    &filename,
-                    &inspected,
-                    effective_kind,
-                    overwrite,
-                    &task_manager,
-                    &running_instances,
-                    &mut report,
-                )
-                .await;
+                import_single_pack(&ctx, effective_kind, &mut report).await;
             }
             DetectedFileKind::Datapack => {
-                import_single_datapack(
-                    &instance_dir,
-                    &instance_id,
-                    &src_path,
-                    &filename,
-                    &inspected,
-                    target_world.as_deref(),
-                    overwrite,
-                    &task_manager,
-                    &running_instances,
-                    &mut report,
-                )
-                .await;
+                import_single_datapack(&ctx, target_world.as_deref(), &mut report).await;
             }
             DetectedFileKind::World => {
-                import_single_world(
-                    &instance_dir,
-                    &instance_id,
-                    &src_path,
-                    &filename,
-                    &inspected,
-                    overwrite,
-                    &task_manager,
-                    &running_instances,
-                    &mut report,
-                )
-                .await;
+                import_single_world(&ctx, &mut report).await;
             }
             DetectedFileKind::Modpack => {
                 report.skipped.push(SkippedFileResult {
