@@ -49,6 +49,11 @@ where
     S: Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+        // Do not broadcast DEBUG or TRACE logs over IPC to prevent flooding the frontend UI
+        if *event.metadata().level() > tracing::Level::INFO {
+            return;
+        }
+
         let target = event.metadata().target();
         // Broadcast explicitly targeted logs OR any log from our own library
         if target != "frontend" && !target.starts_with("dawnland_launcher_lib") {

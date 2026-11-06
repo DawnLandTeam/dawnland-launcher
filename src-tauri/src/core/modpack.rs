@@ -227,12 +227,25 @@ pub async fn copy_overrides(
     instance_dir: &std::path::Path,
     overrides_folder: &str,
 ) -> Result<(), DawnlandError> {
+    copy_overrides_with_progress(extract_dir, instance_dir, overrides_folder, None, None)
+        .await
+        .map(|_| ())
+}
+
+/// Copies the overrides folder from the extracted modpack to the instance root with progress reporting and cancellation support.
+pub async fn copy_overrides_with_progress(
+    extract_dir: &std::path::Path,
+    instance_dir: &std::path::Path,
+    overrides_folder: &str,
+    cancel_token: Option<tokio_util::sync::CancellationToken>,
+    progress_tx: Option<tokio::sync::mpsc::Sender<(u64, u64, String)>>,
+) -> Result<usize, DawnlandError> {
     if !crate::core::fs_utils::is_safe_relative_path(overrides_folder) {
         tracing::warn!(
             "Unsafe overrides folder '{}' rejected.",
             overrides_folder
         );
-        return Ok(());
+        return Ok(0);
     }
     let overrides_path = extract_dir.join(overrides_folder);
     if !overrides_path.exists() || !overrides_path.is_dir() {
@@ -240,18 +253,20 @@ pub async fn copy_overrides(
             "Overrides folder '{}' not found or is not a directory. Skipping.",
             overrides_folder
         );
-        return Ok(());
+        return Ok(0);
     }
 
     tracing::info!(
-        "Copying overrides from {:?} to {:?}",
+        "Scanning overrides from {:?} to prepare copying to {:?}",
         overrides_path,
         instance_dir
     );
 
     let overrides_path_clone = overrides_path.to_path_buf();
     let instance_dir_clone = instance_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || {
+    let copied_count = tokio::task::spawn_blocking(move || -> Result<usize, DawnlandError> {
+        // Collect valid files first for accurate total progress reporting
+        let mut files_to_copy = Vec::new();
         for entry_result in WalkDir::new(&overrides_path_clone) {
             let entry = match entry_result {
                 Ok(e) => e,
@@ -268,7 +283,6 @@ pub async fn copy_overrides(
             }
 
             let path = entry.path();
-
             if path.is_file() {
                 let relative_path = match path.strip_prefix(&overrides_path_clone) {
                     Ok(p) => p,
@@ -282,30 +296,66 @@ pub async fn copy_overrides(
                     tracing::warn!("Skipping unsafe relative path in overrides: {}", rel_str);
                     continue;
                 }
+                files_to_copy.push((path.to_path_buf(), relative_path.to_path_buf()));
+            }
+        }
 
-                let dest_path = instance_dir_clone.join(relative_path);
+        let total_files = files_to_copy.len();
+        tracing::info!(
+            "Found {} override files to copy from {:?} to {:?}",
+            total_files,
+            overrides_path_clone,
+            instance_dir_clone
+        );
 
-                if let Some(parent) = dest_path.parent() {
-                    // Ensure none of the parent components within the instance dir are symlinks
-                    let mut check = parent;
-                    let mut has_symlink = false;
-                    while check.starts_with(&instance_dir_clone) && check != instance_dir_clone {
-                        if let Ok(meta) = std::fs::symlink_metadata(check) {
-                            if meta.file_type().is_symlink() {
-                                has_symlink = true;
-                                break;
-                            }
-                        }
-                        match check.parent() {
-                            Some(p) => check = p,
-                            None => break,
+        // Cache for verified safe parent directories to avoid redundant, expensive symlink checks and directory creation
+        let mut verified_safe_dirs = std::collections::HashSet::new();
+        verified_safe_dirs.insert(instance_dir_clone.clone());
+
+        let mut copied = 0u64;
+        let mut last_emit = std::time::Instant::now();
+
+        for (src_path, relative_path) in files_to_copy {
+            if let Some(ref token) = cancel_token {
+                if token.is_cancelled() {
+                    return Err(DawnlandError::ProcessError("Overrides copying cancelled by user".to_string()));
+                }
+            }
+
+            let dest_path = instance_dir_clone.join(&relative_path);
+
+            if let Some(parent) = dest_path.parent() {
+                let mut check = parent;
+                let mut unverified = Vec::new();
+                while check.starts_with(&instance_dir_clone) && check != instance_dir_clone {
+                    if verified_safe_dirs.contains(check) {
+                        break;
+                    }
+                    unverified.push(check);
+                    match check.parent() {
+                        Some(p) => check = p,
+                        None => break,
+                    }
+                }
+
+                // Verify unverified paths top-down
+                let mut has_symlink = false;
+                for dir in unverified.iter().rev() {
+                    if let Ok(meta) = std::fs::symlink_metadata(dir) {
+                        if meta.file_type().is_symlink() {
+                            has_symlink = true;
+                            break;
                         }
                     }
-                    if has_symlink {
-                        tracing::warn!("Skipping override file because parent path is a symlink: {:?}", dest_path);
-                        continue;
-                    }
+                    verified_safe_dirs.insert(dir.to_path_buf());
+                }
 
+                if has_symlink {
+                    tracing::warn!("Skipping override file because parent path is a symlink: {:?}", dest_path);
+                    continue;
+                }
+
+                if !parent.exists() {
                     std::fs::create_dir_all(parent).map_err(|e| {
                         DawnlandError::Unknown(format!(
                             "Failed to create parent directory for override file {:?}: {}",
@@ -313,83 +363,102 @@ pub async fn copy_overrides(
                         ))
                     })?;
                 }
+            }
 
-                if let Ok(dest_metadata) = std::fs::symlink_metadata(&dest_path) {
-                    if dest_metadata.file_type().is_symlink() {
-                        #[cfg(windows)]
-                        {
-                            use std::os::windows::fs::FileTypeExt;
-                            if dest_metadata.file_type().is_symlink_dir() {
-                                std::fs::remove_dir(&dest_path).map_err(|e| {
-                                    DawnlandError::Unknown(format!(
-                                        "Failed to remove existing directory symlink {:?}: {}",
-                                        dest_path, e
-                                    ))
-                                })?;
-                            } else {
-                                std::fs::remove_file(&dest_path).map_err(|e| {
-                                    DawnlandError::Unknown(format!(
-                                        "Failed to remove existing file symlink {:?}: {}",
-                                        dest_path, e
-                                    ))
-                                })?;
-                            }
-                        }
-                        #[cfg(not(windows))]
-                        {
+            if let Ok(dest_metadata) = std::fs::symlink_metadata(&dest_path) {
+                if dest_metadata.file_type().is_symlink() {
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::fs::FileTypeExt;
+                        if dest_metadata.file_type().is_symlink_dir() {
+                            std::fs::remove_dir(&dest_path).map_err(|e| {
+                                DawnlandError::Unknown(format!(
+                                    "Failed to remove existing directory symlink {:?}: {}",
+                                    dest_path, e
+                                ))
+                            })?;
+                        } else {
                             std::fs::remove_file(&dest_path).map_err(|e| {
                                 DawnlandError::Unknown(format!(
-                                    "Failed to remove existing symlink {:?}: {}",
+                                    "Failed to remove existing file symlink {:?}: {}",
                                     dest_path, e
                                 ))
                             })?;
                         }
-                    } else if dest_metadata.file_type().is_dir() {
-                        force_remove_dir_all(&dest_path).map_err(|e| {
-                            DawnlandError::Unknown(format!(
-                                "Failed to remove existing directory {:?}: {}",
-                                dest_path, e
-                            ))
-                        })?;
-                    } else {
-                        let mut perms = dest_metadata.permissions();
-                        if perms.readonly() {
-                            #[allow(clippy::permissions_set_readonly_false)]
-                            perms.set_readonly(false);
-                            let _ = std::fs::set_permissions(&dest_path, perms);
-                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
                         std::fs::remove_file(&dest_path).map_err(|e| {
                             DawnlandError::Unknown(format!(
-                                "Failed to remove existing file {:?}: {}",
+                                "Failed to remove existing symlink {:?}: {}",
                                 dest_path, e
                             ))
                         })?;
                     }
-                }
-
-                if let Ok(final_check) = std::fs::symlink_metadata(&dest_path) {
-                    if final_check.file_type().is_symlink() {
-                        return Err(DawnlandError::Unknown(format!(
-                            "Refusing to copy override file to symlink destination: {:?}",
-                            dest_path
-                        )));
+                } else if dest_metadata.file_type().is_dir() {
+                    force_remove_dir_all(&dest_path).map_err(|e| {
+                        DawnlandError::Unknown(format!(
+                            "Failed to remove existing directory {:?}: {}",
+                            dest_path, e
+                        ))
+                    })?;
+                } else {
+                    let mut perms = dest_metadata.permissions();
+                    if perms.readonly() {
+                        #[allow(clippy::permissions_set_readonly_false)]
+                        perms.set_readonly(false);
+                        let _ = std::fs::set_permissions(&dest_path, perms);
                     }
+                    std::fs::remove_file(&dest_path).map_err(|e| {
+                        DawnlandError::Unknown(format!(
+                            "Failed to remove existing file {:?}: {}",
+                            dest_path, e
+                        ))
+                    })?;
                 }
+            }
 
-                std::fs::copy(path, &dest_path).map_err(|e| {
-                    DawnlandError::Unknown(format!(
-                        "Failed to copy override file {:?} to {:?}: {}",
-                        path, dest_path, e
-                    ))
-                })?;
+            if let Ok(final_check) = std::fs::symlink_metadata(&dest_path) {
+                if final_check.file_type().is_symlink() {
+                    return Err(DawnlandError::Unknown(format!(
+                        "Refusing to copy override file to symlink destination: {:?}",
+                        dest_path
+                    )));
+                }
+            }
+
+            std::fs::copy(&src_path, &dest_path).map_err(|e| {
+                DawnlandError::Unknown(format!(
+                    "Failed to copy override file {:?} to {:?}: {}",
+                    src_path, dest_path, e
+                ))
+            })?;
+
+            copied += 1;
+
+            if let Some(ref tx) = progress_tx {
+                let now = std::time::Instant::now();
+                if copied == total_files as u64 || now.duration_since(last_emit).as_millis() >= 100 {
+                    last_emit = now;
+                    let file_name = relative_path.to_string_lossy().to_string();
+                    let _ = tx.blocking_send((copied, total_files as u64, file_name));
+                }
             }
         }
-        Ok::<(), DawnlandError>(())
+
+        tracing::info!(
+            "Successfully copied {}/{} override files to {:?}",
+            copied,
+            total_files,
+            instance_dir_clone
+        );
+
+        Ok(copied as usize)
     })
     .await
     .map_err(|e| DawnlandError::ProcessError(format!("Task join error: {}", e)))??;
 
-    Ok(())
+    Ok(copied_count)
 }
 
 #[cfg(test)]

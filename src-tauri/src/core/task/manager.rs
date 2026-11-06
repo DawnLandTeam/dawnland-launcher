@@ -552,6 +552,7 @@ impl TaskManager {
             match res {
                 Ok(_) => {
                     let mut state = state_arc.write().await;
+                    tracing::info!("Task {} finished successfully (task_type={:?})", id_clone, state.task_type);
                     let _ = state.transition_to(TaskStatus::Completed);
                     state.progress.current = state.progress.total;
                     state.progress.detail = "Completed".to_string();
