@@ -1146,6 +1146,905 @@ async fn verify_instance_idle(
     Ok(())
 }
 
+async fn import_single_mod(
+    instance_dir: &Path,
+    instance_id: &str,
+    src_path: &Path,
+    filename: &str,
+    inspected: &InspectedDropFile,
+    overwrite: bool,
+    task_manager: &crate::core::task::TaskManager,
+    running_instances: &crate::core::launcher::RunningInstances,
+    report: &mut DropImportReport,
+) {
+    if inspected.is_dir {
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: "Mod cannot be a directory".to_string(),
+        });
+        return;
+    }
+
+    let mods_dir = instance_dir.join("mods");
+    if let Err(e) = tokio::fs::create_dir_all(&mods_dir).await {
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Failed to create mods directory: {}", e),
+        });
+        return;
+    }
+
+    // If a mod is dropped with .zip extension, install it as .jar so mod loaders load it
+    let installed_filename = if filename.to_lowercase().ends_with(".zip") {
+        let stem = filename
+            .strip_suffix(".zip")
+            .or_else(|| filename.strip_suffix(".ZIP"))
+            .unwrap_or(filename);
+        format!("{}.jar", stem)
+    } else {
+        filename.to_string()
+    };
+
+    let target_path = mods_dir.join(&installed_filename);
+    if is_same_file_path(src_path, &target_path) {
+        let rel_key = format!("mods/{}", installed_filename);
+        let hash_sha1 = compute_sha1(&target_path).await.ok();
+        let size = tokio::fs::metadata(&target_path)
+            .await
+            .map(|m| m.len())
+            .ok();
+        let canonical_filename = installed_filename
+            .strip_suffix(".disable")
+            .unwrap_or(&installed_filename);
+        let _ = save_asset_to_manifest(
+            instance_id,
+            format!("mods/{}", canonical_filename),
+            AssetRecord {
+                category: AssetCategory::Mod,
+                source_type: AssetSourceType::LocalImport,
+                project_id: None,
+                version_id: None,
+                download_url: None,
+                hash_sha1,
+                hash_sha512: None,
+                size,
+                enabled: !installed_filename.ends_with(".disable"),
+                managed_by_modpack: false,
+            },
+        )
+        .await;
+        report.succeeded.push(ImportedFileResult {
+            filename: filename.to_string(),
+            kind: DetectedFileKind::Mod,
+            target_rel_path: rel_key,
+        });
+        return;
+    }
+
+    if target_path.exists() && !overwrite {
+        report.skipped.push(SkippedFileResult {
+            filename: filename.to_string(),
+            kind: DetectedFileKind::Mod,
+            reason: "FILE_EXISTS".to_string(),
+        });
+        return;
+    }
+
+    // Re-verify instance idle immediately before committing file
+    if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Instance is busy: {}", e),
+        });
+        return;
+    }
+
+    // Copy to unique temp file first to avoid leaving partial/corrupt jar
+    let temp_mod_path = mods_dir.join(format!(
+        ".tmp_mod_{}_{}",
+        uuid::Uuid::new_v4().simple(),
+        installed_filename
+    ));
+
+    if let Err(e) = tokio::fs::copy(src_path, &temp_mod_path).await {
+        let _ = tokio::fs::remove_file(&temp_mod_path).await;
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Failed to copy mod file: {}", e),
+        });
+        return;
+    }
+
+    // Backup existing target mod if overwriting
+    let backup_mod_path = if target_path.exists() {
+        let b = mods_dir.join(format!(
+            ".backup_mod_{}_{}",
+            uuid::Uuid::new_v4().simple(),
+            installed_filename
+        ));
+        if let Err(e) = tokio::fs::rename(&target_path, &b).await {
+            let _ = tokio::fs::remove_file(&temp_mod_path).await;
+            report.failed.push(FailedFileResult {
+                filename: filename.to_string(),
+                error: format!("Failed to backup existing mod file: {}", e),
+            });
+            return;
+        }
+        Some(b)
+    } else {
+        None
+    };
+
+    // Backup conflicting counterpart (e.g. .disable or enabled variant) if overwriting
+    let counterpart_name = if let Some(base) = installed_filename.strip_suffix(".disable") {
+        base.to_string()
+    } else {
+        format!("{}.disable", installed_filename)
+    };
+    let counterpart_path = mods_dir.join(&counterpart_name);
+    let counterpart_backup = if overwrite && counterpart_path.exists() {
+        let b = mods_dir.join(format!(
+            ".backup_mod_{}_{}",
+            uuid::Uuid::new_v4().simple(),
+            counterpart_name
+        ));
+        if tokio::fs::rename(&counterpart_path, &b).await.is_ok() {
+            Some((b, counterpart_path.clone(), counterpart_name.clone()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Commit temp file to target_path
+    if let Err(e) = tokio::fs::rename(&temp_mod_path, &target_path).await {
+        let _ = tokio::fs::remove_file(&temp_mod_path).await;
+        if let Some(ref b) = backup_mod_path {
+            let _ = tokio::fs::rename(b, &target_path).await;
+        }
+        if let Some((ref b, ref orig, _)) = counterpart_backup {
+            let _ = tokio::fs::rename(b, orig).await;
+        }
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Failed to commit mod file: {}", e),
+        });
+        return;
+    }
+
+    let hash_sha1 = compute_sha1(&target_path).await.ok();
+    let size = tokio::fs::metadata(&target_path)
+        .await
+        .map(|m| m.len())
+        .ok();
+
+    // Store disabled mods under canonical name mods/<name>.jar matching toggle and delete logic
+    let canonical_filename = installed_filename
+        .strip_suffix(".disable")
+        .unwrap_or(&installed_filename);
+    let rel_key = format!("mods/{}", canonical_filename);
+
+    let save_res = save_asset_to_manifest(
+        instance_id,
+        rel_key.clone(),
+        AssetRecord {
+            category: AssetCategory::Mod,
+            source_type: AssetSourceType::LocalImport,
+            project_id: None,
+            version_id: None,
+            download_url: None,
+            hash_sha1,
+            hash_sha512: None,
+            size,
+            enabled: !installed_filename.ends_with(".disable"),
+            managed_by_modpack: false,
+        },
+    )
+    .await;
+
+    if let Err(e) = save_res {
+        let _ = tokio::fs::remove_file(&target_path).await;
+        if let Some(ref b) = backup_mod_path {
+            let _ = tokio::fs::rename(b, &target_path).await;
+        }
+        if let Some((ref b, ref orig, _)) = counterpart_backup {
+            let _ = tokio::fs::rename(b, orig).await;
+        }
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Failed to update assets manifest: {}", e),
+        });
+        return;
+    }
+
+    if let Some((ref b, _, ref name)) = counterpart_backup {
+        let _ = delete_asset_from_manifest(instance_id, &format!("mods/{}", name)).await;
+        let _ = tokio::fs::remove_file(b).await;
+    }
+    if let Some(ref b) = backup_mod_path {
+        let _ = tokio::fs::remove_file(b).await;
+    }
+
+    tracing::info!(
+        "Drag-and-drop imported mod '{}' (as '{}') into '{}'",
+        filename,
+        installed_filename,
+        instance_id
+    );
+    report.succeeded.push(ImportedFileResult {
+        filename: filename.to_string(),
+        kind: DetectedFileKind::Mod,
+        target_rel_path: rel_key,
+    });
+}
+
+async fn import_single_pack(
+    instance_dir: &Path,
+    instance_id: &str,
+    src_path: &Path,
+    filename: &str,
+    inspected: &InspectedDropFile,
+    effective_kind: DetectedFileKind,
+    overwrite: bool,
+    task_manager: &crate::core::task::TaskManager,
+    running_instances: &crate::core::launcher::RunningInstances,
+    report: &mut DropImportReport,
+) {
+    let (folder_name, category) = if effective_kind == DetectedFileKind::ResourcePack {
+        ("resourcepacks", AssetCategory::ResourcePack)
+    } else {
+        ("shaderpacks", AssetCategory::ShaderPack)
+    };
+
+    let target_dir = instance_dir.join(folder_name);
+    if let Err(e) = tokio::fs::create_dir_all(&target_dir).await {
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Failed to create {} directory: {}", folder_name, e),
+        });
+        return;
+    }
+
+    let target_path = target_dir.join(filename);
+    if is_same_file_path(src_path, &target_path) {
+        let rel_key = format!("{}/{}", folder_name, filename);
+        let hash_sha1 = if !inspected.is_dir {
+            compute_sha1(&target_path).await.ok()
+        } else {
+            None
+        };
+        let size = if !inspected.is_dir {
+            tokio::fs::metadata(&target_path).await.map(|m| m.len()).ok()
+        } else {
+            Some(0)
+        };
+        let _ = save_asset_to_manifest(
+            instance_id,
+            rel_key.clone(),
+            AssetRecord {
+                category,
+                source_type: AssetSourceType::LocalImport,
+                project_id: None,
+                version_id: None,
+                download_url: None,
+                hash_sha1,
+                hash_sha512: None,
+                size,
+                enabled: true,
+                managed_by_modpack: false,
+            },
+        )
+        .await;
+        report.succeeded.push(ImportedFileResult {
+            filename: filename.to_string(),
+            kind: effective_kind,
+            target_rel_path: rel_key,
+        });
+        return;
+    }
+
+    if target_path.exists() && !overwrite {
+        report.skipped.push(SkippedFileResult {
+            filename: filename.to_string(),
+            kind: effective_kind,
+            reason: "FILE_EXISTS".to_string(),
+        });
+        return;
+    }
+
+    // Re-verify instance idle immediately before committing file
+    if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Instance is busy: {}", e),
+        });
+        return;
+    }
+
+    let backup_opt = if inspected.is_dir {
+        let s = src_path.to_path_buf();
+        let d = target_path.clone();
+        let copy_res =
+            tokio::task::spawn_blocking(move || copy_dir_recursive_sync(&s, &d))
+                .await
+                .map_err(|e| format!("Task join error: {}", e))
+                .and_then(|r| r);
+        match copy_res {
+            Ok(b) => b,
+            Err(e) => {
+                report.failed.push(FailedFileResult {
+                    filename: filename.to_string(),
+                    error: e,
+                });
+                return;
+            }
+        }
+    } else {
+        let s_inspect = src_path.to_path_buf();
+        let wrapper = tokio::task::spawn_blocking(move || {
+            detect_zip_wrapper_prefix(&s_inspect)
+        })
+        .await
+        .unwrap_or(None);
+
+        let s = src_path.to_path_buf();
+        let d = target_path.clone();
+        let copy_res = tokio::task::spawn_blocking(move || {
+            install_zip_stripping_wrapper_sync(&s, &d, wrapper.as_deref())
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))
+        .and_then(|r| r);
+
+        match copy_res {
+            Ok(b) => b,
+            Err(e) => {
+                report.failed.push(FailedFileResult {
+                    filename: filename.to_string(),
+                    error: e,
+                });
+                return;
+            }
+        }
+    };
+
+    let hash_sha1 = if !inspected.is_dir {
+        compute_sha1(&target_path).await.ok()
+    } else {
+        None
+    };
+    let size = if !inspected.is_dir {
+        tokio::fs::metadata(&target_path)
+            .await
+            .map(|m| m.len())
+            .ok()
+    } else {
+        Some(0)
+    };
+    let rel_key = format!("{}/{}", folder_name, filename);
+
+    let save_res = save_asset_to_manifest(
+        instance_id,
+        rel_key.clone(),
+        AssetRecord {
+            category,
+            source_type: AssetSourceType::LocalImport,
+            project_id: None,
+            version_id: None,
+            download_url: None,
+            hash_sha1,
+            hash_sha512: None,
+            size,
+            enabled: true,
+            managed_by_modpack: false,
+        },
+    )
+    .await;
+
+    if let Err(e) = save_res {
+        if inspected.is_dir {
+            let _ = tokio::fs::remove_dir_all(&target_path).await;
+            if let Some(ref b) = backup_opt {
+                let _ = tokio::fs::rename(b, &target_path).await;
+            }
+        } else {
+            let _ = tokio::fs::remove_file(&target_path).await;
+            if let Some(ref b) = backup_opt {
+                let _ = tokio::fs::rename(b, &target_path).await;
+            }
+        }
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Failed to update assets manifest: {}", e),
+        });
+        return;
+    }
+
+    if let Some(ref b) = backup_opt {
+        if inspected.is_dir {
+            let _ = tokio::fs::remove_dir_all(b).await;
+        } else {
+            let _ = tokio::fs::remove_file(b).await;
+        }
+    }
+
+    tracing::info!(
+        "Drag-and-drop imported {:?} '{}' into '{}'",
+        effective_kind,
+        filename,
+        instance_id
+    );
+    report.succeeded.push(ImportedFileResult {
+        filename: filename.to_string(),
+        kind: effective_kind,
+        target_rel_path: rel_key,
+    });
+}
+
+async fn import_single_datapack(
+    instance_dir: &Path,
+    instance_id: &str,
+    src_path: &Path,
+    filename: &str,
+    inspected: &InspectedDropFile,
+    target_world: Option<&str>,
+    overwrite: bool,
+    task_manager: &crate::core::task::TaskManager,
+    running_instances: &crate::core::launcher::RunningInstances,
+    report: &mut DropImportReport,
+) {
+    let resolved_world = match target_world
+        .map(|w| w.trim().to_string())
+        .filter(|w| !w.is_empty())
+    {
+        Some(w) => {
+            if !is_safe_single_name(&w) {
+                report.failed.push(FailedFileResult {
+                    filename: filename.to_string(),
+                    error: "Invalid target world name".to_string(),
+                });
+                return;
+            }
+            w
+        }
+        None => {
+            let saves = get_instance_saves(instance_id.to_string())
+                .await
+                .unwrap_or_default();
+            if saves.is_empty() {
+                report.skipped.push(SkippedFileResult {
+                    filename: filename.to_string(),
+                    kind: DetectedFileKind::Datapack,
+                    reason: "NO_WORLD_FOUND".to_string(),
+                });
+                return;
+            } else if saves.len() == 1 {
+                saves[0].clone()
+            } else {
+                report.skipped.push(SkippedFileResult {
+                    filename: filename.to_string(),
+                    kind: DetectedFileKind::Datapack,
+                    reason: "WORLD_SELECTION_REQUIRED".to_string(),
+                });
+                return;
+            }
+        }
+    };
+
+    let world_dir = instance_dir.join("saves").join(&resolved_world);
+    if !world_dir.is_dir() {
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!(
+                "Target world '{}' does not exist in instance '{}'",
+                resolved_world, instance_id
+            ),
+        });
+        return;
+    }
+
+    let datapacks_dir = world_dir.join("datapacks");
+    if let Err(e) = tokio::fs::create_dir_all(&datapacks_dir).await {
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Failed to create datapacks directory: {}", e),
+        });
+        return;
+    }
+
+    let target_path = datapacks_dir.join(filename);
+    if is_same_file_path(src_path, &target_path) {
+        let rel_key = format!("saves/{}/datapacks/{}", resolved_world, filename);
+        let hash_sha1 = if !inspected.is_dir {
+            compute_sha1(&target_path).await.ok()
+        } else {
+            None
+        };
+        let size = if !inspected.is_dir {
+            tokio::fs::metadata(&target_path).await.map(|m| m.len()).ok()
+        } else {
+            Some(0)
+        };
+        let _ = save_asset_to_manifest(
+            instance_id,
+            rel_key.clone(),
+            AssetRecord {
+                category: AssetCategory::Datapack,
+                source_type: AssetSourceType::LocalImport,
+                project_id: None,
+                version_id: None,
+                download_url: None,
+                hash_sha1,
+                hash_sha512: None,
+                size,
+                enabled: true,
+                managed_by_modpack: false,
+            },
+        )
+        .await;
+        report.succeeded.push(ImportedFileResult {
+            filename: filename.to_string(),
+            kind: DetectedFileKind::Datapack,
+            target_rel_path: rel_key,
+        });
+        return;
+    }
+
+    if target_path.exists() && !overwrite {
+        report.skipped.push(SkippedFileResult {
+            filename: filename.to_string(),
+            kind: DetectedFileKind::Datapack,
+            reason: "FILE_EXISTS".to_string(),
+        });
+        return;
+    }
+
+    // Re-verify instance idle immediately before committing file
+    if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Instance is busy: {}", e),
+        });
+        return;
+    }
+
+    let backup_opt = if inspected.is_dir {
+        let s = src_path.to_path_buf();
+        let d = target_path.clone();
+        let copy_res =
+            tokio::task::spawn_blocking(move || copy_dir_recursive_sync(&s, &d))
+                .await
+                .map_err(|e| format!("Task join error: {}", e))
+                .and_then(|r| r);
+        match copy_res {
+            Ok(b) => b,
+            Err(e) => {
+                report.failed.push(FailedFileResult {
+                    filename: filename.to_string(),
+                    error: e,
+                });
+                return;
+            }
+        }
+    } else {
+        let s_inspect = src_path.to_path_buf();
+        let wrapper = tokio::task::spawn_blocking(move || {
+            detect_zip_wrapper_prefix(&s_inspect)
+        })
+        .await
+        .unwrap_or(None);
+
+        let s = src_path.to_path_buf();
+        let d = target_path.clone();
+        let copy_res = tokio::task::spawn_blocking(move || {
+            install_zip_stripping_wrapper_sync(&s, &d, wrapper.as_deref())
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))
+        .and_then(|r| r);
+
+        match copy_res {
+            Ok(b) => b,
+            Err(e) => {
+                report.failed.push(FailedFileResult {
+                    filename: filename.to_string(),
+                    error: e,
+                });
+                return;
+            }
+        }
+    };
+
+    let hash_sha1 = if !inspected.is_dir {
+        compute_sha1(&target_path).await.ok()
+    } else {
+        None
+    };
+    let size = if !inspected.is_dir {
+        tokio::fs::metadata(&target_path)
+            .await
+            .map(|m| m.len())
+            .ok()
+    } else {
+        Some(0)
+    };
+    let rel_key = format!("saves/{}/datapacks/{}", resolved_world, filename);
+
+    let save_res = save_asset_to_manifest(
+        instance_id,
+        rel_key.clone(),
+        AssetRecord {
+            category: AssetCategory::Datapack,
+            source_type: AssetSourceType::LocalImport,
+            project_id: None,
+            version_id: None,
+            download_url: None,
+            hash_sha1,
+            hash_sha512: None,
+            size,
+            enabled: true,
+            managed_by_modpack: false,
+        },
+    )
+    .await;
+
+    if let Err(e) = save_res {
+        if inspected.is_dir {
+            let _ = tokio::fs::remove_dir_all(&target_path).await;
+            if let Some(ref b) = backup_opt {
+                let _ = tokio::fs::rename(b, &target_path).await;
+            }
+        } else {
+            let _ = tokio::fs::remove_file(&target_path).await;
+            if let Some(ref b) = backup_opt {
+                let _ = tokio::fs::rename(b, &target_path).await;
+            }
+        }
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Failed to update assets manifest: {}", e),
+        });
+        return;
+    }
+
+    if let Some(ref b) = backup_opt {
+        if inspected.is_dir {
+            let _ = tokio::fs::remove_dir_all(b).await;
+        } else {
+            let _ = tokio::fs::remove_file(b).await;
+        }
+    }
+
+    tracing::info!(
+        "Drag-and-drop imported datapack '{}' into '{}/{}'",
+        filename,
+        instance_id,
+        resolved_world
+    );
+    report.succeeded.push(ImportedFileResult {
+        filename: filename.to_string(),
+        kind: DetectedFileKind::Datapack,
+        target_rel_path: rel_key,
+    });
+}
+
+async fn import_single_world(
+    instance_dir: &Path,
+    instance_id: &str,
+    src_path: &Path,
+    filename: &str,
+    inspected: &InspectedDropFile,
+    overwrite: bool,
+    task_manager: &crate::core::task::TaskManager,
+    running_instances: &crate::core::launcher::RunningInstances,
+    report: &mut DropImportReport,
+) {
+    let saves_dir = instance_dir.join("saves");
+    if let Err(e) = tokio::fs::create_dir_all(&saves_dir).await {
+        report.failed.push(FailedFileResult {
+            filename: filename.to_string(),
+            error: format!("Failed to create saves directory: {}", e),
+        });
+        return;
+    }
+
+    if inspected.is_dir {
+        let target_path = saves_dir.join(filename);
+        if is_same_file_path(src_path, &target_path) {
+            let rel_key = format!("saves/{}", filename);
+            let _ = save_asset_to_manifest(
+                instance_id,
+                rel_key.clone(),
+                AssetRecord {
+                    category: AssetCategory::Save,
+                    source_type: AssetSourceType::LocalImport,
+                    project_id: None,
+                    version_id: None,
+                    download_url: None,
+                    hash_sha1: None,
+                    hash_sha512: None,
+                    size: Some(0),
+                    enabled: true,
+                    managed_by_modpack: false,
+                },
+            )
+            .await;
+            report.succeeded.push(ImportedFileResult {
+                filename: filename.to_string(),
+                kind: DetectedFileKind::World,
+                target_rel_path: rel_key,
+            });
+            return;
+        }
+        if target_path.exists() && !overwrite {
+            report.skipped.push(SkippedFileResult {
+                filename: filename.to_string(),
+                kind: DetectedFileKind::World,
+                reason: "FILE_EXISTS".to_string(),
+            });
+            return;
+        }
+
+        // Re-verify instance idle immediately before committing directory
+        if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+            report.failed.push(FailedFileResult {
+                filename: filename.to_string(),
+                error: format!("Instance is busy: {}", e),
+            });
+            return;
+        }
+
+        let s = src_path.to_path_buf();
+        let d = target_path.clone();
+        let copy_res =
+            tokio::task::spawn_blocking(move || copy_dir_recursive_sync(&s, &d))
+                .await
+                .map_err(|e| format!("Task join error: {}", e))
+                .and_then(|r| r);
+        let backup_dir = match copy_res {
+            Ok(b) => b,
+            Err(e) => {
+                report.failed.push(FailedFileResult {
+                    filename: filename.to_string(),
+                    error: e,
+                });
+                return;
+            }
+        };
+
+        let rel_key = format!("saves/{}", filename);
+        let save_res = save_asset_to_manifest(
+            instance_id,
+            rel_key.clone(),
+            AssetRecord {
+                category: AssetCategory::Save,
+                source_type: AssetSourceType::LocalImport,
+                project_id: None,
+                version_id: None,
+                download_url: None,
+                hash_sha1: None,
+                hash_sha512: None,
+                size: Some(0),
+                enabled: true,
+                managed_by_modpack: false,
+            },
+        )
+        .await;
+
+        if let Err(e) = save_res {
+            let _ = tokio::fs::remove_dir_all(&target_path).await;
+            if let Some(ref b) = backup_dir {
+                let _ = tokio::fs::rename(b, &target_path).await;
+            }
+            report.failed.push(FailedFileResult {
+                filename: filename.to_string(),
+                error: format!("Failed to update assets manifest: {}", e),
+            });
+            return;
+        }
+
+        if let Some(ref b) = backup_dir {
+            let _ = tokio::fs::remove_dir_all(b).await;
+        }
+
+        report.succeeded.push(ImportedFileResult {
+            filename: filename.to_string(),
+            kind: DetectedFileKind::World,
+            target_rel_path: rel_key,
+        });
+    } else {
+        let stem = src_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("World")
+            .to_string();
+        let zp = src_path.to_path_buf();
+        let sd = saves_dir.clone();
+
+        // Re-verify instance idle immediately before extracting archive
+        if let Err(e) = verify_instance_idle(instance_dir, instance_id, task_manager, running_instances).await {
+            report.failed.push(FailedFileResult {
+                filename: filename.to_string(),
+                error: format!("Instance is busy: {}", e),
+            });
+            return;
+        }
+
+        let extract_res = tokio::task::spawn_blocking(move || {
+            extract_world_archive_sync(&zp, &sd, &stem, overwrite)
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))
+        .and_then(|r| r);
+
+        match extract_res {
+            Ok((world_folder, backup_dir)) => {
+                let rel_key = format!("saves/{}", world_folder);
+                let save_res = save_asset_to_manifest(
+                    instance_id,
+                    rel_key.clone(),
+                    AssetRecord {
+                        category: AssetCategory::Save,
+                        source_type: AssetSourceType::LocalImport,
+                        project_id: None,
+                        version_id: None,
+                        download_url: None,
+                        hash_sha1: None,
+                        hash_sha512: None,
+                        size: Some(0),
+                        enabled: true,
+                        managed_by_modpack: false,
+                    },
+                )
+                .await;
+
+                if let Err(e) = save_res {
+                    let committed_dir = saves_dir.join(&world_folder);
+                    let _ = tokio::fs::remove_dir_all(&committed_dir).await;
+                    if let Some(ref b) = backup_dir {
+                        let _ = tokio::fs::rename(b, &committed_dir).await;
+                    }
+                    report.failed.push(FailedFileResult {
+                        filename: filename.to_string(),
+                        error: format!("Failed to update assets manifest: {}", e),
+                    });
+                    return;
+                }
+
+                if let Some(ref b) = backup_dir {
+                    let _ = tokio::fs::remove_dir_all(b).await;
+                }
+
+                tracing::info!(
+                    "Drag-and-drop extracted world '{}' into '{}/saves/{}'",
+                    filename,
+                    instance_id,
+                    world_folder
+                );
+                report.succeeded.push(ImportedFileResult {
+                    filename: filename.to_string(),
+                    kind: DetectedFileKind::World,
+                    target_rel_path: rel_key,
+                });
+            }
+            Err(reason) if reason == "FILE_EXISTS" => {
+                report.skipped.push(SkippedFileResult {
+                    filename: filename.to_string(),
+                    kind: DetectedFileKind::World,
+                    reason,
+                });
+            }
+            Err(e) => {
+                report.failed.push(FailedFileResult {
+                    filename: filename.to_string(),
+                    error: e,
+                });
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn import_dropped_files_to_instance(
     instance_id: String,
@@ -1210,863 +2109,63 @@ pub async fn import_dropped_files_to_instance(
 
         match effective_kind {
             DetectedFileKind::Mod => {
-                if inspected.is_dir {
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: "Mod cannot be a directory".to_string(),
-                    });
-                    continue;
-                }
-
-                let mods_dir = instance_dir.join("mods");
-                if let Err(e) = tokio::fs::create_dir_all(&mods_dir).await {
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Failed to create mods directory: {}", e),
-                    });
-                    continue;
-                }
-
-                // If a mod is dropped with .zip extension, install it as .jar so mod loaders load it
-                let installed_filename = if filename.to_lowercase().ends_with(".zip") {
-                    let stem = filename
-                        .strip_suffix(".zip")
-                        .or_else(|| filename.strip_suffix(".ZIP"))
-                        .unwrap_or(&filename);
-                    format!("{}.jar", stem)
-                } else {
-                    filename.clone()
-                };
-
-                let target_path = mods_dir.join(&installed_filename);
-                if is_same_file_path(&src_path, &target_path) {
-                    let rel_key = format!("mods/{}", installed_filename);
-                    let hash_sha1 = compute_sha1(&target_path).await.ok();
-                    let size = tokio::fs::metadata(&target_path)
-                        .await
-                        .map(|m| m.len())
-                        .ok();
-                    let canonical_filename = installed_filename
-                        .strip_suffix(".disable")
-                        .unwrap_or(&installed_filename);
-                    let _ = save_asset_to_manifest(
-                        &instance_id,
-                        format!("mods/{}", canonical_filename),
-                        AssetRecord {
-                            category: AssetCategory::Mod,
-                            source_type: AssetSourceType::LocalImport,
-                            project_id: None,
-                            version_id: None,
-                            download_url: None,
-                            hash_sha1,
-                            hash_sha512: None,
-                            size,
-                            enabled: !installed_filename.ends_with(".disable"),
-                            managed_by_modpack: false,
-                        },
-                    )
-                    .await;
-                    report.succeeded.push(ImportedFileResult {
-                        filename,
-                        kind: DetectedFileKind::Mod,
-                        target_rel_path: rel_key,
-                    });
-                    continue;
-                }
-
-                if target_path.exists() && !overwrite {
-                    report.skipped.push(SkippedFileResult {
-                        filename,
-                        kind: DetectedFileKind::Mod,
-                        reason: "FILE_EXISTS".to_string(),
-                    });
-                    continue;
-                }
-
-                // Re-verify instance idle immediately before committing file
-                if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Instance is busy: {}", e),
-                    });
-                    continue;
-                }
-
-                // Copy to unique temp file first to avoid leaving partial/corrupt jar
-                let temp_mod_path = mods_dir.join(format!(
-                    ".tmp_mod_{}_{}",
-                    uuid::Uuid::new_v4().simple(),
-                    installed_filename
-                ));
-                if let Err(e) = tokio::fs::copy(&src_path, &temp_mod_path).await {
-                    let _ = tokio::fs::remove_file(&temp_mod_path).await;
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Failed to copy mod file: {}", e),
-                    });
-                    continue;
-                }
-
-                // Backup existing target mod if overwriting
-                let backup_mod_path = if target_path.exists() {
-                    let b = mods_dir.join(format!(
-                        ".backup_mod_{}_{}",
-                        uuid::Uuid::new_v4().simple(),
-                        installed_filename
-                    ));
-                    if let Err(e) = tokio::fs::rename(&target_path, &b).await {
-                        let _ = tokio::fs::remove_file(&temp_mod_path).await;
-                        report.failed.push(FailedFileResult {
-                            filename,
-                            error: format!("Failed to backup existing mod file: {}", e),
-                        });
-                        continue;
-                    }
-                    Some(b)
-                } else {
-                    None
-                };
-
-                // Backup conflicting counterpart (e.g. .disable or enabled variant) if overwriting
-                let counterpart_name = if let Some(base) = installed_filename.strip_suffix(".disable") {
-                    base.to_string()
-                } else {
-                    format!("{}.disable", installed_filename)
-                };
-                let counterpart_path = mods_dir.join(&counterpart_name);
-                let counterpart_backup = if overwrite && counterpart_path.exists() {
-                    let b = mods_dir.join(format!(
-                        ".backup_mod_{}_{}",
-                        uuid::Uuid::new_v4().simple(),
-                        counterpart_name
-                    ));
-                    if tokio::fs::rename(&counterpart_path, &b).await.is_ok() {
-                        Some((b, counterpart_path.clone(), counterpart_name.clone()))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // Commit temp file to target_path
-                if let Err(e) = tokio::fs::rename(&temp_mod_path, &target_path).await {
-                    let _ = tokio::fs::remove_file(&temp_mod_path).await;
-                    if let Some(ref b) = backup_mod_path {
-                        let _ = tokio::fs::rename(b, &target_path).await;
-                    }
-                    if let Some((ref b, ref orig, _)) = counterpart_backup {
-                        let _ = tokio::fs::rename(b, orig).await;
-                    }
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Failed to commit mod file: {}", e),
-                    });
-                    continue;
-                }
-
-                let hash_sha1 = compute_sha1(&target_path).await.ok();
-                let size = tokio::fs::metadata(&target_path)
-                    .await
-                    .map(|m| m.len())
-                    .ok();
-
-                // Store disabled mods under canonical name mods/<name>.jar matching toggle and delete logic
-                let canonical_filename = installed_filename
-                    .strip_suffix(".disable")
-                    .unwrap_or(&installed_filename);
-                let rel_key = format!("mods/{}", canonical_filename);
-
-                let save_res = save_asset_to_manifest(
+                import_single_mod(
+                    &instance_dir,
                     &instance_id,
-                    rel_key.clone(),
-                    AssetRecord {
-                        category: AssetCategory::Mod,
-                        source_type: AssetSourceType::LocalImport,
-                        project_id: None,
-                        version_id: None,
-                        download_url: None,
-                        hash_sha1,
-                        hash_sha512: None,
-                        size,
-                        enabled: !installed_filename.ends_with(".disable"),
-                        managed_by_modpack: false,
-                    },
+                    &src_path,
+                    &filename,
+                    &inspected,
+                    overwrite,
+                    &task_manager,
+                    &running_instances,
+                    &mut report,
                 )
                 .await;
-
-                if let Err(e) = save_res {
-                    let _ = tokio::fs::remove_file(&target_path).await;
-                    if let Some(ref b) = backup_mod_path {
-                        let _ = tokio::fs::rename(b, &target_path).await;
-                    }
-                    if let Some((ref b, ref orig, _)) = counterpart_backup {
-                        let _ = tokio::fs::rename(b, orig).await;
-                    }
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Failed to update assets manifest: {}", e),
-                    });
-                    continue;
-                }
-
-                if let Some((ref b, _, ref name)) = counterpart_backup {
-                    let _ = delete_asset_from_manifest(&instance_id, &format!("mods/{}", name)).await;
-                    let _ = tokio::fs::remove_file(b).await;
-                }
-                if let Some(ref b) = backup_mod_path {
-                    let _ = tokio::fs::remove_file(b).await;
-                }
-
-                tracing::info!(
-                    "Drag-and-drop imported mod '{}' (as '{}') into '{}'",
-                    filename,
-                    installed_filename,
-                    instance_id
-                );
-                report.succeeded.push(ImportedFileResult {
-                    filename,
-                    kind: DetectedFileKind::Mod,
-                    target_rel_path: rel_key,
-                });
             }
-
             DetectedFileKind::ResourcePack | DetectedFileKind::ShaderPack => {
-                let (folder_name, category) =
-                    if effective_kind == DetectedFileKind::ResourcePack {
-                        ("resourcepacks", AssetCategory::ResourcePack)
-                    } else {
-                        ("shaderpacks", AssetCategory::ShaderPack)
-                    };
-
-                let target_dir = instance_dir.join(folder_name);
-                if let Err(e) = tokio::fs::create_dir_all(&target_dir).await {
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Failed to create {} directory: {}", folder_name, e),
-                    });
-                    continue;
-                }
-
-                let target_path = target_dir.join(&filename);
-                if is_same_file_path(&src_path, &target_path) {
-                    let rel_key = format!("{}/{}", folder_name, filename);
-                    let hash_sha1 = if !inspected.is_dir {
-                        compute_sha1(&target_path).await.ok()
-                    } else {
-                        None
-                    };
-                    let size = if !inspected.is_dir {
-                        tokio::fs::metadata(&target_path).await.map(|m| m.len()).ok()
-                    } else {
-                        Some(0)
-                    };
-                    let _ = save_asset_to_manifest(
-                        &instance_id,
-                        rel_key.clone(),
-                        AssetRecord {
-                            category,
-                            source_type: AssetSourceType::LocalImport,
-                            project_id: None,
-                            version_id: None,
-                            download_url: None,
-                            hash_sha1,
-                            hash_sha512: None,
-                            size,
-                            enabled: true,
-                            managed_by_modpack: false,
-                        },
-                    )
-                    .await;
-                    report.succeeded.push(ImportedFileResult {
-                        filename,
-                        kind: effective_kind,
-                        target_rel_path: rel_key,
-                    });
-                    continue;
-                }
-
-                if target_path.exists() && !overwrite {
-                    report.skipped.push(SkippedFileResult {
-                        filename,
-                        kind: effective_kind,
-                        reason: "FILE_EXISTS".to_string(),
-                    });
-                    continue;
-                }
-
-                // Re-verify instance idle immediately before committing file
-                if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Instance is busy: {}", e),
-                    });
-                    continue;
-                }
-
-                let backup_opt = if inspected.is_dir {
-                    let s = src_path.clone();
-                    let d = target_path.clone();
-                    let copy_res =
-                        tokio::task::spawn_blocking(move || copy_dir_recursive_sync(&s, &d))
-                            .await
-                            .map_err(|e| format!("Task join error: {}", e))
-                            .and_then(|r| r);
-                    match copy_res {
-                        Ok(b) => b,
-                        Err(e) => {
-                            report.failed.push(FailedFileResult {
-                                filename,
-                                error: e,
-                            });
-                            continue;
-                        }
-                    }
-                } else {
-                    let s_inspect = src_path.clone();
-                    let wrapper = tokio::task::spawn_blocking(move || {
-                        detect_zip_wrapper_prefix(&s_inspect)
-                    })
-                    .await
-                    .unwrap_or(None);
-
-                    let s = src_path.clone();
-                    let d = target_path.clone();
-                    let copy_res = tokio::task::spawn_blocking(move || {
-                        install_zip_stripping_wrapper_sync(&s, &d, wrapper.as_deref())
-                    })
-                    .await
-                    .map_err(|e| format!("Task join error: {}", e))
-                    .and_then(|r| r);
-
-                    match copy_res {
-                        Ok(b) => b,
-                        Err(e) => {
-                            report.failed.push(FailedFileResult {
-                                filename,
-                                error: e,
-                            });
-                            continue;
-                        }
-                    }
-                };
-
-                let hash_sha1 = if !inspected.is_dir {
-                    compute_sha1(&target_path).await.ok()
-                } else {
-                    None
-                };
-                let size = if !inspected.is_dir {
-                    tokio::fs::metadata(&target_path)
-                        .await
-                        .map(|m| m.len())
-                        .ok()
-                } else {
-                    Some(0)
-                };
-                let rel_key = format!("{}/{}", folder_name, filename);
-
-                let save_res = save_asset_to_manifest(
+                import_single_pack(
+                    &instance_dir,
                     &instance_id,
-                    rel_key.clone(),
-                    AssetRecord {
-                        category,
-                        source_type: AssetSourceType::LocalImport,
-                        project_id: None,
-                        version_id: None,
-                        download_url: None,
-                        hash_sha1,
-                        hash_sha512: None,
-                        size,
-                        enabled: true,
-                        managed_by_modpack: false,
-                    },
-                )
-                .await;
-
-                if let Err(e) = save_res {
-                    if inspected.is_dir {
-                        let _ = tokio::fs::remove_dir_all(&target_path).await;
-                        if let Some(ref b) = backup_opt {
-                            let _ = tokio::fs::rename(b, &target_path).await;
-                        }
-                    } else {
-                        let _ = tokio::fs::remove_file(&target_path).await;
-                        if let Some(ref b) = backup_opt {
-                            let _ = tokio::fs::rename(b, &target_path).await;
-                        }
-                    }
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Failed to update assets manifest: {}", e),
-                    });
-                    continue;
-                }
-
-                if let Some(ref b) = backup_opt {
-                    if inspected.is_dir {
-                        let _ = tokio::fs::remove_dir_all(b).await;
-                    } else {
-                        let _ = tokio::fs::remove_file(b).await;
-                    }
-                }
-
-                tracing::info!(
-                    "Drag-and-drop imported {:?} '{}' into '{}'",
+                    &src_path,
+                    &filename,
+                    &inspected,
                     effective_kind,
-                    filename,
-                    instance_id
-                );
-                report.succeeded.push(ImportedFileResult {
-                    filename,
-                    kind: effective_kind,
-                    target_rel_path: rel_key,
-                });
-            }
-
-            DetectedFileKind::Datapack => {
-                let resolved_world = match target_world
-                    .as_ref()
-                    .map(|w| w.trim().to_string())
-                    .filter(|w| !w.is_empty())
-                {
-                    Some(w) => {
-                        if !is_safe_single_name(&w) {
-                            report.failed.push(FailedFileResult {
-                                filename,
-                                error: "Invalid target world name".to_string(),
-                            });
-                            continue;
-                        }
-                        w
-                    }
-                    None => {
-                        let saves = get_instance_saves(instance_id.clone())
-                            .await
-                            .unwrap_or_default();
-                        if saves.is_empty() {
-                            report.skipped.push(SkippedFileResult {
-                                filename,
-                                kind: DetectedFileKind::Datapack,
-                                reason: "NO_WORLD_FOUND".to_string(),
-                            });
-                            continue;
-                        } else if saves.len() == 1 {
-                            saves[0].clone()
-                        } else {
-                            report.skipped.push(SkippedFileResult {
-                                filename,
-                                kind: DetectedFileKind::Datapack,
-                                reason: "WORLD_SELECTION_REQUIRED".to_string(),
-                            });
-                            continue;
-                        }
-                    }
-                };
-
-                let world_dir = instance_dir.join("saves").join(&resolved_world);
-                if !world_dir.is_dir() {
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!(
-                            "Target world '{}' does not exist in instance '{}'",
-                            resolved_world, instance_id
-                        ),
-                    });
-                    continue;
-                }
-
-                let datapacks_dir = world_dir.join("datapacks");
-                if let Err(e) = tokio::fs::create_dir_all(&datapacks_dir).await {
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Failed to create datapacks directory: {}", e),
-                    });
-                    continue;
-                }
-
-                let target_path = datapacks_dir.join(&filename);
-                if is_same_file_path(&src_path, &target_path) {
-                    let rel_key = format!("saves/{}/datapacks/{}", resolved_world, filename);
-                    let hash_sha1 = if !inspected.is_dir {
-                        compute_sha1(&target_path).await.ok()
-                    } else {
-                        None
-                    };
-                    let size = if !inspected.is_dir {
-                        tokio::fs::metadata(&target_path).await.map(|m| m.len()).ok()
-                    } else {
-                        Some(0)
-                    };
-                    let _ = save_asset_to_manifest(
-                        &instance_id,
-                        rel_key.clone(),
-                        AssetRecord {
-                            category: AssetCategory::Datapack,
-                            source_type: AssetSourceType::LocalImport,
-                            project_id: None,
-                            version_id: None,
-                            download_url: None,
-                            hash_sha1,
-                            hash_sha512: None,
-                            size,
-                            enabled: true,
-                            managed_by_modpack: false,
-                        },
-                    )
-                    .await;
-                    report.succeeded.push(ImportedFileResult {
-                        filename,
-                        kind: DetectedFileKind::Datapack,
-                        target_rel_path: rel_key,
-                    });
-                    continue;
-                }
-
-                if target_path.exists() && !overwrite {
-                    report.skipped.push(SkippedFileResult {
-                        filename,
-                        kind: DetectedFileKind::Datapack,
-                        reason: "FILE_EXISTS".to_string(),
-                    });
-                    continue;
-                }
-
-                // Re-verify instance idle immediately before committing file
-                if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Instance is busy: {}", e),
-                    });
-                    continue;
-                }
-
-                let backup_opt = if inspected.is_dir {
-                    let s = src_path.clone();
-                    let d = target_path.clone();
-                    let copy_res =
-                        tokio::task::spawn_blocking(move || copy_dir_recursive_sync(&s, &d))
-                            .await
-                            .map_err(|e| format!("Task join error: {}", e))
-                            .and_then(|r| r);
-                    match copy_res {
-                        Ok(b) => b,
-                        Err(e) => {
-                            report.failed.push(FailedFileResult {
-                                filename,
-                                error: e,
-                            });
-                            continue;
-                        }
-                    }
-                } else {
-                    let s_inspect = src_path.clone();
-                    let wrapper = tokio::task::spawn_blocking(move || {
-                        detect_zip_wrapper_prefix(&s_inspect)
-                    })
-                    .await
-                    .unwrap_or(None);
-
-                    let s = src_path.clone();
-                    let d = target_path.clone();
-                    let copy_res = tokio::task::spawn_blocking(move || {
-                        install_zip_stripping_wrapper_sync(&s, &d, wrapper.as_deref())
-                    })
-                    .await
-                    .map_err(|e| format!("Task join error: {}", e))
-                    .and_then(|r| r);
-
-                    match copy_res {
-                        Ok(b) => b,
-                        Err(e) => {
-                            report.failed.push(FailedFileResult {
-                                filename,
-                                error: e,
-                            });
-                            continue;
-                        }
-                    }
-                };
-
-                let hash_sha1 = if !inspected.is_dir {
-                    compute_sha1(&target_path).await.ok()
-                } else {
-                    None
-                };
-                let size = if !inspected.is_dir {
-                    tokio::fs::metadata(&target_path)
-                        .await
-                        .map(|m| m.len())
-                        .ok()
-                } else {
-                    Some(0)
-                };
-                let rel_key = format!("saves/{}/datapacks/{}", resolved_world, filename);
-
-                let save_res = save_asset_to_manifest(
-                    &instance_id,
-                    rel_key.clone(),
-                    AssetRecord {
-                        category: AssetCategory::Datapack,
-                        source_type: AssetSourceType::LocalImport,
-                        project_id: None,
-                        version_id: None,
-                        download_url: None,
-                        hash_sha1,
-                        hash_sha512: None,
-                        size,
-                        enabled: true,
-                        managed_by_modpack: false,
-                    },
+                    overwrite,
+                    &task_manager,
+                    &running_instances,
+                    &mut report,
                 )
                 .await;
-
-                if let Err(e) = save_res {
-                    if inspected.is_dir {
-                        let _ = tokio::fs::remove_dir_all(&target_path).await;
-                        if let Some(ref b) = backup_opt {
-                            let _ = tokio::fs::rename(b, &target_path).await;
-                        }
-                    } else {
-                        let _ = tokio::fs::remove_file(&target_path).await;
-                        if let Some(ref b) = backup_opt {
-                            let _ = tokio::fs::rename(b, &target_path).await;
-                        }
-                    }
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Failed to update assets manifest: {}", e),
-                    });
-                    continue;
-                }
-
-                if let Some(ref b) = backup_opt {
-                    if inspected.is_dir {
-                        let _ = tokio::fs::remove_dir_all(b).await;
-                    } else {
-                        let _ = tokio::fs::remove_file(b).await;
-                    }
-                }
-
-                tracing::info!(
-                    "Drag-and-drop imported datapack '{}' into '{}/{}'",
-                    filename,
-                    instance_id,
-                    resolved_world
-                );
-                report.succeeded.push(ImportedFileResult {
-                    filename,
-                    kind: DetectedFileKind::Datapack,
-                    target_rel_path: rel_key,
-                });
             }
-
+            DetectedFileKind::Datapack => {
+                import_single_datapack(
+                    &instance_dir,
+                    &instance_id,
+                    &src_path,
+                    &filename,
+                    &inspected,
+                    target_world.as_deref(),
+                    overwrite,
+                    &task_manager,
+                    &running_instances,
+                    &mut report,
+                )
+                .await;
+            }
             DetectedFileKind::World => {
-                let saves_dir = instance_dir.join("saves");
-                if let Err(e) = tokio::fs::create_dir_all(&saves_dir).await {
-                    report.failed.push(FailedFileResult {
-                        filename,
-                        error: format!("Failed to create saves directory: {}", e),
-                    });
-                    continue;
-                }
-
-                if inspected.is_dir {
-                    let target_path = saves_dir.join(&filename);
-                    if is_same_file_path(&src_path, &target_path) {
-                        let rel_key = format!("saves/{}", filename);
-                        let _ = save_asset_to_manifest(
-                            &instance_id,
-                            rel_key.clone(),
-                            AssetRecord {
-                                category: AssetCategory::Save,
-                                source_type: AssetSourceType::LocalImport,
-                                project_id: None,
-                                version_id: None,
-                                download_url: None,
-                                hash_sha1: None,
-                                hash_sha512: None,
-                                size: Some(0),
-                                enabled: true,
-                                managed_by_modpack: false,
-                            },
-                        )
-                        .await;
-                        report.succeeded.push(ImportedFileResult {
-                            filename,
-                            kind: DetectedFileKind::World,
-                            target_rel_path: rel_key,
-                        });
-                        continue;
-                    }
-                    if target_path.exists() && !overwrite {
-                        report.skipped.push(SkippedFileResult {
-                            filename,
-                            kind: DetectedFileKind::World,
-                            reason: "FILE_EXISTS".to_string(),
-                        });
-                        continue;
-                    }
-
-                    // Re-verify instance idle immediately before committing directory
-                    if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
-                        report.failed.push(FailedFileResult {
-                            filename,
-                            error: format!("Instance is busy: {}", e),
-                        });
-                        continue;
-                    }
-
-                    let s = src_path.clone();
-                    let d = target_path.clone();
-                    let copy_res =
-                        tokio::task::spawn_blocking(move || copy_dir_recursive_sync(&s, &d))
-                            .await
-                            .map_err(|e| format!("Task join error: {}", e))
-                            .and_then(|r| r);
-                    let backup_dir = match copy_res {
-                        Ok(b) => b,
-                        Err(e) => {
-                            report.failed.push(FailedFileResult {
-                                filename,
-                                error: e,
-                            });
-                            continue;
-                        }
-                    };
-
-                    let rel_key = format!("saves/{}", filename);
-                    let save_res = save_asset_to_manifest(
-                        &instance_id,
-                        rel_key.clone(),
-                        AssetRecord {
-                            category: AssetCategory::Save,
-                            source_type: AssetSourceType::LocalImport,
-                            project_id: None,
-                            version_id: None,
-                            download_url: None,
-                            hash_sha1: None,
-                            hash_sha512: None,
-                            size: Some(0),
-                            enabled: true,
-                            managed_by_modpack: false,
-                        },
-                    )
-                    .await;
-
-                    if let Err(e) = save_res {
-                        let _ = tokio::fs::remove_dir_all(&target_path).await;
-                        if let Some(ref b) = backup_dir {
-                            let _ = tokio::fs::rename(b, &target_path).await;
-                        }
-                        report.failed.push(FailedFileResult {
-                            filename,
-                            error: format!("Failed to update assets manifest: {}", e),
-                        });
-                        continue;
-                    }
-
-                    if let Some(ref b) = backup_dir {
-                        let _ = tokio::fs::remove_dir_all(b).await;
-                    }
-
-                    report.succeeded.push(ImportedFileResult {
-                        filename,
-                        kind: DetectedFileKind::World,
-                        target_rel_path: rel_key,
-                    });
-                } else {
-                    let stem = src_path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("World")
-                        .to_string();
-                    let zp = src_path.clone();
-                    let sd = saves_dir.clone();
-
-                    // Re-verify instance idle immediately before extracting archive
-                    if let Err(e) = verify_instance_idle(&instance_dir, &instance_id, &task_manager, &running_instances).await {
-                        report.failed.push(FailedFileResult {
-                            filename,
-                            error: format!("Instance is busy: {}", e),
-                        });
-                        continue;
-                    }
-
-                    let extract_res = tokio::task::spawn_blocking(move || {
-                        extract_world_archive_sync(&zp, &sd, &stem, overwrite)
-                    })
-                    .await
-                    .map_err(|e| format!("Task join error: {}", e))
-                    .and_then(|r| r);
-
-                    match extract_res {
-                        Ok((world_folder, backup_dir)) => {
-                            let rel_key = format!("saves/{}", world_folder);
-                            let save_res = save_asset_to_manifest(
-                                &instance_id,
-                                rel_key.clone(),
-                                AssetRecord {
-                                    category: AssetCategory::Save,
-                                    source_type: AssetSourceType::LocalImport,
-                                    project_id: None,
-                                    version_id: None,
-                                    download_url: None,
-                                    hash_sha1: None,
-                                    hash_sha512: None,
-                                    size: Some(0),
-                                    enabled: true,
-                                    managed_by_modpack: false,
-                                },
-                            )
-                            .await;
-
-                            if let Err(e) = save_res {
-                                let committed_dir = saves_dir.join(&world_folder);
-                                let _ = tokio::fs::remove_dir_all(&committed_dir).await;
-                                if let Some(ref b) = backup_dir {
-                                    let _ = tokio::fs::rename(b, &committed_dir).await;
-                                }
-                                report.failed.push(FailedFileResult {
-                                    filename,
-                                    error: format!("Failed to update assets manifest: {}", e),
-                                });
-                                continue;
-                            }
-
-                            if let Some(ref b) = backup_dir {
-                                let _ = tokio::fs::remove_dir_all(b).await;
-                            }
-
-                            tracing::info!(
-                                "Drag-and-drop extracted world '{}' into '{}/saves/{}'",
-                                filename,
-                                instance_id,
-                                world_folder
-                            );
-                            report.succeeded.push(ImportedFileResult {
-                                filename,
-                                kind: DetectedFileKind::World,
-                                target_rel_path: rel_key,
-                            });
-                        }
-                        Err(reason) if reason == "FILE_EXISTS" => {
-                            report.skipped.push(SkippedFileResult {
-                                filename,
-                                kind: DetectedFileKind::World,
-                                reason,
-                            });
-                        }
-                        Err(e) => {
-                            report.failed.push(FailedFileResult {
-                                filename,
-                                error: e,
-                            });
-                        }
-                    }
-                }
+                import_single_world(
+                    &instance_dir,
+                    &instance_id,
+                    &src_path,
+                    &filename,
+                    &inspected,
+                    overwrite,
+                    &task_manager,
+                    &running_instances,
+                    &mut report,
+                )
+                .await;
             }
-
             DetectedFileKind::Modpack => {
                 report.skipped.push(SkippedFileResult {
                     filename,
@@ -2074,14 +2173,14 @@ pub async fn import_dropped_files_to_instance(
                     reason: "MODPACK_REQUIRES_INSTALL_FLOW".to_string(),
                 });
             }
-
             DetectedFileKind::Unknown => {
                 report.skipped.push(SkippedFileResult {
                     filename,
                     kind: DetectedFileKind::Unknown,
                     reason: "UNSUPPORTED_FILE_TYPE".to_string(),
                 });
-            }        }
+            }
+        }
     }
 
     Ok(report)
