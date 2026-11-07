@@ -886,23 +886,17 @@ impl ExecutableTask for InstallOnlineModpackTask {
             let monitor_dl = global_downloaded.clone();
             
             let monitor = tokio::spawn(async move {
-                let mut last_dl = 0;
-                let mut last_time = tokio::time::Instant::now();
+                let mut tracker = crate::downloader::SpeedTracker::new(0);
                 loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                     if monitor_ctx.is_cancelled() { break; }
                     let dl = monitor_dl.load(std::sync::atomic::Ordering::Relaxed);
-                    
-                    let elapsed_sec = last_time.elapsed().as_secs_f64();
-                    let speed = if elapsed_sec > 0.0 { ((dl.saturating_sub(last_dl)) as f64 / elapsed_sec) as u64 } else { 0 };
+                    let speed = tracker.update(dl);
                     
                     let mb = dl as f64 / 1024.0 / 1024.0;
                     let t_mb = total_size as f64 / 1024.0 / 1024.0;
                     monitor_ctx.update_progress(dl, total_size, &format!("Downloading archive... {:.1} MB / {:.1} MB", mb, t_mb)).await;
                     monitor_ctx.update_download_metrics(speed, 1).await;
-                    
-                    last_dl = dl;
-                    last_time = tokio::time::Instant::now();
                     
                     if dl >= total_size && total_size > 0 { break; }
                 }

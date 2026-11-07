@@ -20,6 +20,7 @@ import { trackEvent, getErrorType, sanitizeTrackingUrl } from "../utils/analytic
 import { getErrorMessage } from "../utils/error";
 import { normalizeUpdateChannel, getUpdateChannelQuery } from "../utils/updateChannel";
 import { toast } from "../composables/useToast";
+import { formatSpeed, formatBytes } from "../utils/format";
 
 const route = useRoute();
 const router = useRouter();
@@ -145,6 +146,8 @@ interface DownloadProgress {
   taskId: string;
   downloaded: number;
   total: number;
+  speed?: number;
+  completed?: boolean;
 }
 
 interface AuthlibServer {
@@ -353,13 +356,7 @@ const isFetchingJavaVersions = ref(false);
 const isFullDiskScanning = ref(false);
 const fullDiskScanPath = ref("");
 
-function formatBytes(bytes: number) {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-}
+
 
 // Authlib state
 const authlibServers = ref<AuthlibServer[]>([]);
@@ -555,9 +552,6 @@ async function downloadJava(majorVersion: number): Promise<void> {
 
   let unlisten: (() => void) | null = null;
   try {
-    let lastDownloaded = 0;
-    let lastTime = performance.now();
-
     // Listen for download progress
     unlisten = await listen<DownloadProgress>("download-progress", (event) => {
       const payload = event.payload;
@@ -565,15 +559,8 @@ async function downloadJava(majorVersion: number): Promise<void> {
         javaDownloadProgress.value = Math.floor((payload.downloaded / payload.total) * 100);
         javaDownloadedBytes.value = payload.downloaded;
         javaTotalBytes.value = payload.total;
-
-        const now = performance.now();
-        const timeDiff = (now - lastTime) / 1000;
-        if (timeDiff >= 0.5) {
-          const bytesDiff = payload.downloaded - lastDownloaded;
-          const speed = bytesDiff / timeDiff;
-          javaDownloadSpeed.value = `${formatBytes(speed)}/s`;
-          lastDownloaded = payload.downloaded;
-          lastTime = now;
+        if (payload.speed !== undefined) {
+          javaDownloadSpeed.value = formatSpeed(payload.speed) || "0 B/s";
         }
       }
     });
@@ -701,13 +688,7 @@ function getDownloadPercentage(filename: string) {
   return Math.round((model.downloaded / model.total) * 100);
 }
 
-function formatSpeed(bytesPerSec: number) {
-  if (!bytesPerSec) return '0 B/s';
-  const k = 1024;
-  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-  const i = Math.floor(Math.log(bytesPerSec) / Math.log(k));
-  return parseFloat((bytesPerSec / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
+
 
 function formatModelName(filename: string) {
   return filename.replace(/-00001-of-\d{5}/, '');
@@ -1116,7 +1097,7 @@ const clearLogs = () => {
           </div>
           <div class="flex items-center justify-between text-xs text-muted-foreground mt-1">
             <span>{{ formatBytes(javaDownloadedBytes) }} / {{ formatBytes(javaTotalBytes) }}</span>
-            <span>{{ javaDownloadSpeed }}</span>
+            <span class="font-mono tabular-nums">{{ javaDownloadSpeed }}</span>
           </div>
         </div>
       </div>
@@ -1343,7 +1324,7 @@ const clearLogs = () => {
                   <!-- Progress bar -->
                   <div v-if="downloadingModels[model.filename]" class="w-full">
                     <div class="flex justify-between text-xs mb-1">
-                      <span>{{ $t('settings.ai.downloading') }} ({{ formatSpeed(downloadingModels[model.filename].speed) }})</span>
+                      <span class="font-mono tabular-nums">{{ $t('settings.ai.downloading') }} ({{ formatSpeed(downloadingModels[model.filename].speed) || '0 B/s' }})</span>
                       <span>{{ getDownloadPercentage(model.filename) }}%</span>
                     </div>
                     <div class="w-full h-1.5 bg-gray-200 rounded-full dark:bg-zinc-700 overflow-hidden">

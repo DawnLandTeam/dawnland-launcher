@@ -112,7 +112,7 @@ impl TaskContext {
         let now = tokio::time::Instant::now();
         {
             let mut last_emit = self.last_emit_time.write().await;
-            if remaining_files == 0 || now.duration_since(*last_emit).as_millis() >= 200 {
+            if remaining_files == 0 || now.duration_since(*last_emit).as_millis() >= 400 {
                 should_emit = true;
                 *last_emit = now;
             }

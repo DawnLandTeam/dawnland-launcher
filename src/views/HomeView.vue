@@ -32,6 +32,7 @@ import { useInstances } from "../composables/useInstances";
 import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
 import { useFileDrop } from "../composables/useFileDrop";
 import { type InstanceItem, isInstanceBusy, getInstanceStatusLabel } from "../types";
+import { formatSpeed } from "../utils/format";
 
 interface GameLog {
   type: string;
@@ -105,6 +106,7 @@ const repairTotalFiles = ref(0);
 const repairCompletedFiles = ref(0);
 const repairDownloadSpeed = ref(0);
 const repairActiveTasks = ref(new Map<string, DownloadProgress>());
+let repairSpeedThrottleTimer: ReturnType<typeof setTimeout> | null = null;
 const repairingDependencyName = ref("");
 const repairPhase = ref("");
 
@@ -332,24 +334,38 @@ onMounted(async () => {
     if (!isRepairing.value) return;
     
     const progress = event.payload;
-    repairActiveTasks.value.set(progress.taskId, progress);
-
     if (progress.completed) {
       repairCompletedFiles.value++;
+      repairActiveTasks.value.delete(progress.taskId);
+    } else {
+      repairActiveTasks.value.set(progress.taskId, progress);
     }
 
-    // Calculate total speed
-    let currentSpeed = 0;
-    for (const task of repairActiveTasks.value.values()) {
-      if (!task.completed) {
-        currentSpeed += task.speed;
-      }
+    // Throttle speed calculation to 400ms to avoid high-frequency UI jitter
+    if (!repairSpeedThrottleTimer) {
+      repairSpeedThrottleTimer = setTimeout(() => {
+        repairSpeedThrottleTimer = null;
+        if (!isRepairing.value) {
+          repairDownloadSpeed.value = 0;
+          return;
+        }
+        let currentSpeed = 0;
+        for (const task of repairActiveTasks.value.values()) {
+          if (!task.completed) {
+            currentSpeed += task.speed;
+          }
+        }
+        repairDownloadSpeed.value = currentSpeed;
+      }, 400);
     }
-    repairDownloadSpeed.value = currentSpeed;
   });
 });
 
 onUnmounted(() => {
+  if (repairSpeedThrottleTimer) {
+    clearTimeout(repairSpeedThrottleTimer);
+    repairSpeedThrottleTimer = null;
+  }
   if (taskAddedDebounceTimer) {
     clearTimeout(taskAddedDebounceTimer);
     taskAddedDebounceTimer = null;
@@ -985,7 +1001,7 @@ function loaderBadgeClass(loaderType: string): string {
             <div class="space-y-2" v-if="repairPhase !== 'running_processors'">
               <div class="flex justify-between text-xs font-medium">
                 <span>{{ repairCompletedFiles }} / {{ repairTotalFiles }} files</span>
-                <span>{{ (repairDownloadSpeed / 1024 / 1024).toFixed(2) }} MB/s</span>
+                <span class="font-mono tabular-nums">{{ formatSpeed(repairDownloadSpeed) || '0 B/s' }}</span>
               </div>
               <div class="h-2 w-full bg-secondary rounded-full overflow-hidden">
                 <div class="h-full bg-primary transition-all duration-300 ease-out" :style="{ width: `${repairProgressPercentage}%` }" />
