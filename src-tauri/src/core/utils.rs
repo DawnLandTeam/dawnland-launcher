@@ -152,8 +152,14 @@ async fn flatten_instance_json_recursive_inner(
         let cache_json = dawnland_cache
             .join(parent_id)
             .join(format!("{}.json", parent_id));
+        let bak_json = base_dir
+            .join("versions")
+            .join(parent_id)
+            .join(format!("{}.json.bak", parent_id));
         if cache_json.exists() {
             parent_json_path = cache_json;
+        } else if bak_json.exists() {
+            parent_json_path = bak_json;
         } else {
             return Err(format!(
                 "Parent version {} not found at {:?}",

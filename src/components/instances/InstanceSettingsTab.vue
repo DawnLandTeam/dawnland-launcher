@@ -2,9 +2,13 @@
 import { ref, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
-import { Save, FolderOpen, Puzzle, Box, Sparkles, Globe } from '@lucide/vue';
+import { Save, FolderOpen, Puzzle, Box, Sparkles, Globe, Download, ArrowUpDown, Trash2 } from '@lucide/vue';
 import DInput from '../ui/DInput.vue';
 import DSelect from '../ui/DSelect.vue';
+import DButton from '../ui/DButton.vue';
+import ModLoaderInstallDialog from './ModLoaderInstallDialog.vue';
+import ModLoaderUninstallDialog from './ModLoaderUninstallDialog.vue';
+import { useInstances } from '../../composables/useInstances';
 import { getErrorMessage } from '../../utils/error';
 import { repairingInstances, isInstanceActive } from '../../composables/useLaunchState';
 import { toast } from '../../composables/useToast';
@@ -433,6 +437,44 @@ async function setAsGlobalPreset() {
   }
 }
 
+const { fetchInstances } = useInstances();
+const showInstallModal = ref(false);
+const installModalMode = ref<'install' | 'switch'>('install');
+const showUninstallModal = ref(false);
+
+const isInstanceBusy = computed(() => {
+  return isSettingsInstanceRunning.value ||
+    props.instance?.status === 'updating' ||
+    props.instance?.status === 'installing';
+});
+
+const isVanilla = computed(() => {
+  const type = props.instance?.loaderType;
+  return !type || type.toLowerCase() === 'vanilla';
+});
+
+const mcVersion = computed(() => props.instance?.mcVersion || '');
+const loaderType = computed(() => props.instance?.loaderType || 'Vanilla');
+const loaderVersion = computed(() => props.instance?.loaderVersion || '');
+
+function openInstallLoader() {
+  installModalMode.value = 'install';
+  showInstallModal.value = true;
+}
+
+function openSwitchLoader() {
+  installModalMode.value = 'switch';
+  showInstallModal.value = true;
+}
+
+function openUninstallLoader() {
+  showUninstallModal.value = true;
+}
+
+async function handleLoaderOperationSuccess() {
+  await fetchInstances(true);
+}
+
 async function openInstanceSubfolder(subfolder: string) {
   if (!props.instanceId) return;
   try {
@@ -467,6 +509,88 @@ async function openInstanceSubfolder(subfolder: string) {
         <div v-if="isSettingsInstanceRunning" class="p-3 bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 rounded-md text-sm flex items-center gap-2">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 shrink-0"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
           {{ t('instances.cannotEditRunning', '游戏正在运行中，无法修改配置') }}
+        </div>
+
+        <!-- Game Core & Mod Loader -->
+        <div class="space-y-4">
+          <div>
+            <h4 class="text-sm font-medium mb-1">{{ t('instances.loaderManagement.title', 'Game Core & Loader') }}</h4>
+            <p class="text-xs text-muted-foreground">{{ t('instances.loaderManagement.subtitle', 'Manage Minecraft base core and mod loader') }}</p>
+          </div>
+
+          <div class="p-4 rounded-lg border border-neutral-200/80 dark:border-zinc-800 bg-white/50 dark:bg-zinc-800/40 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-neutral-100 dark:bg-zinc-700/60 flex items-center justify-center shrink-0 border border-neutral-200 dark:border-zinc-700">
+                  <img
+                    v-if="!isVanilla && (loaderType.toLowerCase() === 'fabric' || loaderType.toLowerCase() === 'forge' || loaderType.toLowerCase() === 'neoforge')"
+                    :src="'/' + loaderType.toLowerCase() + '.png'"
+                    class="w-6 h-6 object-contain"
+                  />
+                  <Box v-else class="w-5 h-5 text-neutral-500" />
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="font-semibold text-sm text-neutral-900 dark:text-neutral-100">
+                      Minecraft {{ mcVersion }}
+                    </span>
+                    <span
+                      class="px-2 py-0.5 rounded-full text-[11px] font-medium"
+                      :class="[
+                        isVanilla
+                          ? 'bg-neutral-100 dark:bg-zinc-700 text-neutral-700 dark:text-neutral-300'
+                          : 'bg-primary/10 text-primary border border-primary/20'
+                      ]"
+                    >
+                      {{ isVanilla ? 'Vanilla' : (loaderType + (loaderVersion ? ' ' + loaderVersion : '')) }}
+                    </span>
+                  </div>
+                  <p class="text-xs text-muted-foreground mt-0.5">
+                    {{
+                      isVanilla
+                        ? t('instances.loaderManagement.vanillaDescription', 'Pure Vanilla Minecraft (No Mod Loader)')
+                        : t('instances.loaderManagement.moddedDescription', 'Mod loader installed, supports loading mods for this environment')
+                    }}
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2 shrink-0">
+                <DButton
+                  v-if="isVanilla"
+                  size="sm"
+                  variant="primary"
+                  @click="openInstallLoader"
+                  :disabled="isInstanceBusy"
+                >
+                  <Download class="w-4 h-4 mr-1.5" />
+                  {{ t('instances.loaderManagement.installLoaderBtn', 'Install Mod Loader') }}
+                </DButton>
+
+                <template v-else>
+                  <DButton
+                    size="sm"
+                    variant="outline"
+                    @click="openSwitchLoader"
+                    :disabled="isInstanceBusy"
+                  >
+                    <ArrowUpDown class="w-4 h-4 mr-1.5" />
+                    {{ t('instances.loaderManagement.switchVersionBtn', 'Change Version') }}
+                  </DButton>
+
+                  <DButton
+                    size="sm"
+                    variant="danger"
+                    @click="openUninstallLoader"
+                    :disabled="isInstanceBusy"
+                  >
+                    <Trash2 class="w-4 h-4 mr-1.5" />
+                    {{ t('instances.loaderManagement.uninstallLoaderBtn', 'Uninstall Loader') }}
+                  </DButton>
+                </template>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Quick Folders -->
@@ -669,4 +793,25 @@ async function openInstanceSubfolder(subfolder: string) {
       </div>
     </div>
   </div>
+
+  <ModLoaderInstallDialog
+    :open="showInstallModal"
+    :instance-id="instanceId"
+    :mc-version="mcVersion"
+    :current-loader-type="loaderType"
+    :current-loader-version="loaderVersion"
+    :mode="installModalMode"
+    @update:open="showInstallModal = $event"
+    @success="handleLoaderOperationSuccess"
+  />
+
+  <ModLoaderUninstallDialog
+    :open="showUninstallModal"
+    :instance-id="instanceId"
+    :mc-version="mcVersion"
+    :current-loader-type="loaderType"
+    :current-loader-version="loaderVersion"
+    @update:open="showUninstallModal = $event"
+    @success="handleLoaderOperationSuccess"
+  />
 </template>
