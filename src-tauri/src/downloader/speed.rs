@@ -147,7 +147,7 @@ mod tests {
         tracker.samples.push_back((t0, 0));
 
         let speed = tracker.update(1024 * 1024); // 1 MB in 0.5s => 2 MB/s
-        assert!(speed >= 1_900_000 && speed <= 2_200_000, "Initial speed should be ~2 MB/s: got {}", speed);
+        assert!((1_900_000..=2_200_000).contains(&speed), "Initial speed should be ~2 MB/s: got {}", speed);
     }
 
     #[test]
