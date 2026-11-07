@@ -3,6 +3,9 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 pub mod download;
+pub mod speed;
+
+pub use speed::SpeedTracker;
 
 pub use download::{run_batch_download, run_batch_download_task};
 

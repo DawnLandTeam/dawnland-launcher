@@ -7,6 +7,7 @@ import { X, Clock, Loader2, CheckCircle, Pause, XCircle, Ban, ArrowRight, Extern
 import { getTaskName, getTaskTargetRoute, formatTaskErrorMessage } from '../types/task';
 import AiAnalysisPanel from './ai/AiAnalysisPanel.vue';
 import { useLogStore } from '../composables/useLogStore';
+import { formatSpeed } from '../utils/format';
 
 const { t, te } = useI18n();
 const router = useRouter();
@@ -18,12 +19,7 @@ function getSubTaskName(sub: any) {
   return te(key) ? t(key) : sub.name;
 }
 
-function formatSpeed(speed: number | undefined) {
-  if (speed === undefined || speed === 0) return '';
-  if (speed > 1024 * 1024) return `${(speed / 1024 / 1024).toFixed(1)} MB/s`;
-  if (speed > 1024) return `${(speed / 1024).toFixed(1)} KB/s`;
-  return `${speed} B/s`;
-}
+
 
 const task = computed(() => {
   if (!taskStore.selectedTaskId.value) return null;
@@ -106,7 +102,7 @@ function getInstanceId(taskType: any): string | undefined {
           </h3>
           <!-- Status Icon -->
           <div class="shrink-0 flex items-center justify-center gap-3">
-            <span v-if="task.progress.speed > 0" class="shrink-0 text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+            <span v-if="task.progress.speed > 0" class="shrink-0 text-xs font-mono tabular-nums min-w-[4.5rem] text-center text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded transition-all">
               {{ formatSpeed(task.progress.speed) }}
             </span>
             <Clock v-if="task.status === 'Pending'" class="w-5 h-5 text-neutral-400" />

@@ -6,6 +6,7 @@ import { Clock, Loader2, Pause, CheckCircle, XCircle, Ban, X, RotateCcw, Externa
 import type { TaskState } from '../types/task';
 import { getTaskName, getTaskTargetRoute, formatTaskErrorMessage } from '../types/task';
 import { useTaskStore } from '../composables/useTaskStore';
+import { formatSpeed } from '../utils/format';
 
 const props = defineProps<{
   task: TaskState
@@ -61,12 +62,7 @@ function handleCancel(e: Event) {
   }
 }
 
-function formatSpeed(speed: number | undefined) {
-  if (speed === undefined || speed === 0) return '';
-  if (speed > 1024 * 1024) return `${(speed / 1024 / 1024).toFixed(1)} MB/s`;
-  if (speed > 1024) return `${(speed / 1024).toFixed(1)} KB/s`;
-  return `${speed} B/s`;
-}
+
 
 function handleRetry(e: Event) {
   e.stopPropagation();
@@ -128,7 +124,7 @@ function handleNavigate(e: Event) {
               <span v-else-if="task.progress.detail" class="text-xs text-neutral-500 dark:text-neutral-400 truncate" :title="task.progress.detail">
                 {{ task.progress.detail }}
               </span>
-              <span v-if="task.progress.speed > 0" class="shrink-0 text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+              <span v-if="task.progress.speed > 0" class="shrink-0 text-xs font-mono tabular-nums min-w-[4.5rem] text-center text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded transition-all">
                 {{ formatSpeed(task.progress.speed) }}
               </span>
             </template>

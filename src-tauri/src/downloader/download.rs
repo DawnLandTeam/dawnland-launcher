@@ -1,5 +1,5 @@
 use crate::core::task::TaskContext;
-use crate::downloader::{DownloadProgress, DownloadTask};
+use crate::downloader::{DownloadProgress, DownloadTask, SpeedTracker};
 use futures_util::StreamExt;
 use sha1::{Digest, Sha1};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -59,18 +59,16 @@ fn emit_progress_throttled(
     current_total: u64,
     total_size: u64,
     last_emit_time: &mut std::time::Instant,
-    last_downloaded: &mut u64,
+    speed_tracker: &mut SpeedTracker,
 ) {
     let elapsed = last_emit_time.elapsed().as_millis() as u64;
-    let since_last = current_total.saturating_sub(*last_downloaded);
 
     if elapsed >= PROGRESS_THROTTLE_MS {
-        let speed = (since_last * 1000).checked_div(elapsed).unwrap_or(0);
+        let speed = speed_tracker.update(current_total);
         let mut progress = DownloadProgress::progress(task_id.to_string(), current_total, total_size, speed);
         progress.file_name = Some(file_name.to_string());
         let _ = app.emit("download-progress", &progress);
         *last_emit_time = std::time::Instant::now();
-        *last_downloaded = current_total;
     }
 }
 
@@ -197,9 +195,6 @@ where
                     }
                     
                     if size_ok {
-                        if let Some(expected_size) = task.expected_size {
-                            add_global_downloaded(expected_size);
-                        }
                         return Ok(());
                     }
                 }
@@ -368,7 +363,7 @@ where
         task_downloaded.store(initial_dl, Ordering::Relaxed);
 
         let last_emit_time_global = Arc::new(tokio::sync::Mutex::new(std::time::Instant::now()));
-        let last_downloaded_global = Arc::new(AtomicU64::new(initial_dl));
+        let speed_tracker_global = Arc::new(tokio::sync::Mutex::new(SpeedTracker::new(initial_dl)));
         
         let client_clone = client.clone();
         let target_url = final_url;
@@ -384,7 +379,7 @@ where
             let global_dl = task_downloaded.clone();
             let add_global_dl = add_global_downloaded.clone();
             let last_emit_time_global = last_emit_time_global.clone();
-            let last_downloaded_global = last_downloaded_global.clone();
+            let speed_tracker_global = speed_tracker_global.clone();
             let inner_sem = inner_sem.clone();
 
             let is_cancelled_clone = is_cancelled.clone();
@@ -457,7 +452,7 @@ where
                     // Throttle emit
                     let mut emit_time = last_emit_time_global.lock().await;
                     let current_total = global_dl.load(Ordering::Relaxed);
-                    let mut last_dl = last_downloaded_global.load(Ordering::Relaxed);
+                    let mut tracker = speed_tracker_global.lock().await;
                     emit_progress_throttled(
                         &app,
                         &task_id,
@@ -465,9 +460,8 @@ where
                         current_total,
                         total_size,
                         &mut emit_time,
-                        &mut last_dl,
+                        &mut tracker,
                     );
-                    last_downloaded_global.store(last_dl, Ordering::Relaxed);
                 }
                 file.flush().await.map_err(|e| e.to_string())?;
                 Ok(())
@@ -586,7 +580,7 @@ where
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = initial_downloaded;
     let mut last_emit_time = std::time::Instant::now();
-    let mut last_downloaded: u64 = initial_downloaded;
+    let mut speed_tracker = SpeedTracker::new(initial_downloaded);
 
     while let Some(chunk_result) = stream.next().await {
         if is_cancelled() {
@@ -608,7 +602,7 @@ where
                     downloaded,
                     total_size,
                     &mut last_emit_time,
-                    &mut last_downloaded,
+                    &mut speed_tracker,
                 );
             }
             Err(e) => {
@@ -729,23 +723,17 @@ pub async fn run_batch_download_task(
     let completed_files_clone = completed_files.clone();
 
     let monitor_handle = tokio::spawn(async move {
-        let mut last_bytes = 0;
-        let mut last_time = tokio::time::Instant::now();
+        let mut tracker = SpeedTracker::new(0);
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             if ctx_monitor.is_cancelled() {
                 break;
             }
             let current_bytes = global_dl_clone.load(Ordering::Relaxed);
-            let elapsed = last_time.elapsed().as_secs_f64();
-            if elapsed > 0.0 {
-                let speed = (current_bytes.saturating_sub(last_bytes) as f64 / elapsed) as u64;
-                let remaining =
-                    total_files.saturating_sub(completed_files_clone.load(Ordering::SeqCst) as u32);
-                ctx_monitor.update_download_metrics(speed, remaining).await;
-            }
-            last_bytes = current_bytes;
-            last_time = tokio::time::Instant::now();
+            let speed = tracker.update(current_bytes);
+            let remaining =
+                total_files.saturating_sub(completed_files_clone.load(Ordering::SeqCst) as u32);
+            ctx_monitor.update_download_metrics(speed, remaining).await;
 
             if completed_files_clone.load(Ordering::SeqCst) >= total_tasks {
                 break;
