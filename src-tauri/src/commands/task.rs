@@ -117,6 +117,7 @@ pub async fn retry_task(
                     loader_type,
                     custom_instance_name,
                     is_dependency,
+                    is_existing_instance: None,
                 },
             };
             task_manager
@@ -145,6 +146,7 @@ pub async fn retry_task(
                     fabric_version,
                     custom_instance_name,
                     is_dependency,
+                    is_existing_instance: None,
                 },
             };
             task_manager
@@ -346,6 +348,61 @@ pub async fn retry_task(
                     target_dir,
                     download_url,
                     file_id,
+                },
+            };
+            task_manager
+                .spawn_task_with_id(task_id.clone(), task.task_type, executable)
+                .await
+                .map_err(|e| e.to_string())?
+        }
+        TaskType::InstallLoaderToInstance {
+            instance_id,
+            mc_version,
+            loader_type,
+            loader_version,
+        } => {
+            crate::core::mod_loader::spawn_loader_install_task(
+                &task_manager,
+                Some(task_id.clone()),
+                instance_id,
+                mc_version,
+                loader_type,
+                loader_version,
+                task.task_type,
+            )
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        TaskType::SwitchInstanceLoaderVersion {
+            instance_id,
+            mc_version,
+            loader_type,
+            new_loader_version,
+            ..
+        } => {
+            crate::core::mod_loader::spawn_loader_install_task(
+                &task_manager,
+                Some(task_id.clone()),
+                instance_id,
+                mc_version,
+                loader_type,
+                new_loader_version,
+                task.task_type,
+            )
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        TaskType::UninstallInstanceLoader {
+            instance_id,
+            mc_version,
+            mod_handling_mode,
+            ..
+        } => {
+            let executable = crate::core::mod_loader::UninstallInstanceLoaderTask {
+                options: crate::core::mod_loader::UninstallInstanceLoaderOptions {
+                    instance_id,
+                    mod_handling_mode: mod_handling_mode.unwrap_or_else(|| "keep".to_string()),
+                    mc_version: Some(mc_version),
                 },
             };
             task_manager

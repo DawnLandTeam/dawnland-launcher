@@ -12,6 +12,7 @@ export interface InstanceItem {
   path?: string;
   mcVersion: string;
   loaderType: string;
+  loaderVersion?: string;
   modpackVersion?: string;
   modpackType?: string;
   modpackProjectId?: string;

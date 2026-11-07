@@ -8,6 +8,21 @@
     </div>
 
     <div class="flex-1 overflow-y-auto overflow-x-hidden p-6 flex flex-col gap-4 minimal-scrollbar">
+      <!-- Vanilla Instance Warning Banner -->
+      <div
+        v-if="isVanilla"
+        class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-lg border border-primary/30 bg-primary/5 text-xs text-neutral-800 dark:text-neutral-200"
+      >
+        <div class="flex items-center gap-2.5">
+          <AlertCircle class="w-4 h-4 text-primary shrink-0" />
+          <span>{{ t('instances.loaderManagement.installBanner', 'This instance is pure Vanilla Minecraft, which cannot run mods. Install a Mod Loader to enable mod support!') }}</span>
+        </div>
+        <DButton size="sm" variant="primary" class="shrink-0" @click="showInstallDialog = true">
+          <Download class="w-3.5 h-3.5 mr-1.5" />
+          {{ t('instances.loaderManagement.installLoaderBtn', 'Install Mod Loader') }}
+        </DButton>
+      </div>
+
       <div class="flex items-center gap-3">
         <DInput
           v-model="searchQuery"
@@ -109,6 +124,17 @@
         </div>
       </div>
     </AlertDialog>
+
+    <ModLoaderInstallDialog
+      :open="showInstallDialog"
+      :instance-id="instanceId"
+      :mc-version="currentInstance?.mcVersion || ''"
+      :current-loader-type="currentInstance?.loaderType || 'Vanilla'"
+      :current-loader-version="currentInstance?.loaderVersion"
+      mode="install"
+      @update:open="showInstallDialog = $event"
+      @success="handleInstallSuccess"
+    />
   </div>
 </template>
 
@@ -117,10 +143,12 @@ import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { Package, Search, Puzzle, Download, Trash2, RefreshCw } from '@lucide/vue';
+import { Package, Search, Puzzle, Download, Trash2, RefreshCw, AlertCircle } from '@lucide/vue';
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from '../ui/alert-dialog';
 import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
+import ModLoaderInstallDialog from './ModLoaderInstallDialog.vue';
+import { useInstances } from '../../composables/useInstances';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
 import { INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
@@ -128,7 +156,25 @@ import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
 
 const props = defineProps<{
   instanceId: string;
+  instance?: any;
 }>();
+
+const { instances, fetchInstances } = useInstances();
+const showInstallDialog = ref(false);
+
+const currentInstance = computed(() => {
+  if (props.instance) return props.instance;
+  return instances.value.find((i) => i.id === props.instanceId);
+});
+
+const isVanilla = computed(() => {
+  const type = currentInstance.value?.loaderType;
+  return type ? type.toLowerCase() === 'vanilla' : false;
+});
+
+async function handleInstallSuccess() {
+  await fetchInstances(true);
+}
 
 const router = useRouter();
 const { t } = useI18n();
