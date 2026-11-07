@@ -104,6 +104,8 @@ pub struct InstanceItem {
     pub mc_version: String,
     /// Loader type: "Vanilla" or "Fabric"
     pub loader_type: String,
+    /// Loader version (if any, e.g., "0.16.9")
+    pub loader_version: Option<String>,
     /// Modpack Version (if any)
     pub modpack_version: Option<String>,
     /// Modpack Type (e.g., "CurseForge" or "Modrinth")
@@ -388,6 +390,7 @@ pub async fn scan_installed_instances_internal(
                 // Read version JSON to extract metadata
                 match tokio::fs::read_to_string(&json_path).await {
                     Ok(content) => {
+                        let parsed_json_opt: Option<serde_json::Value> = serde_json::from_str(&content).ok();
                         // Parse basic info from JSON
                         let (
                             mut mc_version,
@@ -397,12 +400,17 @@ pub async fn scan_installed_instances_internal(
                             mut modpack_project_id,
                         ) = parse_version_json(&content, &id);
 
+                        let mut loader_version = None;
+
                         if let Some(ref config) = config_opt {
                             if let Some(ref mc) = config.mc_version {
                                 if !mc.is_empty() { mc_version = mc.clone(); }
                             }
                             if let Some(ref ld) = config.loader_type {
                                 loader_type = format!("{:?}", ld);
+                            }
+                            if let Some(ref lv) = config.loader_version {
+                                if !lv.is_empty() { loader_version = Some(lv.clone()); }
                             }
                             if config.modpack_version.is_some() {
                                 modpack_version = config.modpack_version.clone();
@@ -412,6 +420,12 @@ pub async fn scan_installed_instances_internal(
                             }
                             if config.modpack_project_id.is_some() {
                                 modpack_project_id = config.modpack_project_id.clone();
+                            }
+                        }
+
+                        if loader_version.is_none() && loader_type != "Vanilla" {
+                            if let Some(ref json) = parsed_json_opt {
+                                loader_version = crate::core::mod_loader::extract_loader_version_from_json(json, &id);
                             }
                         }
 
@@ -471,6 +485,7 @@ pub async fn scan_installed_instances_internal(
                             name: id.clone(),
                             mc_version,
                             loader_type,
+                            loader_version,
                             modpack_version,
                             modpack_type,
                             modpack_project_id,
@@ -485,6 +500,7 @@ pub async fn scan_installed_instances_internal(
                         tracing::warn!("Failed to read version JSON for {}: {}", id, e);
                         let mut mc_version = extract_mc_version_from_id(&id).unwrap_or_default();
                         let mut loader_type = "Vanilla".to_string();
+                        let mut loader_version = None;
                         let mut modpack_version = None;
                         let mut modpack_type = None;
                         let mut modpack_project_id = None;
@@ -495,6 +511,9 @@ pub async fn scan_installed_instances_internal(
                             }
                             if let Some(ref ld) = config.loader_type {
                                 loader_type = format!("{:?}", ld);
+                            }
+                            if let Some(ref lv) = config.loader_version {
+                                if !lv.is_empty() { loader_version = Some(lv.clone()); }
                             }
                             if config.modpack_version.is_some() {
                                 modpack_version = config.modpack_version.clone();
@@ -513,6 +532,7 @@ pub async fn scan_installed_instances_internal(
                             name: id.clone(),
                             mc_version,
                             loader_type,
+                            loader_version,
                             modpack_version,
                             modpack_type,
                             modpack_project_id,
@@ -637,7 +657,7 @@ async fn scan_installed_instances_impl(
 }
 
 /// Parse version JSON content to extract Minecraft version and loader type.
-fn parse_version_json(
+pub fn parse_version_json(
     content: &str,
     id: &str,
 ) -> (
@@ -844,6 +864,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
     let mut pack_file_name = None;
     let mut status = crate::models::instance::InstanceStatus::Ready;
     let mut icon_name = None;
+    let mut loader_version = None;
 
     if config_path.exists() {
         if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
@@ -878,6 +899,11 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
                 }
                 if config.modpack_project_id.is_some() {
                     modpack_project_id = config.modpack_project_id.clone();
+                }
+                if let Some(lv) = &config.loader_version {
+                    if !lv.is_empty() {
+                        loader_version = Some(lv.clone());
+                    }
                 }
             }
         }
@@ -918,11 +944,20 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         .await
         .map(|p| p.to_string_lossy().to_string());
 
+    if loader_version.is_none() && loader_type != "Vanilla" {
+        if let Ok(c) = tokio::fs::read_to_string(&json_path).await {
+            if let Ok(pj) = serde_json::from_str::<serde_json::Value>(&c) {
+                loader_version = crate::core::mod_loader::extract_loader_version_from_json(&pj, &version_id);
+            }
+        }
+    }
+
     Ok(InstanceItem {
         id: version_id.clone(),
         name: version_id,
         mc_version,
         loader_type,
+        loader_version,
         modpack_version,
         modpack_type,
         modpack_project_id,

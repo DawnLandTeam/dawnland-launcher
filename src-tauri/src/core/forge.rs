@@ -604,6 +604,7 @@ pub struct InstallForgeOptions {
     pub loader_type: String, // "forge" or "neoforge"
     pub custom_instance_name: String,
     pub is_dependency: Option<bool>,
+    pub is_existing_instance: Option<bool>,
 }
 
 pub struct InstallForgeTask {
@@ -674,12 +675,32 @@ impl ExecutableTask for InstallForgeTask {
         };
 
         let _ = tokio::fs::create_dir_all(&instance_dir).await;
-        crate::core::launcher::InstanceConfig::ensure_installing(
-            &instance_dir,
-            self.options.is_dependency.unwrap_or(false),
-        )
-        .await
-        .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+        let is_existing = self.options.is_existing_instance.unwrap_or(false);
+        if is_existing {
+            crate::core::launcher::InstanceConfig::ensure_updating(&instance_dir)
+                .await
+                .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+        } else {
+            crate::core::launcher::InstanceConfig::ensure_installing(
+                &instance_dir,
+                self.options.is_dependency.unwrap_or(false),
+            )
+            .await
+            .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+        }
+
+        let json_bak = instance_dir.join(format!("{}.json.bak", custom_instance_name));
+        let config_bak = instance_dir.join("dlml.json.bak");
+        if is_existing {
+            let json_path = instance_dir.join(format!("{}.json", custom_instance_name));
+            let config_path = instance_dir.join("dlml.json");
+            if json_path.exists() {
+                let _ = tokio::fs::copy(&json_path, &json_bak).await;
+            }
+            if config_path.exists() {
+                let _ = tokio::fs::copy(&config_path, &config_bak).await;
+            }
+        }
 
         let mc_version_parsed = mc_version
             .split('.')
@@ -720,9 +741,41 @@ impl ExecutableTask for InstallForgeTask {
         let base_client_jar = base_version_dir.join(format!("{}.jar", mc_version));
         let base_version_json = base_version_dir.join(format!("{}.json", mc_version));
 
-        ctx.manager
-            .wait_for_instance(mc_version, &ctx.cancel_token)
-            .await;
+        if is_existing {
+            let existing_jar = instance_dir.join(format!("{}.jar", custom_instance_name));
+            let existing_json = instance_dir.join(format!("{}.json", custom_instance_name));
+            let existing_json_bak = instance_dir.join(format!("{}.json.bak", custom_instance_name));
+            let json_src = if existing_json.exists() {
+                existing_json
+            } else {
+                existing_json_bak
+            };
+            if existing_jar.exists() && !base_client_jar.exists() {
+                let _ = tokio::fs::create_dir_all(&base_version_dir).await;
+                let _ = tokio::fs::copy(&existing_jar, &base_client_jar).await;
+            }
+            if json_src.exists() && !base_version_json.exists() {
+                let _ = tokio::fs::create_dir_all(&base_version_dir).await;
+                let _ = tokio::fs::copy(&json_src, &base_version_json).await;
+            }
+            let cache_mc_dir = dawnland_cache.join(mc_version);
+            let cache_jar = cache_mc_dir.join(format!("{}.jar", mc_version));
+            let cache_json = cache_mc_dir.join(format!("{}.json", mc_version));
+            if existing_jar.exists() && !cache_jar.exists() {
+                let _ = tokio::fs::create_dir_all(&cache_mc_dir).await;
+                let _ = tokio::fs::copy(&existing_jar, &cache_jar).await;
+            }
+            if json_src.exists() && !cache_json.exists() {
+                let _ = tokio::fs::create_dir_all(&cache_mc_dir).await;
+                let _ = tokio::fs::copy(&json_src, &cache_json).await;
+            }
+        }
+
+        if custom_instance_name != mc_version {
+            ctx.manager
+                .wait_for_instance(mc_version, Some(&ctx.id), &ctx.cancel_token)
+                .await;
+        }
 
         if !base_client_jar.exists() || !base_version_json.exists() {
             tracing::info!(
@@ -1060,7 +1113,21 @@ impl ExecutableTask for InstallForgeTask {
             if let Err(e) = crate::downloader::run_batch_download_task(tasks, ctx_libs).await {
                 tracing::warn!("Installation failed during batch download, cleaning up...");
                 let version_dir = instance_dir.clone();
-                let _ = tokio::fs::remove_dir_all(&version_dir).await;
+                if is_existing {
+                    if json_bak.exists() {
+                        let _ = tokio::fs::copy(&json_bak, version_dir.join(format!("{}.json", custom_instance_name))).await;
+                        let _ = tokio::fs::remove_file(&json_bak).await;
+                    }
+                    if config_bak.exists() {
+                        let _ = tokio::fs::copy(&config_bak, version_dir.join("dlml.json")).await;
+                        let _ = tokio::fs::remove_file(&config_bak).await;
+                    }
+                    let _ = crate::core::launcher::update_instance_config(&version_dir, |c| {
+                        c.set_status(crate::core::launcher::InstanceStatus::Ready);
+                    }).await;
+                } else {
+                    let _ = tokio::fs::remove_dir_all(&version_dir).await;
+                }
                 return Err(TaskError::ExecutionError(e));
             }
         }
@@ -1068,7 +1135,21 @@ impl ExecutableTask for InstallForgeTask {
         if ctx.is_cancelled() {
             tracing::warn!("Installation cancelled, cleaning up forge instance directory...");
             let version_dir = instance_dir.clone();
-            let _ = tokio::fs::remove_dir_all(&version_dir).await;
+            if is_existing {
+                if json_bak.exists() {
+                    let _ = tokio::fs::copy(&json_bak, version_dir.join(format!("{}.json", custom_instance_name))).await;
+                    let _ = tokio::fs::remove_file(&json_bak).await;
+                }
+                if config_bak.exists() {
+                    let _ = tokio::fs::copy(&config_bak, version_dir.join("dlml.json")).await;
+                    let _ = tokio::fs::remove_file(&config_bak).await;
+                }
+                let _ = crate::core::launcher::update_instance_config(&version_dir, |c| {
+                    c.set_status(crate::core::launcher::InstanceStatus::Ready);
+                }).await;
+            } else {
+                let _ = tokio::fs::remove_dir_all(&version_dir).await;
+            }
             return Err(TaskError::ExecutionError(
                 "Installation cancelled by user".to_string(),
             ));
@@ -1306,10 +1387,22 @@ impl ExecutableTask for InstallForgeTask {
         // ========== Step 5: Update dlml.json config atomically ==========
         crate::core::launcher::update_instance_config(&version_dir, |config| {
             config.hidden = is_dependency.unwrap_or(false);
+            config.loader_type = Some(if loader_type == "neoforge" {
+                crate::models::instance::LoaderType::NeoForge
+            } else {
+                crate::models::instance::LoaderType::Forge
+            });
+            config.loader_version = Some(loader_version.clone());
+            config.mc_version = Some(mc_version.clone());
             config.set_status(crate::core::launcher::InstanceStatus::Ready);
         })
         .await
         .map_err(TaskError::ExecutionError)?;
+
+        if is_existing {
+            let _ = tokio::fs::remove_file(&json_bak).await;
+            let _ = tokio::fs::remove_file(&config_bak).await;
+        }
 
         tracing::info!("Updated instance config in: {:?}", version_dir);
 
@@ -1410,6 +1503,7 @@ pub async fn install_forge_instance(
             loader_type: loader_type.clone(),
             custom_instance_name: custom_instance_name.clone(),
             is_dependency,
+            is_existing_instance: None,
         },
     };
 

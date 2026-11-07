@@ -322,7 +322,12 @@ impl TaskManager {
         let _ = self.app_handle.emit("task-progress-update", state);
     }
 
-    pub async fn wait_for_instance(&self, instance_id: &str, cancel_token: &CancellationToken) {
+    pub async fn wait_for_instance(
+        &self,
+        instance_id: &str,
+        exclude_task_id: Option<&str>,
+        cancel_token: &CancellationToken,
+    ) {
         loop {
             if cancel_token.is_cancelled() {
                 break;
@@ -331,8 +336,13 @@ impl TaskManager {
                 let mut running = false;
                 if let Ok(all_tasks) = self.db.load_all_tasks().await {
                     for task in all_tasks {
+                        if let Some(exclude) = exclude_task_id {
+                            if task.id == exclude {
+                                continue;
+                            }
+                        }
                         if task.status.is_active()
-                            && task.task_type.instance_id() == Some(instance_id.to_string())
+                            && task.task_type.instance_id().as_deref() == Some(instance_id)
                         {
                             running = true;
                             break;

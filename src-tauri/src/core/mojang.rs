@@ -827,6 +827,7 @@ impl ExecutableTask for InstallVanillaTask {
         };
         let _ = crate::core::launcher::update_instance_config(&version_dir, |config| {
             config.hidden = is_dependency.unwrap_or(false);
+            config.mc_version = Some(version_id.clone());
             config.set_status(crate::core::launcher::InstanceStatus::Ready);
         })
         .await;

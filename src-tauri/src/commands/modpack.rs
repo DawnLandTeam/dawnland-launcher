@@ -965,7 +965,7 @@ async fn ensure_dependencies(
     // Check if loader is empty -> means only vanilla
     if loader.is_empty() {
         ctx.manager
-            .wait_for_instance(mc_version, &ctx.cancel_token)
+            .wait_for_instance(mc_version, Some(&ctx.id), &ctx.cancel_token)
             .await;
 
         let dawnland_cache = crate::core::mojang::get_dawnland_cache();
@@ -1027,7 +1027,7 @@ async fn ensure_dependencies(
 
     // Loader is present
     ctx.manager
-        .wait_for_instance(&custom_instance_name, &ctx.cancel_token)
+        .wait_for_instance(&custom_instance_name, Some(&ctx.id), &ctx.cancel_token)
         .await;
 
     let dawnland_cache = crate::core::mojang::get_dawnland_cache();
@@ -1052,6 +1052,7 @@ async fn ensure_dependencies(
                     fabric_version: loader_version,
                     custom_instance_name: custom_instance_name.clone(),
                     is_dependency: Some(true),
+                    is_existing_instance: None,
                 },
             };
             fabric_task.execute(ctx.clone()).await?;
@@ -1066,6 +1067,7 @@ async fn ensure_dependencies(
                     loader_type: "forge".to_string(),
                     custom_instance_name: custom_instance_name.clone(),
                     is_dependency: Some(true),
+                    is_existing_instance: None,
                 },
             };
             forge_task.execute(ctx.clone()).await?;
@@ -1080,6 +1082,7 @@ async fn ensure_dependencies(
                     loader_type: "neoforge".to_string(),
                     custom_instance_name: custom_instance_name.clone(),
                     is_dependency: Some(true),
+                    is_existing_instance: None,
                 },
             };
             forge_task.execute(ctx.clone()).await?;
@@ -1117,6 +1120,12 @@ async fn ensure_dependencies(
         ctx.with_sub_task("download_loader_libs")
             .update_progress(100, 100, "Skipped (Already exists)")
             .await;
+
+        if loader.starts_with("fabric-") {
+            ctx.with_sub_task("install_fabric_api")
+                .update_progress(100, 100, "Skipped (Already exists)")
+                .await;
+        }
 
         if loader.starts_with("forge-") || loader.starts_with("neoforge-") {
             ctx.with_sub_task("install_loader")
