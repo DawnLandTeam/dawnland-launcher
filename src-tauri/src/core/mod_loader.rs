@@ -548,19 +548,19 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
         let json_bak = instance_dir.join(format!("{}.json.bak", instance_id));
         let config_bak = instance_dir.join("dlml.json.bak");
         if json_path.exists() {
-            let _ = tokio::fs::copy(&json_path, &json_bak).await;
+            let _ = crate::core::fs_utils::copy_file_atomic(&json_path, &json_bak).await;
         }
         if config_path.exists() {
-            let _ = tokio::fs::copy(&config_path, &config_bak).await;
+            let _ = crate::core::fs_utils::copy_file_atomic(&config_path, &config_bak).await;
         }
 
         let rollback = || async {
             if json_bak.exists() {
-                let _ = tokio::fs::copy(&json_bak, &json_path).await;
+                let _ = crate::core::fs_utils::copy_file_atomic(&json_bak, &json_path).await;
                 let _ = tokio::fs::remove_file(&json_bak).await;
             }
             if config_bak.exists() {
-                let _ = tokio::fs::copy(&config_bak, &config_path).await;
+                let _ = crate::core::fs_utils::copy_file_atomic(&config_bak, &config_path).await;
                 let _ = tokio::fs::remove_file(&config_bak).await;
             }
             let _ = crate::core::launcher::update_instance_config(&instance_dir, |c| {
@@ -608,7 +608,7 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
             }
         };
 
-        if let Err(e) = tokio::fs::write(&json_path, serialized).await {
+        if let Err(e) = crate::core::fs_utils::write_file_atomic(&json_path, serialized.as_bytes()).await {
             rollback().await;
             return Err(TaskError::ExecutionError(format!("Failed to write restored vanilla JSON: {}", e)));
         }
@@ -717,7 +717,7 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
                                 }
                                 if !previously_enabled_asset_keys.is_empty() {
                                     if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
-                                        let _ = tokio::fs::write(&assets_path, serialized).await;
+                                        let _ = crate::core::fs_utils::write_file_atomic(&assets_path, serialized.as_bytes()).await;
                                     }
                                 }
                             }
@@ -727,16 +727,50 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
                 "backup" => {
                     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
                     let b_dir = instance_dir.join(format!("mods_backup_{}", timestamp));
-                    if tokio::fs::rename(&mods_dir, &b_dir).await.is_ok() {
+                    let mut renamed = false;
+                    for _ in 0..3 {
+                        if tokio::fs::rename(&mods_dir, &b_dir).await.is_ok() {
+                            renamed = true;
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    if renamed {
                         backup_dir_opt = Some(b_dir);
+                    } else {
+                        rollback().await;
+                        return Err(TaskError::ExecutionError(
+                            "Failed to backup mods directory (files may be in use)".to_string(),
+                        ));
                     }
                 }
                 "delete" => {
                     // Move to temporary trash directory during uninstallation to allow rollback
-                    if tokio::fs::rename(&mods_dir, &mods_trash).await.is_ok() {
+                    if mods_trash.exists() {
+                        let _ = tokio::fs::remove_dir_all(&mods_trash).await;
+                    }
+                    let mut renamed = false;
+                    let mut rename_err = String::new();
+                    for _ in 0..3 {
+                        match tokio::fs::rename(&mods_dir, &mods_trash).await {
+                            Ok(_) => {
+                                renamed = true;
+                                break;
+                            }
+                            Err(e) => {
+                                rename_err = e.to_string();
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            }
+                        }
+                    }
+                    if renamed {
                         moved_to_trash = true;
                     } else {
-                        let _ = tokio::fs::remove_dir_all(&mods_dir).await;
+                        rollback().await;
+                        return Err(TaskError::ExecutionError(format!(
+                            "Failed to move mods folder to trash for deletion (files may be in use): {}",
+                            rename_err
+                        )));
                     }
                     if assets_path.exists() {
                         if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
@@ -744,7 +778,7 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
                             if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
                                 manifest.assets.retain(|_, r| r.category != crate::models::instance::AssetCategory::Mod);
                                 if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
-                                    let _ = tokio::fs::write(&assets_path, serialized).await;
+                                    let _ = crate::core::fs_utils::write_file_atomic(&assets_path, serialized.as_bytes()).await;
                                 }
                             }
                         }
@@ -771,7 +805,7 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
                 }
             }
             if let Some(ref orig_content) = original_assets_content {
-                let _ = tokio::fs::write(&assets_path, orig_content).await;
+                let _ = crate::core::fs_utils::write_file_atomic(&assets_path, orig_content.as_bytes()).await;
             } else if !previously_enabled_asset_keys.is_empty() && assets_path.exists() {
                 if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
                     if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
@@ -781,7 +815,7 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
                             }
                         }
                         if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
-                            let _ = tokio::fs::write(&assets_path, serialized).await;
+                            let _ = crate::core::fs_utils::write_file_atomic(&assets_path, serialized.as_bytes()).await;
                         }
                     }
                 }

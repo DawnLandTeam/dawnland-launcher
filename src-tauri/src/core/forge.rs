@@ -670,7 +670,7 @@ impl ExecutableTask for InstallForgeTask {
             );
             if is_existing {
                 if json_bak.exists() {
-                    let _ = tokio::fs::copy(
+                    let _ = crate::core::fs_utils::copy_file_atomic(
                         &json_bak,
                         instance_dir.join(format!("{}.json", custom_instance_name)),
                     )
@@ -678,7 +678,7 @@ impl ExecutableTask for InstallForgeTask {
                     let _ = tokio::fs::remove_file(&json_bak).await;
                 }
                 if config_bak.exists() {
-                    let _ = tokio::fs::copy(&config_bak, instance_dir.join("dlml.json")).await;
+                    let _ = crate::core::fs_utils::copy_file_atomic(&config_bak, instance_dir.join("dlml.json")).await;
                     let _ = tokio::fs::remove_file(&config_bak).await;
                 }
                 let _ = crate::core::launcher::update_instance_config(&instance_dir, |c| {
@@ -733,10 +733,10 @@ impl InstallForgeTask {
             let json_path = instance_dir.join(format!("{}.json", custom_instance_name));
             let config_path = instance_dir.join("dlml.json");
             if json_path.exists() {
-                let _ = tokio::fs::copy(&json_path, json_bak).await;
+                let _ = crate::core::fs_utils::copy_file_atomic(&json_path, json_bak).await;
             }
             if config_path.exists() {
-                let _ = tokio::fs::copy(&config_path, config_bak).await;
+                let _ = crate::core::fs_utils::copy_file_atomic(&config_path, config_bak).await;
             }
 
             crate::core::launcher::InstanceConfig::ensure_updating(instance_dir)
@@ -1398,7 +1398,7 @@ impl InstallForgeTask {
             TaskError::ExecutionError(format!("Failed to serialize version JSON: {}", e))
         })?;
 
-        fs::write(&final_version_json_path, &final_json)
+        crate::core::fs_utils::write_file_atomic(&final_version_json_path, final_json.as_bytes())
             .await
             .map_err(|e| {
                 TaskError::ExecutionError(format!("Failed to write version JSON: {}", e))

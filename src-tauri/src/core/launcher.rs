@@ -565,24 +565,9 @@ pub async fn write_instance_config_atomic(
 ) -> Result<(), String> {
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
-    let parent = config_path
-        .parent()
-        .ok_or_else(|| "Invalid config path".to_string())?;
-    let temp_file = parent.join(format!(
-        "{}.tmp.{}",
-        CONFIG_FILENAME,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    tokio::fs::write(&temp_file, &json)
+    crate::core::fs_utils::write_file_atomic(config_path, json.as_bytes())
         .await
-        .map_err(|e| format!("Failed to write temp instance config: {}", e))?;
-    crate::core::fs_utils::atomic_move(&temp_file, config_path, true)
-        .await
-        .map_err(|e| format!("Failed to commit instance config atomically: {}", e))?;
-    Ok(())
+        .map_err(|e| format!("Failed to commit instance config atomically: {}", e))
 }
 
 /// Atomically reads, mutates, and writes `dlml.json` in `instance_dir` under a
@@ -2692,8 +2677,10 @@ pub async fn launch_instance(
                         obj.remove("inheritsFrom");
                     }
                     if let Ok(serialized) = serde_json::to_string_pretty(&parsed) {
-                        let _ = tokio::fs::write(&version_json_path, &serialized).await;
-                        if let Ok(reloaded) = serde_json::from_str::<VersionMeta>(&serialized) {
+                        let write_res = crate::core::fs_utils::write_file_atomic(&version_json_path, serialized.as_bytes()).await;
+                        if let Err(ref e) = write_res {
+                            tracing::warn!("Failed to atomically save repaired version JSON for {}: {}", version_id, e);
+                        } else if let Ok(reloaded) = serde_json::from_str::<VersionMeta>(&serialized) {
                             version_meta = reloaded;
                             tracing::info!("Auto-repaired version JSON for {} to pure vanilla successfully", version_id);
                         }

@@ -13,6 +13,8 @@ pub enum FsError {
     HashMismatch { expected: String, actual: String },
     #[error("Target already exists and overwrite is false")]
     TargetExists,
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
 }
 
 /// Computes SHA1 hash of a file asynchronously
@@ -84,6 +86,69 @@ pub async fn atomic_move(
             }
         }
     }
+}
+
+/// Atomically writes data to a target path via a temporary file in the same directory and atomic rename.
+pub async fn write_file_atomic(
+    target_path: impl AsRef<Path>,
+    data: impl AsRef<[u8]>,
+) -> Result<(), FsError> {
+    let target_path = target_path.as_ref();
+    let parent = target_path
+        .parent()
+        .ok_or_else(|| FsError::InvalidPath("Target path has no parent directory".to_string()))?;
+
+    if !parent.exists() {
+        fs::create_dir_all(parent).await?;
+    }
+
+    let file_name = target_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+
+    let temp_file = parent.join(format!("{}.tmp.{}", file_name, uuid::Uuid::new_v4()));
+
+    fs::write(&temp_file, data).await?;
+
+    if let Err(e) = atomic_move(&temp_file, target_path, true).await {
+        let _ = fs::remove_file(&temp_file).await;
+        return Err(e);
+    }
+
+    Ok(())
+}
+
+/// Atomically copies `src` over `dest` via a temporary file in the same directory as `dest` and atomic rename.
+pub async fn copy_file_atomic(
+    src: impl AsRef<Path>,
+    dest: impl AsRef<Path>,
+) -> Result<(), FsError> {
+    let src = src.as_ref();
+    let dest = dest.as_ref();
+    let parent = dest
+        .parent()
+        .ok_or_else(|| FsError::InvalidPath("Destination path has no parent directory".to_string()))?;
+
+    if !parent.exists() {
+        fs::create_dir_all(parent).await?;
+    }
+
+    let file_name = dest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+
+    let temp_file = parent.join(format!("{}.tmp.{}", file_name, uuid::Uuid::new_v4()));
+
+    fs::copy(src, &temp_file).await?;
+
+    if let Err(e) = atomic_move(&temp_file, dest, true).await {
+        let _ = fs::remove_file(&temp_file).await;
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 /// Checks if a file is valid against a given SHA1 hash.
@@ -413,5 +478,37 @@ mod tests {
         let legacy_dir = versions_dir.join("legacy_inst_dir");
         tokio::fs::create_dir_all(&legacy_dir).await.unwrap();
         assert!(is_safe_or_existing_instance_id("legacy_inst_dir", &versions_dir).await);
+    }
+
+    #[tokio::test]
+    async fn test_write_file_atomic() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let target_file = temp_dir.path().join("sub").join("test.json");
+
+        write_file_atomic(&target_file, b"{\"test\": 123}").await.unwrap();
+        assert!(target_file.exists());
+        let content = fs::read_to_string(&target_file).await.unwrap();
+        assert_eq!(content, "{\"test\": 123}");
+
+        // Overwrite atomically
+        write_file_atomic(&target_file, b"{\"test\": 456}").await.unwrap();
+        let content2 = fs::read_to_string(&target_file).await.unwrap();
+        assert_eq!(content2, "{\"test\": 456}");
+    }
+
+    #[tokio::test]
+    async fn test_copy_file_atomic() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let src_file = temp_dir.path().join("source.json");
+        let dest_file = temp_dir.path().join("dest.json");
+
+        fs::write(&src_file, "original content").await.unwrap();
+        fs::write(&dest_file, "old content").await.unwrap();
+
+        copy_file_atomic(&src_file, &dest_file).await.unwrap();
+        assert!(src_file.exists());
+        assert!(dest_file.exists());
+        let content = fs::read_to_string(&dest_file).await.unwrap();
+        assert_eq!(content, "original content");
     }
 }

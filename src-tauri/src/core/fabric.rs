@@ -173,7 +173,7 @@ impl ExecutableTask for InstallFabricTask {
             );
             if is_existing {
                 if json_bak.exists() {
-                    let _ = tokio::fs::copy(
+                    let _ = crate::core::fs_utils::copy_file_atomic(
                         &json_bak,
                         instance_dir.join(format!("{}.json", custom_instance_name)),
                     )
@@ -181,7 +181,7 @@ impl ExecutableTask for InstallFabricTask {
                     let _ = tokio::fs::remove_file(&json_bak).await;
                 }
                 if config_bak.exists() {
-                    let _ = tokio::fs::copy(&config_bak, instance_dir.join("dlml.json")).await;
+                    let _ = crate::core::fs_utils::copy_file_atomic(&config_bak, instance_dir.join("dlml.json")).await;
                     let _ = tokio::fs::remove_file(&config_bak).await;
                 }
                 let _ = crate::core::launcher::update_instance_config(&instance_dir, |c| {
@@ -234,10 +234,10 @@ impl InstallFabricTask {
             let json_path = instance_dir.join(format!("{}.json", custom_instance_name));
             let config_path = instance_dir.join("dlml.json");
             if json_path.exists() {
-                let _ = tokio::fs::copy(&json_path, json_bak).await;
+                let _ = crate::core::fs_utils::copy_file_atomic(&json_path, json_bak).await;
             }
             if config_path.exists() {
-                let _ = tokio::fs::copy(&config_path, config_bak).await;
+                let _ = crate::core::fs_utils::copy_file_atomic(&config_path, config_bak).await;
             }
 
             crate::core::launcher::InstanceConfig::ensure_updating(instance_dir)
@@ -511,7 +511,7 @@ impl InstallFabricTask {
             TaskError::ExecutionError(format!("Failed to serialize Fabric profile: {}", e))
         })?;
 
-        tokio::fs::write(&version_json_path, &updated_json)
+        crate::core::fs_utils::write_file_atomic(&version_json_path, updated_json.as_bytes())
             .await
             .map_err(|e| {
                 TaskError::ExecutionError(format!("Failed to write Fabric profile: {}", e))
