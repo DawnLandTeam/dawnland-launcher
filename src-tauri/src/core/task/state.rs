@@ -99,6 +99,26 @@ pub enum TaskType {
         download_url: String,
         file_id: String,
     },
+    InstallLoaderToInstance {
+        instance_id: String,
+        mc_version: String,
+        loader_type: String,
+        loader_version: String,
+    },
+    SwitchInstanceLoaderVersion {
+        instance_id: String,
+        mc_version: String,
+        loader_type: String,
+        old_loader_version: Option<String>,
+        new_loader_version: String,
+    },
+    UninstallInstanceLoader {
+        instance_id: String,
+        mc_version: String,
+        old_loader_type: String,
+        #[serde(default)]
+        mod_handling_mode: Option<String>,
+    },
     Generic {
         name: String,
     },
@@ -189,6 +209,15 @@ impl TaskType {
                 instance_id,
                 ..
             } => format!("Installing Preset {} to {}", preset_name, instance_id),
+            TaskType::InstallLoaderToInstance { instance_id, loader_type, loader_version, .. } => {
+                format!("Installing {} {} to {}", loader_type, loader_version, instance_id)
+            }
+            TaskType::SwitchInstanceLoaderVersion { instance_id, loader_type, new_loader_version, .. } => {
+                format!("Switching {} in {} to {}", loader_type, instance_id, new_loader_version)
+            }
+            TaskType::UninstallInstanceLoader { instance_id, old_loader_type, .. } => {
+                format!("Uninstalling {} from {}", old_loader_type, instance_id)
+            }
             TaskType::Generic { name } => name.clone(),
         }
     }
@@ -214,6 +243,9 @@ impl TaskType {
             TaskType::InstallWorld { instance_id, .. } => instance_id.clone(),
             TaskType::InstallDatapack { instance_id, .. } => instance_id.clone(),
             TaskType::InstallPreset { instance_id, .. } => Some(instance_id.clone()),
+            TaskType::InstallLoaderToInstance { instance_id, .. } => Some(instance_id.clone()),
+            TaskType::SwitchInstanceLoaderVersion { instance_id, .. } => Some(instance_id.clone()),
+            TaskType::UninstallInstanceLoader { instance_id, .. } => Some(instance_id.clone()),
             TaskType::Generic { .. } => None,
         }
     }
@@ -222,6 +254,9 @@ impl TaskType {
         match self {
             TaskType::InstallModpack { is_update, .. } => *is_update,
             TaskType::InstallOnlineModpack { is_update, .. } => *is_update,
+            TaskType::InstallLoaderToInstance { .. }
+            | TaskType::SwitchInstanceLoaderVersion { .. }
+            | TaskType::UninstallInstanceLoader { .. } => true,
             _ => false,
         }
     }
@@ -243,6 +278,9 @@ impl TaskType {
                 | TaskType::InstallFabric { .. }
                 | TaskType::InstallModpack { .. }
                 | TaskType::InstallOnlineModpack { .. }
+                | TaskType::InstallLoaderToInstance { .. }
+                | TaskType::SwitchInstanceLoaderVersion { .. }
+                | TaskType::UninstallInstanceLoader { .. }
         )
     }
 
@@ -267,7 +305,10 @@ impl TaskType {
             | TaskType::InstallForge { .. }
             | TaskType::InstallFabric { .. }
             | TaskType::InstallModpack { .. }
-            | TaskType::InstallOnlineModpack { .. } => TaskMutex::Exclusive,
+            | TaskType::InstallOnlineModpack { .. }
+            | TaskType::InstallLoaderToInstance { .. }
+            | TaskType::SwitchInstanceLoaderVersion { .. }
+            | TaskType::UninstallInstanceLoader { .. } => TaskMutex::Exclusive,
 
             // Asset downloads safely drop files into specific subdirectories (mods, resourcepacks, etc.).
             // They only require a shared lock, meaning they can run concurrently with other shared tasks

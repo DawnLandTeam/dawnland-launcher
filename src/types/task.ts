@@ -10,6 +10,9 @@ export type TaskType =
   | { InstallWorld: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { InstallDatapack: { source: string; project_id: string; pack_name: string; instance_id?: string | null; target_dir?: string | null; download_url: string; file_id: string; } }
   | { InstallPreset: { preset_name: string; asset_type?: string; instance_id: string; } }
+  | { InstallLoaderToInstance: { instance_id: string; mc_version: string; loader_type: string; loader_version: string } }
+  | { SwitchInstanceLoaderVersion: { instance_id: string; mc_version: string; loader_type: string; old_loader_version?: string | null; new_loader_version: string } }
+  | { UninstallInstanceLoader: { instance_id: string; mc_version: string; old_loader_type: string; mod_handling_mode?: string | null } }
   | { Generic: { name: string } };
 
 export type TaskStatus = 
@@ -79,6 +82,9 @@ export function getTaskName(taskType: TaskType): string {
   if ('InstallWorld' in taskType) return t('task.installWorld', { name: taskType.InstallWorld.pack_name });
   if ('InstallDatapack' in taskType) return t('task.installDatapack', { name: taskType.InstallDatapack.pack_name });
   if ('InstallPreset' in taskType) return t('task.installPreset', { name: taskType.InstallPreset.preset_name });
+  if ('InstallLoaderToInstance' in taskType) return t('task.installLoaderToInstance', { loader: taskType.InstallLoaderToInstance.loader_type, version: taskType.InstallLoaderToInstance.loader_version, instance: taskType.InstallLoaderToInstance.instance_id });
+  if ('SwitchInstanceLoaderVersion' in taskType) return t('task.switchInstanceLoaderVersion', { loader: taskType.SwitchInstanceLoaderVersion.loader_type, version: taskType.SwitchInstanceLoaderVersion.new_loader_version, instance: taskType.SwitchInstanceLoaderVersion.instance_id });
+  if ('UninstallInstanceLoader' in taskType) return t('task.uninstallInstanceLoader', { loader: taskType.UninstallInstanceLoader.old_loader_type, instance: taskType.UninstallInstanceLoader.instance_id });
   if ('Generic' in taskType) return taskType.Generic.name;
   return t('task.unknown');
 }
@@ -183,6 +189,24 @@ export function getTaskTargetRoute(taskType: TaskType): TaskTargetRoute | null {
     return {
       path: `/instances/${encodeURIComponent(taskType.InstallWorld.instance_id)}`,
       query: { tab: 'worlds' }
+    };
+  }
+  if ('InstallLoaderToInstance' in taskType) {
+    return {
+      path: `/instances/${encodeURIComponent(taskType.InstallLoaderToInstance.instance_id)}`,
+      query: { tab: 'settings' }
+    };
+  }
+  if ('SwitchInstanceLoaderVersion' in taskType) {
+    return {
+      path: `/instances/${encodeURIComponent(taskType.SwitchInstanceLoaderVersion.instance_id)}`,
+      query: { tab: 'settings' }
+    };
+  }
+  if ('UninstallInstanceLoader' in taskType) {
+    return {
+      path: `/instances/${encodeURIComponent(taskType.UninstallInstanceLoader.instance_id)}`,
+      query: { tab: 'settings' }
     };
   }
   return null;

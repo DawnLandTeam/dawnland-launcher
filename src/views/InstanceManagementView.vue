@@ -193,7 +193,7 @@ watch(instanceId, async (newId) => {
           />
           <div class="min-w-0 flex-1 flex flex-col">
             <span class="font-bold text-xs truncate leading-tight" :title="currentInstance.name">{{ currentInstance.name }}</span>
-            <span class="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{{ currentInstance.mcVersion }} · {{ currentInstance.loaderType }}</span>
+            <span class="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{{ currentInstance.mcVersion }} · {{ currentInstance.loaderType }}{{ currentInstance.loaderVersion ? ` (${currentInstance.loaderVersion})` : '' }}</span>
           </div>
         </div>
         
@@ -219,7 +219,7 @@ watch(instanceId, async (newId) => {
       <div class="flex-1 relative bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md rounded-xl border border-neutral-200/50 dark:border-zinc-800/50 shadow-sm overflow-hidden flex flex-col min-w-0">
         <keep-alive>
           <InstanceSettingsTab v-if="activeTab === 'settings'" :instance-id="instanceId" :instance="currentInstance" />
-          <InstanceModsTab v-else-if="activeTab === 'mods'" :instance-id="instanceId" />
+          <InstanceModsTab v-else-if="activeTab === 'mods'" :instance-id="instanceId" :instance="currentInstance" />
           <InstanceDatapacksTab v-else-if="activeTab === 'datapacks'" :instance-id="instanceId" />
           <InstanceResourcepacksTab v-else-if="activeTab === 'resourcepacks'" :instance-id="instanceId" />
           <InstanceWorldsTab v-else-if="activeTab === 'worlds'" :instance-id="instanceId" />

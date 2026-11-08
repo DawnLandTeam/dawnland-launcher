@@ -371,6 +371,11 @@ pub fn run() {
             core::forge::get_forge_loaders,
             core::forge::get_neoforge_loaders,
             core::forge::install_forge_instance,
+            // Mod Loader management commands
+            core::mod_loader::get_instance_loader_info,
+            core::mod_loader::install_instance_loader,
+            core::mod_loader::switch_instance_loader_version,
+            core::mod_loader::uninstall_instance_loader,
             // Manager commands
             core::manager::scan_installed_instances,
             core::manager::get_instance_details,

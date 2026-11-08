@@ -565,24 +565,9 @@ pub async fn write_instance_config_atomic(
 ) -> Result<(), String> {
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize instance config: {}", e))?;
-    let parent = config_path
-        .parent()
-        .ok_or_else(|| "Invalid config path".to_string())?;
-    let temp_file = parent.join(format!(
-        "{}.tmp.{}",
-        CONFIG_FILENAME,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    tokio::fs::write(&temp_file, &json)
+    crate::core::fs_utils::write_file_atomic(config_path, json.as_bytes())
         .await
-        .map_err(|e| format!("Failed to write temp instance config: {}", e))?;
-    crate::core::fs_utils::atomic_move(&temp_file, config_path, true)
-        .await
-        .map_err(|e| format!("Failed to commit instance config atomically: {}", e))?;
-    Ok(())
+        .map_err(|e| format!("Failed to commit instance config atomically: {}", e))
 }
 
 /// Atomically reads, mutates, and writes `dlml.json` in `instance_dir` under a
@@ -676,6 +661,16 @@ impl InstanceConfig {
             if is_dependency {
                 config.hidden = true;
             }
+        })
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn ensure_updating(
+        instance_dir: &std::path::Path,
+    ) -> Result<(), String> {
+        update_instance_config(instance_dir, |config| {
+            config.set_status(InstanceStatus::Updating);
         })
         .await
         .map(|_| ())
@@ -2647,6 +2642,53 @@ pub async fn launch_instance(
 
     let mut version_meta: VersionMeta = serde_json::from_str(&version_json_content)
         .map_err(|e| format!("Failed to parse version JSON: {e}"))?;
+
+    // Self-healing check: If this instance is explicitly configured as Vanilla in dlml.json,
+    // but the version JSON on disk still has loader mainClass or loader inheritsFrom, auto-repair it!
+    if instance_config.loader_type == Some(crate::models::instance::LoaderType::Vanilla) {
+        let is_loader_main = version_meta
+            .main_class
+            .as_deref()
+            .map(|m| {
+                let lower = m.to_lowercase();
+                lower.contains("fabric") || lower.contains("knot") || lower.contains("bootstraplauncher")
+            })
+            .unwrap_or(false);
+
+        let has_loader_inherits = version_meta
+            .inherits_from
+            .as_deref()
+            .map(|i| {
+                let lower = i.to_lowercase();
+                lower.contains("fabric") || lower.contains("forge") || lower.contains("neoforge")
+            })
+            .unwrap_or(false);
+
+        if is_loader_main || has_loader_inherits {
+            tracing::warn!(
+                "Instance {} is configured as Vanilla in dlml.json, but version JSON still contains loader components! Auto-repairing to pure vanilla...",
+                version_id
+            );
+            let mc_ver = instance_config.mc_version.clone().unwrap_or_else(|| version_id.clone());
+            if let Ok(pure_json) = crate::core::mod_loader::acquire_pure_vanilla_json(&mc_ver, &version_id).await {
+                if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&pure_json) {
+                    if let Some(obj) = parsed.as_object_mut() {
+                        obj.insert("id".to_string(), serde_json::json!(version_id));
+                        obj.remove("inheritsFrom");
+                    }
+                    if let Ok(serialized) = serde_json::to_string_pretty(&parsed) {
+                        let write_res = crate::core::fs_utils::write_file_atomic(&version_json_path, serialized.as_bytes()).await;
+                        if let Err(ref e) = write_res {
+                            tracing::warn!("Failed to atomically save repaired version JSON for {}: {}", version_id, e);
+                        } else if let Ok(reloaded) = serde_json::from_str::<VersionMeta>(&serialized) {
+                            version_meta = reloaded;
+                            tracing::info!("Auto-repaired version JSON for {} to pure vanilla successfully", version_id);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Merge libraries from inheritsFrom
     let mut merged_libraries = version_meta.libraries.clone().unwrap_or_default();

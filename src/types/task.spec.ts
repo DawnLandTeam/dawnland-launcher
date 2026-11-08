@@ -76,6 +76,47 @@ describe('task route and helper functions', () => {
     });
   });
 
+  it('correctly maps loader tasks to instance settings tab', () => {
+    const installTask: TaskType = {
+      InstallLoaderToInstance: {
+        instance_id: 'inst-1',
+        mc_version: '1.20.1',
+        loader_type: 'Fabric',
+        loader_version: '0.16.9',
+      },
+    };
+    expect(getTaskTargetRoute(installTask)).toEqual({
+      path: '/instances/inst-1',
+      query: { tab: 'settings' },
+    });
+
+    const switchTask: TaskType = {
+      SwitchInstanceLoaderVersion: {
+        instance_id: 'inst-2',
+        mc_version: '1.20.1',
+        loader_type: 'Forge',
+        old_loader_version: '47.2.0',
+        new_loader_version: '47.3.0',
+      },
+    };
+    expect(getTaskTargetRoute(switchTask)).toEqual({
+      path: '/instances/inst-2',
+      query: { tab: 'settings' },
+    });
+
+    const uninstallTask: TaskType = {
+      UninstallInstanceLoader: {
+        instance_id: 'inst-3',
+        mc_version: '1.20.1',
+        old_loader_type: 'Fabric',
+      },
+    };
+    expect(getTaskTargetRoute(uninstallTask)).toEqual({
+      path: '/instances/inst-3',
+      query: { tab: 'settings' },
+    });
+  });
+
   it('returns null for generic tasks with no specific target', () => {
     const task: TaskType = {
       Generic: {
