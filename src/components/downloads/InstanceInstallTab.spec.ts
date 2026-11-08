@@ -215,4 +215,107 @@ describe('InstanceInstallTab - Instance Name Autofill & Refresh', () => {
     expect(vm.isNameManuallyEdited).toBe(false);
     expect(vm.customInstanceName).toBe('Forge-1.20.1-47.3.0');
   });
+
+  it('discards pending loader response when Minecraft version is changed before response arrives', async () => {
+    let resolveFabricLoaders: (val: any) => void;
+    const fabricPromise = new Promise((resolve) => {
+      resolveFabricLoaders = resolve;
+    });
+
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_vanilla_versions') {
+        return [
+          { id: '1.20.1', versionType: 'release', url: 'https://example.com/1.20.1.json' },
+          { id: '1.20.4', versionType: 'release', url: 'https://example.com/1.20.4.json' }
+        ];
+      }
+      if (cmd === 'get_fabric_loaders') {
+        return fabricPromise;
+      }
+      return [];
+    });
+
+    const wrapper = mount(InstanceInstallTab, {
+      global: {
+        mocks: {
+          $t: (key: string, defaultOrParams?: any) => typeof defaultOrParams === 'string' ? defaultOrParams : key
+        },
+        stubs: {
+          InstallCard: true,
+          TaskDetailView: true
+        }
+      }
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const vm = wrapper.vm as any;
+
+    // 1. Select version 1.20.1
+    vm.selectVersionAndNext('1.20.1');
+    expect(vm.selectedVersion).toBe('1.20.1');
+
+    // 2. Start loading Fabric loaders for 1.20.1
+    const loadPromise = vm.loadFabricLoaders();
+
+    // 3. User switches to version 1.20.4 before response arrives
+    vm.selectVersionAndNext('1.20.4');
+    expect(vm.selectedVersion).toBe('1.20.4');
+
+    // 4. Old response finally arrives
+    resolveFabricLoaders!({ stable: ['0.16.10'], unstable: [] });
+    await loadPromise;
+    await wrapper.vm.$nextTick();
+
+    // Old loader response must NOT be applied to 1.20.4
+    expect(vm.selectedComponents.Fabric).toBeNull();
+    expect(vm.customInstanceName).toBe('1.20.4');
+  });
+
+  it('synchronizes selectedComponents and selector-bound loader refs and refreshes name', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_vanilla_versions') {
+        return [
+          { id: '1.20.1', versionType: 'release', url: 'https://example.com/1.20.1.json' }
+        ];
+      }
+      return [];
+    });
+
+    const wrapper = mount(InstanceInstallTab, {
+      global: {
+        mocks: {
+          $t: (key: string, defaultOrParams?: any) => typeof defaultOrParams === 'string' ? defaultOrParams : key
+        },
+        stubs: {
+          InstallCard: true,
+          TaskDetailView: true
+        }
+      }
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const vm = wrapper.vm as any;
+
+    vm.selectVersionAndNext('1.20.1');
+    await wrapper.vm.$nextTick();
+    expect(vm.customInstanceName).toBe('1.20.1');
+
+    // Directly updating selector-bound selectedFabricLoader
+    vm.selectedFabricLoader = '0.15.11';
+    await wrapper.vm.$nextTick();
+    expect(vm.selectedComponents.Fabric).toBe('0.15.11');
+    expect(vm.customInstanceName).toBe('Fabric-1.20.1-0.15.11');
+
+    // Clearing selectedFabricLoader clears selectedComponents.Fabric
+    vm.selectedFabricLoader = '';
+    await wrapper.vm.$nextTick();
+    expect(vm.selectedComponents.Fabric).toBeNull();
+    expect(vm.customInstanceName).toBe('1.20.1');
+
+    // Directly updating selector-bound selectedForgeLoader
+    vm.selectedForgeLoader = '47.2.0';
+    await wrapper.vm.$nextTick();
+    expect(vm.selectedComponents.Forge).toBe('47.2.0');
+    expect(vm.customInstanceName).toBe('Forge-1.20.1-47.2.0');
+  });
 });

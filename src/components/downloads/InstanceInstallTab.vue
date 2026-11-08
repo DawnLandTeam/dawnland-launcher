@@ -330,15 +330,59 @@ const canProceedToStep3 = computed(() => {
 
 
 
+// Keep selected component value synchronized with the selector-bound loader refs
+watch(() => selectedComponents.Fabric, (val) => {
+  if (selectedFabricLoader.value !== (val || "")) {
+    selectedFabricLoader.value = val || "";
+  }
+});
+watch(selectedFabricLoader, (val) => {
+  if (val && selectedComponents.Fabric !== val) {
+    selectedComponents.Fabric = val;
+  } else if (!val && selectedComponents.Fabric) {
+    selectedComponents.Fabric = null;
+  }
+});
+
+watch(() => selectedComponents.Forge, (val) => {
+  if (selectedForgeLoader.value !== (val || "")) {
+    selectedForgeLoader.value = val || "";
+  }
+});
+watch(selectedForgeLoader, (val) => {
+  if (val && selectedComponents.Forge !== val) {
+    selectedComponents.Forge = val;
+  } else if (!val && selectedComponents.Forge) {
+    selectedComponents.Forge = null;
+  }
+});
+
+watch(() => selectedComponents.NeoForge, (val) => {
+  if (selectedNeoForgeLoader.value !== (val || "")) {
+    selectedNeoForgeLoader.value = val || "";
+  }
+});
+watch(selectedNeoForgeLoader, (val) => {
+  if (val && selectedComponents.NeoForge !== val) {
+    selectedComponents.NeoForge = val;
+  } else if (!val && selectedComponents.NeoForge) {
+    selectedComponents.NeoForge = null;
+  }
+});
+
 // Generate default instance name based on selections
 function generateInstanceName(): string {
   if (!selectedVersion.value) return "";
-  if (selectedComponents.Fabric) {
-    return `Fabric-${selectedVersion.value}-${selectedComponents.Fabric}`;
-  } else if (selectedComponents.Forge) {
-    return `Forge-${selectedVersion.value}-${selectedComponents.Forge}`;
-  } else if (selectedComponents.NeoForge) {
-    return `NeoForge-${selectedVersion.value}-${selectedComponents.NeoForge}`;
+  const fabricVersion = selectedComponents.Fabric || selectedFabricLoader.value;
+  const forgeVersion = selectedComponents.Forge || selectedForgeLoader.value;
+  const neoForgeVersion = selectedComponents.NeoForge || selectedNeoForgeLoader.value;
+
+  if (fabricVersion) {
+    return `Fabric-${selectedVersion.value}-${fabricVersion}`;
+  } else if (forgeVersion) {
+    return `Forge-${selectedVersion.value}-${forgeVersion}`;
+  } else if (neoForgeVersion) {
+    return `NeoForge-${selectedVersion.value}-${neoForgeVersion}`;
   }
   return selectedVersion.value;
 }
@@ -350,6 +394,9 @@ watch(
     () => selectedComponents.Fabric,
     () => selectedComponents.Forge,
     () => selectedComponents.NeoForge,
+    selectedFabricLoader,
+    selectedForgeLoader,
+    selectedNeoForgeLoader,
   ],
   () => {
     if (!isNameManuallyEdited.value) {
@@ -446,6 +493,7 @@ async function loadVersions(): Promise<void> {
 // Load Fabric loaders for selected Minecraft version
 async function loadFabricLoaders(): Promise<void> {
   if (!selectedVersion.value) return;
+  const requestedMcVersion = selectedVersion.value;
   
   isLoadingFabric.value = true;
   error.value = null;
@@ -455,9 +503,12 @@ async function loadFabricLoaders(): Promise<void> {
 
   try {
     const loaders = await invoke<FabricLoaderList>("get_fabric_loaders", {
-      mcVersion: selectedVersion.value,
+      mcVersion: requestedMcVersion,
     });
     
+    // Check that the requested Minecraft version is still selected before applying the loader response
+    if (selectedVersion.value !== requestedMcVersion) return;
+
     stableFabricLoaders.value = loaders.stable;
     unstableFabricLoaders.value = loaders.unstable;
     
@@ -475,16 +526,20 @@ async function loadFabricLoaders(): Promise<void> {
     }
     if (activeConfiguringComponent.value === 'Fabric') activeConfiguringComponent.value = null; // Auto close
   } catch (err) {
+    if (selectedVersion.value !== requestedMcVersion) return;
     error.value = getErrorMessage(err);
     console.error("Failed to load Fabric loaders:", err);
   } finally {
-    isLoadingFabric.value = false;
+    if (selectedVersion.value === requestedMcVersion) {
+      isLoadingFabric.value = false;
+    }
   }
 }
 
 // Load Forge loaders for selected Minecraft version
 async function loadForgeLoaders(): Promise<void> {
   if (!selectedVersion.value) return;
+  const requestedMcVersion = selectedVersion.value;
   
   isLoadingForge.value = true;
   error.value = null;
@@ -493,9 +548,12 @@ async function loadForgeLoaders(): Promise<void> {
 
   try {
     const loaders = await invoke<LoaderVersionList>("get_forge_loaders", {
-      mcVersion: selectedVersion.value,
+      mcVersion: requestedMcVersion,
     });
     
+    // Check that the requested Minecraft version is still selected before applying the loader response
+    if (selectedVersion.value !== requestedMcVersion) return;
+
     forgeLoaders.value = loaders.versions;
     
     // Auto-select first version
@@ -510,16 +568,20 @@ async function loadForgeLoaders(): Promise<void> {
     }
     if (activeConfiguringComponent.value === 'Forge') activeConfiguringComponent.value = null; // Auto close
   } catch (err) {
+    if (selectedVersion.value !== requestedMcVersion) return;
     error.value = getErrorMessage(err);
     console.error("Failed to load Forge loaders:", err);
   } finally {
-    isLoadingForge.value = false;
+    if (selectedVersion.value === requestedMcVersion) {
+      isLoadingForge.value = false;
+    }
   }
 }
 
 // Load NeoForge loaders for selected Minecraft version
 async function loadNeoForgeLoaders(): Promise<void> {
   if (!selectedVersion.value) return;
+  const requestedMcVersion = selectedVersion.value;
   
   isLoadingNeoForge.value = true;
   error.value = null;
@@ -528,9 +590,12 @@ async function loadNeoForgeLoaders(): Promise<void> {
 
   try {
     const loaders = await invoke<LoaderVersionList>("get_neoforge_loaders", {
-      mcVersion: selectedVersion.value,
+      mcVersion: requestedMcVersion,
     });
     
+    // Check that the requested Minecraft version is still selected before applying the loader response
+    if (selectedVersion.value !== requestedMcVersion) return;
+
     neoForgeLoaders.value = loaders.versions;
     
     // Auto-select first version
@@ -545,10 +610,13 @@ async function loadNeoForgeLoaders(): Promise<void> {
     }
     if (activeConfiguringComponent.value === 'NeoForge') activeConfiguringComponent.value = null; // Auto close
   } catch (err) {
+    if (selectedVersion.value !== requestedMcVersion) return;
     error.value = getErrorMessage(err);
     console.error("Failed to load NeoForge loaders:", err);
   } finally {
-    isLoadingNeoForge.value = false;
+    if (selectedVersion.value === requestedMcVersion) {
+      isLoadingNeoForge.value = false;
+    }
   }
 }
 
