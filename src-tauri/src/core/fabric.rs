@@ -579,28 +579,10 @@ impl InstallFabricTask {
             ));
         }
 
-        // Step 4: Update dlml.json config atomically
-        crate::core::launcher::update_instance_config(version_dir, |config| {
-            config.hidden = is_dependency.unwrap_or(false);
-            config.loader_type = Some(crate::models::instance::LoaderType::Fabric);
-            config.loader_version = Some(fabric_version.clone());
-            config.mc_version = Some(mc_version.clone());
-            config.set_status(crate::core::launcher::InstanceStatus::Ready);
-        })
-        .await
-        .map_err(TaskError::ExecutionError)?;
-
-        if is_existing {
-            let _ = tokio::fs::remove_file(json_bak).await;
-            let _ = tokio::fs::remove_file(config_bak).await;
-        }
-
-        tracing::info!("Updated instance config in: {:?}", version_dir);
-
         if !is_dependency.unwrap_or(false) {
             crate::core::launcher::apply_global_game_settings(version_dir).await;
 
-            // Step 5: Auto-install Fabric API
+            // Step 4: Auto-install Fabric API
             auto_install_fabric_api(
                 version_dir,
                 mc_version,
@@ -619,6 +601,19 @@ impl InstallFabricTask {
                 "Installation cancelled by user".to_string(),
             ));
         }
+
+        // Step 5: Update dlml.json config atomically
+        crate::core::launcher::update_instance_config(version_dir, |config| {
+            config.hidden = is_dependency.unwrap_or(false);
+            config.loader_type = Some(crate::models::instance::LoaderType::Fabric);
+            config.loader_version = Some(fabric_version.clone());
+            config.mc_version = Some(mc_version.clone());
+            config.set_status(crate::core::launcher::InstanceStatus::Ready);
+        })
+        .await
+        .map_err(TaskError::ExecutionError)?;
+
+        tracing::info!("Updated instance config in: {:?}", version_dir);
 
         // Emit complete
         ctx.update_progress(100, 100, "Complete").await;
@@ -800,6 +795,7 @@ async fn auto_install_fabric_api(
     );
 
     if let Err(e) = crate::downloader::run_batch_download_task(vec![dl_task], ctx_api.clone()).await {
+        let _ = tokio::fs::remove_file(&dest).await;
         if ctx_api.is_cancelled() {
             tracing::info!("Fabric API download cancelled by user");
             return;
@@ -808,6 +804,12 @@ async fn auto_install_fabric_api(
         ctx_api
             .update_progress(100, 100, "Download failed (Skipped)")
             .await;
+        return;
+    }
+
+    if ctx_api.is_cancelled() {
+        let _ = tokio::fs::remove_file(&dest).await;
+        tracing::info!("Fabric API installation cancelled by user before manifest update");
         return;
     }
 

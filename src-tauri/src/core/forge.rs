@@ -1410,34 +1410,8 @@ impl InstallForgeTask {
                 "Installation cancelled by user".to_string(),
             ));
         }
-        // ========== Step 5: Update dlml.json config atomically ==========
-        crate::core::launcher::update_instance_config(version_dir, |config| {
-            config.hidden = is_dependency.unwrap_or(false);
-            config.loader_type = Some(if loader_type == "neoforge" {
-                crate::models::instance::LoaderType::NeoForge
-            } else {
-                crate::models::instance::LoaderType::Forge
-            });
-            config.loader_version = Some(loader_version.clone());
-            config.mc_version = Some(mc_version.clone());
-            config.set_status(crate::core::launcher::InstanceStatus::Ready);
-        })
-        .await
-        .map_err(TaskError::ExecutionError)?;
 
-        if is_existing {
-            let _ = tokio::fs::remove_file(json_bak).await;
-            let _ = tokio::fs::remove_file(config_bak).await;
-        }
-
-        tracing::info!("Updated instance config in: {:?}", version_dir);
-
-        if ctx.is_cancelled() {
-            return Err(TaskError::ExecutionError(
-                "Installation cancelled by user".to_string(),
-            ));
-        }
-        // ========== Step 6: Cleanup temp files and installer artifacts ==========
+        // ========== Step 5: Cleanup temp files and installer artifacts ==========
         // Note: In production, we might want to keep the installer for potential re-installs
         let _ = fs::remove_dir_all(&temp_dir).await;
 
@@ -1461,6 +1435,29 @@ impl InstallForgeTask {
         if !is_dep {
             crate::core::launcher::apply_global_game_settings(version_dir).await;
         }
+
+        if ctx.is_cancelled() {
+            return Err(TaskError::ExecutionError(
+                "Installation cancelled by user".to_string(),
+            ));
+        }
+
+        // ========== Step 6: Update dlml.json config atomically ==========
+        crate::core::launcher::update_instance_config(version_dir, |config| {
+            config.hidden = is_dependency.unwrap_or(false);
+            config.loader_type = Some(if loader_type == "neoforge" {
+                crate::models::instance::LoaderType::NeoForge
+            } else {
+                crate::models::instance::LoaderType::Forge
+            });
+            config.loader_version = Some(loader_version.clone());
+            config.mc_version = Some(mc_version.clone());
+            config.set_status(crate::core::launcher::InstanceStatus::Ready);
+        })
+        .await
+        .map_err(TaskError::ExecutionError)?;
+
+        tracing::info!("Updated instance config in: {:?}", version_dir);
 
         // Emit complete
         ctx.update_progress(0, 0, "Complete").await;
