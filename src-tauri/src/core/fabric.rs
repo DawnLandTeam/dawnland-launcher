@@ -150,6 +150,64 @@ impl InstallFabricTask {
 #[async_trait::async_trait]
 impl ExecutableTask for InstallFabricTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
+        let is_existing = self.options.is_existing_instance.unwrap_or(false);
+        let custom_instance_name = &self.options.custom_instance_name;
+        let base_dir = get_minecraft_base();
+        let instance_dir = if self.options.is_dependency.unwrap_or(false) {
+            crate::core::mojang::get_dawnland_cache().join(custom_instance_name)
+        } else {
+            base_dir.join("versions").join(custom_instance_name)
+        };
+        let json_bak = instance_dir.join(format!("{}.json.bak", custom_instance_name));
+        let config_bak = instance_dir.join("dlml.json.bak");
+
+        let res = self
+            .execute_inner(&ctx, &instance_dir, &json_bak, &config_bak)
+            .await;
+
+        if let Err(ref e) = res {
+            tracing::warn!(
+                "Fabric installation failed for '{}': {:?}. Rolling back...",
+                custom_instance_name,
+                e
+            );
+            if is_existing {
+                if json_bak.exists() {
+                    let _ = tokio::fs::copy(
+                        &json_bak,
+                        instance_dir.join(format!("{}.json", custom_instance_name)),
+                    )
+                    .await;
+                    let _ = tokio::fs::remove_file(&json_bak).await;
+                }
+                if config_bak.exists() {
+                    let _ = tokio::fs::copy(&config_bak, instance_dir.join("dlml.json")).await;
+                    let _ = tokio::fs::remove_file(&config_bak).await;
+                }
+                let _ = crate::core::launcher::update_instance_config(&instance_dir, |c| {
+                    c.set_status(crate::core::launcher::InstanceStatus::Ready);
+                })
+                .await;
+            } else if instance_dir.exists() {
+                let _ = tokio::fs::remove_dir_all(&instance_dir).await;
+            }
+        } else if is_existing {
+            let _ = tokio::fs::remove_file(&json_bak).await;
+            let _ = tokio::fs::remove_file(&config_bak).await;
+        }
+
+        res
+    }
+}
+
+impl InstallFabricTask {
+    async fn execute_inner(
+        &self,
+        ctx: &TaskContext,
+        instance_dir: &std::path::Path,
+        json_bak: &std::path::Path,
+        config_bak: &std::path::Path,
+    ) -> Result<(), TaskError> {
         let mc_version = &self.options.mc_version;
         let fabric_version = &self.options.fabric_version;
         let custom_instance_name = &self.options.custom_instance_name;
@@ -169,38 +227,29 @@ impl ExecutableTask for InstallFabricTask {
         }
 
         let base_dir = get_minecraft_base();
-        let instance_dir = if is_dependency.unwrap_or(false) {
-            crate::core::mojang::get_dawnland_cache().join(custom_instance_name)
-        } else {
-            base_dir.join("versions").join(custom_instance_name)
-        };
 
-        let _ = tokio::fs::create_dir_all(&instance_dir).await;
+        let _ = tokio::fs::create_dir_all(instance_dir).await;
         let is_existing = self.options.is_existing_instance.unwrap_or(false);
-        if is_existing {
-            crate::core::launcher::InstanceConfig::ensure_updating(&instance_dir)
-                .await
-                .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-        } else {
-            crate::core::launcher::InstanceConfig::ensure_installing(
-                &instance_dir,
-                self.options.is_dependency.unwrap_or(false),
-            )
-            .await
-            .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
-        }
-
-        let json_bak = instance_dir.join(format!("{}.json.bak", custom_instance_name));
-        let config_bak = instance_dir.join("dlml.json.bak");
         if is_existing {
             let json_path = instance_dir.join(format!("{}.json", custom_instance_name));
             let config_path = instance_dir.join("dlml.json");
             if json_path.exists() {
-                let _ = tokio::fs::copy(&json_path, &json_bak).await;
+                let _ = tokio::fs::copy(&json_path, json_bak).await;
             }
             if config_path.exists() {
-                let _ = tokio::fs::copy(&config_path, &config_bak).await;
+                let _ = tokio::fs::copy(&config_path, config_bak).await;
             }
+
+            crate::core::launcher::InstanceConfig::ensure_updating(instance_dir)
+                .await
+                .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
+        } else {
+            crate::core::launcher::InstanceConfig::ensure_installing(
+                instance_dir,
+                self.options.is_dependency.unwrap_or(false),
+            )
+            .await
+            .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
         }
 
         let client = crate::core::utils::get_http_client();
@@ -231,24 +280,36 @@ impl ExecutableTask for InstallFabricTask {
             } else {
                 existing_json_bak
             };
-            if existing_jar.exists() && !base_client_jar.exists() {
-                let _ = tokio::fs::create_dir_all(&base_version_dir).await;
-                let _ = tokio::fs::copy(&existing_jar, &base_client_jar).await;
-            }
-            if json_src.exists() && !base_version_json.exists() {
-                let _ = tokio::fs::create_dir_all(&base_version_dir).await;
-                let _ = tokio::fs::copy(&json_src, &base_version_json).await;
-            }
-            let cache_mc_dir = dawnland_cache.join(mc_version);
-            let cache_jar = cache_mc_dir.join(format!("{}.jar", mc_version));
-            let cache_json = cache_mc_dir.join(format!("{}.json", mc_version));
-            if existing_jar.exists() && !cache_jar.exists() {
-                let _ = tokio::fs::create_dir_all(&cache_mc_dir).await;
-                let _ = tokio::fs::copy(&existing_jar, &cache_jar).await;
-            }
-            if json_src.exists() && !cache_json.exists() {
-                let _ = tokio::fs::create_dir_all(&cache_mc_dir).await;
-                let _ = tokio::fs::copy(&json_src, &cache_json).await;
+
+            let is_vanilla_src = if json_src.exists() {
+                tokio::fs::read_to_string(&json_src)
+                    .await
+                    .map(|c| crate::core::mod_loader::is_pure_vanilla_json(&c, mc_version))
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            if is_vanilla_src {
+                if existing_jar.exists() && !base_client_jar.exists() {
+                    let _ = tokio::fs::create_dir_all(&base_version_dir).await;
+                    let _ = tokio::fs::copy(&existing_jar, &base_client_jar).await;
+                }
+                if !base_version_json.exists() {
+                    let _ = tokio::fs::create_dir_all(&base_version_dir).await;
+                    let _ = tokio::fs::copy(&json_src, &base_version_json).await;
+                }
+                let cache_mc_dir = dawnland_cache.join(mc_version);
+                let cache_jar = cache_mc_dir.join(format!("{}.jar", mc_version));
+                let cache_json = cache_mc_dir.join(format!("{}.json", mc_version));
+                if existing_jar.exists() && !cache_jar.exists() {
+                    let _ = tokio::fs::create_dir_all(&cache_mc_dir).await;
+                    let _ = tokio::fs::copy(&existing_jar, &cache_jar).await;
+                }
+                if !cache_json.exists() {
+                    let _ = tokio::fs::create_dir_all(&cache_mc_dir).await;
+                    let _ = tokio::fs::copy(&json_src, &cache_json).await;
+                }
             }
         }
 
@@ -258,7 +319,16 @@ impl ExecutableTask for InstallFabricTask {
                 .await;
         }
 
-        if !base_client_jar.exists() || !base_version_json.exists() {
+        let base_is_pure_vanilla = if base_version_json.exists() {
+            tokio::fs::read_to_string(&base_version_json)
+                .await
+                .map(|c| crate::core::mod_loader::is_pure_vanilla_json(&c, mc_version))
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        if !base_client_jar.exists() || !base_is_pure_vanilla {
             // Need to install base vanilla version first
             tracing::info!(
                 "Base Minecraft {} not installed, installing first...",
@@ -430,9 +500,9 @@ impl ExecutableTask for InstallFabricTask {
         }
 
         // Save Fabric profile
-        let version_dir = instance_dir.clone();
+        let version_dir = instance_dir;
 
-        tokio::fs::create_dir_all(&version_dir).await.map_err(|e| {
+        tokio::fs::create_dir_all(version_dir).await.map_err(|e| {
             TaskError::ExecutionError(format!("Failed to create version directory: {}", e))
         })?;
 
@@ -502,53 +572,19 @@ impl ExecutableTask for InstallFabricTask {
         tracing::info!("Resolved {} Fabric library files", total_tasks);
 
         if !tasks.is_empty() {
-            if let Err(e) = crate::downloader::run_batch_download_task(tasks, ctx_libs).await {
-                tracing::warn!("Installation failed during batch download, cleaning up...");
-                let version_dir = instance_dir.clone();
-                if is_existing {
-                    if json_bak.exists() {
-                        let _ = tokio::fs::copy(&json_bak, version_dir.join(format!("{}.json", custom_instance_name))).await;
-                        let _ = tokio::fs::remove_file(&json_bak).await;
-                    }
-                    if config_bak.exists() {
-                        let _ = tokio::fs::copy(&config_bak, version_dir.join("dlml.json")).await;
-                        let _ = tokio::fs::remove_file(&config_bak).await;
-                    }
-                    let _ = crate::core::launcher::update_instance_config(&version_dir, |c| {
-                        c.set_status(crate::core::launcher::InstanceStatus::Ready);
-                    }).await;
-                } else {
-                    let _ = tokio::fs::remove_dir_all(&version_dir).await;
-                }
-                return Err(TaskError::ExecutionError(e));
-            }
+            crate::downloader::run_batch_download_task(tasks, ctx_libs)
+                .await
+                .map_err(TaskError::ExecutionError)?;
         }
 
         if ctx.is_cancelled() {
-            tracing::warn!("Installation cancelled, cleaning up fabric instance directory...");
-            let version_dir = instance_dir.clone();
-            if is_existing {
-                if json_bak.exists() {
-                    let _ = tokio::fs::copy(&json_bak, version_dir.join(format!("{}.json", custom_instance_name))).await;
-                    let _ = tokio::fs::remove_file(&json_bak).await;
-                }
-                if config_bak.exists() {
-                    let _ = tokio::fs::copy(&config_bak, version_dir.join("dlml.json")).await;
-                    let _ = tokio::fs::remove_file(&config_bak).await;
-                }
-                let _ = crate::core::launcher::update_instance_config(&version_dir, |c| {
-                    c.set_status(crate::core::launcher::InstanceStatus::Ready);
-                }).await;
-            } else {
-                let _ = tokio::fs::remove_dir_all(&version_dir).await;
-            }
             return Err(TaskError::ExecutionError(
                 "Installation cancelled by user".to_string(),
             ));
         }
 
         // Step 4: Update dlml.json config atomically
-        crate::core::launcher::update_instance_config(&version_dir, |config| {
+        crate::core::launcher::update_instance_config(version_dir, |config| {
             config.hidden = is_dependency.unwrap_or(false);
             config.loader_type = Some(crate::models::instance::LoaderType::Fabric);
             config.loader_version = Some(fabric_version.clone());
@@ -559,18 +595,18 @@ impl ExecutableTask for InstallFabricTask {
         .map_err(TaskError::ExecutionError)?;
 
         if is_existing {
-            let _ = tokio::fs::remove_file(&json_bak).await;
-            let _ = tokio::fs::remove_file(&config_bak).await;
+            let _ = tokio::fs::remove_file(json_bak).await;
+            let _ = tokio::fs::remove_file(config_bak).await;
         }
 
         tracing::info!("Updated instance config in: {:?}", version_dir);
 
         if !is_dependency.unwrap_or(false) {
-            crate::core::launcher::apply_global_game_settings(&version_dir).await;
+            crate::core::launcher::apply_global_game_settings(version_dir).await;
 
             // Step 5: Auto-install Fabric API
             auto_install_fabric_api(
-                &version_dir,
+                version_dir,
                 mc_version,
                 custom_instance_name,
                 ctx.with_sub_task("install_fabric_api"),

@@ -52,12 +52,9 @@ pub fn extract_loader_version_from_json(json: &serde_json::Value, instance_id: &
                             return Some(ver.to_string());
                         }
                     }
-                } else if name.starts_with("net.fabricmc:fabric-loader:") {
-                    let parts: Vec<&str> = name.split(':').collect();
-                    if parts.len() >= 3 {
-                        return Some(parts[2].to_string());
-                    }
-                } else if name.starts_with("org.quiltmc:quilt-loader:") {
+                } else if name.starts_with("net.fabricmc:fabric-loader:")
+                    || name.starts_with("org.quiltmc:quilt-loader:")
+                {
                     let parts: Vec<&str> = name.split(':').collect();
                     if parts.len() >= 3 {
                         return Some(parts[2].to_string());
@@ -574,74 +571,8 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
         // Mark instance as Updating
         let _ = crate::core::launcher::InstanceConfig::ensure_updating(&instance_dir).await;
 
-        // 2. Handle mods directory
-        let mods_dir = instance_dir.join("mods");
-        if mods_dir.exists() {
-            ctx.update_progress(20, 100, "Handling mods folder...").await;
-            match mod_handling.as_str() {
-                "disable" => {
-                    if let Ok(mut entries) = tokio::fs::read_dir(&mods_dir).await {
-                        while let Ok(Some(entry)) = entries.next_entry().await {
-                            let p = entry.path();
-                            if p.is_file() {
-                                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                                    if ext.eq_ignore_ascii_case("jar") {
-                                        let file_name = p.file_name().unwrap().to_string_lossy();
-                                        let disabled_name = format!("{}.disable", file_name);
-                                        let _ = tokio::fs::rename(&p, mods_dir.join(disabled_name)).await;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let assets_path = instance_dir.join("assets.json");
-                    if assets_path.exists() {
-                        if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
-                            if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
-                                for (_, record) in manifest.assets.iter_mut() {
-                                    if record.category == crate::models::instance::AssetCategory::Mod {
-                                        record.enabled = false;
-                                    }
-                                }
-                                if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
-                                    let _ = tokio::fs::write(&assets_path, serialized).await;
-                                }
-                            }
-                        }
-                    }
-                }
-                "backup" => {
-                    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-                    let backup_dir = instance_dir.join(format!("mods_backup_{}", timestamp));
-                    let _ = tokio::fs::rename(&mods_dir, &backup_dir).await;
-                }
-                "delete" => {
-                    let _ = tokio::fs::remove_dir_all(&mods_dir).await;
-                    let assets_path = instance_dir.join("assets.json");
-                    if assets_path.exists() {
-                        if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
-                            if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
-                                manifest.assets.retain(|_, r| r.category != crate::models::instance::AssetCategory::Mod);
-                                if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
-                                    let _ = tokio::fs::write(&assets_path, serialized).await;
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    // "keep": do nothing to files
-                }
-            }
-        }
-
-        if ctx.is_cancelled() {
-            rollback().await;
-            return Err(TaskError::ExecutionError("Uninstallation cancelled by user".to_string()));
-        }
-
-        // 3. Reconstruct vanilla version profile JSON
-        ctx.update_progress(50, 100, "Restoring vanilla profile...").await;
+        // 2. Reconstruct vanilla version profile JSON
+        ctx.update_progress(20, 100, "Restoring vanilla profile...").await;
 
         let pure_vanilla_content = match acquire_pure_vanilla_json(&mc_version, instance_id).await {
             Ok(c) => c,
@@ -650,6 +581,11 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
                 return Err(TaskError::ExecutionError(e));
             }
         };
+
+        if ctx.is_cancelled() {
+            rollback().await;
+            return Err(TaskError::ExecutionError("Uninstallation cancelled by user".to_string()));
+        }
 
         let mut parsed: serde_json::Value = match serde_json::from_str(&pure_vanilla_content) {
             Ok(v) => v,
@@ -677,7 +613,8 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
             return Err(TaskError::ExecutionError(format!("Failed to write restored vanilla JSON: {}", e)));
         }
 
-        // Restore / ensure vanilla client jar
+        // 3. Restore / ensure vanilla client jar
+        ctx.update_progress(50, 100, "Ensuring vanilla client jar...").await;
         let dest_jar = instance_dir.join(format!("{}.jar", instance_id));
         let dawnland_cache = crate::core::mojang::get_dawnland_cache();
         let cached_jar = dawnland_cache.join(&mc_version).join(format!("{}.jar", mc_version));
@@ -709,9 +646,17 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
                         sha1,
                         size,
                     );
-                    let _ = crate::downloader::run_batch_download_task(vec![dl_task], ctx.clone()).await;
+                    if let Err(e) = crate::downloader::run_batch_download_task(vec![dl_task], ctx.clone()).await {
+                        rollback().await;
+                        return Err(TaskError::ExecutionError(format!("Failed to download vanilla client jar: {}", e)));
+                    }
                 }
             }
+        }
+
+        if ctx.is_cancelled() {
+            rollback().await;
+            return Err(TaskError::ExecutionError("Uninstallation cancelled by user".to_string()));
         }
 
         // 4. Remove loader temporary artifacts
@@ -727,7 +672,96 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
             }
         }
 
-        // 5. Update dlml.json
+        // 5. Handle mods directory after vanilla profile and jar have been safely acquired
+        ctx.update_progress(75, 100, "Handling mods folder...").await;
+        let mods_dir = instance_dir.join("mods");
+        let mods_trash = instance_dir.join(".mods_trash_tmp");
+        let mut backup_dir_opt: Option<std::path::PathBuf> = None;
+        let mut moved_to_trash = false;
+
+        if mods_dir.exists() {
+            match mod_handling.as_str() {
+                "disable" => {
+                    if let Ok(mut entries) = tokio::fs::read_dir(&mods_dir).await {
+                        while let Ok(Some(entry)) = entries.next_entry().await {
+                            let p = entry.path();
+                            if p.is_file() {
+                                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                                    if ext.eq_ignore_ascii_case("jar") {
+                                        let file_name = p.file_name().unwrap().to_string_lossy();
+                                        let disabled_name = format!("{}.disable", file_name);
+                                        let _ = tokio::fs::rename(&p, mods_dir.join(disabled_name)).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let assets_path = instance_dir.join("assets.json");
+                    if assets_path.exists() {
+                        if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+                            if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+                                for record in manifest.assets.values_mut() {
+                                    if record.category == crate::models::instance::AssetCategory::Mod {
+                                        record.enabled = false;
+                                    }
+                                }
+                                if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
+                                    let _ = tokio::fs::write(&assets_path, serialized).await;
+                                }
+                            }
+                        }
+                    }
+                }
+                "backup" => {
+                    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                    let b_dir = instance_dir.join(format!("mods_backup_{}", timestamp));
+                    if tokio::fs::rename(&mods_dir, &b_dir).await.is_ok() {
+                        backup_dir_opt = Some(b_dir);
+                    }
+                }
+                "delete" => {
+                    // Move to temporary trash directory during uninstallation to allow rollback
+                    if tokio::fs::rename(&mods_dir, &mods_trash).await.is_ok() {
+                        moved_to_trash = true;
+                    } else {
+                        let _ = tokio::fs::remove_dir_all(&mods_dir).await;
+                    }
+                    let assets_path = instance_dir.join("assets.json");
+                    if assets_path.exists() {
+                        if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+                            if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+                                manifest.assets.retain(|_, r| r.category != crate::models::instance::AssetCategory::Mod);
+                                if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
+                                    let _ = tokio::fs::write(&assets_path, serialized).await;
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // "keep": do nothing to files
+                }
+            }
+        }
+
+        let rollback_mods = || async {
+            if moved_to_trash && mods_trash.exists() {
+                let _ = tokio::fs::rename(&mods_trash, &mods_dir).await;
+            }
+            if let Some(ref b_dir) = backup_dir_opt {
+                if b_dir.exists() && !mods_dir.exists() {
+                    let _ = tokio::fs::rename(b_dir, &mods_dir).await;
+                }
+            }
+        };
+
+        if ctx.is_cancelled() {
+            rollback_mods().await;
+            rollback().await;
+            return Err(TaskError::ExecutionError("Uninstallation cancelled by user".to_string()));
+        }
+
+        // 6. Update dlml.json
         ctx.update_progress(90, 100, "Updating instance configuration...").await;
         let update_res = crate::core::launcher::update_instance_config(&instance_dir, |c| {
             c.loader_type = Some(crate::models::instance::LoaderType::Vanilla);
@@ -737,13 +771,17 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
         }).await;
 
         if let Err(e) = update_res {
+            rollback_mods().await;
             rollback().await;
             return Err(TaskError::ExecutionError(e));
         }
 
-        // Clean up backup files on success
+        // Clean up backup and temporary trash files on success
         let _ = tokio::fs::remove_file(&json_bak).await;
         let _ = tokio::fs::remove_file(&config_bak).await;
+        if moved_to_trash && mods_trash.exists() {
+            let _ = tokio::fs::remove_dir_all(&mods_trash).await;
+        }
 
         ctx.update_progress(100, 100, "Uninstallation complete").await;
         tracing::info!("Successfully uninstalled mod loader from instance '{}'", instance_id);
@@ -852,5 +890,24 @@ mod tests {
             "inheritsFrom": "fabric-loader-0.20.1-26.3"
         }).to_string();
         assert!(!is_pure_vanilla_json(&inherited_fabric, "26.3"));
+    }
+
+    #[test]
+    fn test_instance_loader_info_camel_case_serialization() {
+        let info = InstanceLoaderInfo {
+            instance_id: "test-instance".to_string(),
+            mc_version: "1.20.1".to_string(),
+            loader_type: "Fabric".to_string(),
+            loader_version: Some("0.16.0".to_string()),
+            is_inherited: false,
+            has_mods: true,
+            mods_count: 5,
+        };
+        let val = serde_json::to_value(&info).unwrap();
+        assert_eq!(val["modsCount"], 5);
+        assert_eq!(val["hasMods"], true);
+        assert_eq!(val["loaderType"], "Fabric");
+        assert_eq!(val["loaderVersion"], "0.16.0");
+        assert!(val.get("mods_count").is_none());
     }
 }

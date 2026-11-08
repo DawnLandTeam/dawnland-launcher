@@ -63,15 +63,15 @@ async function fetchLoaderInfo() {
   loadingInfo.value = true;
   try {
     const info = await invoke<{
-      mods_count: number;
-      has_mods: boolean;
-      loader_type: string;
-      loader_version?: string;
+      modsCount: number;
+      hasMods: boolean;
+      loaderType: string;
+      loaderVersion?: string;
     }>('get_instance_loader_info', {
       instanceId: props.instanceId,
       mcVersion: props.mcVersion,
     });
-    modsCount.value = info.mods_count || 0;
+    modsCount.value = info.modsCount || 0;
   } catch (e) {
     console.error('Failed to load loader info:', e);
   } finally {
