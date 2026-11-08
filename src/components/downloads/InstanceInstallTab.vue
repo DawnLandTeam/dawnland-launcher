@@ -100,6 +100,7 @@ const filteredVersions = computed(() => {
 function selectVersionAndNext(id: string) {
   if (selectedVersion.value !== id) {
     selectedVersion.value = id;
+    isNameManuallyEdited.value = false;
     
     // Clear mod loader cache
     forgeLoaders.value = [];
@@ -153,6 +154,7 @@ const neoForgeLoaderOptions = computed<SelectOption[]>(() => neoForgeLoaders.val
 })));
 
 const customInstanceName = ref<string>("");
+const isNameManuallyEdited = ref(false);
 const isLoadingVersions = ref(false);
 const isInstalling = ref(false);
 const installProgress = ref<InstallProgress | null>(null);
@@ -341,6 +343,22 @@ function generateInstanceName(): string {
   return selectedVersion.value;
 }
 
+// Auto-refresh instance name when base version or selected loaders change
+watch(
+  [
+    selectedVersion,
+    () => selectedComponents.Fabric,
+    () => selectedComponents.Forge,
+    () => selectedComponents.NeoForge,
+  ],
+  () => {
+    if (!isNameManuallyEdited.value) {
+      customInstanceName.value = generateInstanceName();
+    }
+  },
+  { immediate: true }
+);
+
 // When dialog opens, load versions if not yet loaded
 onMounted(async () => {
     const isOpen = true;
@@ -363,6 +381,7 @@ onMounted(async () => {
     neoForgeLoaders.value = [];
     selectedNeoForgeLoader.value = "";
     customInstanceName.value = "";
+    isNameManuallyEdited.value = false;
     error.value = null;
     installProgress.value = null;
     downloadProgress.value.clear();
@@ -401,23 +420,7 @@ watch(selectedVersion, (_, oldVal) => {
   selectedComponents.NeoForge = null;
   selectedComponents.OptiFine = null;
   selectedComponents['Fabric API'] = null;
-});
-
-// Watch loader type changes to reload appropriate loaders
-watch([selectedVersion, installModLoader, selectedLoaderType], async () => {
-  const newVersion = selectedVersion.value;
-  const newLoaderEnabled = installModLoader.value;
-  const loaderType = selectedLoaderType.value;
-  
-  if (newLoaderEnabled && newVersion) {
-    if (loaderType === "fabric") {
-      await loadFabricLoaders();
-    } else if (loaderType === "forge") {
-      await loadForgeLoaders();
-    } else if (loaderType === "neoforge") {
-      await loadNeoForgeLoaders();
-    }
-  }
+  isNameManuallyEdited.value = false;
 });
 
 // Load version list from backend
@@ -459,17 +462,18 @@ async function loadFabricLoaders(): Promise<void> {
     unstableFabricLoaders.value = loaders.unstable;
     
     // Auto-select latest STABLE loader (if available), otherwise latest unstable
-    if (loaders.stable.length > 0) {
-      selectedFabricLoader.value = loaders.stable[0];
-    } else if (loaders.unstable.length > 0) {
-      selectedFabricLoader.value = loaders.unstable[0];
+    if (!selectedComponents.Fabric) {
+      if (loaders.stable.length > 0) {
+        selectedFabricLoader.value = loaders.stable[0];
+      } else if (loaders.unstable.length > 0) {
+        selectedFabricLoader.value = loaders.unstable[0];
+      }
+      
+      if (selectedFabricLoader.value) {
+        selectedComponents.Fabric = selectedFabricLoader.value;
+      }
     }
-    
-    if (selectedFabricLoader.value) {
-      selectedComponents.Fabric = selectedFabricLoader.value;
-      customInstanceName.value = generateInstanceName();
-      if (activeConfiguringComponent.value === 'Fabric') activeConfiguringComponent.value = null; // Auto close
-    }
+    if (activeConfiguringComponent.value === 'Fabric') activeConfiguringComponent.value = null; // Auto close
   } catch (err) {
     error.value = getErrorMessage(err);
     console.error("Failed to load Fabric loaders:", err);
@@ -495,15 +499,16 @@ async function loadForgeLoaders(): Promise<void> {
     forgeLoaders.value = loaders.versions;
     
     // Auto-select first version
-    if (loaders.versions.length > 0) {
-      selectedForgeLoader.value = loaders.versions[0].version;
+    if (!selectedComponents.Forge) {
+      if (loaders.versions.length > 0) {
+        selectedForgeLoader.value = loaders.versions[0].version;
+      }
+      
+      if (selectedForgeLoader.value) {
+        selectedComponents.Forge = selectedForgeLoader.value;
+      }
     }
-    
-    if (selectedForgeLoader.value) {
-      selectedComponents.Forge = selectedForgeLoader.value;
-      customInstanceName.value = generateInstanceName();
-      if (activeConfiguringComponent.value === 'Forge') activeConfiguringComponent.value = null; // Auto close
-    }
+    if (activeConfiguringComponent.value === 'Forge') activeConfiguringComponent.value = null; // Auto close
   } catch (err) {
     error.value = getErrorMessage(err);
     console.error("Failed to load Forge loaders:", err);
@@ -529,15 +534,16 @@ async function loadNeoForgeLoaders(): Promise<void> {
     neoForgeLoaders.value = loaders.versions;
     
     // Auto-select first version
-    if (loaders.versions.length > 0) {
-      selectedNeoForgeLoader.value = loaders.versions[0].version;
+    if (!selectedComponents.NeoForge) {
+      if (loaders.versions.length > 0) {
+        selectedNeoForgeLoader.value = loaders.versions[0].version;
+      }
+      
+      if (selectedNeoForgeLoader.value) {
+        selectedComponents.NeoForge = selectedNeoForgeLoader.value;
+      }
     }
-    
-    if (selectedNeoForgeLoader.value) {
-      selectedComponents.NeoForge = selectedNeoForgeLoader.value;
-      customInstanceName.value = generateInstanceName();
-      if (activeConfiguringComponent.value === 'NeoForge') activeConfiguringComponent.value = null; // Auto close
-    }
+    if (activeConfiguringComponent.value === 'NeoForge') activeConfiguringComponent.value = null; // Auto close
   } catch (err) {
     error.value = getErrorMessage(err);
     console.error("Failed to load NeoForge loaders:", err);
@@ -558,7 +564,9 @@ function goToStep3() {
   if (canProceedToStep3.value) {
     mapComponentsToLegacyState();
     currentStep.value = 3;
-    if (!customInstanceName.value) customInstanceName.value = generateInstanceName();
+    if (!isNameManuallyEdited.value || !customInstanceName.value.trim()) {
+      customInstanceName.value = generateInstanceName();
+    }
     error.value = null;
     nameError.value = null;
   }
@@ -575,6 +583,23 @@ function goBackToStep2() {
   nameError.value = null;
 }
 
+function onInstanceNameInput(val: string) {
+  nameError.value = null;
+  if (!val.trim()) {
+    isNameManuallyEdited.value = false;
+  } else if (val !== generateInstanceName()) {
+    isNameManuallyEdited.value = true;
+  } else {
+    isNameManuallyEdited.value = false;
+  }
+}
+
+function onInstanceNameBlur() {
+  if (!customInstanceName.value.trim()) {
+    isNameManuallyEdited.value = false;
+    customInstanceName.value = generateInstanceName();
+  }
+}
 
 watch(currentTask, (newTask) => {
   if (isInstalling.value && !newTask) {
@@ -594,6 +619,7 @@ function resetToInitialState() {
   selectedComponents.OptiFine = null;
   selectedComponents['Fabric API'] = null;
   customInstanceName.value = "";
+  isNameManuallyEdited.value = false;
   activeConfiguringComponent.value = null;
   mapComponentsToLegacyState();
 }
@@ -978,7 +1004,8 @@ onUnmounted(() => {
             <label class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">{{ $t('install.instanceName') }}</label>
             <DInput
               v-model="customInstanceName"
-              @update:model-value="nameError = null"
+              @update:model-value="onInstanceNameInput"
+              @blur="onInstanceNameBlur"
               :class="{ '!border-red-500 !ring-red-500 focus:!ring-red-500': nameError }"
               :placeholder="(currentTask as any)?.metadata?.versionId || $t('install.defaultName')"
             />
