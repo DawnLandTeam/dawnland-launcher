@@ -676,8 +676,12 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
         ctx.update_progress(75, 100, "Handling mods folder...").await;
         let mods_dir = instance_dir.join("mods");
         let mods_trash = instance_dir.join(".mods_trash_tmp");
+        let assets_path = instance_dir.join("assets.json");
         let mut backup_dir_opt: Option<std::path::PathBuf> = None;
         let mut moved_to_trash = false;
+        let mut disabled_renames: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+        let mut original_assets_content: Option<String> = None;
+        let mut previously_enabled_asset_keys: Vec<String> = Vec::new();
 
         if mods_dir.exists() {
             match mod_handling.as_str() {
@@ -690,23 +694,31 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
                                     if ext.eq_ignore_ascii_case("jar") {
                                         let file_name = p.file_name().unwrap().to_string_lossy();
                                         let disabled_name = format!("{}.disable", file_name);
-                                        let _ = tokio::fs::rename(&p, mods_dir.join(disabled_name)).await;
+                                        let disabled_path = mods_dir.join(disabled_name);
+                                        if tokio::fs::rename(&p, &disabled_path).await.is_ok() {
+                                            disabled_renames.push((disabled_path, p));
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                    let assets_path = instance_dir.join("assets.json");
                     if assets_path.exists() {
                         if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+                            original_assets_content = Some(content.clone());
                             if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
-                                for record in manifest.assets.values_mut() {
-                                    if record.category == crate::models::instance::AssetCategory::Mod {
+                                for (key, record) in manifest.assets.iter_mut() {
+                                    if record.category == crate::models::instance::AssetCategory::Mod
+                                        && record.enabled
+                                    {
+                                        previously_enabled_asset_keys.push(key.clone());
                                         record.enabled = false;
                                     }
                                 }
-                                if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
-                                    let _ = tokio::fs::write(&assets_path, serialized).await;
+                                if !previously_enabled_asset_keys.is_empty() {
+                                    if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
+                                        let _ = tokio::fs::write(&assets_path, serialized).await;
+                                    }
                                 }
                             }
                         }
@@ -726,9 +738,9 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
                     } else {
                         let _ = tokio::fs::remove_dir_all(&mods_dir).await;
                     }
-                    let assets_path = instance_dir.join("assets.json");
                     if assets_path.exists() {
                         if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+                            original_assets_content = Some(content.clone());
                             if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
                                 manifest.assets.retain(|_, r| r.category != crate::models::instance::AssetCategory::Mod);
                                 if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
@@ -751,6 +763,27 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
             if let Some(ref b_dir) = backup_dir_opt {
                 if b_dir.exists() && !mods_dir.exists() {
                     let _ = tokio::fs::rename(b_dir, &mods_dir).await;
+                }
+            }
+            for (disabled_path, orig_path) in &disabled_renames {
+                if disabled_path.exists() && !orig_path.exists() {
+                    let _ = tokio::fs::rename(disabled_path, orig_path).await;
+                }
+            }
+            if let Some(ref orig_content) = original_assets_content {
+                let _ = tokio::fs::write(&assets_path, orig_content).await;
+            } else if !previously_enabled_asset_keys.is_empty() && assets_path.exists() {
+                if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+                    if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+                        for key in &previously_enabled_asset_keys {
+                            if let Some(record) = manifest.assets.get_mut(key) {
+                                record.enabled = true;
+                            }
+                        }
+                        if let Ok(serialized) = serde_json::to_string_pretty(&manifest) {
+                            let _ = tokio::fs::write(&assets_path, serialized).await;
+                        }
+                    }
                 }
             }
         };
@@ -909,5 +942,112 @@ mod tests {
         assert_eq!(val["loaderType"], "Fabric");
         assert_eq!(val["loaderVersion"], "0.16.0");
         assert!(val.get("mods_count").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_disable_mods_rollback() {
+        let temp_dir = std::env::temp_dir().join(format!("dawnland-test-rollback-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+        let mods_dir = temp_dir.join("mods");
+        tokio::fs::create_dir_all(&mods_dir).await.unwrap();
+
+        let mod1_path = mods_dir.join("mod1.jar");
+        let mod2_path = mods_dir.join("mod2.jar");
+        let already_disabled_path = mods_dir.join("already.jar.disable");
+
+        tokio::fs::write(&mod1_path, "dummy mod 1").await.unwrap();
+        tokio::fs::write(&mod2_path, "dummy mod 2").await.unwrap();
+        tokio::fs::write(&already_disabled_path, "dummy disabled").await.unwrap();
+
+        let assets_path = temp_dir.join("assets.json");
+        let mut manifest = crate::models::instance::AssetManifest::default();
+        let mod1_record: crate::models::instance::AssetRecord = serde_json::from_value(serde_json::json!({
+            "category": "Mod",
+            "sourceType": "LocalImport",
+            "enabled": true
+        })).unwrap();
+        let disabled_record: crate::models::instance::AssetRecord = serde_json::from_value(serde_json::json!({
+            "category": "Mod",
+            "sourceType": "LocalImport",
+            "enabled": false
+        })).unwrap();
+        manifest.assets.insert("mods/mod1.jar".to_string(), mod1_record);
+        manifest.assets.insert("mods/already.jar.disable".to_string(), disabled_record);
+        tokio::fs::write(&assets_path, serde_json::to_string_pretty(&manifest).unwrap()).await.unwrap();
+
+        // 1. Simulate disable mode
+        let mut disabled_renames: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+        let mut original_assets_content: Option<String> = None;
+        let mut previously_enabled_asset_keys: Vec<String> = Vec::new();
+
+        if let Ok(mut entries) = tokio::fs::read_dir(&mods_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let p = entry.path();
+                if p.is_file() {
+                    if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                        if ext.eq_ignore_ascii_case("jar") {
+                            let file_name = p.file_name().unwrap().to_string_lossy();
+                            let disabled_name = format!("{}.disable", file_name);
+                            let disabled_path = mods_dir.join(disabled_name);
+                            if tokio::fs::rename(&p, &disabled_path).await.is_ok() {
+                                disabled_renames.push((disabled_path, p));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if assets_path.exists() {
+            if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+                original_assets_content = Some(content.clone());
+                if let Ok(mut m) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+                    for (key, record) in m.assets.iter_mut() {
+                        if record.category == crate::models::instance::AssetCategory::Mod && record.enabled {
+                            previously_enabled_asset_keys.push(key.clone());
+                            record.enabled = false;
+                        }
+                    }
+                    if !previously_enabled_asset_keys.is_empty() {
+                        let serialized = serde_json::to_string_pretty(&m).unwrap();
+                        tokio::fs::write(&assets_path, serialized).await.unwrap();
+                    }
+                }
+            }
+        }
+
+        assert_eq!(disabled_renames.len(), 2);
+        assert!(!mod1_path.exists());
+        assert!(!mod2_path.exists());
+        assert!(mods_dir.join("mod1.jar.disable").exists());
+        assert!(mods_dir.join("mod2.jar.disable").exists());
+        assert!(already_disabled_path.exists());
+
+        let modified_assets: crate::models::instance::AssetManifest =
+            serde_json::from_str(&tokio::fs::read_to_string(&assets_path).await.unwrap()).unwrap();
+        assert!(!modified_assets.assets["mods/mod1.jar"].enabled);
+
+        // 2. Simulate rollback_mods
+        for (disabled_path, orig_path) in &disabled_renames {
+            if disabled_path.exists() && !orig_path.exists() {
+                let _ = tokio::fs::rename(disabled_path, orig_path).await;
+            }
+        }
+        if let Some(ref orig_content) = original_assets_content {
+            let _ = tokio::fs::write(&assets_path, orig_content).await;
+        }
+
+        assert!(mod1_path.exists());
+        assert!(mod2_path.exists());
+        assert!(!mods_dir.join("mod1.jar.disable").exists());
+        assert!(!mods_dir.join("mod2.jar.disable").exists());
+        assert!(already_disabled_path.exists());
+
+        let restored_assets: crate::models::instance::AssetManifest =
+            serde_json::from_str(&tokio::fs::read_to_string(&assets_path).await.unwrap()).unwrap();
+        assert!(restored_assets.assets["mods/mod1.jar"].enabled);
+        assert!(!restored_assets.assets["mods/already.jar.disable"].enabled);
+
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 }
