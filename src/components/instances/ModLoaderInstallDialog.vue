@@ -73,38 +73,52 @@ watch(selectedLoader, () => {
   }
 });
 
+let loadRequestId = 0;
+
 async function loadLoaders() {
   if (!props.mcVersion) return;
+  const currentReqId = ++loadRequestId;
+  const targetLoader = selectedLoader.value;
   loadingLoaders.value = true;
   error.value = null;
   availableVersions.value = [];
   selectedVersion.value = '';
 
   try {
-    if (selectedLoader.value === 'fabric') {
+    let list: LoaderVersionItem[] = [];
+    if (targetLoader === 'fabric') {
       const res = await invoke<{ stable: string[]; unstable: string[] }>('get_fabric_loaders', {
         mcVersion: props.mcVersion,
       });
-      const list: LoaderVersionItem[] = [
+      list = [
         ...res.stable.map((v) => ({ version: v, isStable: true })),
         ...res.unstable.map((v) => ({ version: v, isStable: false })),
       ];
-      availableVersions.value = list;
-    } else if (selectedLoader.value === 'forge') {
+    } else if (targetLoader === 'forge') {
       const res = await invoke<{ versions: Array<{ version: string }> }>('get_forge_loaders', {
         mcVersion: props.mcVersion,
       });
-      availableVersions.value = res.versions.map((v) => ({ version: v.version, isStable: true }));
-    } else if (selectedLoader.value === 'neoforge') {
+      list = res.versions.map((v) => ({ version: v.version, isStable: true }));
+    } else if (targetLoader === 'neoforge') {
       const res = await invoke<{ versions: Array<{ version: string }> }>('get_neoforge_loaders', {
         mcVersion: props.mcVersion,
       });
-      availableVersions.value = res.versions.map((v) => ({ version: v.version, isStable: true }));
+      list = res.versions.map((v) => ({ version: v.version, isStable: true }));
     }
+
+    if (currentReqId !== loadRequestId || selectedLoader.value !== targetLoader) {
+      return;
+    }
+
+    availableVersions.value = list;
 
     if (availableVersions.value.length > 0) {
       // Default to first version, or current if found
-      if (props.mode === 'switch' && props.currentLoaderVersion) {
+      if (
+        props.mode === 'switch' &&
+        props.currentLoaderVersion &&
+        props.currentLoaderType?.toLowerCase() === targetLoader
+      ) {
         const matched = availableVersions.value.find((v) => v.version === props.currentLoaderVersion);
         selectedVersion.value = matched ? matched.version : availableVersions.value[0].version;
       } else {
@@ -112,10 +126,15 @@ async function loadLoaders() {
       }
     }
   } catch (e) {
+    if (currentReqId !== loadRequestId || selectedLoader.value !== targetLoader) {
+      return;
+    }
     console.error('Failed to load loader versions:', e);
     error.value = getErrorMessage(e);
   } finally {
-    loadingLoaders.value = false;
+    if (currentReqId === loadRequestId) {
+      loadingLoaders.value = false;
+    }
   }
 }
 

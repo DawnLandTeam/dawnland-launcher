@@ -162,19 +162,6 @@ pub async fn resolve_instance_mc_version(
         if !resolved.is_empty() {
             return Ok(resolved);
         }
-
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(assets) = json.get("assetIndex").and_then(|a| a.get("id")).and_then(|v| v.as_str()) {
-                if !assets.is_empty() {
-                    return Ok(assets.to_string());
-                }
-            }
-            if let Some(assets) = json.get("assets").and_then(|v| v.as_str()) {
-                if !assets.is_empty() {
-                    return Ok(assets.to_string());
-                }
-            }
-        }
     }
 
     Err(DawnlandError::Unknown("Unable to determine Minecraft version for instance".to_string()).into())

@@ -790,6 +790,12 @@ impl InstallForgeTask {
         let base_client_jar = base_version_dir.join(format!("{}.jar", mc_version));
         let base_version_json = base_version_dir.join(format!("{}.json", mc_version));
 
+        if custom_instance_name != mc_version {
+            ctx.manager
+                .wait_for_instance(mc_version, Some(&ctx.id), &ctx.cancel_token)
+                .await;
+        }
+
         if is_existing {
             let existing_jar = instance_dir.join(format!("{}.jar", custom_instance_name));
             let existing_json = instance_dir.join(format!("{}.json", custom_instance_name));
@@ -811,31 +817,21 @@ impl InstallForgeTask {
 
             if is_vanilla_src {
                 if existing_jar.exists() && !base_client_jar.exists() {
-                    let _ = tokio::fs::create_dir_all(&base_version_dir).await;
-                    let _ = tokio::fs::copy(&existing_jar, &base_client_jar).await;
+                    let _ = crate::core::fs_utils::copy_file_atomic(&existing_jar, &base_client_jar).await;
                 }
                 if !base_version_json.exists() {
-                    let _ = tokio::fs::create_dir_all(&base_version_dir).await;
-                    let _ = tokio::fs::copy(&json_src, &base_version_json).await;
+                    let _ = crate::core::fs_utils::copy_file_atomic(&json_src, &base_version_json).await;
                 }
                 let cache_mc_dir = dawnland_cache.join(mc_version);
                 let cache_jar = cache_mc_dir.join(format!("{}.jar", mc_version));
                 let cache_json = cache_mc_dir.join(format!("{}.json", mc_version));
                 if existing_jar.exists() && !cache_jar.exists() {
-                    let _ = tokio::fs::create_dir_all(&cache_mc_dir).await;
-                    let _ = tokio::fs::copy(&existing_jar, &cache_jar).await;
+                    let _ = crate::core::fs_utils::copy_file_atomic(&existing_jar, &cache_jar).await;
                 }
                 if !cache_json.exists() {
-                    let _ = tokio::fs::create_dir_all(&cache_mc_dir).await;
-                    let _ = tokio::fs::copy(&json_src, &cache_json).await;
+                    let _ = crate::core::fs_utils::copy_file_atomic(&json_src, &cache_json).await;
                 }
             }
-        }
-
-        if custom_instance_name != mc_version {
-            ctx.manager
-                .wait_for_instance(mc_version, Some(&ctx.id), &ctx.cancel_token)
-                .await;
         }
 
         let base_is_pure_vanilla = if base_version_json.exists() {
