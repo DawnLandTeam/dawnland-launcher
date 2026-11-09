@@ -278,6 +278,19 @@ onMounted(async () => {
         crashIsOpenJ9.value = !!isOpenJ9;
         crashReportContent.value = crashReport ?? null;
         showCrashAlert.value = true;
+
+        // Automatically record crash to CrashHistoryDb
+        invoke("save_crash_history", {
+          input: {
+            instanceId: versionId,
+            instanceName: inst?.name || versionId,
+            exitCode: exitCode ?? -1,
+            crashSummary: crashReport || (gameLogs.value.slice(-50).join("\n") || `Process exited with code ${exitCode}`),
+            aiCause: null,
+            aiSolution: null,
+            aiActions: null,
+          }
+        }).catch((err) => console.error("Failed to auto-save crash history:", err));
       }
     } else if (status === "repairing") {
       repairingInstances.value.add(versionId);

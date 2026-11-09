@@ -10,6 +10,18 @@ export interface CustomUpdate {
 // Global state for update
 export const hasUpdateAvailable = ref(false);
 export const globalUpdateInfo = shallowRef<CustomUpdate | null>(null);
+export const isUpdateModalOpen = ref(false);
+
+export function openUpdateModal(update?: CustomUpdate) {
+  if (update) {
+    setUpdateAvailable(update);
+  }
+  isUpdateModalOpen.value = true;
+}
+
+export function closeUpdateModal() {
+  isUpdateModalOpen.value = false;
+}
 
 export function setUpdateAvailable(update: CustomUpdate | null) {
   if (update) {

@@ -249,6 +249,10 @@ async function loadInstances() {
         selectedInstanceId.value = route.query.instanceId;
       }
     }
+
+    if (route.query.source === "modrinth" || route.query.source === "curseforge") {
+      searchSource.value = route.query.source;
+    }
     
     // Check if deep linked with search query
     if (route.query.q && typeof route.query.q === "string") {
@@ -403,7 +407,11 @@ watch(selectedGroupVersion, (newVal, oldVal) => {
   }
 });
 
+let currentSearchToken = 0;
+
 async function performSearch(isLoadMore = false) {
+  const token = ++currentSearchToken;
+
   if (!isLoadMore) {
     currentPage.value = 0;
     searchResults.value = [];
@@ -447,6 +455,9 @@ async function performSearch(isLoadMore = false) {
       results = await invoke<UnifiedModProject[]>("search_curseforge", args);
     }
     
+    // Ignore results if a newer search was initiated in the meantime
+    if (token !== currentSearchToken) return;
+
     if (results.length < 20) {
       hasMore.value = false;
     }
@@ -458,10 +469,14 @@ async function performSearch(isLoadMore = false) {
     }
     currentPage.value++;
   } catch (err) {
-    error.value = getErrorMessage(err);
+    if (token === currentSearchToken) {
+      error.value = getErrorMessage(err);
+    }
   } finally {
-    isSearching.value = false;
-    isLoadingMore.value = false;
+    if (token === currentSearchToken) {
+      isSearching.value = false;
+      isLoadingMore.value = false;
+    }
   }
 }
 
@@ -507,6 +522,9 @@ async function handleCardClick(mod: UnifiedModProject) {
 }
 
 async function checkDependenciesForSelectedFile() {
+  const currentMod = pendingMod.value;
+  if (!currentMod) return;
+
   const file = installFiles.value.find(f => f.id === selectedFileId.value);
   if (!file) {
     pendingDependencies.value = [];
@@ -525,7 +543,7 @@ async function checkDependenciesForSelectedFile() {
         });
         
         missingDeps = requiredDeps.filter(dep => {
-          const key = `${pendingMod.value?.source}_${dep.project_id}`;
+          const key = `${currentMod.source}_${dep.project_id}`;
           return !mapping[key];
         });
       } else {
@@ -537,7 +555,7 @@ async function checkDependenciesForSelectedFile() {
       try {
         let title = "";
         let slug = "";
-        if (pendingMod.value?.source === "modrinth") {
+        if (currentMod.source === "modrinth") {
           const mod = await invoke<UnifiedModProject>("get_modrinth_mod_details", { projectId: dep.project_id });
           title = mod.title;
           slug = mod.slug;

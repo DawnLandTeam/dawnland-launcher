@@ -22,11 +22,16 @@ pub struct CrashHistoryEntry {
 #[serde(rename_all = "camelCase")]
 pub struct CrashHistoryInput {
     pub instance_id: String,
+    #[serde(default)]
     pub instance_name: Option<String>,
+    #[serde(default)]
     pub exit_code: Option<i32>,
     pub crash_summary: String,
+    #[serde(default)]
     pub ai_cause: Option<String>,
+    #[serde(default)]
     pub ai_solution: Option<String>,
+    #[serde(default)]
     pub ai_actions: Option<String>,
 }
 

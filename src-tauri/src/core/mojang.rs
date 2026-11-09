@@ -380,17 +380,35 @@ pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
     let client = crate::core::utils::get_http_client().clone();
 
     let settings = crate::core::settings::get_launcher_settings_sync();
+    let official_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
     let url = crate::core::settings::replace_download_url(
-        "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json",
+        official_url,
         &settings.download_source,
     );
 
-    let response = client
+    let response = match client
         .get(&url)
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch version manifest: {e}"))?;
+    {
+        Ok(res) if res.status().is_success() => res,
+        _ if url != official_url => {
+            client
+                .get(official_url)
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(|e| format!("Failed to fetch version manifest: {e}"))?
+        }
+        Ok(res) => {
+            return Err(format!(
+                "Version manifest request failed: {}",
+                res.status()
+            ));
+        }
+        Err(e) => return Err(format!("Failed to fetch version manifest: {e}")),
+    };
 
     if !response.status().is_success() {
         return Err(format!(
