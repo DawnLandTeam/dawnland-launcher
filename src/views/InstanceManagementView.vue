@@ -35,6 +35,7 @@ import CrashHistoryPanel from "../components/CrashHistoryPanel.vue";
 import { isInstanceBusy } from "../types";
 import { useTaskStore } from "../composables/useTaskStore";
 import { useModpackInstallState } from "../composables/useModpackInstallState";
+import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../composables/useLaunchState";
 
 const route = useRoute();
@@ -56,6 +57,11 @@ const hasOngoingUpdateTask = computed(() => {
 useInstanceIconUpdates(({ instanceId: updatedId, iconPath }) => {
   const target = instances.value.find(i => i.id === updatedId);
   if (target) target.iconPath = iconPath;
+});
+
+// Auto-reload instance details when background tasks (e.g. loader/mod install) complete
+useTaskStatusReload(async () => {
+  await fetchInstances(true);
 });
 
 const tabs = [

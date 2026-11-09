@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef, onMounted, onActivated, watch, onUnmounted, computed } from "vue";
+import { ref, onMounted, onActivated, watch, onUnmounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from '@tauri-apps/plugin-dialog';
@@ -13,9 +13,8 @@ import DButton from '../components/ui/DButton.vue';
 import DTooltip from '../components/ui/DTooltip.vue';
 import { useLogStore } from '../composables/useLogStore';
 import { useRoute, useRouter } from "vue-router";
-import UpdaterModal from "../components/UpdaterModal.vue";
 import { getVersion } from "@tauri-apps/api/app";
-import { setUpdateAvailable, hasUpdateAvailable, type CustomUpdate, parseUpdateData } from "../composables/useUpdate";
+import { setUpdateAvailable, hasUpdateAvailable, parseUpdateData, openUpdateModal } from "../composables/useUpdate";
 import { trackEvent, getErrorType, sanitizeTrackingUrl } from "../utils/analytics";
 import { getErrorMessage } from "../utils/error";
 import { normalizeUpdateChannel, getUpdateChannelQuery } from "../utils/updateChannel";
@@ -163,8 +162,6 @@ const hasCustomMaxMemory = ref(false);
 
 // Updater state
 const isCheckingUpdate = ref(false);
-const showUpdaterModal = ref(false);
-const updateInfo = shallowRef<CustomUpdate | null>(null);
 const updateChannel = ref(normalizeUpdateChannel(localStorage.getItem('updateChannel')));
 
 // Launcher Settings state
@@ -324,9 +321,7 @@ async function checkForUpdates() {
       const data = await res.json();
       const update = parseUpdateData(data, targetOS);
       if (update && update.version !== appVersion.value) {
-        updateInfo.value = update;
-        showUpdaterModal.value = true;
-        setUpdateAvailable(update);
+        openUpdateModal(update);
         return;
       }
     }
@@ -1475,7 +1470,6 @@ const clearLogs = () => {
       </div>
     </div>
     
-    <UpdaterModal v-model:open="showUpdaterModal" :update-info="updateInfo" />
     </div>
   </div>
   

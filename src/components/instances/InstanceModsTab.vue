@@ -323,7 +323,7 @@ async function executeDelete() {
 }
 
 function handleDownloadMore() {
-  router.push({ path: '/downloads', query: { tab: 'mod', instanceId: props.instanceId } });
+  router.push({ path: '/downloads', query: { tab: 'mod', instanceId: props.instanceId, source: 'modrinth' } });
 }
 </script>
 
