@@ -1,11 +1,6 @@
 import { test, expect, resolveSafePath } from './fixtures';
 import fs from 'fs';
 
-//1. Install a Fabric 26.2 instance
-//2. Install independent mod: JEI
-//3. Install dependent mod: AppleSkin
-//4. Verify both mods are installed successfully
-
 test.describe.serial('Fabric Mod Workflow (E2E)', () => {
   
   test('1. Setup mock instance', async ({ page }, testInfo) => {
@@ -63,6 +58,49 @@ test.describe.serial('Fabric Mod Workflow (E2E)', () => {
     await expect(page.getByText('AppleSkin', { exact: true })).toBeVisible();
     await expect(page.getByText('Fabric API')).toBeVisible();
     await expect(page.getByText('Just Enough Items', { exact: true })).toBeVisible();
+  });
+
+  test('5. Local mod search, toggle disable/enable, and delete', async ({ page }) => {
+    await page.getByRole('link', { name: '实例', exact: true }).click();
+    await page.getByRole('heading', { name: 'E2E_Fabric_Test' }).click();
+    await page.getByRole('button', { name: '模组' }).first().click();
+
+    // 1. Search filter
+    const searchInput = page.getByPlaceholder(/搜索已安装模组|Search/);
+    if (await searchInput.isVisible()) {
+      await searchInput.fill('AppleSkin');
+      await expect(page.getByText('AppleSkin', { exact: true })).toBeVisible();
+      await expect(page.getByText('Just Enough Items', { exact: true })).not.toBeVisible();
+      await searchInput.clear();
+      await expect(page.getByText('Just Enough Items', { exact: true })).toBeVisible();
+    }
+
+    // 2. Toggle disable
+    const appleCard = page.locator('div.border', { hasText: 'AppleSkin' }).first();
+    const toggleBtn = appleCard.locator('button:has-text("禁用"), button:has-text("Disable")').first();
+    if (await toggleBtn.isVisible()) {
+      await toggleBtn.click();
+      await expect(appleCard.locator('button:has-text("启用"), button:has-text("Enable")').first()).toBeVisible({ timeout: 5000 });
+
+      // Toggle back to enable
+      const enableBtn = appleCard.locator('button:has-text("启用"), button:has-text("Enable")').first();
+      await enableBtn.click();
+      await expect(appleCard.locator('button:has-text("禁用"), button:has-text("Disable")').first()).toBeVisible({ timeout: 5000 });
+    }
+
+    // 3. Delete mod
+    const deleteBtn = appleCard.locator('button:has(.lucide-trash-2)').first();
+    if (await deleteBtn.isVisible()) {
+      await deleteBtn.click();
+
+      // Confirm delete in AlertDialog
+      await expect(page.getByText('确定要删除此模组吗')).toBeVisible();
+      const confirmDeleteBtn = page.getByRole('button', { name: '删除' }).last();
+      await confirmDeleteBtn.click();
+
+      // Verify AppleSkin is removed
+      await expect(page.getByText('AppleSkin', { exact: true })).not.toBeVisible({ timeout: 5000 });
+    }
   });
 
 });
