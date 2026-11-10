@@ -35,6 +35,7 @@ import { type InstanceItem, isInstanceBusy, getInstanceStatusLabel } from "../ty
 import { formatSpeed } from "../utils/format";
 
 interface GameLog {
+  versionId?: string;
   type: string;
   line: string;
 }
@@ -78,6 +79,7 @@ import { launchingInstances, jvmSpawnedInstances, runningInstances, repairingIns
 
 // Running state
 const gameLogs = ref<string[]>([]);
+const instanceLogs = ref<Map<string, string[]>>(new Map());
 const showGameLog = ref(false);
 const prelaunchWarnings = ref<PrelaunchWarning[]>([]);
 const showPrelaunchWarning = ref(false);
@@ -88,6 +90,7 @@ const intentionallyKilledInstances = ref<Set<string>>(new Set());
 // Crash alert state
 const showCrashAlert = ref(false);
 const crashExitCode = ref(0);
+const crashHistoryId = ref<number | null>(null);
 const crashVersionId = ref("");
 const crashIsOpenJ9 = ref(false);
 const crashReportContent = ref<string | null>(null);
@@ -212,9 +215,22 @@ onMounted(async () => {
 
   // Listen for game logs
   listen<GameLog>("game-log", (event) => {
-    gameLogs.value.push(event.payload.line);
-    if (gameLogs.value.length > 2000) {
-      gameLogs.value = gameLogs.value.slice(-2000);
+    const vId = event.payload.versionId || selectedInstance.value?.id || "default";
+    let list = instanceLogs.value.get(vId);
+    if (!list) {
+      list = [];
+      instanceLogs.value.set(vId, list);
+    }
+    list.push(event.payload.line);
+    if (list.length > 2000) {
+      list.splice(0, list.length - 2000);
+    }
+
+    if (!event.payload.versionId || event.payload.versionId === selectedInstance.value?.id) {
+      gameLogs.value.push(event.payload.line);
+      if (gameLogs.value.length > 2000) {
+        gameLogs.value = gameLogs.value.slice(-2000);
+      }
     }
     
     // Heuristic: detect when Minecraft window is likely appearing
@@ -271,26 +287,38 @@ onMounted(async () => {
       const wasIntentionallyKilled = intentionallyKilledInstances.value.has(versionId);
       intentionallyKilledInstances.value.delete(versionId);
 
-      // Show crash alert if exit code is non-zero or there's a fresh crash report, and it wasn't intentionally killed
-      if ((exitCode !== 0 || crashReport) && !wasIntentionallyKilled) {
+      // Show crash alert only if exit is confirmed abnormal (crash report present, or non-zero numeric exit code)
+      const isConfirmedCrash = !wasIntentionallyKilled && (
+        Boolean(crashReport) || (typeof exitCode === 'number' && exitCode !== 0)
+      );
+
+      if (isConfirmedCrash) {
         crashVersionId.value = versionId;
-        crashExitCode.value = exitCode ?? -1;
+        crashExitCode.value = typeof exitCode === 'number' ? exitCode : -1;
         crashIsOpenJ9.value = !!isOpenJ9;
         crashReportContent.value = crashReport ?? null;
+        crashHistoryId.value = null;
         showCrashAlert.value = true;
 
+        const targetLogs = instanceLogs.value.get(versionId) || [];
+        const fallbackSummary = targetLogs.slice(-50).join("\n") || `Process exited with code ${crashExitCode.value}`;
+
         // Automatically record crash to CrashHistoryDb
-        invoke("save_crash_history", {
+        invoke<number>("save_crash_history", {
           input: {
             instanceId: versionId,
             instanceName: inst?.name || versionId,
-            exitCode: exitCode ?? -1,
-            crashSummary: crashReport || (gameLogs.value.slice(-50).join("\n") || `Process exited with code ${exitCode}`),
+            exitCode: crashExitCode.value,
+            crashSummary: crashReport || fallbackSummary,
             aiCause: null,
             aiSolution: null,
             aiActions: null,
           }
-        }).catch((err) => console.error("Failed to auto-save crash history:", err));
+        })
+          .then((id) => {
+            crashHistoryId.value = id;
+          })
+          .catch((err) => console.error("Failed to auto-save crash history:", err));
       }
     } else if (status === "repairing") {
       repairingInstances.value.add(versionId);
@@ -948,7 +976,16 @@ function loaderBadgeClass(loaderType: string): string {
     </Teleport>
 
     <!-- Crash Report Modal -->
-    <CrashReportModal :open="showCrashAlert" :exit-code="crashExitCode" :version-id="crashVersionId" :logs="gameLogs" :is-open-j9="crashIsOpenJ9" :crash-report="crashReportContent" @update:open="showCrashAlert = $event" />
+    <CrashReportModal 
+      :open="showCrashAlert" 
+      :exit-code="crashExitCode" 
+      :version-id="crashVersionId" 
+      :logs="instanceLogs.get(crashVersionId) || gameLogs" 
+      :is-open-j9="crashIsOpenJ9" 
+      :crash-report="crashReportContent" 
+      :crash-history-id="crashHistoryId"
+      @update:open="showCrashAlert = $event" 
+    />
 
     <!-- Prelaunch Mod Dependency Warning -->
     <Teleport to="body">

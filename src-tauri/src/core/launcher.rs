@@ -3456,12 +3456,14 @@ pub async fn launch_instance(
 
     // Spawn tasks to read output
     let app_clone = app.clone();
+    let version_id_log1 = version_id.clone();
     tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
             let _ = app_clone.emit(
                 "game-log",
                 serde_json::json!({
+                    "versionId": version_id_log1,
                     "type": "stdout",
                     "line": line
                 }),
@@ -3470,12 +3472,14 @@ pub async fn launch_instance(
     });
 
     let app_clone2 = app.clone();
+    let version_id_log2 = version_id.clone();
     tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
             let _ = app_clone2.emit(
                 "game-log",
                 serde_json::json!({
+                    "versionId": version_id_log2,
                     "type": "stderr",
                     "line": line
                 }),

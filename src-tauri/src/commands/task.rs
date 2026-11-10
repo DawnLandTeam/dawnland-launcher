@@ -430,7 +430,7 @@ pub async fn task_create(
 ) -> Result<String, AppError> {
     use crate::core::task::TaskType;
 
-    tracing::info!("task_create: type={}, payload={}", task_type, payload);
+    tracing::info!("task_create: type={task_type}");
 
     let task_id = match task_type.as_str() {
         "install-mod" => {

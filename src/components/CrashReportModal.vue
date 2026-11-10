@@ -10,6 +10,7 @@ const props = defineProps<{
   logs: string[];
   isOpenJ9?: boolean;
   crashReport?: string | null;
+  crashHistoryId?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -113,6 +114,7 @@ async function copyLogs() {
             :log-context="crashReport || formattedLogs"
             context-type="crash"
             :version-id="versionId"
+            :crash-history-id="crashHistoryId"
           />
         </div>
       </div>

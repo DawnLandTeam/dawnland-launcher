@@ -21,6 +21,7 @@ const props = defineProps<{
   contextType: "crash" | "task";
   taskId?: string;
   versionId?: string; // Optional context for search-mod and goto instance-mods
+  crashHistoryId?: number | null;
 }>();
 
 const isAnalyzing = ref(false);
@@ -240,6 +241,7 @@ async function saveCrashHistory(aiResult: string) {
   
   await invoke('save_crash_history', {
     input: {
+      id: props.crashHistoryId ?? undefined,
       instanceId: props.versionId,
       crashSummary: props.logContext.substring(0, 2000),
       aiCause,

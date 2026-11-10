@@ -21,6 +21,8 @@ pub struct CrashHistoryEntry {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CrashHistoryInput {
+    #[serde(default)]
+    pub id: Option<i64>,
     pub instance_id: String,
     #[serde(default)]
     pub instance_name: Option<String>,
@@ -69,12 +71,70 @@ impl CrashHistoryDb {
         Ok(Self { conn })
     }
 
-    /// Insert a new crash history entry. Truncates crash_summary to 2000 chars.
+    /// Insert or update a crash history entry. Truncates crash_summary to 2000 chars.
+    /// Also enforces a retention policy of keeping at most 50 entries per instance.
     pub async fn save(&self, input: CrashHistoryInput) -> Result<i64, String> {
         let now = chrono::Local::now().timestamp();
         let summary: String = input.crash_summary.chars().take(2000).collect();
         self.conn
             .call(move |conn| -> rusqlite::Result<i64> {
+                // 1. If an explicit ID is supplied, update that entry with any newly provided fields
+                if let Some(target_id) = input.id {
+                    let mut stmt = conn.prepare(
+                        "UPDATE crash_history
+                         SET instance_name = COALESCE(?1, instance_name),
+                             exit_code = COALESCE(?2, exit_code),
+                             crash_summary = CASE WHEN ?3 != '' THEN ?3 ELSE crash_summary END,
+                             ai_cause = COALESCE(?4, ai_cause),
+                             ai_solution = COALESCE(?5, ai_solution),
+                             ai_actions = COALESCE(?6, ai_actions)
+                         WHERE id = ?7",
+                    )?;
+                    let rows = stmt.execute(rusqlite::params![
+                        &input.instance_name,
+                        input.exit_code,
+                        &summary,
+                        &input.ai_cause,
+                        &input.ai_solution,
+                        &input.ai_actions,
+                        target_id,
+                    ])?;
+                    if rows > 0 {
+                        return Ok(target_id);
+                    }
+                }
+
+                // 2. Deduplication fallback: Check if this same crash for this instance was already
+                // auto-recorded recently (within 120s). If so, update the existing entry with AI details.
+                let recent_cutoff = now - 120;
+                let existing_id: Option<i64> = conn
+                    .query_row(
+                        "SELECT id FROM crash_history
+                         WHERE instance_id = ?1 AND crash_summary = ?2 AND created_at >= ?3
+                         ORDER BY id DESC LIMIT 1",
+                        rusqlite::params![&input.instance_id, &summary, recent_cutoff],
+                        |row| row.get(0),
+                    )
+                    .ok();
+
+                if let Some(existing_id) = existing_id {
+                    conn.execute(
+                        "UPDATE crash_history
+                         SET ai_cause = COALESCE(?1, ai_cause),
+                             ai_solution = COALESCE(?2, ai_solution),
+                             ai_actions = COALESCE(?3, ai_actions)
+                         WHERE id = ?4",
+                        rusqlite::params![
+                            &input.ai_cause,
+                            &input.ai_solution,
+                            &input.ai_actions,
+                            existing_id,
+                        ],
+                    )?;
+                    return Ok(existing_id);
+                }
+
+                // 3. Otherwise, insert a new crash record
                 conn.execute(
                     "INSERT INTO crash_history
                         (instance_id, instance_name, exit_code, crash_summary, ai_cause, ai_solution, ai_actions, created_at)
@@ -90,7 +150,22 @@ impl CrashHistoryDb {
                         now,
                     ),
                 )?;
-                Ok(conn.last_insert_rowid())
+                let row_id = conn.last_insert_rowid();
+
+                // 4. Retention policy: Keep only the newest 50 entries per instance
+                conn.execute(
+                    "DELETE FROM crash_history
+                     WHERE instance_id = ?1
+                       AND id NOT IN (
+                           SELECT id FROM crash_history
+                           WHERE instance_id = ?1
+                           ORDER BY created_at DESC, id DESC
+                           LIMIT 50
+                       )",
+                    rusqlite::params![&input.instance_id],
+                )?;
+
+                Ok(row_id)
             })
             .await
             .map_err(|e| e.to_string())
