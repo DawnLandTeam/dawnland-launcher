@@ -1,5 +1,5 @@
 import { test as base, chromium, type Page, type Browser } from '@playwright/test';
-import { spawn, execSync, type ChildProcess } from 'child_process';
+import { spawn, execFileSync, type ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 
@@ -28,9 +28,16 @@ function cleanupWorkerProcesses(workerIndex: number) {
   if (process.platform === 'win32') {
     try {
       // Terminate any detached WebView2 child processes scoped strictly to this worker sandbox
+      // Use execFileSync with fixed binary to avoid shell evaluation and prevent command injection
       // nosemgrep: javascript.lang.security.detect-child-process
-      execSync(
-        `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*webview2*' -and ($_.CommandLine -like '*worker-${safeWorkerIndex}\\*' -or $_.CommandLine -like '*worker-${safeWorkerIndex}/*') } | Stop-Process -Force -ErrorAction SilentlyContinue"`,
+      execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*webview2*' -and ($_.CommandLine -like '*worker-${safeWorkerIndex}\\*' -or $_.CommandLine -like '*worker-${safeWorkerIndex}/*') } | Stop-Process -Force -ErrorAction SilentlyContinue`,
+        ],
         { stdio: 'ignore' }
       );
     } catch (e) {
@@ -43,8 +50,11 @@ async function forceKillChildProcess(childProcess: ChildProcess, workerIndex?: n
   if (childProcess.pid) {
     if (process.platform === 'win32') {
       try {
-        // nosemgrep: javascript.lang.security.detect-child-process
-        execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' });
+        const safePid = parseInt(String(childProcess.pid), 10);
+        if (Number.isInteger(safePid) && safePid > 0) {
+          // nosemgrep: javascript.lang.security.detect-child-process
+          execFileSync('taskkill', ['/pid', String(safePid), '/T', '/F'], { stdio: 'ignore' });
+        }
       } catch (e) {
         // Ignore if process is already dead
       }
