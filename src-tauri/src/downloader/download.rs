@@ -72,6 +72,68 @@ fn emit_progress_throttled(
     }
 }
 
+async fn await_cancellable<F, T, C>(
+    fut: F,
+    cancel_token: Option<&tokio_util::sync::CancellationToken>,
+    is_cancelled: &C,
+) -> Result<T, String>
+where
+    F: std::future::Future<Output = T>,
+    C: Fn() -> bool,
+{
+    if is_cancelled() {
+        return Err("Cancelled".to_string());
+    }
+    if let Some(token) = cancel_token {
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => Err("Cancelled".to_string()),
+            res = fut => Ok(res),
+        }
+    } else {
+        Ok(fut.await)
+    }
+}
+
+fn is_cancel_error(err: &str) -> bool {
+    err == "Cancelled" || err == "Download cancelled by user"
+}
+
+struct AbortMonitorGuard(Option<tokio::task::JoinHandle<()>>);
+
+impl AbortMonitorGuard {
+    async fn stop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+
+    async fn wait(&mut self) {
+        if let Some(handle) = self.0.take() {
+            let _ = handle.await;
+        }
+    }
+}
+
+impl Drop for AbortMonitorGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
+async fn drain_join_set_on_cancel(join_set: &mut tokio::task::JoinSet<Result<(), String>>) {
+    // Allow active downloads a short window to remove temporary files cleanly before force-aborting.
+    let _ = tokio::time::timeout(tokio::time::Duration::from_millis(200), async {
+        while join_set.join_next().await.is_some() {}
+    })
+    .await;
+    join_set.abort_all();
+    while join_set.join_next().await.is_some() {}
+}
+
 /// Downloads a single file with progress reporting.
 /// Returns Ok on success, Err with message on failure.
 /// If file already exists and matches expected SHA-1 hash, skips download.
@@ -81,6 +143,7 @@ async fn download_file_core<C, G>(
     client: reqwest::Client,
     app_handle: AppHandle,
     is_cancelled: C,
+    cancel_token: Option<tokio_util::sync::CancellationToken>,
     add_global_downloaded: G,
 ) -> Result<(), String>
 where
@@ -223,12 +286,15 @@ where
         Some(r) => r,
         None => return Err("Request body cannot be cloned".to_string()),
     };
-    let response = match req_clone.send().await {
+    let response = match await_cancellable(req_clone.send(), cancel_token.as_ref(), &is_cancelled).await? {
         Ok(resp) => resp,
         Err(e) => {
+            if is_cancelled() {
+                return Err("Cancelled".to_string());
+            }
             tracing::error!(target: "frontend", "Failed to connect to {}: {}", task.url, e);
-            return Err(format!("Request failed: {}", e))
-        },
+            return Err(format!("Request failed: {}", e));
+        }
     };
 
     let mut response = if !response.status().is_success() {
@@ -237,7 +303,13 @@ where
             let mut fallback_success = false;
             let mut fallback_resp = response;
             for fallback_url in fallbacks {
-                if let Ok(resp) = client.get(&fallback_url).send().await {
+                let fallback_res = await_cancellable(
+                    client.get(&fallback_url).send(),
+                    cancel_token.as_ref(),
+                    &is_cancelled,
+                )
+                .await?;
+                if let Ok(resp) = fallback_res {
                     if resp.status().is_success() {
                         fallback_resp = resp;
                         fallback_success = true;
@@ -301,14 +373,14 @@ where
                         }
                     }
                 }
-                let range_resp = match range_req.send().await {
-                    Ok(r) => r,
-                    Err(e) => return Err(format!("Range request failed: {}", e)),
-                };
-                if range_resp.status().is_success() {
+                let range_resp = await_cancellable(range_req.send(), cancel_token.as_ref(), &is_cancelled)
+                    .await?
+                    .map_err(|e| format!("Range request failed: {}", e))?;
+                if range_resp.status() == reqwest::StatusCode::PARTIAL_CONTENT {
                     response = range_resp;
                 } else {
                     initial_downloaded = 0;
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
                     let mut fallback_req = client.get(url.clone());
                     if let Some(host) = url.host_str() {
                         if host == "forgecdn.net" || host.ends_with(".forgecdn.net") {
@@ -317,9 +389,11 @@ where
                             }
                         }
                     }
-                    response = fallback_req.send().await.map_err(|e| e.to_string())?;
+                    response = await_cancellable(fallback_req.send(), cancel_token.as_ref(), &is_cancelled)
+                        .await?
+                        .map_err(|e| e.to_string())?;
                 }
-            } else if initial_downloaded >= total_size {
+            } else {
                 initial_downloaded = 0;
                 let _ = tokio::fs::remove_file(&tmp_path).await;
             }
@@ -383,6 +457,7 @@ where
             let inner_sem = inner_sem.clone();
 
             let is_cancelled_clone = is_cancelled.clone();
+            let cancel_token_chunk = cancel_token.clone();
 
             
             let h = tokio::spawn(async move {
@@ -415,7 +490,9 @@ where
                         }
                     }
                 }
-                let mut resp = req.send().await.map_err(|e| e.to_string())?;
+                let mut resp = await_cancellable(req.send(), cancel_token_chunk.as_ref(), &is_cancelled_clone)
+                    .await?
+                    .map_err(|e| e.to_string())?;
                 
                 // Safety check: if server ignores Range and returns 200 OK with the full file,
                 // we should abort to prevent downloading the whole file N times.
@@ -437,12 +514,30 @@ where
                     .map_err(|e| e.to_string())?;
 
                 let mut stream = resp.bytes_stream();
-                while let Some(chunk_result) = stream.next().await {
-                    if is_cancelled_clone() {
-                        drop(file);
-                        return Err("Cancelled".to_string());
-                    }
-                    let chunk = chunk_result.map_err(|e| e.to_string())?;
+                loop {
+                    let next_chunk = match await_cancellable(
+                        stream.next(),
+                        cancel_token_chunk.as_ref(),
+                        &is_cancelled_clone,
+                    )
+                    .await
+                    {
+                        Ok(item) => item,
+                        Err(cancel_err) => {
+                            drop(file);
+                            return Err(cancel_err);
+                        }
+                    };
+                    let Some(chunk_result) = next_chunk else {
+                        break;
+                    };
+                    let chunk = chunk_result.map_err(|e| {
+                        if is_cancelled_clone() {
+                            "Cancelled".to_string()
+                        } else {
+                            e.to_string()
+                        }
+                    })?;
                     file.write_all(&chunk).await.map_err(|e| e.to_string())?;
                     
                     let chunk_len = chunk.len() as u64;
@@ -492,6 +587,9 @@ where
             }
             for part in &parts {
                 let _ = tokio::fs::remove_file(part).await;
+            }
+            if is_cancelled() {
+                return Err("Cancelled".to_string());
             }
             return Err(err);
         }
@@ -582,12 +680,18 @@ where
     let mut last_emit_time = std::time::Instant::now();
     let mut speed_tracker = SpeedTracker::new(initial_downloaded);
 
-    while let Some(chunk_result) = stream.next().await {
-        if is_cancelled() {
-            drop(file);
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err("Cancelled".to_string());
-        }
+    loop {
+        let next_chunk = match await_cancellable(stream.next(), cancel_token.as_ref(), &is_cancelled).await {
+            Ok(item) => item,
+            Err(cancel_err) => {
+                drop(file);
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                return Err(cancel_err);
+            }
+        };
+        let Some(chunk_result) = next_chunk else {
+            break;
+        };
 
         match chunk_result {
             Ok(chunk) => {
@@ -608,6 +712,9 @@ where
             Err(e) => {
                 drop(file);
                 let _ = tokio::fs::remove_file(&tmp_path).await;
+                if is_cancelled() {
+                    return Err("Cancelled".to_string());
+                }
                 return Err(format!("Stream error: {}", e));
             }
         }
@@ -675,12 +782,21 @@ pub async fn download_file_task(
     global_downloaded: &Arc<AtomicU64>,
 ) -> Result<(), String> {
     let cancel_token = ctx.cancel_token.clone();
+    let cancel_token_for_core = cancel_token.clone();
     let is_cancelled = move || cancel_token.is_cancelled();
     let global_dl = global_downloaded.clone();
     let add_global = move |bytes: u64| {
         global_dl.fetch_add(bytes, Ordering::Relaxed);
     };
-    download_file_core(task, client.clone(), ctx.app_handle.clone(), is_cancelled, add_global).await
+    download_file_core(
+        task,
+        client.clone(),
+        ctx.app_handle.clone(),
+        is_cancelled,
+        Some(cancel_token_for_core),
+        add_global,
+    )
+    .await
 }
 
 async fn download_file(
@@ -692,7 +808,7 @@ async fn download_file(
     let cancel_flag_clone = cancel_flag.clone();
     let is_cancelled = move || cancel_flag_clone.load(Ordering::Relaxed);
     let add_global = |_| {};
-    download_file_core(task, client.clone(), app.clone(), is_cancelled, add_global).await
+    download_file_core(task, client.clone(), app.clone(), is_cancelled, None, add_global).await
 }
 
 pub async fn run_batch_download_task(
@@ -725,9 +841,13 @@ pub async fn run_batch_download_task(
     let monitor_handle = tokio::spawn(async move {
         let mut tracker = SpeedTracker::new(0);
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            tokio::select! {
+                biased;
+                _ = ctx_monitor.cancel_token.cancelled() => return,
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(500)) => {}
+            }
             if ctx_monitor.is_cancelled() {
-                break;
+                return;
             }
             let current_bytes = global_dl_clone.load(Ordering::Relaxed);
             let speed = tracker.update(current_bytes);
@@ -739,140 +859,172 @@ pub async fn run_batch_download_task(
                 break;
             }
         }
-        // Reset speed to 0 when done
-        ctx_monitor.update_download_metrics(0, 0).await;
+        if !ctx_monitor.is_cancelled() {
+            // Reset speed to 0 when done
+            ctx_monitor.update_download_metrics(0, 0).await;
+        }
     });
+    let mut monitor_guard = AbortMonitorGuard(Some(monitor_handle));
 
-    // Spawn download tasks with error isolation.
-    let handles: Vec<_> = tasks
-        .into_iter()
-        .map(|task| {
-            let task_id = task.id.clone();
-            let dest_path = task.dest_path.clone(); // Clone for error logging
-            let client = client.clone();
-            let ctx = ctx.clone();
-            let semaphore = semaphore.clone();
-            let completed_files = completed_files.clone();
-            let global_downloaded_clone = global_downloaded.clone();
+    // Spawn download tasks in a JoinSet so cancellation aborts/drains all tasks cleanly.
+    let mut join_set: tokio::task::JoinSet<Result<(), String>> = tokio::task::JoinSet::new();
+    for task in tasks {
+        let task_id = task.id.clone();
+        let dest_path = task.dest_path.clone();
+        let client = client.clone();
+        let ctx = ctx.clone();
+        let semaphore = semaphore.clone();
+        let completed_files = completed_files.clone();
+        let global_downloaded_clone = global_downloaded.clone();
 
-            tokio::spawn(async move {
-                if ctx.is_cancelled() {
-                    return Err("Cancelled".to_string());
-                }
-
-                // Acquire semaphore slot for concurrency control.
-                let _permit = semaphore.acquire().await.expect("Semaphore closed");
-
-                if ctx.is_cancelled() {
-                    return Err("Cancelled".to_string());
-                }
-
-                tracing::debug!("Downloading: {}", dest_path);
-
-                let mut attempts = 0;
-                let max_attempts = 3;
-                let mut last_err = String::new();
-
-                while attempts < max_attempts {
-                    if ctx.is_cancelled() {
-                        return Err("Cancelled".to_string());
-                    }
-
-                    // Execute download and handle errors gracefully.
-                    match download_file_task(task.clone(), client.clone(), &ctx, &global_downloaded_clone)
-                        .await
-                    {
-                        Ok(()) => {
-                            // Emit completion.
-                            tracing::debug!("Emitting completed for task: {}", task_id);
-                            let mut progress = DownloadProgress::completed(task_id);
-                            progress.file_name = std::path::Path::new(&dest_path)
-                                .file_name()
-                                .map(|f| f.to_string_lossy().to_string());
-                            let _ = ctx.app_handle.emit("download-progress", &progress);
-
-                            // Update overall task progress
-                            let count = completed_files.fetch_add(1, Ordering::SeqCst) + 1;
-                            let file_str = std::path::Path::new(&dest_path)
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy();
-                            ctx.update_progress(
-                                count as u64,
-                                total_tasks as u64,
-                                &format!("Downloaded {}", file_str),
-                            )
-                            .await;
-                            return Ok(());
-                        }
-                        Err(err) => {
-                            if ctx.is_cancelled() {
-                                return Err("Download cancelled by user".to_string());
-                            }
-                            last_err = err;
-                            attempts += 1;
-                            if attempts < max_attempts {
-                                tracing::warn!(
-                                    "Download failed for {}, retrying {}/{}: {}",
-                                    dest_path,
-                                    attempts,
-                                    max_attempts,
-                                    last_err
-                                );
-                                tokio::select! {
-                                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {},
-                                    _ = ctx.cancel_token.cancelled() => {
-                                        return Err("Download cancelled by user".to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Log error but don't propagate - single failure shouldn't crash queue.
-                tracing::error!(
-                    "Download failed after {} attempts: {} - {}",
-                    max_attempts,
-                    dest_path,
-                    last_err
-                );
-
-                // Emit error progress so frontend knows.
-                let progress = DownloadProgress::failed(task_id, last_err.clone());
-                let _ = ctx.app_handle.emit("download-progress", &progress);
-
-                Err(last_err)
-            })
-        })
-        .collect();
-
-    // Wait for all downloads to complete.
-    let mut error_count = 0;
-    for handle in handles {
-        match handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                if e == "Cancelled" {
-                    monitor_handle.abort();
-                    return Err("Cancelled".to_string());
-                }
-                error_count += 1;
-                tracing::error!("Download task failed: {}", e);
+        join_set.spawn(async move {
+            if ctx.is_cancelled() {
+                return Err("Cancelled".to_string());
             }
-            Err(e) => {
-                error_count += 1;
-                tracing::error!("Download task panicked: {}", e);
+
+            // Acquire semaphore slot for concurrency control without blocking on cancellation.
+            let _permit = tokio::select! {
+                biased;
+                _ = ctx.cancel_token.cancelled() => return Err("Cancelled".to_string()),
+                permit = semaphore.acquire() => permit.expect("Semaphore closed"),
+            };
+
+            if ctx.is_cancelled() {
+                return Err("Cancelled".to_string());
+            }
+
+            tracing::debug!("Downloading: {}", dest_path);
+
+            let mut attempts = 0;
+            let max_attempts = 3;
+            let mut last_err = String::new();
+
+            while attempts < max_attempts {
+                if ctx.is_cancelled() {
+                    return Err("Cancelled".to_string());
+                }
+
+                // Execute download and handle errors gracefully.
+                match download_file_task(task.clone(), client.clone(), &ctx, &global_downloaded_clone)
+                    .await
+                {
+                    Ok(()) => {
+                        if ctx.is_cancelled() {
+                            return Err("Cancelled".to_string());
+                        }
+                        // Emit completion.
+                        tracing::debug!("Emitting completed for task: {}", task_id);
+                        let mut progress = DownloadProgress::completed(task_id);
+                        progress.file_name = std::path::Path::new(&dest_path)
+                            .file_name()
+                            .map(|f| f.to_string_lossy().to_string());
+                        let _ = ctx.app_handle.emit("download-progress", &progress);
+
+                        // Update overall task progress
+                        let count = completed_files.fetch_add(1, Ordering::SeqCst) + 1;
+                        let file_str = std::path::Path::new(&dest_path)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy();
+                        ctx.update_progress(
+                            count as u64,
+                            total_tasks as u64,
+                            &format!("Downloaded {}", file_str),
+                        )
+                        .await;
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        if ctx.is_cancelled() || is_cancel_error(&err) {
+                            return Err("Cancelled".to_string());
+                        }
+                        last_err = err;
+                        attempts += 1;
+                        if attempts < max_attempts {
+                            tracing::warn!(
+                                "Download failed for {}, retrying {}/{}: {}",
+                                dest_path,
+                                attempts,
+                                max_attempts,
+                                last_err
+                            );
+                            tokio::select! {
+                                biased;
+                                _ = ctx.cancel_token.cancelled() => {
+                                    return Err("Cancelled".to_string());
+                                }
+                                _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            if ctx.is_cancelled() {
+                return Err("Cancelled".to_string());
+            }
+
+            // Log error but don't propagate - single failure shouldn't crash queue.
+            tracing::error!(
+                "Download failed after {} attempts: {} - {}",
+                max_attempts,
+                dest_path,
+                last_err
+            );
+
+            // Emit error progress so frontend knows.
+            let progress = DownloadProgress::failed(task_id, last_err.clone());
+            let _ = ctx.app_handle.emit("download-progress", &progress);
+
+            Err(last_err)
+        });
+    }
+
+    // Wait for all downloads to complete or abort immediately on cancellation.
+    let mut error_count = 0;
+    loop {
+        tokio::select! {
+            biased;
+            _ = ctx.cancel_token.cancelled() => {
+                monitor_guard.stop().await;
+                drain_join_set_on_cancel(&mut join_set).await;
+                return Err("Cancelled".to_string());
+            }
+            next = join_set.join_next() => {
+                match next {
+                    Some(Ok(Ok(()))) => {}
+                    Some(Ok(Err(e))) => {
+                        if ctx.is_cancelled() || is_cancel_error(&e) {
+                            monitor_guard.stop().await;
+                            drain_join_set_on_cancel(&mut join_set).await;
+                            return Err("Cancelled".to_string());
+                        }
+                        error_count += 1;
+                        tracing::error!("Download task failed: {}", e);
+                    }
+                    Some(Err(e)) => {
+                        if !e.is_cancelled() {
+                            error_count += 1;
+                            tracing::error!("Download task panicked: {}", e);
+                        }
+                    }
+                    None => break,
+                }
             }
         }
     }
 
+    if ctx.is_cancelled() {
+        monitor_guard.stop().await;
+        return Err("Cancelled".to_string());
+    }
+
     if error_count > 0 {
-        monitor_handle.abort();
+        monitor_guard.stop().await;
         tracing::warn!("Batch download finished with {} errors", error_count);
         return Err(format!("{} downloads failed", error_count));
     } else {
-        let _ = monitor_handle.await;
+        monitor_guard.wait().await;
         tracing::info!("Batch download completed successfully");
     }
 
@@ -1056,6 +1208,55 @@ mod tests {
         let actual_hash = compute_sha1_sync(temp_file.path()).unwrap();
 
         assert_eq!(actual_hash, expected_hash);
+    }
+
+    #[test]
+    fn test_is_cancel_error_recognizes_cancel_messages() {
+        assert!(is_cancel_error("Cancelled"));
+        assert!(is_cancel_error("Download cancelled by user"));
+        assert!(!is_cancel_error("HTTP error: 500"));
+        assert!(!is_cancel_error("83 downloads failed"));
+    }
+
+    #[tokio::test]
+    async fn test_await_cancellable_aborts_pending_future() {
+        let token = tokio_util::sync::CancellationToken::new();
+        let token_trigger = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            token_trigger.cancel();
+        });
+
+        let is_cancelled = || token.is_cancelled();
+        let res = tokio::time::timeout(
+            Duration::from_secs(1),
+            await_cancellable(
+                std::future::pending::<()>(),
+                Some(&token),
+                &is_cancelled,
+            ),
+        )
+        .await
+        .expect("await_cancellable should return promptly after cancellation");
+
+        assert_eq!(res, Err("Cancelled".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_drain_join_set_on_cancel_stops_pending_tasks() {
+        let mut join_set: tokio::task::JoinSet<Result<(), String>> = tokio::task::JoinSet::new();
+        for _ in 0..5 {
+            join_set.spawn(async {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok(())
+            });
+        }
+
+        tokio::time::timeout(Duration::from_secs(2), drain_join_set_on_cancel(&mut join_set))
+            .await
+            .expect("drain_join_set_on_cancel should abort and drain promptly");
+
+        assert!(join_set.is_empty());
     }
 }
 

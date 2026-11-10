@@ -3600,13 +3600,15 @@ mod tests {
         running_mod.status = crate::core::task::TaskStatus::Running;
 
         let (_, done_rx) = tokio::sync::watch::channel(false);
+        let running_mod_type = running_mod.task_type.clone();
         let active_tasks_map = HashMap::from([(
             "running_mod".to_string(),
             Arc::new(crate::core::task::manager::TaskWorkerHandle {
                 cancel_token: Arc::new(CancellationToken::new()),
                 done_rx,
                 instance_id: Some(inst_id.to_string()),
-                task_type: running_mod.task_type.clone(),
+                task_type: running_mod_type,
+                state: Arc::new(RwLock::new(running_mod.clone())),
             }),
         )]);
         let active_tasks_lock = RwLock::new(active_tasks_map);

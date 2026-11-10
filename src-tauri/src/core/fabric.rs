@@ -166,11 +166,18 @@ impl ExecutableTask for InstallFabricTask {
             .await;
 
         if let Err(ref e) = res {
-            tracing::warn!(
-                "Fabric installation failed for '{}': {:?}. Rolling back...",
-                custom_instance_name,
-                e
-            );
+            if ctx.is_cancelled() {
+                tracing::info!(
+                    "Fabric installation cancelled for '{}'. Rolling back...",
+                    custom_instance_name
+                );
+            } else {
+                tracing::warn!(
+                    "Fabric installation failed for '{}': {:?}. Rolling back...",
+                    custom_instance_name,
+                    e
+                );
+            }
             if is_existing {
                 if json_bak.exists() {
                     let _ = crate::core::fs_utils::copy_file_atomic(
@@ -275,6 +282,11 @@ impl InstallFabricTask {
             ctx.manager
                 .wait_for_instance(mc_version, Some(&ctx.id), &ctx.cancel_token)
                 .await;
+            if ctx.is_cancelled() {
+                return Err(TaskError::ExecutionError(
+                    "Installation cancelled by user".to_string(),
+                ));
+            }
         }
 
         if is_existing {
@@ -342,20 +354,24 @@ impl InstallFabricTask {
                 &settings.download_source,
             );
 
-            let manifest: serde_json::Value = client
-                .get(&manifest_url)
-                .timeout(std::time::Duration::from_secs(15))
-                .send()
-                .await
+            let manifest_resp = ctx
+                .cancellable(
+                    client
+                        .get(&manifest_url)
+                        .timeout(std::time::Duration::from_secs(15))
+                        .send(),
+                )
+                .await?
                 .map_err(|e| {
                     TaskError::ExecutionError(format!("Failed to download version JSON: {}", e))
                 })?
                 .error_for_status()
                 .map_err(|e| {
                     TaskError::ExecutionError(format!("HTTP error downloading version JSON: {}", e))
-                })?
-                .json()
-                .await
+                })?;
+            let manifest: serde_json::Value = ctx
+                .cancellable(manifest_resp.json())
+                .await?
                 .map_err(|e| {
                     TaskError::ExecutionError(format!("Failed to parse version manifest: {}", e))
                 })?;
@@ -434,19 +450,19 @@ impl InstallFabricTask {
 
         tracing::info!("Fetching Fabric profile from: {}", fabric_url);
 
-        let profile_json = client
-            .get(&fabric_url)
-            .send()
-            .await
+        let profile_resp = ctx
+            .cancellable(client.get(&fabric_url).send())
+            .await?
             .map_err(|e| {
                 TaskError::ExecutionError(format!("Failed to download Fabric profile: {}", e))
             })?
             .error_for_status()
             .map_err(|e| {
                 TaskError::ExecutionError(format!("HTTP error downloading Fabric profile: {}", e))
-            })?
-            .text()
-            .await
+            })?;
+        let profile_json = ctx
+            .cancellable(profile_resp.text())
+            .await?
             .map_err(|e| {
                 TaskError::ExecutionError(format!("Failed to read Fabric profile: {}", e))
             })?;
@@ -704,14 +720,15 @@ async fn auto_install_fabric_api(
         .await;
 
     // 1. Search Modrinth
-    let mod_file = match crate::core::modrinth::get_modrinth_mod_files(
-        "fabric-api".to_string(),
-        mc_version.to_string(),
-        vec!["fabric".to_string()],
-    )
-    .await
+    let mod_file = match ctx_api
+        .cancellable(crate::core::modrinth::get_modrinth_mod_files(
+            "fabric-api".to_string(),
+            mc_version.to_string(),
+            vec!["fabric".to_string()],
+        ))
+        .await
     {
-        Ok(files) if !files.is_empty() => {
+        Ok(Ok(files)) if !files.is_empty() => {
             let file = files
                 .iter()
                 .find(|f| f.release_type == "release")
@@ -723,21 +740,27 @@ async fn auto_install_fabric_api(
                 "P7dR8mSH".to_string(),
             ))
         }
+        Err(_) => return,
         _ => None,
     };
+
+    if ctx_api.is_cancelled() {
+        return;
+    }
 
     // 2. Search CurseForge as fallback
     let mod_file = if let Some(m) = mod_file {
         Some(m)
     } else {
-        match crate::core::curseforge::get_cf_mod_files(
-            "306612".to_string(),
-            mc_version.to_string(),
-            vec!["fabric".to_string()],
-        )
-        .await
+        match ctx_api
+            .cancellable(crate::core::curseforge::get_cf_mod_files(
+                "306612".to_string(),
+                mc_version.to_string(),
+                vec!["fabric".to_string()],
+            ))
+            .await
         {
-            Ok(files) if !files.is_empty() => {
+            Ok(Ok(files)) if !files.is_empty() => {
                 let file = files
                     .iter()
                     .find(|f| f.release_type == "release")
@@ -749,6 +772,7 @@ async fn auto_install_fabric_api(
                     "306612".to_string(),
                 ))
             }
+            Err(_) => return,
             _ => None,
         }
     };
