@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, shallowRef, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
 import PrivacyPolicyModal from "./components/PrivacyPolicyModal.vue";
-import { setUpdateAvailable, parseUpdateData, type CustomUpdate } from "./composables/useUpdate";
+import { setUpdateAvailable, parseUpdateData, isUpdateModalOpen, globalUpdateInfo, openUpdateModal } from "./composables/useUpdate";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
@@ -25,8 +25,8 @@ import { getUpdateChannelQuery } from "./utils/updateChannel";
 import { fetchApi } from "./utils/api";
 import { initGlobalLaunchState } from "./composables/useLaunchState";
 
-const isUpdateModalOpen = ref(false);
-const updateInfo = shallowRef<CustomUpdate | null>(null);
+// isUpdateModalOpen managed globally in useUpdate
+// updateInfo managed globally in useUpdate
 const showPrivacyModal = ref(false);
 const hasPendingUpdate = ref(false);
 const showDeepLinkModal = ref(false);
@@ -120,12 +120,11 @@ onMounted(async () => {
         const update = parseUpdateData(data, targetOS);
         if (update && update.version !== currentVersion) {
           console.log(`Update available: ${update.version}`);
-          updateInfo.value = update;
+          setUpdateAvailable(update);
           if (showPrivacyModal.value) {
             hasPendingUpdate.value = true;
           } else {
-            isUpdateModalOpen.value = true;
-            setUpdateAvailable(update);
+            openUpdateModal(update);
           }
         }
       }
@@ -140,9 +139,8 @@ onMounted(async () => {
 });
 
 function handlePrivacyResolved() {
-  if (hasPendingUpdate.value && updateInfo.value) {
-    isUpdateModalOpen.value = true;
-    setUpdateAvailable(updateInfo.value);
+  if (hasPendingUpdate.value && globalUpdateInfo.value) {
+    openUpdateModal();
   }
 }
 
@@ -258,7 +256,7 @@ onUnmounted(() => {
 <template>
   <MainLayout />
   <PrivacyPolicyModal v-model:open="showPrivacyModal" @resolved="handlePrivacyResolved" />
-  <UpdaterModal v-model:open="isUpdateModalOpen" :update-info="updateInfo" />
+  <UpdaterModal v-model:open="isUpdateModalOpen" :update-info="globalUpdateInfo" />
   <TaskCenter />
   <TaskDetailModal />
   <NotificationCenter />

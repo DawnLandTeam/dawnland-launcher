@@ -380,29 +380,48 @@ pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
     let client = crate::core::utils::get_http_client().clone();
 
     let settings = crate::core::settings::get_launcher_settings_sync();
+    let official_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
     let url = crate::core::settings::replace_download_url(
-        "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json",
+        official_url,
         &settings.download_source,
     );
 
-    let response = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch version manifest: {e}"))?;
+    async fn fetch_and_parse_manifest(
+        client: &reqwest::Client,
+        target_url: &str,
+    ) -> Result<VersionManifest, String> {
+        let response = client
+            .get(target_url)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch version manifest from {target_url}: {e}"))?;
 
-    if !response.status().is_success() {
-        return Err(format!(
-            "Version manifest request failed: {}",
-            response.status()
-        ));
+        if !response.status().is_success() {
+            return Err(format!(
+                "Version manifest request failed with status: {}",
+                response.status()
+            ));
+        }
+
+        response
+            .json::<VersionManifest>()
+            .await
+            .map_err(|e| format!("Failed to parse version manifest from {target_url}: {e}"))
     }
 
-    let manifest: VersionManifest = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse version manifest: {e}"))?;
+    let manifest = match fetch_and_parse_manifest(&client, &url).await {
+        Ok(m) => m,
+        Err(e) if url != official_url => {
+            tracing::warn!(
+                "Failed to fetch or parse manifest from configured source ({url}): {e}. Retrying official Mojang source..."
+            );
+            fetch_and_parse_manifest(&client, official_url)
+                .await
+                .map_err(|e2| format!("Failed to fetch manifest from official source after mirror failure: {e2}"))?
+        }
+        Err(e) => return Err(e),
+    };
 
     let versions: Vec<VanillaVersion> = manifest
         .versions

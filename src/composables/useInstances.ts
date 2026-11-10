@@ -7,12 +7,24 @@ import type { InstanceItem } from '../types';
 const instances = ref<InstanceItem[]>([]);
 const isLoaded = ref(false);
 let activeScanPromise: Promise<InstanceItem[]> | null = null;
+let queuedScanPromise: Promise<InstanceItem[]> | null = null;
 let lastScanTime = 0;
 const MIN_SCAN_INTERVAL_MS = 150;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function executeScan(force = false): Promise<InstanceItem[]> {
   if (activeScanPromise) {
+    if (force) {
+      if (!queuedScanPromise) {
+        queuedScanPromise = activeScanPromise
+          .catch(() => {})
+          .then(() => {
+            queuedScanPromise = null;
+            return executeScan(true);
+          });
+      }
+      return queuedScanPromise;
+    }
     return activeScanPromise;
   }
   const now = Date.now();
@@ -77,6 +89,7 @@ export function _resetStateForTesting() {
   instances.value = [];
   isLoaded.value = false;
   activeScanPromise = null;
+  queuedScanPromise = null;
   lastScanTime = 0;
   if (debounceTimer) {
     clearTimeout(debounceTimer);

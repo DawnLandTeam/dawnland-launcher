@@ -327,7 +327,7 @@ const initializeView = async () => {
   try {
     while (true) {
       const activeToken = currentInitToken;
-      if (props.isModalUpdate && route.query.tab !== 'update_modpack') {
+      if (props.isModalUpdate && route.query.tab && route.query.tab !== 'update_modpack') {
         showVersionsModal.value = false;
         return;
       }
@@ -627,24 +627,21 @@ onUnmounted(() => {
 });
 
 let isComponentActive = true;
-let isActivating = false;
 
 onActivated(() => {
   isComponentActive = true;
-  if (props.isModalUpdate && route.query.tab !== 'update_modpack') {
+  if (props.isModalUpdate && route.query.tab && route.query.tab !== 'update_modpack') {
     showVersionsModal.value = false;
     return;
   }
-  isActivating = true;
   nextTick(() => {
-    isActivating = false;
     if (!isComponentActive) return;
     initializeView();
   });
 });
 
 watch(() => route.query, (newQuery) => {
-  if (!isComponentActive || isActivating) return;
+  if (!isComponentActive) return;
   if (route.path === '/downloads') {
     if (!newQuery.tab || newQuery.tab === 'modpack') {
       initializeView();
@@ -652,7 +649,7 @@ watch(() => route.query, (newQuery) => {
   } else if (route.path.startsWith('/instances/')) {
     if (newQuery.tab === 'update_modpack') {
       initializeView();
-    } else {
+    } else if (newQuery.tab) {
       showVersionsModal.value = false;
     }
   }
@@ -660,7 +657,6 @@ watch(() => route.query, (newQuery) => {
 
 onDeactivated(() => {
   isComponentActive = false;
-  isActivating = false;
   if (props.isModalUpdate) {
     showVersionsModal.value = false;
   }

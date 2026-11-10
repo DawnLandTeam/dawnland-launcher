@@ -55,4 +55,32 @@ describe('useInstances composable', () => {
     expect(invoke).toHaveBeenCalledTimes(2);
     expect(result2).toEqual([{ id: '3', name: 'Forced', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
   });
+
+  it('queues a fresh scan if force fetch is called while a scan is in-flight', async () => {
+    let resolveFirstScan: (val: any) => void = () => {};
+    const firstScanPromise = new Promise((resolve) => {
+      resolveFirstScan = resolve;
+    });
+
+    vi.mocked(invoke)
+      .mockImplementationOnce(() => firstScanPromise as any)
+      .mockResolvedValueOnce([{ id: '2', name: 'Second Scan', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
+
+    const { fetchInstances, instances } = useInstances();
+
+    // Start first scan in-flight
+    const p1 = fetchInstances(true);
+    // While first scan is in-flight, a force scan arrives (e.g. task completed)
+    const p2 = fetchInstances(true);
+
+    // Resolve first scan with old data
+    resolveFirstScan([{ id: '1', name: 'First Scan', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
+
+    await p1;
+    const res2 = await p2;
+
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(res2).toEqual([{ id: '2', name: 'Second Scan', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
+    expect(instances.value).toEqual([{ id: '2', name: 'Second Scan', mcVersion: '1.20.1', loaderType: 'Vanilla', status: 'ready' as const }]);
+  });
 });
