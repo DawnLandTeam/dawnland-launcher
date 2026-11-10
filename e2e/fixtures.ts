@@ -30,7 +30,7 @@ function cleanupWorkerProcesses(workerIndex: number) {
       // Terminate any detached WebView2 child processes scoped strictly to this worker sandbox
       // nosemgrep: javascript.lang.security.detect-child-process
       execSync(
-        `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*webview2*' -and $_.CommandLine -like '*worker-${safeWorkerIndex}*' } | Stop-Process -Force -ErrorAction SilentlyContinue"`,
+        `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*webview2*' -and ($_.CommandLine -like '*worker-${safeWorkerIndex}\\*' -or $_.CommandLine -like '*worker-${safeWorkerIndex}/*') } | Stop-Process -Force -ErrorAction SilentlyContinue"`,
         { stdio: 'ignore' }
       );
     } catch (e) {

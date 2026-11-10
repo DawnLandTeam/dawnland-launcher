@@ -77,13 +77,12 @@ test.describe.serial('Instance Launch, Prelaunch Warnings & Crash Capture (E2E)'
     const accountsNav = page.locator('a[href="/accounts"]').first();
     await accountsNav.click({ timeout: 10000 });
     const addAccountBtn = page.locator('button:has-text("添加账号"), button:has-text("Add Account")').first();
-    if (await addAccountBtn.isVisible()) {
-      await addAccountBtn.click();
-      await page.locator('button:has-text("离线账号"), button:has-text("Offline")').first().click();
-      await page.locator('input[placeholder*="输入用户名"], input[placeholder*="Enter username"]').fill('LaunchTester');
-      await page.locator('button:has-text("添加"), button:has-text("Add")').last().click();
-      await expect(page.locator('text=LaunchTester').first()).toBeVisible({ timeout: 5000 });
-    }
+    await expect(addAccountBtn).toBeVisible({ timeout: 10000 });
+    await addAccountBtn.click();
+    await page.locator('button:has-text("离线账号"), button:has-text("Offline")').first().click();
+    await page.locator('input[placeholder*="输入用户名"], input[placeholder*="Enter username"]').fill('LaunchTester');
+    await page.locator('button:has-text("添加"), button:has-text("Add")').last().click();
+    await expect(page.locator('text=LaunchTester').first()).toBeVisible({ timeout: 5000 });
 
     // Navigate to instances view to trigger backend scan and registration
     const instancesNav = page.locator('a[href="/instances"]').first();
