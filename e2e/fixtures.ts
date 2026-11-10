@@ -20,26 +20,77 @@ export function resolveSafePath(baseDir: string, ...segments: string[]): string 
   return resolvedPath;
 }
 
-async function forceKillChildProcess(childProcess: ChildProcess) {
-  if (!childProcess.pid) return;
+function cleanupWorkerProcesses(workerIndex: number) {
+  const safeWorkerIndex = parseInt(String(workerIndex), 10);
+  if (isNaN(safeWorkerIndex) || safeWorkerIndex < 0 || safeWorkerIndex > 1000) {
+    return;
+  }
   if (process.platform === 'win32') {
     try {
+      // Terminate any detached WebView2 child processes scoped strictly to this worker sandbox
       // nosemgrep: javascript.lang.security.detect-child-process
-      execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' });
+      execSync(
+        `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*webview2*' -and $_.CommandLine -like '*worker-${safeWorkerIndex}*' } | Stop-Process -Force -ErrorAction SilentlyContinue"`,
+        { stdio: 'ignore' }
+      );
     } catch (e) {
-      // Ignore if process is already dead
+      // Ignore
     }
-  } else {
-    // Attempt graceful shutdown first
-    childProcess.kill('SIGTERM');
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    try {
-      // Sending signal 0 checks if process still exists
-      process.kill(childProcess.pid, 0);
-      childProcess.kill('SIGKILL');
-    } catch (e) {
-      // Process already dead
+  }
+}
+
+async function forceKillChildProcess(childProcess: ChildProcess, workerIndex?: number) {
+  if (childProcess.pid) {
+    if (process.platform === 'win32') {
+      try {
+        // nosemgrep: javascript.lang.security.detect-child-process
+        execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' });
+      } catch (e) {
+        // Ignore if process is already dead
+      }
+    } else {
+      // Attempt graceful shutdown first
+      childProcess.kill('SIGTERM');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      try {
+        // Sending signal 0 checks if process still exists
+        process.kill(childProcess.pid, 0);
+        childProcess.kill('SIGKILL');
+      } catch (e) {
+        // Process already dead
+      }
     }
+  }
+  if (workerIndex !== undefined) {
+    cleanupWorkerProcesses(workerIndex);
+  }
+}
+
+// Export helper function to wait for and dismiss startup updater modal
+export async function waitAndDismissUpdateModal(page: Page, timeoutMs = 7000) {
+  // 1. Check and dismiss Privacy Policy if shown
+  const privacyBtn = page.locator(
+    '.z-\\[100\\] button:has-text("拒绝并继续"), .z-\\[100\\] button:has-text("Agree"), .z-\\[100\\] button:has-text("同意")'
+  ).first();
+  try {
+    if (await privacyBtn.isVisible({ timeout: 1500 })) {
+      await privacyBtn.click({ force: true });
+      await privacyBtn.waitFor({ state: 'hidden', timeout: 3000 });
+      await page.waitForTimeout(300);
+    }
+  } catch {}
+
+  // 2. Explicitly wait for the startup update modal to pop up and close it before continuing
+  const updaterModalBtn = page.locator(
+    '.z-\\[100\\] button:has-text("稍后再说"), .z-\\[100\\] button:has-text("Later"), .z-\\[100\\] button:has-text("Remind Me Later")'
+  ).first();
+  try {
+    await updaterModalBtn.waitFor({ state: 'visible', timeout: timeoutMs });
+    await updaterModalBtn.click({ force: true });
+    await updaterModalBtn.waitFor({ state: 'hidden', timeout: 5000 });
+    await page.waitForTimeout(500);
+  } catch {
+    // If update modal did not pop up within timeout (e.g. offline / no update available), proceed safely
   }
 }
 
@@ -62,7 +113,14 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       const e2eTempDir = resolveSafePath(process.cwd(), 'e2e', '.temp', `worker-${safeWorkerIndex}`);
       // Clean up previous runs if any
       if (fs.existsSync(e2eTempDir)) {
-        fs.rmSync(e2eTempDir, { recursive: true, force: true });
+        try {
+          fs.rmSync(e2eTempDir, { recursive: true, force: true });
+        } catch (e) {
+          // If locked, run worker-specific process cleanup directly then retry
+          cleanupWorkerProcesses(safeWorkerIndex);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          fs.rmSync(e2eTempDir, { recursive: true, force: true });
+        }
       }
       fs.mkdirSync(e2eTempDir, { recursive: true });
 
@@ -75,10 +133,18 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       const sandboxExePath = resolveSafePath(e2eTempDir, 'DLML.exe');
       fs.copyFileSync(originalExePath, sandboxExePath);
 
-      // 3. Set environment variable to open WebView2 debugging port
+      // Also copy dawnland_launcher_lib.dll if it exists beside DLML.exe
+      const dllPath = resolveSafePath(process.cwd(), 'src-tauri', 'target', 'release', 'dawnland_launcher_lib.dll');
+      if (fs.existsSync(dllPath)) {
+        fs.copyFileSync(dllPath, resolveSafePath(e2eTempDir, 'dawnland_launcher_lib.dll'));
+      }
+
+      // 3. Set environment variable to open isolated WebView2 debugging port and data directory
+      const ebWebViewDir = resolveSafePath(e2eTempDir, 'EBWebView');
       const env = { 
         ...process.env,
-        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` 
+        WEBVIEW2_USER_DATA_FOLDER: ebWebViewDir,
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --user-data-dir="${ebWebViewDir}"` 
       };
       
       // 4. Start the copied executable with sandbox as CWD
@@ -114,7 +180,7 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       for (let i = 0; i < maxRetries; i++) {
         try {
           // Force IPv4 loopback to avoid ECONNREFUSED ::1 issues on Node 17+
-          browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+          browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 1500 });
           break;
         } catch (e) {
           lastError = e;
@@ -126,7 +192,7 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       }
 
       if (!browser) {
-        await forceKillChildProcess(childProcess);
+        await forceKillChildProcess(childProcess, safeWorkerIndex);
         throw new Error(
           `Failed to connect to CDP port ${port} after ${maxRetries} attempts. ` +
           `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
@@ -145,19 +211,36 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       }
 
       if (!defaultContext || !page) {
-        await forceKillChildProcess(childProcess);
+        await forceKillChildProcess(childProcess, safeWorkerIndex);
         throw new Error(`Failed to attach to default CDP context/page after waiting. App may have crashed or failed to load Webview.`);
       }
 
-      // Auto-dismiss Privacy Policy modal if it appears at any time
-      await page.addLocatorHandler(page.locator('.z-\\[100\\] button:has-text("拒绝并继续"), .z-\\[100\\] button:has-text("Agree")'), async () => {
-        await page.locator('.z-\\[100\\] button:has-text("拒绝并继续"), .z-\\[100\\] button:has-text("Agree")').first().click();
+      page.on('console', msg => {
+        if (msg.type() === 'error') {
+          // eslint-disable-next-line no-console
+          console.warn(`[BROWSER error] ${msg.text()}`);
+        }
       });
 
+      // Auto-dismiss Privacy Policy modal if it appears at any time
+      await page.addLocatorHandler(
+        page.locator('.z-\\[100\\] button:has-text("拒绝并继续"), .z-\\[100\\] button:has-text("Agree")'),
+        async (btn) => {
+          await btn.click({ force: true }).catch(() => {});
+        }
+      );
+
       // Auto-dismiss Updater modal if it appears at any time
-      await page.addLocatorHandler(page.locator('.z-\\[100\\] button:has-text("稍后再说"), .z-\\[100\\] button:has-text("Later")'), async () => {
-        await page.locator('.z-\\[100\\] button:has-text("稍后再说"), .z-\\[100\\] button:has-text("Later")').first().click();
-      });
+      await page.addLocatorHandler(
+        page.locator('.z-\\[100\\] button:has-text("稍后再说"), .z-\\[100\\] button:has-text("Later")'),
+        async (btn) => {
+          await btn.click({ force: true }).catch(() => {});
+        }
+      );
+
+      // Wait for page to finish loading and wait for startup updater modal to pop up & dismiss it
+      await page.waitForLoadState('domcontentloaded');
+      await waitAndDismissUpdateModal(page, 7000);
 
       // 6. Provide the shared app to the tests running in this worker
       await use({ page });
@@ -166,11 +249,17 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
       await browser.close();
       
       // Forcefully kill the entire process tree (especially critical on Windows to release file locks)
-      await forceKillChildProcess(childProcess);
+      await forceKillChildProcess(childProcess, safeWorkerIndex);
       
       // Give the process a moment to exit before deleting the folder
       await new Promise(resolve => setTimeout(resolve, 1500));
       
+      try {
+        if (fs.existsSync(tauriLogPath)) {
+          fs.copyFileSync(tauriLogPath, resolveSafePath(process.cwd(), 'e2e', `tauri-worker-${safeWorkerIndex}-last.log`));
+        }
+      } catch {}
+
       try {
         fs.rmSync(e2eTempDir, { recursive: true, force: true });
       } catch (e) {
@@ -183,6 +272,14 @@ export const test = base.extend<{ page: Page }, WorkerFixtures>({
 
   // Override the test-level `page` fixture to just return our shared worker page
   page: async ({ sharedApp }, use) => {
+    // If an updater modal is currently visible, dismiss it before starting test
+    const updateModalBtn = sharedApp.page.locator(
+      '.z-\\[100\\] button:has-text("稍后再说"), .z-\\[100\\] button:has-text("Later"), .z-\\[100\\] button:has-text("Remind Me Later")'
+    ).first();
+    if (await updateModalBtn.isVisible().catch(() => false)) {
+      await updateModalBtn.click({ force: true }).catch(() => {});
+      await updateModalBtn.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
+    }
     await use(sharedApp.page);
   }
 });

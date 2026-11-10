@@ -623,6 +623,27 @@ pub async fn search_modrinth_modpacks(query: String) -> Result<Vec<UnifiedModPro
 pub async fn get_modrinth_modpack_versions(
     project_id: String,
 ) -> Result<Vec<OnlineModpackVersion>, String> {
+    #[cfg(feature = "e2e")]
+    if project_id == "fabulously-optimized" || project_id == "e2e-mock-modpack" {
+        return Ok(vec![
+            OnlineModpackVersion {
+                id: "v15.0.0-beta.3".to_string(),
+                name: "15.0.0-beta.3".to_string(),
+                mc_version: "1.20.1".to_string(),
+                loaders: vec!["fabric".to_string()],
+                download_url: "https://example.com/v15.0.0-beta.3.mrpack".to_string(),
+                date: "2024-05-01T00:00:00Z".to_string(),
+            },
+            OnlineModpackVersion {
+                id: "v14.1.2".to_string(),
+                name: "14.1.2".to_string(),
+                mc_version: "1.20.1".to_string(),
+                loaders: vec!["fabric".to_string()],
+                download_url: "https://example.com/v14.1.2.mrpack".to_string(),
+                date: "2024-04-01T00:00:00Z".to_string(),
+            },
+        ]);
+    }
     tracing::info!(
         "Getting Modrinth modpack versions: project_id={}",
         project_id
