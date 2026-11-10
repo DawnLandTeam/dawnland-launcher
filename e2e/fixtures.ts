@@ -36,7 +36,7 @@ function cleanupWorkerProcesses(workerIndex: number) {
           '-NoProfile',
           '-NonInteractive',
           '-Command',
-          `Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*webview2*' -and ($_.CommandLine -like '*worker-${safeWorkerIndex}\\*' -or $_.CommandLine -like '*worker-${safeWorkerIndex}/*') } | Stop-Process -Force -ErrorAction SilentlyContinue`,
+          `Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*webview2*' -and ($_.CommandLine -like '*worker-${safeWorkerIndex}\\*' -or $_.CommandLine -like '*worker-${safeWorkerIndex}/*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
         ],
         { stdio: 'ignore' }
       );
