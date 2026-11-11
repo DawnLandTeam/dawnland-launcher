@@ -18,7 +18,38 @@ pub struct TaskContext {
     last_emit_time: Arc<RwLock<tokio::time::Instant>>,
 }
 
+fn should_skip_progress_update_state(is_cancelled: bool, state: &TaskState) -> bool {
+    is_cancelled || state.status.is_cancelling() || state.status.is_terminal()
+}
+
+fn apply_cancel_to_state(state: &mut TaskState) -> bool {
+    if state.status != TaskStatus::Cancelling
+        && state.status.can_transition_to(TaskStatus::Cancelling)
+    {
+        let _ = state.transition_to(TaskStatus::Cancelling);
+        state.error = Some("Task cancelled".to_string());
+        true
+    } else {
+        false
+    }
+}
+
+fn apply_force_cancel_to_state(state: &mut TaskState) -> bool {
+    if state.status != TaskStatus::Cancelled {
+        let _ = state.transition_to(TaskStatus::Cancelled);
+        state.status = TaskStatus::Cancelled;
+        state.error = Some("Task force cancelled by user".to_string());
+        true
+    } else {
+        false
+    }
+}
+
 impl TaskContext {
+    fn should_skip_progress_update(&self, state: &TaskState) -> bool {
+        should_skip_progress_update_state(self.is_cancelled(), state)
+    }
+
     pub fn with_sub_task(&self, key: &str) -> Self {
         let mut new_ctx = self.clone();
         new_ctx.sub_task_key = Some(key.to_string());
@@ -26,7 +57,13 @@ impl TaskContext {
     }
 
     pub async fn init_sub_tasks(&self, tasks: Vec<crate::core::task::state::SubTaskState>) {
+        if self.is_cancelled() {
+            return;
+        }
         let mut state = self.state.write().await;
+        if self.should_skip_progress_update(&state) {
+            return;
+        }
         state.progress.sub_tasks = tasks;
         state.updated_at = chrono::Utc::now().timestamp();
         *self.last_emit_time.write().await = tokio::time::Instant::now();
@@ -34,7 +71,13 @@ impl TaskContext {
     }
 
     pub async fn append_sub_tasks(&self, mut tasks: Vec<crate::core::task::state::SubTaskState>) {
+        if self.is_cancelled() {
+            return;
+        }
         let mut state = self.state.write().await;
+        if self.should_skip_progress_update(&state) {
+            return;
+        }
         for task in tasks.drain(..) {
             if !state.progress.sub_tasks.iter().any(|s| s.key == task.key) {
                 state.progress.sub_tasks.push(task);
@@ -46,7 +89,13 @@ impl TaskContext {
     }
 
     pub async fn update_progress(&self, current: u64, total: u64, detail: &str) {
+        if self.is_cancelled() {
+            return;
+        }
         let mut state = self.state.write().await;
+        if self.should_skip_progress_update(&state) {
+            return;
+        }
 
         if let Some(key) = &self.sub_task_key {
             // Update the specific sub-task
@@ -103,7 +152,13 @@ impl TaskContext {
     }
 
     pub async fn update_download_metrics(&self, speed: u64, remaining_files: u32) {
+        if self.is_cancelled() {
+            return;
+        }
         let mut state = self.state.write().await;
+        if self.should_skip_progress_update(&state) {
+            return;
+        }
         state.progress.speed = speed;
         state.progress.remaining_files = remaining_files;
         state.updated_at = chrono::Utc::now().timestamp();
@@ -124,7 +179,13 @@ impl TaskContext {
     }
 
     pub async fn set_total_steps(&self, total_steps: u32) {
+        if self.is_cancelled() {
+            return;
+        }
         let mut state = self.state.write().await;
+        if self.should_skip_progress_update(&state) {
+            return;
+        }
         state.progress.total_steps = total_steps;
         state.updated_at = chrono::Utc::now().timestamp();
         *self.last_emit_time.write().await = tokio::time::Instant::now();
@@ -132,7 +193,13 @@ impl TaskContext {
     }
 
     pub async fn next_step(&self, detail: &str) {
+        if self.is_cancelled() {
+            return;
+        }
         let mut state = self.state.write().await;
+        if self.should_skip_progress_update(&state) {
+            return;
+        }
         if state.progress.step < state.progress.total_steps {
             state.progress.step += 1;
         }
@@ -144,7 +211,13 @@ impl TaskContext {
     }
 
     pub async fn set_step(&self, step: u32, total_steps: u32, detail: &str) {
+        if self.is_cancelled() {
+            return;
+        }
         let mut state = self.state.write().await;
+        if self.should_skip_progress_update(&state) {
+            return;
+        }
         state.progress.step = step;
         state.progress.total_steps = total_steps;
         state.progress.current = 0;
@@ -162,6 +235,24 @@ impl TaskContext {
         self.cancel_token.cancelled().await
     }
 
+    /// Races an async operation against the task's cancellation token so
+    /// in-flight network requests abort promptly when the user cancels.
+    pub async fn cancellable<F, T>(&self, fut: F) -> Result<T, TaskError>
+    where
+        F: std::future::Future<Output = T>,
+    {
+        if self.is_cancelled() {
+            return Err(TaskError::ExecutionError("Task cancelled".to_string()));
+        }
+        tokio::select! {
+            biased;
+            _ = self.cancel_token.cancelled() => {
+                Err(TaskError::ExecutionError("Task cancelled".to_string()))
+            }
+            res = fut => Ok(res),
+        }
+    }
+
     pub async fn get_context_data<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
         let state = self.state.read().await;
         if let Some(val) = &state.context_data {
@@ -173,8 +264,15 @@ impl TaskContext {
 
     pub async fn set_context_data<T: serde::Serialize>(&self, data: &T) {
         let mut state = self.state.write().await;
+        if state.status.is_terminal() {
+            return;
+        }
         if let Ok(val) = serde_json::to_value(data) {
             state.context_data = Some(val);
+        }
+        if self.is_cancelled() || state.status.is_cancelling() {
+            let _ = self.manager.db.save_task(&state).await;
+            return;
         }
         *self.last_emit_time.write().await = tokio::time::Instant::now();
         self.manager.emit_state(&state).await;
@@ -208,6 +306,7 @@ pub struct TaskWorkerHandle {
     pub done_rx: tokio::sync::watch::Receiver<bool>,
     pub instance_id: Option<String>,
     pub task_type: TaskType,
+    pub state: Arc<RwLock<TaskState>>,
 }
 
 pub struct TaskManager {
@@ -462,6 +561,8 @@ impl TaskManager {
 
         self.emit_state(&state).await;
 
+        let task_type_for_handle = state.task_type.clone();
+        let state_arc = Arc::new(RwLock::new(state));
         let cancel_token = CancellationToken::new();
         let task_token = Arc::new(cancel_token.clone());
         let (done_tx, done_rx) = tokio::sync::watch::channel(false);
@@ -469,7 +570,8 @@ impl TaskManager {
             cancel_token: task_token.clone(),
             done_rx,
             instance_id,
-            task_type: state.task_type.clone(),
+            task_type: task_type_for_handle,
+            state: state_arc.clone(),
         });
 
         self.active_tasks
@@ -479,7 +581,6 @@ impl TaskManager {
 
         let manager = self.clone();
         let id_clone = id.clone();
-        let state_arc = Arc::new(RwLock::new(state));
 
         let ctx = TaskContext {
             id: id.clone(),
@@ -534,15 +635,24 @@ impl TaskManager {
                 finished: false,
             };
 
-            {
+            let start_cancelled = {
                 let mut state = state_arc.write().await;
-                let _ = state.transition_to(TaskStatus::Running);
-                manager.emit_state(&state).await;
-            }
+                if task_token.is_cancelled() || state.status != TaskStatus::Pending {
+                    true
+                } else {
+                    let _ = state.transition_to(TaskStatus::Running);
+                    manager.emit_state(&state).await;
+                    false
+                }
+            };
 
-            let exec_res = std::panic::AssertUnwindSafe(executable.execute(ctx))
-                .catch_unwind()
-                .await;
+            let exec_res = if start_cancelled {
+                Ok(Err(TaskError::ExecutionError("Task cancelled".to_string())))
+            } else {
+                std::panic::AssertUnwindSafe(executable.execute(ctx))
+                    .catch_unwind()
+                    .await
+            };
 
             let res: Result<(), TaskError> = match exec_res {
                 Ok(r) => r,
@@ -561,12 +671,49 @@ impl TaskManager {
 
             match res {
                 Ok(_) => {
-                    let mut state = state_arc.write().await;
-                    tracing::info!("Task {} finished successfully (task_type={:?})", id_clone, state.task_type);
-                    let _ = state.transition_to(TaskStatus::Completed);
-                    state.progress.current = state.progress.total;
-                    state.progress.detail = "Completed".to_string();
-                    manager.emit_state(&state).await;
+                    let mut completed_while_cancelling = false;
+                    {
+                        let mut state = state_arc.write().await;
+                        if state.status == TaskStatus::Cancelled {
+                            tracing::info!(
+                                "Task {} finished after force-cancellation; preserving Cancelled state",
+                                id_clone
+                            );
+                        } else if state.status == TaskStatus::Cancelling || task_token.is_cancelled() {
+                            tracing::info!(
+                                "Task {} completed while cancellation was requested; finalizing Cancelled state",
+                                id_clone
+                            );
+                            let _ = state.transition_to(TaskStatus::Cancelled);
+                            state.status = TaskStatus::Cancelled;
+                            manager.emit_state(&state).await;
+                            completed_while_cancelling = true;
+                        } else {
+                            tracing::info!("Task {} finished successfully (task_type={:?})", id_clone, state.task_type);
+                            let _ = state.transition_to(TaskStatus::Completed);
+                            state.progress.current = state.progress.total;
+                            state.progress.detail = "Completed".to_string();
+                            manager.emit_state(&state).await;
+                        }
+                    }
+                    if completed_while_cancelling {
+                        let task_type = state_arc.read().await.task_type.clone();
+                        if let Some(instance_id) = task_type.instance_id() {
+                            if !task_type.is_dependency() && crate::core::fs_utils::is_safe_single_name(&instance_id) {
+                                let instance_dir = crate::core::mojang::get_minecraft_base()
+                                    .join("versions")
+                                    .join(&instance_id);
+                                let config_path = instance_dir.join("dlml.json");
+                                if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                                    let _ = crate::core::launcher::update_instance_config_if(
+                                        &instance_dir,
+                                        |c| c.effective_status().is_busy(),
+                                        |c| c.set_status(crate::core::launcher::InstanceStatus::Ready),
+                                    ).await;
+                                }
+                            }
+                        }
+                    }
                     spawn_guard.mark_done();
                 }
                 Err(e) => {
@@ -583,24 +730,14 @@ impl TaskManager {
                     }
 
                     if task_token.is_cancelled() {
-                        let is_already_cancelled = match manager.db.get_task(&id_clone).await {
-                            Ok(Some(db_state)) => db_state.status == TaskStatus::Cancelled,
-                            _ => false,
-                        };
-
-                        if !is_already_cancelled {
-                            // Mark task as Cancelling while cleanup is proceeding
+                        {
                             let mut state = state_arc.write().await;
-                            if state.status != TaskStatus::Cancelling {
+                            if state.status != TaskStatus::Cancelled && state.status != TaskStatus::Cancelling {
+                                // Mark task as Cancelling while cleanup is proceeding
                                 let _ = state.transition_to(TaskStatus::Cancelling);
+                                state.error = Some("Task cancelled".to_string());
+                                manager.emit_state(&state).await;
                             }
-                            state.error = Some("Task cancelled".to_string());
-                            manager.emit_state(&state).await;
-                        } else {
-                            // Already cancelled in DB (e.g. by force_cancel_task); sync local state without re-persisting Cancelling
-                            let mut state = state_arc.write().await;
-                            let _ = state.transition_to(TaskStatus::Cancelled);
-                            state.status = TaskStatus::Cancelled;
                         }
 
                         let task_type = state_arc.read().await.task_type.clone();
@@ -709,9 +846,11 @@ impl TaskManager {
                         // Complete cancellation transition: Cancelling -> Cancelled
                         {
                             let mut state = state_arc.write().await;
-                            let _ = state.transition_to(TaskStatus::Cancelled);
-                            state.status = TaskStatus::Cancelled;
-                            manager.emit_state(&state).await;
+                            if state.status != TaskStatus::Cancelled {
+                                let _ = state.transition_to(TaskStatus::Cancelled);
+                                state.status = TaskStatus::Cancelled;
+                                manager.emit_state(&state).await;
+                            }
                         }
                         spawn_guard.mark_done();
                     } else {
@@ -795,12 +934,11 @@ impl TaskManager {
             let instance_id_opt = handle.instance_id.clone();
             let task_type = handle.task_type.clone();
 
-            // Transition to Cancelling in DB and emit to frontend.
+            // Transition shared in-memory state to Cancelling, persist to DB, and emit to frontend.
             // Terminal Cancelled state is emitted ONLY after the task worker finishes cleaning up!
-            if let Ok(Some(mut state)) = self.db.get_task(id).await {
-                if state.status.can_transition_to(TaskStatus::Cancelling) {
-                    let _ = state.transition_to(TaskStatus::Cancelling);
-                    state.error = Some("Task cancelled".to_string());
+            {
+                let mut state = handle.state.write().await;
+                if apply_cancel_to_state(&mut state) {
                     self.emit_state(&state).await;
                 }
             }
@@ -868,14 +1006,15 @@ impl TaskManager {
         if let Some(ref handle) = handle {
             // Signal cancellation while leaving tombstone in active_tasks for conflict checks
             handle.cancel_token.cancel();
-        }
-
-        // Persist Cancelled status in DB and emit to frontend immediately
-        if let Ok(Some(mut state)) = self.db.get_task(id).await {
-            let _ = state.transition_to(TaskStatus::Cancelled);
-            state.status = TaskStatus::Cancelled;
-            state.error = Some("Task force cancelled by user".to_string());
-            self.emit_state(&state).await;
+            let mut state = handle.state.write().await;
+            if apply_force_cancel_to_state(&mut state) {
+                self.emit_state(&state).await;
+            }
+        } else if let Ok(Some(mut state)) = self.db.get_task(id).await {
+            // Persist Cancelled status in DB and emit to frontend immediately
+            if apply_force_cancel_to_state(&mut state) {
+                self.emit_state(&state).await;
+            }
         }
 
         if let Some(handle) = handle {
@@ -1553,16 +1692,18 @@ mod tests {
         let task_token = Arc::new(CancellationToken::new());
         let (_done_tx, done_rx) = tokio::sync::watch::channel(false);
 
+        let task_type = TaskType::InstallVanilla {
+            version_id: "1.20.1".into(),
+            version_json_url: "".into(),
+            custom_instance_name: Some("busy_instance".into()),
+            is_dependency: None,
+        };
         let handle = Arc::new(TaskWorkerHandle {
             cancel_token: task_token.clone(),
             done_rx,
             instance_id: Some("busy_instance".to_string()),
-            task_type: TaskType::InstallVanilla {
-                version_id: "1.20.1".into(),
-                version_json_url: "".into(),
-                custom_instance_name: Some("busy_instance".into()),
-                is_dependency: None,
-            },
+            task_type: task_type.clone(),
+            state: Arc::new(RwLock::new(TaskState::new("busy_task".to_string(), task_type))),
         });
 
         let active_tasks: Arc<RwLock<HashMap<String, Arc<TaskWorkerHandle>>>> =
@@ -1606,5 +1747,60 @@ mod tests {
             .values()
             .any(|h| h.instance_id.as_deref() == Some("busy_instance"));
         assert!(!is_busy_after, "Instance must no longer be busy after tombstone removal");
+    }
+
+    #[tokio::test]
+    async fn test_shared_handle_state_prevents_status_regression_after_cancel() {
+        let task_type = TaskType::InstallFabric {
+            mc_version: "1.20.1".into(),
+            fabric_version: "0.15.11".into(),
+            custom_instance_name: "fabric-test".into(),
+            is_dependency: None,
+        };
+        let mut initial_state = TaskState::new("task-fabric-cancel".to_string(), task_type.clone());
+        assert!(initial_state.transition_to(TaskStatus::Running).is_ok());
+
+        let state_arc = Arc::new(RwLock::new(initial_state));
+        let cancel_token = Arc::new(CancellationToken::new());
+        let (_done_tx, done_rx) = tokio::sync::watch::channel(false);
+
+        let handle = Arc::new(TaskWorkerHandle {
+            cancel_token: cancel_token.clone(),
+            done_rx,
+            instance_id: Some("fabric-test".to_string()),
+            task_type,
+            state: state_arc.clone(),
+        });
+
+        // Before cancel: worker progress updates are allowed
+        {
+            let guard = state_arc.read().await;
+            assert!(!should_skip_progress_update_state(cancel_token.is_cancelled(), &guard));
+        }
+
+        // Simulate cancel_task: cancel token + mutate shared handle.state
+        handle.cancel_token.cancel();
+        {
+            let mut guard = handle.state.write().await;
+            assert!(apply_cancel_to_state(&mut guard));
+            // Repeated cancel must be idempotent
+            assert!(!apply_cancel_to_state(&mut guard));
+        }
+
+        // Worker's TaskContext sees Cancelling immediately and blocks subsequent progress emits
+        {
+            let guard = state_arc.read().await;
+            assert_eq!(guard.status, TaskStatus::Cancelling);
+            assert!(should_skip_progress_update_state(cancel_token.is_cancelled(), &guard));
+            assert!(should_skip_progress_update_state(false, &guard));
+        }
+
+        // Force-cancel transitions shared state directly to Cancelled and keeps blocking emits
+        {
+            let mut guard = handle.state.write().await;
+            assert!(apply_force_cancel_to_state(&mut guard));
+            assert_eq!(guard.status, TaskStatus::Cancelled);
+            assert!(should_skip_progress_update_state(false, &guard));
+        }
     }
 }

@@ -541,19 +541,19 @@ impl ExecutableTask for InstallVanillaTask {
             .update_progress(0, 100, "Downloading version JSON")
             .await;
 
-        let version_json_content = client
-            .get(&version_json_url)
-            .send()
-            .await
+        let version_json_resp = ctx
+            .cancellable(client.get(&version_json_url).send())
+            .await?
             .map_err(|e| {
                 TaskError::ExecutionError(format!("Failed to download version JSON: {}", e))
             })?
             .error_for_status()
             .map_err(|e| {
                 TaskError::ExecutionError(format!("HTTP error downloading version JSON: {}", e))
-            })?
-            .text()
-            .await
+            })?;
+        let version_json_content = ctx
+            .cancellable(version_json_resp.text())
+            .await?
             .map_err(|e| {
                 TaskError::ExecutionError(format!("Failed to read version JSON: {}", e))
             })?;
@@ -737,17 +737,17 @@ impl ExecutableTask for InstallVanillaTask {
             }
         };
 
-        let asset_index_content = client
-            .get(&asset_index_url)
-            .send()
-            .await
+        let asset_index_resp = ctx
+            .cancellable(client.get(&asset_index_url).send())
+            .await?
             .map_err(|e| TaskError::ExecutionError(format!("Failed to fetch asset index: {e}")))?
             .error_for_status()
             .map_err(|e| {
                 TaskError::ExecutionError(format!("HTTP error fetching asset index: {e}"))
-            })?
-            .text()
-            .await
+            })?;
+        let asset_index_content = ctx
+            .cancellable(asset_index_resp.text())
+            .await?
             .map_err(|e| {
                 TaskError::ExecutionError(format!("Failed to read asset index response: {e}"))
             })?;
@@ -797,7 +797,7 @@ impl ExecutableTask for InstallVanillaTask {
         let ctx_assets = ctx.with_sub_task("download_vanilla_assets");
         let ctx_client = ctx.with_sub_task("download_vanilla_client");
 
-        let (r1, r2, r3) = tokio::join!(
+        tokio::try_join!(
             async {
                 if !lib_tasks.is_empty() {
                     run_batch_download_task(lib_tasks, ctx_libs).await
@@ -819,11 +819,8 @@ impl ExecutableTask for InstallVanillaTask {
                     Ok(())
                 }
             }
-        );
-
-        r1.map_err(TaskError::ExecutionError)?;
-        r2.map_err(TaskError::ExecutionError)?;
-        r3.map_err(TaskError::ExecutionError)?;
+        )
+        .map_err(TaskError::ExecutionError)?;
 
         if ctx.is_cancelled() {
             let version_dir = if is_dependency.unwrap_or(false) {
