@@ -243,6 +243,29 @@ impl CrashHistoryDb {
             .await
             .map_err(|e| e.to_string())
     }
+
+    /// Migrate crash history records when an instance is renamed.
+    pub async fn rename_instance(&self, old_id: String, new_id: String) -> Result<(), String> {
+        if old_id == new_id {
+            return Ok(());
+        }
+        self.conn
+            .call(move |conn| -> rusqlite::Result<()> {
+                conn.execute(
+                    "UPDATE crash_history
+                     SET instance_id = ?1,
+                         instance_name = CASE
+                             WHEN instance_name IS NULL OR instance_name = ?2 THEN ?1
+                             ELSE instance_name
+                         END
+                     WHERE instance_id = ?2",
+                    rusqlite::params![&new_id, &old_id],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
@@ -277,4 +300,44 @@ pub async fn clear_crash_history(
     db: tauri::State<'_, CrashHistoryDb>,
 ) -> Result<(), String> {
     db.clear(instance_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_crash_history_rename_instance() {
+        let dir = tempdir().unwrap();
+        let db = CrashHistoryDb::new(dir.path().join("crash.db")).await.unwrap();
+
+        db.save(CrashHistoryInput {
+            id: None,
+            instance_id: "AlphaPack".to_string(),
+            instance_name: Some("AlphaPack".to_string()),
+            exit_code: Some(1),
+            crash_summary: "OutOfMemoryError".to_string(),
+            ai_cause: None,
+            ai_solution: None,
+            ai_actions: None,
+        })
+        .await
+        .unwrap();
+
+        db.rename_instance("AlphaPack".to_string(), "BetaPack".to_string())
+            .await
+            .unwrap();
+
+        assert!(db
+            .get_history(Some("AlphaPack".to_string()))
+            .await
+            .unwrap()
+            .is_empty());
+
+        let entries = db.get_history(Some("BetaPack".to_string())).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].instance_id, "BetaPack");
+        assert_eq!(entries[0].instance_name.as_deref(), Some("BetaPack"));
+    }
 }

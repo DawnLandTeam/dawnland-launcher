@@ -568,6 +568,13 @@ static SCAN_STATE: LazyLock<Mutex<ScanSharedState>> = LazyLock::new(|| {
     })
 });
 
+/// Invalidate the short-lived instance scan cache after mutating instance metadata or folders.
+pub async fn invalidate_instance_scan_cache() {
+    let mut state = SCAN_STATE.lock().await;
+    state.last_completed_at = None;
+    state.last_result = None;
+}
+
 /// Scan all locally installed instances from the versions directory.
 /// Protected by Singleflight coalescing and a 200ms throttle cache against concurrent avalanche.
 #[tauri::command]
@@ -1114,6 +1121,821 @@ pub async fn delete_instance(
     // Automatically trigger debounced garbage collection of the global mod cache
     crate::core::cache::trigger_auto_gc(app);
 
+    Ok(())
+}
+
+async fn rename_file_case_safe(
+    old_path: &std::path::Path,
+    new_path: &std::path::Path,
+    is_case_only: bool,
+) -> Result<bool, String> {
+    if !tokio::fs::try_exists(old_path)
+        .await
+        .map_err(|e| format!("Failed to check {:?}: {}", old_path, e))?
+    {
+        return Ok(false);
+    }
+    if is_case_only {
+        let tmp_path = old_path.with_file_name(format!(
+            ".dlml_rename_tmp_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        tokio::fs::rename(old_path, &tmp_path)
+            .await
+            .map_err(|e| format!("Failed to stage rename for {:?}: {}", old_path, e))?;
+        if let Err(e) = tokio::fs::rename(&tmp_path, new_path).await {
+            let _ = tokio::fs::rename(&tmp_path, old_path).await;
+            return Err(format!("Failed to finalize rename to {:?}: {}", new_path, e));
+        }
+    } else {
+        tokio::fs::rename(old_path, new_path)
+            .await
+            .map_err(|e| format!("Failed to rename {:?} to {:?}: {}", old_path, new_path, e))?;
+    }
+    Ok(true)
+}
+
+async fn rename_dir_case_safe(
+    old_dir: &std::path::Path,
+    new_dir: &std::path::Path,
+    is_case_only: bool,
+) -> Result<(), String> {
+    if is_case_only {
+        let parent = old_dir
+            .parent()
+            .ok_or_else(|| "Instance directory has no parent".to_string())?;
+        let temp_dir = parent.join(format!(".rename_tmp_{}", uuid::Uuid::new_v4().simple()));
+        tokio::fs::rename(old_dir, &temp_dir)
+            .await
+            .map_err(|e| format!("Failed to stage instance directory rename: {}", e))?;
+        if let Err(e) = tokio::fs::rename(&temp_dir, new_dir).await {
+            let _ = tokio::fs::rename(&temp_dir, old_dir).await;
+            return Err(format!("Failed to finalize instance directory rename: {}", e));
+        }
+    } else {
+        tokio::fs::rename(old_dir, new_dir)
+            .await
+            .map_err(|e| format!("Failed to rename instance directory: {}", e))?;
+    }
+    Ok(())
+}
+
+fn rebase_task_dest_path(
+    dest_path: &str,
+    old_dir: &std::path::Path,
+    new_dir: &std::path::Path,
+) -> Option<String> {
+    if let Ok(rel) = std::path::Path::new(dest_path).strip_prefix(old_dir) {
+        return Some(new_dir.join(rel).to_string_lossy().to_string());
+    }
+    let norm_dest = dest_path.replace('\\', "/");
+    let norm_old = old_dir.to_string_lossy().replace('\\', "/");
+    let norm_old_trimmed = norm_old.trim_end_matches('/');
+    if let Some(rest) = norm_dest.strip_prefix(norm_old_trimmed) {
+        if rest.is_empty() || rest.starts_with('/') {
+            let rel_trimmed = rest.trim_start_matches('/');
+            let mut rebased = new_dir.to_path_buf();
+            for part in rel_trimmed.split('/').filter(|p| !p.is_empty()) {
+                rebased.push(part);
+            }
+            return Some(rebased.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+struct DependentInstanceJson {
+    id: String,
+    json_path: std::path::PathBuf,
+    orig_bytes: Vec<u8>,
+    json_val: serde_json::Value,
+}
+
+async fn collect_dependent_instance_jsons(
+    versions_dir: &std::path::Path,
+    target_id: &str,
+) -> Result<Vec<DependentInstanceJson>, String> {
+    let mut dependents = Vec::new();
+    let mut entries = tokio::fs::read_dir(versions_dir)
+        .await
+        .map_err(|e| format!("Failed to read versions directory: {}", e))?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| format!("Failed to read versions entry: {}", e))?
+    {
+        let entry_path = entry.path();
+        let is_dir = match tokio::fs::metadata(&entry_path).await {
+            Ok(m) => m.is_dir(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to inspect instance directory {:?}: {}",
+                    entry_path, e
+                ));
+            }
+        };
+        if !is_dir {
+            continue;
+        }
+        let other_id = entry.file_name().to_string_lossy().to_string();
+        if other_id == target_id {
+            continue;
+        }
+        let other_json_path = entry_path.join(format!("{}.json", other_id));
+        if !tokio::fs::try_exists(&other_json_path).await.map_err(|e| {
+            format!(
+                "Failed to check dependent instance JSON {:?}: {}",
+                other_json_path, e
+            )
+        })? {
+            continue;
+        }
+        let orig_bytes = tokio::fs::read(&other_json_path).await.map_err(|e| {
+            format!(
+                "Failed to read dependent instance JSON {:?}: {}",
+                other_json_path, e
+            )
+        })?;
+        let json_val = match serde_json::from_slice::<serde_json::Value>(&orig_bytes) {
+            Ok(val) => val,
+            Err(e) => {
+                tracing::warn!(
+                    "Skipping malformed version JSON {:?} while scanning dependents of {}: {}",
+                    other_json_path,
+                    target_id,
+                    e
+                );
+                continue;
+            }
+        };
+        let inherits_matches = json_val
+            .get("inheritsFrom")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v == target_id);
+        if inherits_matches {
+            dependents.push(DependentInstanceJson {
+                id: other_id,
+                json_path: other_json_path,
+                orig_bytes,
+                json_val,
+            });
+        }
+    }
+    Ok(dependents)
+}
+
+async fn find_dependent_instances(
+    versions_dir: &std::path::Path,
+    target_id: &str,
+) -> Result<Vec<String>, String> {
+    let dependents = collect_dependent_instance_jsons(versions_dir, target_id).await?;
+    Ok(dependents.into_iter().map(|d| d.id).collect())
+}
+
+enum VersionJsonPlan {
+    None,
+    RenameRaw,
+    Update {
+        orig_bytes: Vec<u8>,
+        updated_bytes: Vec<u8>,
+    },
+}
+
+struct DependentJsonUpdate {
+    json_path: std::path::PathBuf,
+    orig_bytes: Vec<u8>,
+    updated_bytes: Vec<u8>,
+}
+
+struct RenameCommitPlan {
+    version_json: VersionJsonPlan,
+    dlml_orig_bytes: Option<Vec<u8>>,
+    tasks_update: Option<(Vec<u8>, Vec<u8>)>,
+    dependent_updates: Vec<DependentJsonUpdate>,
+}
+
+enum RollbackStep {
+    RenameDir {
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
+        is_case_only: bool,
+    },
+    RenameFile {
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
+        is_case_only: bool,
+    },
+    RestoreVersionJsonFromBackup {
+        new_json_path: std::path::PathBuf,
+        old_json_path: std::path::PathBuf,
+        backup_json: std::path::PathBuf,
+        orig_bytes: Vec<u8>,
+    },
+    RestoreFile {
+        path: std::path::PathBuf,
+        orig_bytes: Vec<u8>,
+    },
+}
+
+/// Read, validate, and prepare all metadata transformations before mutating the filesystem.
+async fn prepare_rename_commit_plan(
+    versions_dir: &std::path::Path,
+    old_dir: &std::path::Path,
+    new_dir: &std::path::Path,
+    old_id: &str,
+    new_id: &str,
+) -> Result<RenameCommitPlan, String> {
+    // 1. Validate dlml.json if present so malformed configs fail before any directory rename
+    let old_config_path = old_dir.join("dlml.json");
+    let (dlml_orig_bytes, dlml_mc) = if tokio::fs::try_exists(&old_config_path)
+        .await
+        .map_err(|e| format!("Failed to check dlml.json: {}", e))?
+    {
+        let orig_bytes = tokio::fs::read(&old_config_path)
+            .await
+            .map_err(|e| format!("Failed to read instance config: {}", e))?;
+        let config = serde_json::from_slice::<crate::core::launcher::InstanceConfig>(&orig_bytes)
+            .map_err(|e| format!("Failed to parse instance config: {}", e))?;
+        let mc_version = config.mc_version.filter(|s| !s.trim().is_empty());
+        (Some(orig_bytes), mc_version)
+    } else {
+        (None, None)
+    };
+
+    // 2. Read and prepare <old_id>.json -> <new_id>.json
+    let old_json_path = old_dir.join(format!("{}.json", old_id));
+    let version_json = if tokio::fs::try_exists(&old_json_path)
+        .await
+        .map_err(|e| format!("Failed to check version JSON: {}", e))?
+    {
+        let orig_bytes = tokio::fs::read(&old_json_path)
+            .await
+            .map_err(|e| format!("Failed to read version JSON: {}", e))?;
+        if let Ok(content) = std::str::from_utf8(&orig_bytes) {
+            if let Ok(mut json_val) = serde_json::from_str::<serde_json::Value>(content) {
+                if let Some(obj) = json_val.as_object_mut() {
+                    let has_inherits = obj
+                        .get("inheritsFrom")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| !s.is_empty());
+                    let has_client_version = obj
+                        .get("clientVersion")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| !s.is_empty());
+                    if !has_inherits && !has_client_version {
+                        let (parsed_mc, ..) = parse_version_json(content, old_id);
+                        let preserved_mc = dlml_mc.unwrap_or(parsed_mc);
+                        if !preserved_mc.is_empty() {
+                            obj.insert(
+                                "clientVersion".to_string(),
+                                serde_json::json!(preserved_mc),
+                            );
+                        }
+                    }
+                    obj.insert("id".to_string(), serde_json::json!(new_id));
+                }
+                let updated = serde_json::to_string_pretty(&json_val)
+                    .map_err(|e| format!("Failed to serialize version JSON: {}", e))?;
+                VersionJsonPlan::Update {
+                    orig_bytes,
+                    updated_bytes: updated.into_bytes(),
+                }
+            } else {
+                VersionJsonPlan::RenameRaw
+            }
+        } else {
+            VersionJsonPlan::RenameRaw
+        }
+    } else {
+        VersionJsonPlan::None
+    };
+
+    // 3. Validate and prepare modpack_tasks.json destination path rebasing
+    let old_tasks_path = old_dir.join("modpack_tasks.json");
+    let tasks_update = if tokio::fs::try_exists(&old_tasks_path)
+        .await
+        .map_err(|e| format!("Failed to check modpack_tasks.json: {}", e))?
+    {
+        let orig_bytes = tokio::fs::read(&old_tasks_path)
+            .await
+            .map_err(|e| format!("Failed to read modpack_tasks.json: {}", e))?;
+        let mut tasks = serde_json::from_slice::<Vec<crate::downloader::DownloadTask>>(&orig_bytes)
+            .map_err(|e| format!("Failed to parse modpack_tasks.json: {}", e))?;
+        let mut changed = false;
+        for task in &mut tasks {
+            if let Some(updated_dest) = rebase_task_dest_path(&task.dest_path, old_dir, new_dir) {
+                task.dest_path = updated_dest;
+                changed = true;
+            }
+        }
+        if changed {
+            let serialized = serde_json::to_string_pretty(&tasks)
+                .map_err(|e| format!("Failed to serialize modpack_tasks.json: {}", e))?;
+            Some((orig_bytes, serialized.into_bytes()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // 4. Collect and prepare dependent instances' inheritsFrom updates
+    let dependents = collect_dependent_instance_jsons(versions_dir, old_id).await?;
+    let mut dependent_updates = Vec::with_capacity(dependents.len());
+    for mut dep in dependents {
+        if let Some(obj) = dep.json_val.as_object_mut() {
+            obj.insert("inheritsFrom".to_string(), serde_json::json!(new_id));
+        }
+        let updated = serde_json::to_string_pretty(&dep.json_val).map_err(|e| {
+            format!(
+                "Failed to serialize dependent instance JSON for {}: {}",
+                dep.id, e
+            )
+        })?;
+        dependent_updates.push(DependentJsonUpdate {
+            json_path: dep.json_path,
+            orig_bytes: dep.orig_bytes,
+            updated_bytes: updated.into_bytes(),
+        });
+    }
+
+    Ok(RenameCommitPlan {
+        version_json,
+        dlml_orig_bytes,
+        tasks_update,
+        dependent_updates,
+    })
+}
+
+async fn swap_version_json_with_backup(
+    old_json_path: &std::path::Path,
+    new_json_path: &std::path::Path,
+    updated_bytes: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    let parent = old_json_path
+        .parent()
+        .ok_or_else(|| "Version JSON path has no parent directory".to_string())?;
+    let unique = uuid::Uuid::new_v4().simple();
+    let temp_json = parent.join(format!(".dlml_rename_tmp_{}", unique));
+    let backup_json = parent.join(format!(".dlml_rename_bak_{}", unique));
+
+    crate::core::fs_utils::write_file_atomic(&temp_json, updated_bytes)
+        .await
+        .map_err(|e| format!("Failed to write temporary version JSON: {}", e))?;
+
+    if let Err(e) = tokio::fs::rename(old_json_path, &backup_json).await {
+        let _ = tokio::fs::remove_file(&temp_json).await;
+        return Err(format!("Failed to backup old version JSON: {}", e));
+    }
+    if let Err(e) = tokio::fs::rename(&temp_json, new_json_path).await {
+        let _ = tokio::fs::rename(&backup_json, old_json_path).await;
+        let _ = tokio::fs::remove_file(&temp_json).await;
+        return Err(format!("Failed to finalize version JSON rename: {}", e));
+    }
+
+    Ok(backup_json)
+}
+
+async fn restore_version_json_from_backup(
+    new_json_path: &std::path::Path,
+    old_json_path: &std::path::Path,
+    backup_json: &std::path::Path,
+    orig_bytes: &[u8],
+) -> Result<(), String> {
+    let mut remove_err: Option<String> = None;
+    if tokio::fs::try_exists(new_json_path).await.unwrap_or(false) {
+        if let Err(e) = tokio::fs::remove_file(new_json_path).await {
+            remove_err = Some(format!("Failed to remove {:?}: {}", new_json_path, e));
+        }
+    }
+
+    if tokio::fs::try_exists(backup_json).await.unwrap_or(false) {
+        match tokio::fs::rename(backup_json, old_json_path).await {
+            Ok(()) => return remove_err.map_or(Ok(()), Err),
+            Err(rename_err) => {
+                crate::core::fs_utils::write_file_atomic(old_json_path, orig_bytes)
+                    .await
+                    .map_err(|write_err| {
+                        format!(
+                            "Failed to restore {:?} from backup ({}) or fallback write ({})",
+                            old_json_path, rename_err, write_err
+                        )
+                    })?;
+                let _ = tokio::fs::remove_file(backup_json).await;
+                return remove_err.map_or(Ok(()), Err);
+            }
+        }
+    }
+
+    crate::core::fs_utils::write_file_atomic(old_json_path, orig_bytes)
+        .await
+        .map_err(|e| format!("Failed to restore {:?}: {}", old_json_path, e))?;
+    remove_err.map_or(Ok(()), Err)
+}
+
+async fn execute_rollback(steps: Vec<RollbackStep>) -> Vec<String> {
+    let mut errors = Vec::new();
+    for step in steps.into_iter().rev() {
+        let res = match step {
+            RollbackStep::RenameDir {
+                from,
+                to,
+                is_case_only,
+            } => rename_dir_case_safe(&from, &to, is_case_only).await,
+            RollbackStep::RenameFile {
+                from,
+                to,
+                is_case_only,
+            } => rename_file_case_safe(&from, &to, is_case_only)
+                .await
+                .map(|_| ()),
+            RollbackStep::RestoreVersionJsonFromBackup {
+                new_json_path,
+                old_json_path,
+                backup_json,
+                orig_bytes,
+            } => {
+                restore_version_json_from_backup(
+                    &new_json_path,
+                    &old_json_path,
+                    &backup_json,
+                    &orig_bytes,
+                )
+                .await
+            }
+            RollbackStep::RestoreFile { path, orig_bytes } => {
+                crate::core::fs_utils::write_file_atomic(&path, &orig_bytes)
+                    .await
+                    .map_err(|e| format!("Failed to restore {:?}: {}", path, e))
+            }
+        };
+        if let Err(e) = res {
+            tracing::error!("Instance rename rollback step failed: {}", e);
+            errors.push(e);
+        }
+    }
+    errors
+}
+
+struct RenameTarget<'a> {
+    old_dir: &'a std::path::Path,
+    new_dir: &'a std::path::Path,
+    old_id: &'a str,
+    new_id: &'a str,
+    is_case_only: bool,
+}
+
+#[derive(Default)]
+struct RenameTxState {
+    rollback: Vec<RollbackStep>,
+    cleanup_files: Vec<std::path::PathBuf>,
+}
+
+async fn apply_rename_plan_steps(
+    target: &RenameTarget<'_>,
+    plan: RenameCommitPlan,
+    tx: &mut RenameTxState,
+) -> Result<(), String> {
+    let old_dir = target.old_dir;
+    let new_dir = target.new_dir;
+    let old_id = target.old_id;
+    let new_id = target.new_id;
+    let is_case_only = target.is_case_only;
+
+    // 1. Rename instance directory
+    rename_dir_case_safe(old_dir, new_dir, is_case_only).await?;
+    tx.rollback.push(RollbackStep::RenameDir {
+        from: new_dir.to_path_buf(),
+        to: old_dir.to_path_buf(),
+        is_case_only,
+    });
+
+    // 2. Rename <old_id>.jar -> <new_id>.jar and <old_id>.json.bak -> <new_id>.json.bak
+    let old_jar_path = new_dir.join(format!("{}.jar", old_id));
+    let new_jar_path = new_dir.join(format!("{}.jar", new_id));
+    if rename_file_case_safe(&old_jar_path, &new_jar_path, is_case_only).await? {
+        tx.rollback.push(RollbackStep::RenameFile {
+            from: new_jar_path,
+            to: old_jar_path,
+            is_case_only,
+        });
+    }
+
+    let old_bak_path = new_dir.join(format!("{}.json.bak", old_id));
+    let new_bak_path = new_dir.join(format!("{}.json.bak", new_id));
+    if rename_file_case_safe(&old_bak_path, &new_bak_path, is_case_only).await? {
+        tx.rollback.push(RollbackStep::RenameFile {
+            from: new_bak_path,
+            to: old_bak_path,
+            is_case_only,
+        });
+    }
+
+    // 3. Swap and update <old_id>.json -> <new_id>.json (keep backup until transaction commits)
+    let old_json_path = new_dir.join(format!("{}.json", old_id));
+    let new_json_path = new_dir.join(format!("{}.json", new_id));
+    match plan.version_json {
+        VersionJsonPlan::None => {}
+        VersionJsonPlan::RenameRaw => {
+            if rename_file_case_safe(&old_json_path, &new_json_path, is_case_only).await? {
+                tx.rollback.push(RollbackStep::RenameFile {
+                    from: new_json_path,
+                    to: old_json_path,
+                    is_case_only,
+                });
+            }
+        }
+        VersionJsonPlan::Update {
+            orig_bytes,
+            updated_bytes,
+        } => {
+            let backup_json =
+                swap_version_json_with_backup(&old_json_path, &new_json_path, &updated_bytes)
+                    .await?;
+            tx.cleanup_files.push(backup_json.clone());
+            tx.rollback.push(RollbackStep::RestoreVersionJsonFromBackup {
+                new_json_path,
+                old_json_path,
+                backup_json,
+                orig_bytes,
+            });
+        }
+    }
+
+    // 4. Update dlml.json if present
+    if let Some(orig_bytes) = plan.dlml_orig_bytes {
+        crate::core::launcher::update_instance_config(new_dir, |config| {
+            if config.name.is_some() {
+                config.name = Some(new_id.to_string());
+            }
+        })
+        .await?;
+        tx.rollback.push(RollbackStep::RestoreFile {
+            path: new_dir.join("dlml.json"),
+            orig_bytes,
+        });
+    }
+
+    // 5. Update modpack_tasks.json destination paths if rebased
+    if let Some((orig_bytes, updated_bytes)) = plan.tasks_update {
+        let tasks_path = new_dir.join("modpack_tasks.json");
+        crate::core::fs_utils::write_file_atomic(&tasks_path, &updated_bytes)
+            .await
+            .map_err(|e| format!("Failed to update modpack_tasks.json: {}", e))?;
+        tx.rollback.push(RollbackStep::RestoreFile {
+            path: tasks_path,
+            orig_bytes,
+        });
+    }
+
+    // 6. Update any child instances under versions_dir whose inheritsFrom points to old_id
+    for dep in plan.dependent_updates {
+        crate::core::fs_utils::write_file_atomic(&dep.json_path, &dep.updated_bytes)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to update inheritsFrom in dependent instance {:?}: {}",
+                    dep.json_path, e
+                )
+            })?;
+        tx.rollback.push(RollbackStep::RestoreFile {
+            path: dep.json_path,
+            orig_bytes: dep.orig_bytes,
+        });
+    }
+
+    Ok(())
+}
+
+async fn commit_rename_plan(
+    old_dir: &std::path::Path,
+    new_dir: &std::path::Path,
+    old_id: &str,
+    new_id: &str,
+    is_case_only: bool,
+    plan: RenameCommitPlan,
+) -> Result<(), String> {
+    let target = RenameTarget {
+        old_dir,
+        new_dir,
+        old_id,
+        new_id,
+        is_case_only,
+    };
+    let mut tx = RenameTxState::default();
+
+    if let Err(err) = apply_rename_plan_steps(&target, plan, &mut tx).await {
+        let rollback_errors = execute_rollback(tx.rollback).await;
+        if rollback_errors.is_empty() {
+            return Err(err);
+        }
+        return Err(format!(
+            "{} (rollback errors: {})",
+            err,
+            rollback_errors.join("; ")
+        ));
+    }
+
+    for path in tx.cleanup_files {
+        if let Err(e) = tokio::fs::remove_file(&path).await {
+            tracing::warn!(
+                "Failed to remove temporary rename backup {:?}: {}",
+                path,
+                e
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Core filesystem logic for renaming an instance directory and updating its internal descriptors.
+pub async fn rename_instance_in_dir(
+    versions_dir: &std::path::Path,
+    old_id: &str,
+    new_id: &str,
+) -> Result<(), String> {
+    let new_id = new_id.trim();
+    if old_id.is_empty() || new_id.is_empty() {
+        return Err("Instance name cannot be empty".to_string());
+    }
+    if old_id == new_id {
+        return Ok(());
+    }
+
+    if !crate::core::fs_utils::is_safe_or_existing_instance_id(old_id, versions_dir).await {
+        return Err(format!("Invalid instance name: {}", old_id));
+    }
+    if !crate::core::fs_utils::is_safe_single_name(new_id) {
+        return Err(format!("Invalid instance name: {}", new_id));
+    }
+
+    let old_dir = versions_dir.join(old_id);
+    let old_meta = tokio::fs::metadata(&old_dir)
+        .await
+        .map_err(|_| format!("Instance {} not found", old_id))?;
+    if !old_meta.is_dir() {
+        return Err(format!("Instance {} not found", old_id));
+    }
+
+    let new_dir = versions_dir.join(new_id);
+    let is_case_only = old_id.eq_ignore_ascii_case(new_id);
+
+    // Check case-insensitive name collisions against other entries in versions_dir
+    let mut entries = tokio::fs::read_dir(versions_dir)
+        .await
+        .map_err(|e| format!("Failed to read versions directory: {}", e))?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| format!("Failed to read versions entry: {}", e))?
+    {
+        let existing_name = entry.file_name().to_string_lossy().to_string();
+        if existing_name != old_id && existing_name.eq_ignore_ascii_case(new_id) {
+            return Err(format!("Instance with name '{}' already exists", new_id));
+        }
+    }
+    if !is_case_only
+        && tokio::fs::try_exists(&new_dir)
+            .await
+            .map_err(|e| format!("Failed to check target instance directory: {}", e))?
+    {
+        return Err(format!("Instance with name '{}' already exists", new_id));
+    }
+
+    let plan = prepare_rename_commit_plan(versions_dir, &old_dir, &new_dir, old_id, new_id).await?;
+    commit_rename_plan(&old_dir, &new_dir, old_id, new_id, is_case_only, plan).await
+}
+
+/// Rename an existing instance (directory, core metadata files, statistics, and crash history).
+#[tauri::command]
+pub async fn rename_instance(
+    old_id: String,
+    new_id: String,
+    app: tauri::AppHandle,
+    task_manager: tauri::State<'_, crate::core::task::TaskManager>,
+    running_instances: tauri::State<'_, crate::core::launcher::RunningInstances>,
+) -> Result<(), String> {
+    let new_id = new_id.trim().to_string();
+    if old_id.is_empty() || new_id.is_empty() {
+        return Err("Instance name cannot be empty".to_string());
+    }
+    if old_id == new_id {
+        return Ok(());
+    }
+
+    let base_dir = get_minecraft_base();
+    let versions_dir = base_dir.join("versions");
+
+    if !crate::core::fs_utils::is_safe_or_existing_instance_id(&old_id, &versions_dir).await {
+        return Err(format!("Invalid instance name: {}", old_id));
+    }
+    if !crate::core::fs_utils::is_safe_single_name(&new_id) {
+        return Err(format!("Invalid instance name: {}", new_id));
+    }
+
+    let old_dir = versions_dir.join(&old_id);
+    let new_dir = versions_dir.join(&new_id);
+    if !tokio::fs::try_exists(&old_dir).await.unwrap_or(false) {
+        return Err(format!("Instance {} not found", old_id));
+    }
+
+    if running_instances.is_instance_running(&old_id).await {
+        return Err(format!(
+            "Cannot rename instance {} because it is currently running",
+            old_id
+        ));
+    }
+    if !old_id.eq_ignore_ascii_case(&new_id) && running_instances.is_instance_running(&new_id).await {
+        return Err(format!(
+            "Cannot rename to {} because an instance with that name is currently running",
+            new_id
+        ));
+    }
+
+    if check_instance_busy(&old_id, &old_dir, &task_manager).await {
+        return Err(format!(
+            "Cannot rename instance {} while it is installing or updating",
+            old_id
+        ));
+    }
+    if check_instance_busy(&new_id, &new_dir, &task_manager).await {
+        return Err(format!(
+            "Cannot rename to {} while another task for that name is active",
+            new_id
+        ));
+    }
+
+    // Check dependent instances if any are currently running
+    for dep_id in find_dependent_instances(&versions_dir, &old_id).await? {
+        if running_instances.is_instance_running(&dep_id).await {
+            return Err(format!(
+                "Cannot rename instance {} while dependent instance {} is running",
+                old_id, dep_id
+            ));
+        }
+    }
+
+    // Acquire per-instance locks in deterministic lexicographical order to prevent deadlocks
+    let (first_key, second_key) = if old_id < new_id {
+        (&old_id, &new_id)
+    } else {
+        (&new_id, &old_id)
+    };
+    let first_lock = crate::core::drop_install::get_instance_lock(first_key);
+    let second_lock = crate::core::drop_install::get_instance_lock(second_key);
+    let _first_guard = first_lock.lock().await;
+    let _second_guard = second_lock.lock().await;
+
+    // Re-verify runtime & task state after acquiring locks
+    if running_instances.is_instance_running(&old_id).await {
+        return Err(format!(
+            "Cannot rename instance {} because it is currently running",
+            old_id
+        ));
+    }
+    if check_instance_busy(&old_id, &old_dir, &task_manager).await {
+        return Err(format!(
+            "Cannot rename instance {} while it is installing or updating",
+            old_id
+        ));
+    }
+    if check_instance_busy(&new_id, &new_dir, &task_manager).await {
+        return Err(format!(
+            "Cannot rename to {} while another task for that name is active",
+            new_id
+        ));
+    }
+
+    rename_instance_in_dir(&versions_dir, &old_id, &new_id).await?;
+
+    invalidate_instance_scan_cache().await;
+    crate::core::instance_icon::handle_instance_renamed(&old_id, &new_id);
+
+    if let Some(stats_db) = app.try_state::<crate::core::statistics::StatisticsDb>() {
+        if let Err(e) = stats_db.rename_stats(old_id.clone(), new_id.clone()).await {
+            tracing::warn!(
+                "Failed to migrate statistics during rename ({} -> {}): {}",
+                old_id,
+                new_id,
+                e
+            );
+        }
+    }
+
+    if let Some(crash_db) = app.try_state::<crate::core::crash_history::CrashHistoryDb>() {
+        if let Err(e) = crash_db.rename_instance(old_id.clone(), new_id.clone()).await {
+            tracing::warn!(
+                "Failed to migrate crash history during rename ({} -> {}): {}",
+                old_id,
+                new_id,
+                e
+            );
+        }
+    }
+
+    tracing::info!("Renamed instance: {} -> {}", old_id, new_id);
     Ok(())
 }
 
@@ -3656,6 +4478,694 @@ mod tests {
 
         let bad_private = reqwest::Url::parse("https://192.168.1.1/mod.jar").unwrap();
         assert!(validate_preset_download_url(&bad_private).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rename_instance_in_dir_updates_files_and_metadata() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let old_dir = versions_dir.join("1.20.1");
+        tokio::fs::create_dir_all(old_dir.join("mods"))
+            .await
+            .expect("create old dir");
+
+        let version_json = r#"{
+            "id": "1.20.1",
+            "type": "release"
+        }"#;
+        tokio::fs::write(old_dir.join("1.20.1.json"), version_json)
+            .await
+            .expect("write version json");
+        tokio::fs::write(old_dir.join("1.20.1.jar"), b"fake-jar")
+            .await
+            .expect("write jar");
+
+        let dlml_json = r#"{
+            "name": "1.20.1",
+            "status": "ready"
+        }"#;
+        tokio::fs::write(old_dir.join("dlml.json"), dlml_json)
+            .await
+            .expect("write dlml.json");
+
+        let mod_dest = old_dir.join("mods").join("sodium.jar");
+        let tasks = vec![crate::downloader::DownloadTask::new(
+            "https://example.com/sodium.jar".to_string(),
+            mod_dest.to_string_lossy().to_string(),
+            None,
+            None,
+        )];
+        tokio::fs::write(
+            old_dir.join("modpack_tasks.json"),
+            serde_json::to_string_pretty(&tasks).unwrap(),
+        )
+        .await
+        .expect("write modpack_tasks.json");
+
+        // Also create a child instance inheriting from 1.20.1
+        let child_dir = versions_dir.join("ChildPack");
+        tokio::fs::create_dir_all(&child_dir).await.unwrap();
+        tokio::fs::write(
+            child_dir.join("ChildPack.json"),
+            r#"{ "id": "ChildPack", "inheritsFrom": "1.20.1" }"#,
+        )
+        .await
+        .unwrap();
+
+        rename_instance_in_dir(&versions_dir, "1.20.1", "SurvivalPack")
+            .await
+            .expect("rename should succeed");
+
+        assert!(!old_dir.exists());
+        let new_dir = versions_dir.join("SurvivalPack");
+        assert!(new_dir.exists());
+        assert!(!new_dir.join("1.20.1.json").exists());
+        assert!(!new_dir.join("1.20.1.jar").exists());
+        assert!(new_dir.join("SurvivalPack.jar").exists());
+
+        let new_json_content = tokio::fs::read_to_string(new_dir.join("SurvivalPack.json"))
+            .await
+            .expect("read new json");
+        let parsed: serde_json::Value = serde_json::from_str(&new_json_content).unwrap();
+        assert_eq!(parsed.get("id").and_then(|v| v.as_str()), Some("SurvivalPack"));
+        assert_eq!(parsed.get("clientVersion").and_then(|v| v.as_str()), Some("1.20.1"));
+
+        let new_dlml = tokio::fs::read_to_string(new_dir.join("dlml.json"))
+            .await
+            .expect("read dlml.json");
+        let parsed_dlml: crate::core::launcher::InstanceConfig =
+            serde_json::from_str(&new_dlml).unwrap();
+        assert_eq!(parsed_dlml.name.as_deref(), Some("SurvivalPack"));
+
+        let updated_tasks_str = tokio::fs::read_to_string(new_dir.join("modpack_tasks.json"))
+            .await
+            .expect("read modpack_tasks.json");
+        let updated_tasks: Vec<crate::downloader::DownloadTask> =
+            serde_json::from_str(&updated_tasks_str).unwrap();
+        assert_eq!(
+            updated_tasks[0].dest_path,
+            new_dir.join("mods").join("sodium.jar").to_string_lossy().to_string()
+        );
+
+        let child_json = tokio::fs::read_to_string(child_dir.join("ChildPack.json"))
+            .await
+            .unwrap();
+        let parsed_child: serde_json::Value = serde_json::from_str(&child_json).unwrap();
+        assert_eq!(
+            parsed_child.get("inheritsFrom").and_then(|v| v.as_str()),
+            Some("SurvivalPack")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rename_instance_in_dir_case_only_and_conflicts() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let inst_a = versions_dir.join("TestPack");
+        let inst_b = versions_dir.join("OtherPack");
+        tokio::fs::create_dir_all(&inst_a).await.unwrap();
+        tokio::fs::create_dir_all(&inst_b).await.unwrap();
+
+        tokio::fs::write(
+            inst_a.join("TestPack.json"),
+            r#"{ "id": "TestPack", "clientVersion": "1.20.1" }"#,
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(inst_a.join("TestPack.jar"), b"jar").await.unwrap();
+        tokio::fs::write(
+            inst_b.join("OtherPack.json"),
+            r#"{ "id": "OtherPack", "clientVersion": "1.20.1" }"#,
+        )
+        .await
+        .unwrap();
+
+        // Case-only rename on same instance should succeed
+        rename_instance_in_dir(&versions_dir, "TestPack", "testpack")
+            .await
+            .expect("case-only rename should succeed");
+
+        let entries: Vec<String> = std::fs::read_dir(&versions_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(entries.contains(&"testpack".to_string()));
+        assert!(!entries.contains(&"TestPack".to_string()));
+
+        let renamed_dir = versions_dir.join("testpack");
+        let renamed_files: Vec<String> = std::fs::read_dir(&renamed_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(renamed_files.contains(&"testpack.json".to_string()));
+        assert!(renamed_files.contains(&"testpack.jar".to_string()));
+        assert!(!renamed_files.contains(&"TestPack.json".to_string()));
+        assert!(!renamed_files.contains(&"TestPack.jar".to_string()));
+
+        let json_str = tokio::fs::read_to_string(renamed_dir.join("testpack.json"))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.get("id").and_then(|v| v.as_str()), Some("testpack"));
+
+        // Case-insensitive conflict against another instance should fail
+        let conflict_err = rename_instance_in_dir(&versions_dir, "testpack", "otherpack")
+            .await
+            .expect_err("case-insensitive collision with another instance must fail");
+        assert!(conflict_err.contains("already exists"));
+
+        // Invalid path characters and reserved names must fail
+        assert!(rename_instance_in_dir(&versions_dir, "testpack", "bad/name")
+            .await
+            .is_err());
+        assert!(rename_instance_in_dir(&versions_dir, "testpack", "CON")
+            .await
+            .is_err());
+        assert!(rename_instance_in_dir(&versions_dir, "testpack", "trailing.")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rename_instance_in_dir_malformed_dlml_preserves_old_instance() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let old_dir = versions_dir.join("1.20.1");
+        tokio::fs::create_dir_all(&old_dir).await.unwrap();
+
+        let orig_version_json = r#"{ "id": "1.20.1", "type": "release" }"#;
+        tokio::fs::write(old_dir.join("1.20.1.json"), orig_version_json)
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("1.20.1.jar"), b"jar-bytes")
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("1.20.1.json.bak"), b"bak-bytes")
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("dlml.json"), "{ malformed json")
+            .await
+            .unwrap();
+
+        let child_dir = versions_dir.join("ChildPack");
+        tokio::fs::create_dir_all(&child_dir).await.unwrap();
+        tokio::fs::write(
+            child_dir.join("ChildPack.json"),
+            r#"{ "id": "ChildPack", "inheritsFrom": "1.20.1" }"#,
+        )
+        .await
+        .unwrap();
+
+        let err = rename_instance_in_dir(&versions_dir, "1.20.1", "SurvivalPack")
+            .await
+            .expect_err("malformed dlml.json must fail rename");
+        assert!(err.contains("parse instance config"));
+
+        assert!(old_dir.exists());
+        assert!(!versions_dir.join("SurvivalPack").exists());
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("1.20.1.json"))
+                .await
+                .unwrap(),
+            orig_version_json
+        );
+        assert!(old_dir.join("1.20.1.jar").exists());
+        assert!(old_dir.join("1.20.1.json.bak").exists());
+
+        let child_json: serde_json::Value = serde_json::from_str(
+            &tokio::fs::read_to_string(child_dir.join("ChildPack.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            child_json.get("inheritsFrom").and_then(|v| v.as_str()),
+            Some("1.20.1")
+        );
+
+        let task_ctx = InstanceTaskContext {
+            starting_instances: None,
+            active_tasks: None,
+            tasks: &[],
+            running_instances: None,
+        };
+        let (instances, _) = scan_installed_instances_internal(&versions_dir, &task_ctx)
+            .await
+            .unwrap();
+        assert!(instances.iter().any(|item| item.id == "1.20.1"));
+    }
+
+    #[tokio::test]
+    async fn test_rename_instance_in_dir_malformed_modpack_tasks_preserves_old_instance() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let old_dir = versions_dir.join("1.20.1");
+        tokio::fs::create_dir_all(&old_dir).await.unwrap();
+
+        tokio::fs::write(
+            old_dir.join("1.20.1.json"),
+            r#"{ "id": "1.20.1", "clientVersion": "1.20.1" }"#,
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(old_dir.join("1.20.1.jar"), b"jar")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            old_dir.join("dlml.json"),
+            r#"{ "name": "1.20.1", "status": "ready" }"#,
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(old_dir.join("modpack_tasks.json"), "{ invalid tasks")
+            .await
+            .unwrap();
+
+        let err = rename_instance_in_dir(&versions_dir, "1.20.1", "SurvivalPack")
+            .await
+            .expect_err("malformed modpack_tasks.json must fail rename");
+        assert!(err.contains("modpack_tasks.json"));
+
+        assert!(old_dir.exists());
+        assert!(!versions_dir.join("SurvivalPack").exists());
+        assert!(old_dir.join("1.20.1.json").exists());
+        assert!(old_dir.join("1.20.1.jar").exists());
+    }
+
+    #[tokio::test]
+    async fn test_rename_instance_in_dir_blocked_jar_rolls_back_directory() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let old_dir = versions_dir.join("1.20.1");
+        tokio::fs::create_dir_all(&old_dir).await.unwrap();
+
+        let orig_json = r#"{ "id": "1.20.1", "type": "release" }"#;
+        tokio::fs::write(old_dir.join("1.20.1.json"), orig_json)
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("1.20.1.jar"), b"jar-bytes")
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("1.20.1.json.bak"), b"bak-bytes")
+            .await
+            .unwrap();
+
+        // Create a non-empty directory at the target jar name so renaming 1.20.1.jar fails
+        let blocking_dir = old_dir.join("SurvivalPack.jar");
+        tokio::fs::create_dir_all(&blocking_dir).await.unwrap();
+        tokio::fs::write(blocking_dir.join("lock"), b"x")
+            .await
+            .unwrap();
+
+        let err = rename_instance_in_dir(&versions_dir, "1.20.1", "SurvivalPack")
+            .await
+            .expect_err("blocked jar rename must fail");
+        assert!(!err.is_empty());
+
+        assert!(old_dir.exists());
+        assert!(!versions_dir.join("SurvivalPack").exists());
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("1.20.1.json"))
+                .await
+                .unwrap(),
+            orig_json
+        );
+        assert!(old_dir.join("1.20.1.jar").exists());
+        assert!(old_dir.join("1.20.1.json.bak").exists());
+    }
+
+    #[tokio::test]
+    async fn test_commit_rename_plan_rolls_back_all_mutated_files_on_dependent_failure() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let old_dir = versions_dir.join("1.20.1");
+        let new_dir = versions_dir.join("SurvivalPack");
+        tokio::fs::create_dir_all(old_dir.join("mods"))
+            .await
+            .unwrap();
+
+        let orig_version_json = r#"{ "id": "1.20.1", "type": "release" }"#;
+        tokio::fs::write(old_dir.join("1.20.1.json"), orig_version_json)
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("1.20.1.jar"), b"jar-bytes")
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("1.20.1.json.bak"), b"bak-bytes")
+            .await
+            .unwrap();
+
+        let orig_dlml = r#"{ "name": "1.20.1", "status": "ready" }"#;
+        tokio::fs::write(old_dir.join("dlml.json"), orig_dlml)
+            .await
+            .unwrap();
+
+        let tasks = vec![crate::downloader::DownloadTask::new(
+            "https://example.com/sodium.jar".to_string(),
+            old_dir
+                .join("mods")
+                .join("sodium.jar")
+                .to_string_lossy()
+                .to_string(),
+            None,
+            None,
+        )];
+        let orig_tasks = serde_json::to_string_pretty(&tasks).unwrap();
+        tokio::fs::write(old_dir.join("modpack_tasks.json"), &orig_tasks)
+            .await
+            .unwrap();
+
+        let child_a_dir = versions_dir.join("ChildA");
+        tokio::fs::create_dir_all(&child_a_dir).await.unwrap();
+        let orig_child_a = r#"{ "id": "ChildA", "inheritsFrom": "1.20.1" }"#;
+        tokio::fs::write(child_a_dir.join("ChildA.json"), orig_child_a)
+            .await
+            .unwrap();
+
+        let mut plan = prepare_rename_commit_plan(
+            &versions_dir,
+            &old_dir,
+            &new_dir,
+            "1.20.1",
+            "SurvivalPack",
+        )
+        .await
+        .expect("prepare plan");
+
+        // Inject a failing second dependent update where an intermediate path component is a regular file
+        let blocker_file = versions_dir.join("write_blocker_file");
+        tokio::fs::write(&blocker_file, b"not-a-dir")
+            .await
+            .unwrap();
+        plan.dependent_updates.push(DependentJsonUpdate {
+            json_path: blocker_file.join("ChildB.json"),
+            orig_bytes: Vec::new(),
+            updated_bytes: br#"{"id":"ChildB","inheritsFrom":"SurvivalPack"}"#.to_vec(),
+        });
+
+        let err = commit_rename_plan(&old_dir, &new_dir, "1.20.1", "SurvivalPack", false, plan)
+            .await
+            .expect_err("second dependent write failure must fail commit");
+        assert!(err.contains("inheritsFrom"));
+
+        // Verify full rollback of directory, internal files, configs, tasks, and ChildA
+        assert!(old_dir.exists());
+        assert!(!new_dir.exists());
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("1.20.1.json"))
+                .await
+                .unwrap(),
+            orig_version_json
+        );
+        assert!(!old_dir.join("SurvivalPack.json").exists());
+        assert!(old_dir.join("1.20.1.jar").exists());
+        assert!(!old_dir.join("SurvivalPack.jar").exists());
+        assert!(old_dir.join("1.20.1.json.bak").exists());
+        assert!(!old_dir.join("SurvivalPack.json.bak").exists());
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("dlml.json"))
+                .await
+                .unwrap(),
+            orig_dlml
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("modpack_tasks.json"))
+                .await
+                .unwrap(),
+            orig_tasks
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(child_a_dir.join("ChildA.json"))
+                .await
+                .unwrap(),
+            orig_child_a
+        );
+
+        // No leftover temporary backup/staging files
+        let mut dir_entries = tokio::fs::read_dir(&old_dir).await.unwrap();
+        while let Some(entry) = dir_entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            assert!(
+                !name.starts_with(".dlml_rename_"),
+                "unexpected leftover temp file: {}",
+                name
+            );
+        }
+
+        // Instance remains scannable under old name
+        let task_ctx = InstanceTaskContext {
+            starting_instances: None,
+            active_tasks: None,
+            tasks: &[],
+            running_instances: None,
+        };
+        let (instances, _) = scan_installed_instances_internal(&versions_dir, &task_ctx)
+            .await
+            .unwrap();
+        assert!(instances.iter().any(|item| item.id == "1.20.1"));
+        assert!(!instances.iter().any(|item| item.id == "SurvivalPack"));
+    }
+
+    #[tokio::test]
+    async fn test_commit_rename_plan_case_only_rolls_back_casing_and_contents() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let old_dir = versions_dir.join("TestPack");
+        let new_dir = versions_dir.join("testpack");
+        tokio::fs::create_dir_all(&old_dir).await.unwrap();
+
+        let orig_version_json = r#"{ "id": "TestPack", "clientVersion": "1.20.1" }"#;
+        tokio::fs::write(old_dir.join("TestPack.json"), orig_version_json)
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("TestPack.jar"), b"jar")
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("TestPack.json.bak"), b"bak")
+            .await
+            .unwrap();
+
+        let child_a_dir = versions_dir.join("ChildA");
+        tokio::fs::create_dir_all(&child_a_dir).await.unwrap();
+        let orig_child_a = r#"{ "id": "ChildA", "inheritsFrom": "TestPack" }"#;
+        tokio::fs::write(child_a_dir.join("ChildA.json"), orig_child_a)
+            .await
+            .unwrap();
+
+        let mut plan =
+            prepare_rename_commit_plan(&versions_dir, &old_dir, &new_dir, "TestPack", "testpack")
+                .await
+                .expect("prepare case-only plan");
+
+        let blocker_file = versions_dir.join("write_blocker_file");
+        tokio::fs::write(&blocker_file, b"not-a-dir")
+            .await
+            .unwrap();
+        plan.dependent_updates.push(DependentJsonUpdate {
+            json_path: blocker_file.join("ChildB.json"),
+            orig_bytes: Vec::new(),
+            updated_bytes: br#"{"id":"ChildB","inheritsFrom":"testpack"}"#.to_vec(),
+        });
+
+        let err = commit_rename_plan(&old_dir, &new_dir, "TestPack", "testpack", true, plan)
+            .await
+            .expect_err("failing dependent write must fail case-only commit");
+        assert!(err.contains("inheritsFrom"));
+
+        // Verify exact casing of directory and internal files is restored
+        let mut version_entries = Vec::new();
+        let mut rd = tokio::fs::read_dir(&versions_dir).await.unwrap();
+        while let Some(e) = rd.next_entry().await.unwrap() {
+            version_entries.push(e.file_name().to_string_lossy().to_string());
+        }
+        assert!(version_entries.contains(&"TestPack".to_string()));
+        assert!(!version_entries.contains(&"testpack".to_string()));
+
+        let mut inst_entries = Vec::new();
+        let mut inst_rd = tokio::fs::read_dir(&old_dir).await.unwrap();
+        while let Some(e) = inst_rd.next_entry().await.unwrap() {
+            inst_entries.push(e.file_name().to_string_lossy().to_string());
+        }
+        assert!(inst_entries.contains(&"TestPack.json".to_string()));
+        assert!(inst_entries.contains(&"TestPack.jar".to_string()));
+        assert!(inst_entries.contains(&"TestPack.json.bak".to_string()));
+        assert!(!inst_entries.contains(&"testpack.json".to_string()));
+        assert!(!inst_entries.contains(&"testpack.jar".to_string()));
+        assert!(!inst_entries.contains(&"testpack.json.bak".to_string()));
+        assert!(!inst_entries.iter().any(|n| n.starts_with(".dlml_rename_")));
+
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("TestPack.json"))
+                .await
+                .unwrap(),
+            orig_version_json
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(child_a_dir.join("ChildA.json"))
+                .await
+                .unwrap(),
+            orig_child_a
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_rename_instance_in_dir_readonly_modpack_tasks_and_dependent_propagate_and_rollback(
+    ) {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let old_dir = versions_dir.join("1.20.1");
+        tokio::fs::create_dir_all(old_dir.join("mods"))
+            .await
+            .unwrap();
+
+        let orig_version_json = r#"{ "id": "1.20.1", "type": "release" }"#;
+        tokio::fs::write(old_dir.join("1.20.1.json"), orig_version_json)
+            .await
+            .unwrap();
+        tokio::fs::write(old_dir.join("1.20.1.jar"), b"jar")
+            .await
+            .unwrap();
+        let orig_dlml = r#"{ "name": "1.20.1", "status": "ready" }"#;
+        tokio::fs::write(old_dir.join("dlml.json"), orig_dlml)
+            .await
+            .unwrap();
+
+        let tasks = vec![crate::downloader::DownloadTask::new(
+            "https://example.com/sodium.jar".to_string(),
+            old_dir
+                .join("mods")
+                .join("sodium.jar")
+                .to_string_lossy()
+                .to_string(),
+            None,
+            None,
+        )];
+        let orig_tasks = serde_json::to_string_pretty(&tasks).unwrap();
+        let tasks_path = old_dir.join("modpack_tasks.json");
+        tokio::fs::write(&tasks_path, &orig_tasks).await.unwrap();
+
+        let mut tasks_perms = tokio::fs::metadata(&tasks_path).await.unwrap().permissions();
+        tasks_perms.set_readonly(true);
+        tokio::fs::set_permissions(&tasks_path, tasks_perms)
+            .await
+            .unwrap();
+
+        let tasks_err = rename_instance_in_dir(&versions_dir, "1.20.1", "SurvivalPack")
+            .await
+            .expect_err("read-only modpack_tasks.json write failure must propagate");
+        assert!(tasks_err.contains("modpack_tasks.json"));
+
+        // Clear read-only before asserting / next phase
+        let mut tasks_perms_rw = tokio::fs::metadata(&tasks_path).await.unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        tasks_perms_rw.set_readonly(false);
+        tokio::fs::set_permissions(&tasks_path, tasks_perms_rw)
+            .await
+            .unwrap();
+
+        assert!(old_dir.exists());
+        assert!(!versions_dir.join("SurvivalPack").exists());
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("1.20.1.json"))
+                .await
+                .unwrap(),
+            orig_version_json
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("dlml.json"))
+                .await
+                .unwrap(),
+            orig_dlml
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&tasks_path).await.unwrap(),
+            orig_tasks
+        );
+
+        // Now verify read-only dependent instance JSON failure also propagates and rolls back everything
+        let child_a_dir = versions_dir.join("ChildA");
+        let child_b_dir = versions_dir.join("ChildB");
+        tokio::fs::create_dir_all(&child_a_dir).await.unwrap();
+        tokio::fs::create_dir_all(&child_b_dir).await.unwrap();
+        let orig_child_a = r#"{ "id": "ChildA", "inheritsFrom": "1.20.1" }"#;
+        let orig_child_b = r#"{ "id": "ChildB", "inheritsFrom": "1.20.1" }"#;
+        tokio::fs::write(child_a_dir.join("ChildA.json"), orig_child_a)
+            .await
+            .unwrap();
+        let child_b_json = child_b_dir.join("ChildB.json");
+        tokio::fs::write(&child_b_json, orig_child_b).await.unwrap();
+
+        let mut child_b_perms = tokio::fs::metadata(&child_b_json)
+            .await
+            .unwrap()
+            .permissions();
+        child_b_perms.set_readonly(true);
+        tokio::fs::set_permissions(&child_b_json, child_b_perms)
+            .await
+            .unwrap();
+
+        let dep_err = rename_instance_in_dir(&versions_dir, "1.20.1", "SurvivalPack")
+            .await
+            .expect_err("read-only dependent JSON write failure must propagate");
+        assert!(dep_err.contains("inheritsFrom"));
+
+        let mut child_b_perms_rw = tokio::fs::metadata(&child_b_json)
+            .await
+            .unwrap()
+            .permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        child_b_perms_rw.set_readonly(false);
+        tokio::fs::set_permissions(&child_b_json, child_b_perms_rw)
+            .await
+            .unwrap();
+
+        assert!(old_dir.exists());
+        assert!(!versions_dir.join("SurvivalPack").exists());
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("1.20.1.json"))
+                .await
+                .unwrap(),
+            orig_version_json
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(old_dir.join("dlml.json"))
+                .await
+                .unwrap(),
+            orig_dlml
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&tasks_path).await.unwrap(),
+            orig_tasks
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(child_a_dir.join("ChildA.json"))
+                .await
+                .unwrap(),
+            orig_child_a
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&child_b_json).await.unwrap(),
+            orig_child_b
+        );
     }
 }
 

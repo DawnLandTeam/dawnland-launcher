@@ -180,6 +180,32 @@ const handleTaskAdded = () => {
   }, 250);
 };
 
+interface InstanceRenamedDetail {
+  oldId: string;
+  newId: string;
+}
+
+const handleInstanceRenamed = (event: Event) => {
+  const customEvent = event as CustomEvent<InstanceRenamedDetail>;
+  const { oldId, newId } = customEvent.detail || {};
+  if (!oldId || !newId) return;
+
+  if (selectedInstanceId.value === oldId) {
+    selectedInstanceId.value = newId;
+  }
+  if (instanceLogs.value.has(oldId)) {
+    const logs = instanceLogs.value.get(oldId);
+    if (logs) {
+      instanceLogs.value.set(newId, logs);
+    }
+    instanceLogs.value.delete(oldId);
+  }
+  if (crashVersionId.value === oldId) {
+    crashVersionId.value = newId;
+  }
+  loadInstances(true);
+};
+
 const { fetchAllStats, getInstanceStats, formatPlayTime, error: statsError } = useStatistics();
 
 useTaskStatusReload(async () => {
@@ -189,6 +215,7 @@ useTaskStatusReload(async () => {
 
 onMounted(async () => {
   window.addEventListener('task-added', handleTaskAdded);
+  window.addEventListener('instance-renamed', handleInstanceRenamed);
 
   await loadInstances();
   await loadAccounts();
@@ -412,6 +439,7 @@ onUnmounted(() => {
     taskAddedDebounceTimer = null;
   }
   window.removeEventListener('task-added', handleTaskAdded);
+  window.removeEventListener('instance-renamed', handleInstanceRenamed);
 });
 
 // Patch icons cached in the background without rescanning all instances

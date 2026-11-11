@@ -379,6 +379,7 @@ pub fn run() {
             // Manager commands
             core::manager::scan_installed_instances,
             core::manager::get_instance_details,
+            core::manager::rename_instance,
             core::manager::delete_instance,
             core::manager::check_instance_data,
             core::manager::open_instance_folder,

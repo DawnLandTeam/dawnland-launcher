@@ -117,6 +117,16 @@ pub fn advance_instance_icon_generation(
     generation
 }
 
+/// Invalidate in-flight icon jobs for `old_id` and reset backfill tracking for `new_id`
+/// when an instance is renamed.
+pub fn handle_instance_renamed(old_id: &str, new_id: &str) {
+    advance_instance_icon_generation(old_id, None, None);
+    if let Ok(mut attempted) = BACKFILL_ATTEMPTED.lock() {
+        attempted.remove(old_id);
+        attempted.remove(new_id);
+    }
+}
+
 /// Ensure a generation entry exists for `candidate` (used by backfill when no install ran
 /// in the current session) and return its active generation if it matches `candidate`.
 fn ensure_or_match_generation(candidate: &IconBackfillCandidate) -> Option<u64> {
