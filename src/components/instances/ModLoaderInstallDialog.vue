@@ -48,6 +48,8 @@ const loaderTypes = [
   { id: 'neoforge', name: 'NeoForge', icon: '/neoforge.png' },
 ] as const;
 
+let loadRequestId = 0;
+
 watch(
   () => props.open,
   (isOpen) => {
@@ -67,13 +69,30 @@ watch(
   { immediate: true }
 );
 
-watch(selectedLoader, () => {
+function selectLoader(loaderId: 'fabric' | 'forge' | 'neoforge') {
+  if (selectedLoader.value === loaderId) return;
+  selectedLoader.value = loaderId;
   if (props.open) {
     loadLoaders();
   }
-});
+}
 
-let loadRequestId = 0;
+function normalizeVersionForMatch(version: string): string {
+  const trimmed = version.trim();
+  const mcPrefix = props.mcVersion ? `${props.mcVersion.trim()}-` : '';
+  if (mcPrefix && trimmed.startsWith(mcPrefix)) {
+    return trimmed.slice(mcPrefix.length);
+  }
+  return trimmed;
+}
+
+function isVersionMatch(candidate: string, current?: string): boolean {
+  if (!current) return false;
+  const trimmedCandidate = candidate.trim();
+  const trimmedCurrent = current.trim();
+  if (trimmedCandidate === trimmedCurrent) return true;
+  return normalizeVersionForMatch(trimmedCandidate) === normalizeVersionForMatch(trimmedCurrent);
+}
 
 async function loadLoaders() {
   if (!props.mcVersion) return;
@@ -119,7 +138,9 @@ async function loadLoaders() {
         props.currentLoaderVersion &&
         props.currentLoaderType?.toLowerCase() === targetLoader
       ) {
-        const matched = availableVersions.value.find((v) => v.version === props.currentLoaderVersion);
+        const matched = availableVersions.value.find((v) =>
+          isVersionMatch(v.version, props.currentLoaderVersion)
+        );
         selectedVersion.value = matched ? matched.version : availableVersions.value[0].version;
       } else {
         selectedVersion.value = availableVersions.value[0].version;
@@ -139,10 +160,10 @@ async function loadLoaders() {
 }
 
 function compareVersions(target: string, current?: string): 'same' | 'upgrade' | 'downgrade' {
-  if (!current || target === current) return 'same';
+  if (!current || isVersionMatch(target, current)) return 'same';
   // Check index in availableVersions list (index 0 is newest)
   const targetIdx = availableVersions.value.findIndex((v) => v.version === target);
-  const currentIdx = availableVersions.value.findIndex((v) => v.version === current);
+  const currentIdx = availableVersions.value.findIndex((v) => isVersionMatch(v.version, current));
   if (targetIdx !== -1 && currentIdx !== -1) {
     return targetIdx < currentIdx ? 'upgrade' : 'downgrade';
   }
@@ -160,7 +181,11 @@ const selectOptions = computed(() => {
     if (idx === 0) {
       suffix += ` [${t('instances.loaderManagement.latestStableBadge', 'Latest')}]`;
     }
-    if (props.mode === 'switch' && props.currentLoaderVersion && item.version === props.currentLoaderVersion) {
+    if (
+      props.mode === 'switch' &&
+      props.currentLoaderVersion &&
+      isVersionMatch(item.version, props.currentLoaderVersion)
+    ) {
       suffix += ` (${t('instances.loaderManagement.currentVersionBadge', 'Current')})`;
     }
     return {
@@ -237,7 +262,7 @@ async function handleConfirm() {
             v-for="loader in loaderTypes"
             :key="loader.id"
             type="button"
-            @click="selectedLoader = loader.id"
+            @click="selectLoader(loader.id)"
             class="flex flex-col items-center gap-1.5 p-3 rounded-lg border text-xs font-medium transition-all"
             :class="[
               selectedLoader === loader.id
@@ -295,6 +320,9 @@ async function handleConfirm() {
           v-else
           v-model="selectedVersion"
           :options="selectOptions"
+          searchable
+          :search-placeholder="t('instances.loaderManagement.searchVersions', 'Search versions...')"
+          :empty-text="t('instances.loaderManagement.noMatchingVersions', 'No matching versions')"
           class="w-full"
         />
       </div>

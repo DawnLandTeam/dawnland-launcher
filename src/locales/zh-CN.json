@@ -324,6 +324,8 @@
       "upgrade": "升级",
       "downgrade": "降级",
       "loadingVersions": "正在加载可用版本...",
+      "searchVersions": "搜索版本号...",
+      "noMatchingVersions": "无匹配版本",
       "operationSuccess": "任务已提交并在后台执行"
     }
   },
