@@ -3,9 +3,10 @@ import { ref, onMounted, watch, onActivated, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
-import { Package, Plus, Gamepad2, Loader2, Check, Share2, Trash2, Clock, Play, AlertTriangle, UploadCloud } from "@lucide/vue";
+import { Package, Plus, Gamepad2, Loader2, Check, Share2, Trash2, Clock, Play, AlertTriangle, UploadCloud, Pencil } from "@lucide/vue";
 
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from "../components/ui/alert-dialog";
+import InstanceRenameModal from "../components/instances/InstanceRenameModal.vue";
 
 import { getErrorMessage } from "../utils/error";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
@@ -35,6 +36,11 @@ const deletingInstanceId = ref("");
 const deletingInstanceName = ref("");
 const isDeletingInstance = ref(false);
 const hasDataToDelete = ref(false);
+
+// Rename modal state
+const showRenameDialog = ref(false);
+const renamingInstanceId = ref("");
+const renamingInstanceName = ref("");
 
 const openDropdownId = ref<string | null>(null);
 
@@ -174,6 +180,13 @@ async function shareModpack(instance: InstanceItem) {
     toast.error(t('instances.share.copyFailed', 'Failed to copy link to clipboard, please check browser permissions.'));
   }
 }
+function openRenameDialog(instance: InstanceItem) {
+  if (isInstanceBusy(instance) || instance.status === 'running') return;
+  renamingInstanceId.value = instance.id;
+  renamingInstanceName.value = instance.name;
+  showRenameDialog.value = true;
+}
+
 async function confirmDeleteInstance(instance: InstanceItem) {
   deletingInstanceId.value = instance.id;
   deletingInstanceName.value = instance.name;
@@ -363,6 +376,14 @@ function normalizedModpackVersion(version: string): string {
             </div>
             
             <div class="shrink-0 flex items-center -mr-1 -mt-1 relative z-20">
+              <button
+                @click.stop="openRenameDialog(instance)"
+                class="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                :disabled="isInstanceBusy(instance) || instance.status === 'running'"
+                :title="$t('instances.rename', 'Rename')"
+              >
+                <Pencil class="h-4 w-4" />
+              </button>
               <button 
                 v-if="instance.modpackType && instance.modpackProjectId && instance.modpackVersion"
                 @click.stop="shareModpack(instance)"
@@ -455,5 +476,13 @@ function normalizedModpackVersion(version: string): string {
         </button>
       </div>
     </AlertDialog>
+
+    <!-- Rename Instance Dialog -->
+    <InstanceRenameModal
+      :open="showRenameDialog"
+      :instance-id="renamingInstanceId"
+      :instance-name="renamingInstanceName"
+      @update:open="showRenameDialog = $event"
+    />
   </div>
 </template>

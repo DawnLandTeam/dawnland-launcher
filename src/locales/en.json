@@ -88,6 +88,18 @@
     "customModGroup": "Mod Groups",
     "customShaders": "Shaders",
     "customResourcepacks": "Resource Packs",
+    "rename": "Rename",
+    "renameDialog": {
+      "title": "Rename Instance",
+      "desc": "Enter a new name for this instance. Its folder and internal configuration files will be updated.",
+      "label": "Instance Name",
+      "placeholder": "Enter new instance name",
+      "emptyName": "Please enter an instance name",
+      "invalidName": "Instance name cannot contain invalid characters (/ \\ : * ? \" < > |), trailing dots/spaces, or reserved system names",
+      "alreadyExists": "An instance with this name already exists",
+      "success": "Instance renamed to {name}",
+      "failed": "Failed to rename instance"
+    },
     "delete": "Delete",
     "search": "Search instances...",
     "installedCount": "{count} instance installed | {count} instances installed",

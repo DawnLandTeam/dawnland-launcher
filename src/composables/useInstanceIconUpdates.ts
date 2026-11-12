@@ -42,6 +42,11 @@ export function getIconPathRevision(iconPath: string | null | undefined): number
   return iconPathRevisions.value[iconPath];
 }
 
+/** Clear stale cached icon mapping when an instance is renamed. */
+export function renameCachedInstanceIcon(oldId: string, _newId: string): void {
+  latestIconPaths.delete(oldId);
+}
+
 /**
  * Merge any in-session icon updates into a freshly scanned instance list so a scan that
  * started before an `instance-icon-updated` event cannot clobber the patched `iconPath`.

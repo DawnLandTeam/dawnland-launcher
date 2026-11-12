@@ -88,6 +88,18 @@
     "customModGroup": "模组",
     "customShaders": "光影",
     "customResourcepacks": "资源包",
+    "rename": "重命名",
+    "renameDialog": {
+      "title": "重命名实例",
+      "desc": "输入新的实例名称。实例目录及其内部配置文件将同步更新。",
+      "label": "实例名称",
+      "placeholder": "请输入新的实例名称",
+      "emptyName": "请输入实例名称",
+      "invalidName": "实例名称不能包含 / \\ : * ? \" < > | 等非法字符、末尾空格/点或系统保留名称",
+      "alreadyExists": "已存在同名实例，请更换其他名称",
+      "success": "实例已重命名为 {name}",
+      "failed": "重命名实例失败"
+    },
     "delete": "删除",
     "search": "搜索实例...",
     "installedCount": "已安装 {count} 个实例 | 已安装 {count} 个实例",

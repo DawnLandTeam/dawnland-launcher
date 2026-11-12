@@ -117,6 +117,61 @@ impl StatisticsDb {
             .map_err(|e| e.to_string())
     }
 
+    pub async fn rename_stats(&self, old_id: String, new_id: String) -> Result<(), String> {
+        if old_id == new_id {
+            return Ok(());
+        }
+        self.conn
+            .call(move |conn| -> rusqlite::Result<()> {
+                let tx = conn.transaction()?;
+
+                let old_row: Option<(i64, i64, Option<i64>)> = tx
+                    .query_row(
+                        "SELECT launch_count, play_time_seconds, last_played_at FROM instance_stats WHERE instance_id = ?1",
+                        rusqlite::params![&old_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .ok();
+
+                if let Some((old_launches, old_playtime, old_last_played)) = old_row {
+                    let new_row: Option<(i64, i64, Option<i64>)> = tx
+                        .query_row(
+                            "SELECT launch_count, play_time_seconds, last_played_at FROM instance_stats WHERE instance_id = ?1",
+                            rusqlite::params![&new_id],
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                        )
+                        .ok();
+
+                    if let Some((new_launches, new_playtime, new_last_played)) = new_row {
+                        let merged_launches = new_launches + old_launches;
+                        let merged_playtime = new_playtime + old_playtime;
+                        let merged_last_played = match (old_last_played, new_last_played) {
+                            (Some(a), Some(b)) => Some(a.max(b)),
+                            (a, b) => a.or(b),
+                        };
+                        tx.execute(
+                            "UPDATE instance_stats SET launch_count = ?1, play_time_seconds = ?2, last_played_at = ?3 WHERE instance_id = ?4",
+                            rusqlite::params![merged_launches, merged_playtime, merged_last_played, &new_id],
+                        )?;
+                        tx.execute(
+                            "DELETE FROM instance_stats WHERE instance_id = ?1",
+                            rusqlite::params![&old_id],
+                        )?;
+                    } else {
+                        tx.execute(
+                            "UPDATE instance_stats SET instance_id = ?1 WHERE instance_id = ?2",
+                            rusqlite::params![&new_id, &old_id],
+                        )?;
+                    }
+                }
+
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| e.to_string())
+    }
+
 
 
     pub async fn get_all_stats(&self) -> Result<Vec<InstanceStats>, String> {
@@ -138,5 +193,48 @@ impl StatisticsDb {
             })
             .await
             .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_rename_stats_migrates_and_merges() {
+        let dir = tempdir().unwrap();
+        let db = StatisticsDb::new(dir.path().join("stats.db")).await.unwrap();
+
+        db.record_launch("OldPack".to_string()).await.unwrap();
+        db.add_playtime("OldPack".to_string(), 120).await.unwrap();
+
+        db.rename_stats("OldPack".to_string(), "NewPack".to_string())
+            .await
+            .unwrap();
+
+        assert!(db.get_instance_stats("OldPack".to_string()).await.unwrap().is_none());
+        let migrated = db
+            .get_instance_stats("NewPack".to_string())
+            .await
+            .unwrap()
+            .expect("migrated stats should exist");
+        assert_eq!(migrated.launch_count, 1);
+        assert_eq!(migrated.play_time_seconds, 120);
+
+        // Merging when target already has stats
+        db.record_launch("SourcePack".to_string()).await.unwrap();
+        db.add_playtime("SourcePack".to_string(), 30).await.unwrap();
+        db.rename_stats("SourcePack".to_string(), "NewPack".to_string())
+            .await
+            .unwrap();
+
+        let merged = db
+            .get_instance_stats("NewPack".to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(merged.launch_count, 2);
+        assert_eq!(merged.play_time_seconds, 150);
     }
 }

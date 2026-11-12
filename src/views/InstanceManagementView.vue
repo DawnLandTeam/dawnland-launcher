@@ -8,7 +8,7 @@ export default {
 import { ref, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { Settings, Puzzle, Package, Box, Globe, Sparkles, FolderArchive, ArrowLeft, RefreshCw, Share2, AlertTriangle, BarChart } from "@lucide/vue";
+import { Settings, Puzzle, Package, Box, Globe, Sparkles, FolderArchive, ArrowLeft, RefreshCw, Share2, AlertTriangle, BarChart, Pencil } from "@lucide/vue";
 import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
 
 
@@ -21,6 +21,7 @@ import InstanceIcon from "../components/InstanceIcon.vue";
 
 import InstanceSettingsTab from "../components/instances/InstanceSettingsTab.vue";
 import InstanceExportModal from "../components/instances/InstanceExportModal.vue";
+import InstanceRenameModal from "../components/instances/InstanceRenameModal.vue";
 import InstanceModsTab from "../components/instances/InstanceModsTab.vue";
 import InstanceDatapacksTab from "../components/instances/InstanceDatapacksTab.vue";
 import InstanceResourcepacksTab from "../components/instances/InstanceResourcepacksTab.vue";
@@ -80,6 +81,7 @@ const tabs = [
 ];
 
 const showExportModal = ref(false);
+const showRenameModal = ref(false);
 
 const isRunning = computed(() => {
   if (!instanceId.value) return false;
@@ -95,6 +97,19 @@ const isRunning = computed(() => {
   }
   return currentInstance.value?.status === 'running';
 });
+
+const canRenameInstance = computed(() => {
+  if (!currentInstance.value) return false;
+  return !isInstanceBusy(currentInstance.value) && !isRunning.value;
+});
+
+function handleInstanceRenamed(payload: { oldId: string; newId: string }) {
+  router.replace({
+    name: 'instance-management',
+    params: { id: payload.newId },
+    query: route.query,
+  });
+}
 
 const translatedTabs = computed(() => {
   if (!currentInstance.value) return [];
@@ -201,6 +216,14 @@ watch(instanceId, async (newId) => {
             <span class="font-bold text-xs truncate leading-tight" :title="currentInstance.name">{{ currentInstance.name }}</span>
             <span class="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">{{ currentInstance.mcVersion }} · {{ currentInstance.loaderType }}{{ currentInstance.loaderVersion ? ` (${currentInstance.loaderVersion})` : '' }}</span>
           </div>
+          <button
+            @click="showRenameModal = true"
+            :disabled="!canRenameInstance"
+            :title="t('instances.rename', 'Rename')"
+            class="p-1.5 rounded-lg hover:bg-neutral-200/60 dark:hover:bg-zinc-800/60 transition-colors text-neutral-600 dark:text-neutral-400 hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+          >
+            <Pencil class="h-3.5 w-3.5" />
+          </button>
         </div>
         
         <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
@@ -251,6 +274,14 @@ watch(instanceId, async (newId) => {
         :open="showExportModal"
         :instance-id="instanceId"
         @update:open="showExportModal = $event"
+      />
+
+      <InstanceRenameModal
+        :open="showRenameModal"
+        :instance-id="instanceId"
+        :instance-name="currentInstance.name"
+        @update:open="showRenameModal = $event"
+        @renamed="handleInstanceRenamed"
       />
     </template>
   </div>
