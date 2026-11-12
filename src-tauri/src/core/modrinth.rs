@@ -317,7 +317,6 @@ async fn search_modrinth_internal(
     let response = client
         .get(&search_url)
         .header("Accept", "application/json")
-        .header("User-Agent", "DawnlandLauncher/1.0")
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -396,7 +395,6 @@ pub async fn get_modrinth_mod_files(
     let response = client
         .get(&versions_url)
         .header("Accept", "application/json")
-        .header("User-Agent", "DawnlandLauncher/1.0")
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -485,7 +483,6 @@ pub async fn get_modrinth_mod_details(project_id: String) -> Result<UnifiedModPr
     let response = client
         .get(&project_url)
         .header("Accept", "application/json")
-        .header("User-Agent", "DawnlandLauncher/1.0")
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -524,7 +521,6 @@ pub async fn get_modrinth_mod_versions(project_id: String) -> Result<Vec<String>
     let response = client
         .get(&versions_url)
         .header("Accept", "application/json")
-        .header("User-Agent", "DawnlandLauncher/1.0")
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {}", e))?;
@@ -577,7 +573,6 @@ pub async fn search_modrinth_modpacks(query: String) -> Result<Vec<UnifiedModPro
     let response = client
         .get(&search_url)
         .header("Accept", "application/json")
-        .header("User-Agent", "DawnlandLauncher/1.0")
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {:?}", e))?;
@@ -655,7 +650,6 @@ pub async fn get_modrinth_modpack_versions(
     let response = client
         .get(&versions_url)
         .header("Accept", "application/json")
-        .header("User-Agent", "DawnlandLauncher/1.0")
         .send()
         .await
         .map_err(|e| format!("Failed to send request: {:?}", e))?;

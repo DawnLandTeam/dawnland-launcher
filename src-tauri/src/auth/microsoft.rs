@@ -45,10 +45,18 @@ impl AuthError {
 }
 
 fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+    static MS_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    MS_HTTP_CLIENT
+        .get_or_init(|| {
+            crate::core::utils::http_client_builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to build Microsoft HTTP client: {}", e);
+                    crate::core::utils::get_http_client().clone()
+                })
+        })
+        .clone()
 }
 
 #[cfg(not(test))]
@@ -886,7 +894,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
     tracing::info!("Received authorization code from browser callback.");
 
     // 7. Exchange code for token
-    let client = reqwest::Client::new();
+    let client = http_client();
     let token_url = get_oauth_token_url();
 
     let params = [

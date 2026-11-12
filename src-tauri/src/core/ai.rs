@@ -9,7 +9,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use crate::error::AppError;
 use crate::downloader::{DownloadTask, run_batch_download};
-use reqwest::Client;
+
 use std::sync::atomic::AtomicBool;
 use tauri::{AppHandle, Emitter};
 
@@ -131,7 +131,7 @@ pub async fn download_engine(app: AppHandle) -> Result<(), AppError> {
     tokio::fs::create_dir_all(&engine_dir).await.map_err(|e| AppError::from(e.to_string()))?;
     
     // Fetch latest tag
-    let client = Client::builder()
+    let client = crate::core::utils::http_client_builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| AppError::from(e.to_string()))?;
@@ -307,7 +307,7 @@ pub async fn start_llama_engine(model_name: &str) -> Result<u16, String> {
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn llama-server: {}", e))?;
     
     // Wait for the server to bind and be ready by polling /v1/models
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client();
     let mut ready = false;
     for _ in 0..60 { // wait up to 60 seconds for large models to load
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -408,7 +408,7 @@ struct ModelListResponse {
 
 #[tauri::command]
 pub async fn fetch_remote_models(base_url: String, api_key: String) -> Result<Vec<String>, AppError> {
-    let client = Client::new();
+    let client = crate::core::utils::get_http_client();
     let url = format!("{}/models", base_url.trim_end_matches('/'));
     
     let mut request = client.get(&url);
@@ -650,7 +650,7 @@ pub async fn analyze_crash(crash_log: String, language: Option<String>, context_
     // Notify frontend that streaming analysis has started.
     let _ = app.emit("ai-analysis-started", ());
 
-    let client = Client::builder()
+    let client = crate::core::utils::http_client_builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| AppError::from(format!("Failed to build client: {}", e)))?;

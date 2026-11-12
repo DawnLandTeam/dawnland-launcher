@@ -410,3 +410,292 @@ pub async fn install_server_modpack(
     );
     Ok(instance_dir.to_string_lossy().to_string())
 }
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientConfigResponse {
+    pub curseforge_api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherAnnouncementResponse {
+    pub announcements: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawUpdatePlatform {
+    url: Option<String>,
+    md5: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawLauncherUpdateResponse {
+    version: Option<String>,
+    notes: Option<String>,
+    platforms: Option<std::collections::HashMap<String, RawUpdatePlatform>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherUpdateInfo {
+    pub version: String,
+    pub body: String,
+    pub md5: Option<String>,
+    pub url: Option<String>,
+}
+
+fn get_update_target_os() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows-standalone"
+    } else {
+        "linux-standalone"
+    }
+}
+
+async fn fetch_client_config_with_base(
+    client: &reqwest::Client,
+    base_url: &str,
+) -> Result<ClientConfigResponse, String> {
+    let url = format!("{}/api/client-config", base_url.trim_end_matches('/'));
+    let response = crate::core::security::secure_request(client, reqwest::Method::GET, &url, "")
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch client config: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(extract_api_error(status, &body));
+    }
+
+    crate::core::utils::parse_json_response(response).await
+}
+
+/// Fetch public client configuration (such as CurseForge API key) from the Go web backend.
+#[tauri::command]
+pub async fn fetch_client_config() -> Result<ClientConfigResponse, String> {
+    fetch_client_config_with_base(crate::core::utils::get_http_client(), &get_web_backend_url())
+        .await
+}
+
+async fn fetch_launcher_announcement_with_base(
+    client: &reqwest::Client,
+    base_url: &str,
+) -> Result<LauncherAnnouncementResponse, String> {
+    let url = format!(
+        "{}/api/launcher/announcement",
+        base_url.trim_end_matches('/')
+    );
+    let response = crate::core::security::secure_request(client, reqwest::Method::GET, &url, "")
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch launcher announcement: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(extract_api_error(status, &body));
+    }
+
+    crate::core::utils::parse_json_response(response).await
+}
+
+/// Fetch active launcher announcements from the Go web backend.
+#[tauri::command]
+pub async fn fetch_launcher_announcement() -> Result<LauncherAnnouncementResponse, String> {
+    fetch_launcher_announcement_with_base(
+        crate::core::utils::get_http_client(),
+        &get_web_backend_url(),
+    )
+    .await
+}
+
+async fn check_launcher_update_with_base(
+    client: &reqwest::Client,
+    base_url: &str,
+    target_os: &str,
+    current_version: &str,
+    channel: Option<&str>,
+) -> Result<Option<LauncherUpdateInfo>, String> {
+    let query = if channel == Some("prerelease") {
+        "?channel=prerelease"
+    } else {
+        ""
+    };
+    let url = format!(
+        "{}/api/launcher/update/{}/{}{}",
+        base_url.trim_end_matches('/'),
+        target_os,
+        current_version,
+        query
+    );
+
+    let response = client
+        .get(&url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to check launcher update: {}", e))?;
+
+    let status = response.status();
+    if status == reqwest::StatusCode::NO_CONTENT {
+        return Ok(None);
+    }
+
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(extract_api_error(status, &body));
+    }
+
+    let raw: RawLauncherUpdateResponse = crate::core::utils::parse_json_response(response).await?;
+    let Some(version) = raw.version.filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+
+    if version == current_version {
+        return Ok(None);
+    }
+
+    let Some(platform_data) = raw.platforms.and_then(|mut p| p.remove(target_os)) else {
+        tracing::warn!("No update asset found for target OS: {}", target_os);
+        return Ok(None);
+    };
+
+    Ok(Some(LauncherUpdateInfo {
+        version,
+        body: raw.notes.unwrap_or_default(),
+        md5: platform_data.md5,
+        url: platform_data.url,
+    }))
+}
+
+/// Check for launcher updates via the Go web backend.
+#[tauri::command]
+pub async fn check_launcher_update(
+    channel: Option<String>,
+) -> Result<Option<LauncherUpdateInfo>, String> {
+    check_launcher_update_with_base(
+        crate::core::utils::get_http_client(),
+        &get_web_backend_url(),
+        get_update_target_os(),
+        env!("CARGO_PKG_VERSION"),
+        channel.as_deref(),
+    )
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::utils::{get_http_client, APP_USER_AGENT};
+    use mockito::{Matcher, Server};
+
+    #[tokio::test]
+    async fn test_fetch_client_config_sends_unified_user_agent_and_signature() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/client-config")
+            .match_header("user-agent", APP_USER_AGENT)
+            .match_header("x-launcher-time", Matcher::Any)
+            .match_header("x-launcher-signature", Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"curseforgeApiKey":"cf-test-key"}"#)
+            .create_async()
+            .await;
+
+        let res = fetch_client_config_with_base(get_http_client(), &server.url())
+            .await
+            .expect("fetch_client_config should succeed");
+        assert_eq!(res.curseforge_api_key.as_deref(), Some("cf-test-key"));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_fetch_launcher_announcement_sends_unified_user_agent() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/launcher/announcement")
+            .match_header("user-agent", APP_USER_AGENT)
+            .match_header("x-launcher-time", Matcher::Any)
+            .match_header("x-launcher-signature", Matcher::Any)
+            .with_status(200)
+            .with_body(r#"{"announcements":["Hello DLML"]}"#)
+            .create_async()
+            .await;
+
+        let res = fetch_launcher_announcement_with_base(get_http_client(), &server.url())
+            .await
+            .expect("fetch_launcher_announcement should succeed");
+        assert_eq!(res.announcements, vec!["Hello DLML".to_string()]);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_check_launcher_update_handles_200_and_204() {
+        let mut server = Server::new_async().await;
+        let mock_ok = server
+            .mock(
+                "GET",
+                "/api/launcher/update/windows-standalone/0.0.1?channel=prerelease",
+            )
+            .match_header("user-agent", APP_USER_AGENT)
+            .with_status(200)
+            .with_body(
+                r#"{
+                    "version": "1.2.3",
+                    "notes": "Release notes",
+                    "platforms": {
+                        "windows-standalone": {
+                            "url": "https://dl.dlml.app/releases/v1.2.3/DLML.exe",
+                            "md5": "abc123"
+                        }
+                    }
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let update = check_launcher_update_with_base(
+            get_http_client(),
+            &server.url(),
+            "windows-standalone",
+            "0.0.1",
+            Some("prerelease"),
+        )
+        .await
+        .expect("check_launcher_update 200 should succeed");
+        assert_eq!(
+            update,
+            Some(LauncherUpdateInfo {
+                version: "1.2.3".to_string(),
+                body: "Release notes".to_string(),
+                md5: Some("abc123".to_string()),
+                url: Some("https://dl.dlml.app/releases/v1.2.3/DLML.exe".to_string()),
+            })
+        );
+        mock_ok.assert_async().await;
+
+        let mock_no_content = server
+            .mock("GET", "/api/launcher/update/linux-standalone/1.2.3")
+            .match_header("user-agent", APP_USER_AGENT)
+            .with_status(204)
+            .create_async()
+            .await;
+
+        let up_to_date = check_launcher_update_with_base(
+            get_http_client(),
+            &server.url(),
+            "linux-standalone",
+            "1.2.3",
+            Some("stable"),
+        )
+        .await
+        .expect("check_launcher_update 204 should succeed");
+        assert_eq!(up_to_date, None);
+        mock_no_content.assert_async().await;
+    }
+}

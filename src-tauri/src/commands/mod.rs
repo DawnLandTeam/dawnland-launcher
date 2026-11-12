@@ -184,7 +184,7 @@ pub async fn fetch_account_textures(account_id: String) -> Result<auth::AccountT
             // Call sessionserver profile API
             let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
             let url = format!("{}/sessionserver/session/minecraft/profile/{}?unsigned=false&t={}", authlib_url.trim_end_matches('/'), account.id.replace("-", ""), timestamp);
-            let client = reqwest::Client::new();
+            let client = crate::core::utils::get_http_client();
             let res = client.get(&url).send().await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
             if res.status().is_success() {
                 #[derive(serde::Deserialize)]
@@ -266,7 +266,7 @@ pub async fn upload_microsoft_skin(account_id: String, skin_path: String, varian
 
     let skin_data = tokio::fs::read(&skin_path).await.map_err(|e| DawnlandError::Unknown(format!("Failed to read skin file: {}", e)))?;
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client();
     
     let file_part = reqwest::multipart::Part::bytes(skin_data)
         .file_name("skin.png")
@@ -349,7 +349,9 @@ pub async fn update_launcher(version: String, md5: Option<String>, url: Option<S
     use std::io::Write;
     use tauri::Emitter;
 
-    let mut response = reqwest::get(&url)
+    let mut response = crate::core::utils::get_http_client()
+        .get(&url)
+        .send()
         .await
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
@@ -561,7 +563,7 @@ pub async fn proxy_image_base64(url: String) -> Result<String, AppError> {
     let safe_addr = safe_addr.ok_or_else(|| DawnlandError::Unknown("Host resolves to private IP".to_string()))?;
 
     // Create client that forces the resolved safe IP to prevent DNS rebinding
-    let client = reqwest::Client::builder()
+    let client = crate::core::utils::http_client_builder()
         .resolve(host, safe_addr)
         .redirect(reqwest::redirect::Policy::none()) // SSRF Protection: Disable redirects
         .build()

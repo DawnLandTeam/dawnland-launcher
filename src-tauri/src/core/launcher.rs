@@ -1647,7 +1647,7 @@ pub async fn verify_and_collect_missing_files(
             // Need to download asset index first
             if let Some(url) = &asset_index.url {
                 tracing::info!("Downloading missing asset index: {}", url);
-                if let Ok(resp) = reqwest::get(url).await {
+                if let Ok(resp) = crate::core::utils::get_http_client().get(url).send().await {
                     if let Ok(text) = resp.text().await {
                         if let Some(parent) = asset_index_path.parent() {
                             let _ = tokio::fs::create_dir_all(parent).await;
@@ -3168,8 +3168,10 @@ pub async fn launch_instance(
         let injector_path = base_dir.join("authlib-injector.jar");
         if !injector_path.exists() {
             tracing::info!("Fetching latest authlib-injector...");
-            if let Ok(res) =
-                reqwest::get("https://authlib-injector.yushi.moe/artifact/latest.json").await
+            if let Ok(res) = crate::core::utils::get_http_client()
+                .get("https://authlib-injector.yushi.moe/artifact/latest.json")
+                .send()
+                .await
             {
                 if let Ok(json) = res.json::<serde_json::Value>().await {
                     if let Some(download_url) = json.get("download_url").and_then(|v| v.as_str()) {

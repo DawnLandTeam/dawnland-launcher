@@ -64,13 +64,15 @@ static ICON_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         }
         attempt.follow()
     });
-    reqwest::Client::builder()
+    crate::core::utils::http_client_builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(ICON_DOWNLOAD_TIMEOUT)
         .redirect(policy)
-        .user_agent("Dawnland-Launcher/1.0")
         .build()
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to build icon HTTP client: {}", e);
+            crate::core::utils::get_http_client().clone()
+        })
 });
 
 #[derive(Debug, Clone, Serialize)]

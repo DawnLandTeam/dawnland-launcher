@@ -316,7 +316,6 @@ pub fn run() {
             greet,
             core::cache::clean_dawnland_cache,
             core::cache::clean_global_mod_cache,
-            core::security::generate_api_signature,
             commands::get_system_info,
             commands::get_system_locale,
             commands::get_system_memory,
@@ -464,6 +463,9 @@ pub fn run() {
             core::server::download_pack_file,
             core::server::install_server_modpack,
             core::server::get_filter_options,
+            core::server::fetch_client_config,
+            core::server::fetch_launcher_announcement,
+            core::server::check_launcher_update,
             core::ping::ping_server,
             // Task commands
             commands::task::get_task_history,
