@@ -188,9 +188,15 @@ const selectedComponents = reactive<Record<string, string | null>>({
 const activeConfiguringComponent = ref<string | null>(null);
 const gridRef = ref<HTMLElement | null>(null);
 
-onClickOutside(gridRef, () => {
-  activeConfiguringComponent.value = null;
-});
+onClickOutside(
+  gridRef,
+  () => {
+    activeConfiguringComponent.value = null;
+  },
+  {
+    ignore: ['[data-dselect-dropdown]'],
+  }
+);
 
 function getConflictReason(target: string): string | undefined {
   // Check exclusions
