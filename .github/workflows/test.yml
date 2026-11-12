@@ -67,6 +67,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Line Endings (LF)
+        run: |
+          bad_files=$(git ls-files --eol | grep -E '^i/(crlf|mixed)\b' | grep -Ev '\.(bat|cmd|ps1)$' || true)
+          if [ -n "$bad_files" ]; then
+            echo "Error: Non-LF line endings detected in Git index:"
+            echo "$bad_files"
+            exit 1
+          fi
+
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
