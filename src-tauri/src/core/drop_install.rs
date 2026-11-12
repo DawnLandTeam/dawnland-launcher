@@ -44,7 +44,11 @@ pub struct InspectedDropFile {
     pub kind: DetectedFileKind,
     pub display_name: Option<String>,
     pub detected_loader: Option<String>,
+    #[serde(default)]
+    pub detected_loaders: Vec<String>,
     pub detected_mc_version: Option<String>,
+    #[serde(default)]
+    pub detected_mc_versions: HashMap<String, String>,
     pub size: u64,
     pub is_dir: bool,
 }
@@ -110,52 +114,88 @@ fn sanitize_zip_entry_rel_path(raw: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-/// Inspect a `.jar` archive for Mod display name, loader type, and Minecraft version requirement.
-fn inspect_jar_archive(path: &Path) -> (Option<String>, Option<String>, Option<String>) {
+#[derive(Default)]
+struct JarInspectResult {
+    display_name: Option<String>,
+    detected_loader: Option<String>,
+    detected_loaders: Vec<String>,
+    detected_mc_version: Option<String>,
+    detected_mc_versions: HashMap<String, String>,
+}
+
+fn push_unique_loader(loaders: &mut Vec<String>, loader: &str) {
+    if !loaders.iter().any(|l| l.eq_ignore_ascii_case(loader)) {
+        loaders.push(loader.to_string());
+    }
+}
+
+/// Inspect a `.jar` archive for Mod display name, supported loaders, and Minecraft version requirements.
+fn inspect_jar_archive(path: &Path) -> JarInspectResult {
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return (None, None, None),
+        Err(_) => return JarInspectResult::default(),
     };
     let mut archive = match zip::ZipArchive::new(file) {
         Ok(a) => a,
-        Err(_) => return (None, None, None),
+        Err(_) => return JarInspectResult::default(),
     };
+
+    let flags = crate::core::mod_parser::scan_jar_archive_flags(&archive);
+    let markers = if flags.manifest_entry_name.is_some() {
+        crate::core::mod_parser::read_jar_manifest_markers(
+            &mut archive,
+            flags.manifest_entry_name.as_deref(),
+        )
+    } else {
+        Default::default()
+    };
+
+    let mut loaders: Vec<String> = Vec::new();
+    let mut mc_versions: HashMap<String, String> = HashMap::new();
+    let mut fabric_name: Option<String> = None;
+    let mut quilt_name: Option<String> = None;
+    let mut neoforge_name: Option<String> = None;
+    let mut forge_name: Option<String> = None;
+    let mut mcmod_name: Option<String> = None;
 
     // 1. Check Fabric (`fabric.mod.json`)
     if let Ok(mut f) = archive.by_name("fabric.mod.json") {
+        push_unique_loader(&mut loaders, "Fabric");
         let mut content = String::new();
         if f.by_ref().take(MAX_METADATA_ENTRY_BYTES).read_to_string(&mut content).is_ok() {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                let name = json
+                fabric_name = json
                     .get("name")
                     .and_then(|v| v.as_str())
                     .or_else(|| json.get("id").and_then(|v| v.as_str()))
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
-                let mc_ver = json
+                if let Some(mc_ver) = json
                     .get("depends")
                     .and_then(|d| d.get("minecraft"))
-                    .and_then(extract_json_version_req);
-                return (name, Some("Fabric".to_string()), mc_ver);
+                    .and_then(extract_json_version_req)
+                {
+                    mc_versions.insert("Fabric".to_string(), mc_ver);
+                }
             }
         }
-        return (None, Some("Fabric".to_string()), None);
     }
 
     // 2. Check Quilt (`quilt.mod.json`)
     if let Ok(mut f) = archive.by_name("quilt.mod.json") {
+        push_unique_loader(&mut loaders, "Quilt");
         let mut content = String::new();
         if f.by_ref().take(MAX_METADATA_ENTRY_BYTES).read_to_string(&mut content).is_ok() {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                 let ql = json.get("quilt_loader");
-                let name = ql
+                quilt_name = ql
                     .and_then(|q| q.get("metadata"))
                     .and_then(|m| m.get("name"))
                     .and_then(|v| v.as_str())
                     .or_else(|| ql.and_then(|q| q.get("id")).and_then(|v| v.as_str()))
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
-                let mc_ver = ql
+                if let Some(mc_ver) = ql
                     .and_then(|q| q.get("depends"))
                     .and_then(|d| d.as_array())
                     .and_then(|arr| {
@@ -166,41 +206,45 @@ fn inspect_jar_archive(path: &Path) -> (Option<String>, Option<String>, Option<S
                                 None
                             }
                         })
-                    });
-                return (name, Some("Quilt".to_string()), mc_ver);
+                    })
+                {
+                    mc_versions.insert("Quilt".to_string(), mc_ver);
+                }
             }
         }
-        return (None, Some("Quilt".to_string()), None);
     }
 
     // 3. Check NeoForge (`META-INF/neoforge.mods.toml`)
     if let Ok(mut f) = archive.by_name("META-INF/neoforge.mods.toml") {
+        push_unique_loader(&mut loaders, "NeoForge");
         let mut content = String::new();
         if f.by_ref().take(MAX_METADATA_ENTRY_BYTES).read_to_string(&mut content).is_ok() {
             if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
-                let name = extract_forge_display_name(&toml_val);
-                let mc_ver = extract_forge_mc_version(&toml_val);
-                return (name, Some("NeoForge".to_string()), mc_ver);
+                neoforge_name = extract_forge_display_name(&toml_val);
+                if let Some(mc_ver) = extract_forge_mc_version(&toml_val) {
+                    mc_versions.insert("NeoForge".to_string(), mc_ver);
+                }
             }
         }
-        return (None, Some("NeoForge".to_string()), None);
     }
 
     // 4. Check Forge (`META-INF/mods.toml`)
     if let Ok(mut f) = archive.by_name("META-INF/mods.toml") {
+        push_unique_loader(&mut loaders, "Forge");
         let mut content = String::new();
         if f.by_ref().take(MAX_METADATA_ENTRY_BYTES).read_to_string(&mut content).is_ok() {
             if let Ok(toml_val) = toml::from_str::<toml::Value>(&content) {
-                let name = extract_forge_display_name(&toml_val);
-                let mc_ver = extract_forge_mc_version(&toml_val);
-                return (name, Some("Forge".to_string()), mc_ver);
+                forge_name = extract_forge_display_name(&toml_val);
+                if let Some(mc_ver) = extract_forge_mc_version(&toml_val) {
+                    mc_versions.insert("Forge".to_string(), mc_ver);
+                }
             }
         }
-        return (None, Some("Forge".to_string()), None);
     }
 
     // 5. Check Legacy Forge (`mcmod.info`)
     if let Ok(mut f) = archive.by_name("mcmod.info") {
+        push_unique_loader(&mut loaders, "Forge");
         let mut content = String::new();
         if f.by_ref().take(MAX_METADATA_ENTRY_BYTES).read_to_string(&mut content).is_ok() {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -213,25 +257,54 @@ fn inspect_jar_archive(path: &Path) -> (Option<String>, Option<String>, Option<S
                             .and_then(|arr| arr.first())
                     });
                 if let Some(obj) = entry {
-                    let name = obj
+                    mcmod_name = obj
                         .get("name")
                         .and_then(|v| v.as_str())
                         .or_else(|| obj.get("modid").and_then(|v| v.as_str()))
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty());
-                    let mc_ver = obj
-                        .get("mcversion")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty());
-                    return (name, Some("Forge".to_string()), mc_ver);
+                    if !markers.is_til_multiversion && !mc_versions.contains_key("Forge") {
+                        if let Some(mc_ver) = obj
+                            .get("mcversion")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                        {
+                            mc_versions.insert("Forge".to_string(), mc_ver);
+                        }
+                    }
                 }
             }
         }
-        return (None, Some("Forge".to_string()), None);
     }
 
-    (None, None, None)
+    // 6. Check Forge/NeoForge SPI & Manifest markers (e.g. TIL universal / multiversion JARs)
+    if flags.has_forge_spi || markers.is_forge_native {
+        push_unique_loader(&mut loaders, "Forge");
+    }
+    if flags.has_neoforge_spi || markers.is_til_multiversion {
+        push_unique_loader(&mut loaders, "NeoForge");
+    }
+
+    let display_name = forge_name
+        .or(neoforge_name)
+        .or(mcmod_name)
+        .or(markers.implementation_title)
+        .or(fabric_name)
+        .or(quilt_name);
+    let detected_loader = loaders.first().cloned();
+    let detected_mc_version = detected_loader
+        .as_ref()
+        .and_then(|l| mc_versions.get(l).cloned())
+        .or_else(|| mc_versions.values().next().cloned());
+
+    JarInspectResult {
+        display_name,
+        detected_loader,
+        detected_loaders: loaders,
+        detected_mc_version,
+        detected_mc_versions: mc_versions,
+    }
 }
 
 fn extract_json_version_req(val: &serde_json::Value) -> Option<String> {
@@ -342,19 +415,19 @@ fn try_read_modpack_name_from_archive(
 fn inspect_zip_archive(
     path: &Path,
     file_stem: &str,
-) -> (DetectedFileKind, Option<String>, Option<String>) {
+) -> (DetectedFileKind, Option<String>, Vec<String>) {
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return (DetectedFileKind::Unknown, None, None),
+        Err(_) => return (DetectedFileKind::Unknown, None, Vec::new()),
     };
     let mut archive = match zip::ZipArchive::new(file) {
         Ok(a) => a,
-        Err(_) => return (DetectedFileKind::Unknown, None, None),
+        Err(_) => return (DetectedFileKind::Unknown, None, Vec::new()),
     };
 
     // 1. Check if it is a Modpack
     if let Some(pack_name) = try_read_modpack_name_from_archive(&mut archive) {
-        return (DetectedFileKind::Modpack, Some(pack_name), None);
+        return (DetectedFileKind::Modpack, Some(pack_name), Vec::new());
     }
 
     let mut has_root_level_dat = false;
@@ -443,17 +516,17 @@ fn inspect_zip_archive(
         return (
             DetectedFileKind::World,
             Some(file_stem.to_string()),
-            None,
+            Vec::new(),
         );
     }
     if let Some(world_folder) = nested_world_folder {
-        return (DetectedFileKind::World, Some(world_folder), None);
+        return (DetectedFileKind::World, Some(world_folder), Vec::new());
     }
     if has_shaders_dir && !has_pack_mcmeta {
         return (
             DetectedFileKind::ShaderPack,
             Some(file_stem.to_string()),
-            None,
+            Vec::new(),
         );
     }
     if has_pack_mcmeta {
@@ -461,45 +534,45 @@ fn inspect_zip_archive(
             return (
                 DetectedFileKind::ResourcePack,
                 Some(file_stem.to_string()),
-                None,
+                Vec::new(),
             );
         }
         if has_data_dir {
             return (
                 DetectedFileKind::Datapack,
                 Some(file_stem.to_string()),
-                None,
+                Vec::new(),
             );
         }
         return (
             DetectedFileKind::ResourcePack,
             Some(file_stem.to_string()),
-            None,
+            Vec::new(),
         );
     }
     if has_shaders_dir {
         return (
             DetectedFileKind::ShaderPack,
             Some(file_stem.to_string()),
-            None,
+            Vec::new(),
         );
     }
-    if has_fabric_mod {
+    if has_fabric_mod || has_forge_mod {
+        let mut loaders = Vec::new();
+        if has_fabric_mod {
+            loaders.push("Fabric".to_string());
+        }
+        if has_forge_mod {
+            loaders.push("Forge".to_string());
+        }
         return (
             DetectedFileKind::Mod,
             Some(file_stem.to_string()),
-            Some("Fabric".to_string()),
-        );
-    }
-    if has_forge_mod {
-        return (
-            DetectedFileKind::Mod,
-            Some(file_stem.to_string()),
-            Some("Forge".to_string()),
+            loaders,
         );
     }
 
-    (DetectedFileKind::Unknown, None, None)
+    (DetectedFileKind::Unknown, None, Vec::new())
 }
 
 /// Synchronously inspect a single file or directory path.
@@ -520,7 +593,9 @@ pub fn inspect_single_path_sync(path: &Path) -> InspectedDropFile {
                 kind: DetectedFileKind::Unknown,
                 display_name: None,
                 detected_loader: None,
+                detected_loaders: Vec::new(),
                 detected_mc_version: None,
+                detected_mc_versions: HashMap::new(),
                 size: 0,
                 is_dir: false,
             }
@@ -554,7 +629,9 @@ pub fn inspect_single_path_sync(path: &Path) -> InspectedDropFile {
             filename,
             kind,
             detected_loader: None,
+            detected_loaders: Vec::new(),
             detected_mc_version: None,
+            detected_mc_versions: HashMap::new(),
             size: 0,
             is_dir: true,
         };
@@ -581,7 +658,9 @@ pub fn inspect_single_path_sync(path: &Path) -> InspectedDropFile {
             kind: DetectedFileKind::Modpack,
             display_name,
             detected_loader: None,
+            detected_loaders: Vec::new(),
             detected_mc_version: None,
+            detected_mc_versions: HashMap::new(),
             size,
             is_dir: false,
         };
@@ -591,28 +670,32 @@ pub fn inspect_single_path_sync(path: &Path) -> InspectedDropFile {
         || lower_name.ends_with(".jar.disable")
         || lower_name.ends_with(".litemod")
     {
-        let (display_name, detected_loader, detected_mc_version) = inspect_jar_archive(path);
+        let inspected = inspect_jar_archive(path);
         return InspectedDropFile {
             path: path_str,
             filename,
             kind: DetectedFileKind::Mod,
-            display_name: display_name.or(Some(file_stem)),
-            detected_loader,
-            detected_mc_version,
+            display_name: inspected.display_name.or(Some(file_stem)),
+            detected_loader: inspected.detected_loader,
+            detected_loaders: inspected.detected_loaders,
+            detected_mc_version: inspected.detected_mc_version,
+            detected_mc_versions: inspected.detected_mc_versions,
             size,
             is_dir: false,
         };
     }
 
     if lower_name.ends_with(".zip") {
-        let (kind, display_name, detected_loader) = inspect_zip_archive(path, &file_stem);
+        let (kind, display_name, detected_loaders) = inspect_zip_archive(path, &file_stem);
         return InspectedDropFile {
             path: path_str,
             filename,
             kind,
             display_name,
-            detected_loader,
+            detected_loader: detected_loaders.first().cloned(),
+            detected_loaders,
             detected_mc_version: None,
+            detected_mc_versions: HashMap::new(),
             size,
             is_dir: false,
         };
@@ -624,7 +707,9 @@ pub fn inspect_single_path_sync(path: &Path) -> InspectedDropFile {
         kind: DetectedFileKind::Unknown,
         display_name: None,
         detected_loader: None,
+        detected_loaders: Vec::new(),
         detected_mc_version: None,
+        detected_mc_versions: HashMap::new(),
         size,
         is_dir: false,
     }
@@ -2263,6 +2348,49 @@ displayName="Just Enough Items"
         assert_eq!(res_forge.kind, DetectedFileKind::Mod);
         assert_eq!(res_forge.display_name.as_deref(), Some("Just Enough Items"));
         assert_eq!(res_forge.detected_loader.as_deref(), Some("Forge"));
+
+        let til_jar = temp.join("theimpossiblelibrary-0.4.7.jar");
+        create_test_zip(
+            &til_jar,
+            &[
+                (
+                    "fabric.mod.json",
+                    br#"{"schemaVersion": 1, "id": "theimpossibleloader", "name": "The Impossible Loader", "depends": {"minecraft": ">=1.16.5"}}"#,
+                ),
+                (
+                    "mcmod.info",
+                    br#"[{"modid": "theimpossiblelibrary", "name": "The Impossible Library", "mcversion": "1.12.2"}]"#,
+                ),
+                (
+                    "META-INF/services/net.minecraftforge.forgespi.locating.IModLocator",
+                    b"mods.thecomputerizer.theimpossiblelibrary.forge.core.MultiVersionModLocator\n",
+                ),
+                (
+                    "META-INF/MANIFEST.MF",
+                    b"Manifest-Version: 1.0\r\nImplementation-Title: The Impossible Library\r\nTILMultiversionMods: mods.thecomputerizer.theimpossiblelibrary.api.common.TILCommonEntryPoint\r\n",
+                ),
+            ],
+        );
+        let res_til = inspect_single_path_sync(&til_jar);
+        assert_eq!(res_til.kind, DetectedFileKind::Mod);
+        assert_eq!(res_til.display_name.as_deref(), Some("The Impossible Library"));
+        assert!(res_til.detected_loaders.contains(&"Fabric".to_string()));
+        assert!(res_til.detected_loaders.contains(&"Forge".to_string()));
+        assert!(res_til.detected_loaders.contains(&"NeoForge".to_string()));
+        assert!(!res_til.detected_mc_versions.contains_key("Forge"));
+
+        let mt_jar = temp.join("musictriggers-7.0.4.jar");
+        create_test_zip(
+            &mt_jar,
+            &[(
+                "META-INF/MANIFEST.MF",
+                b"Manifest-Version: 1.0\r\nImplementation-Title: Music Triggers\r\nTILMultiversionMods: mods.thecomputerizer.musictriggers.api.common.MTCommonEntryPoint\r\n",
+            )],
+        );
+        let res_mt = inspect_single_path_sync(&mt_jar);
+        assert_eq!(res_mt.kind, DetectedFileKind::Mod);
+        assert_eq!(res_mt.display_name.as_deref(), Some("Music Triggers"));
+        assert!(res_mt.detected_loaders.contains(&"Forge".to_string()));
 
         let _ = std::fs::remove_dir_all(&temp);
     }

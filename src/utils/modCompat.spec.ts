@@ -63,4 +63,37 @@ describe('findIncompatibleMods', () => {
     );
     expect(issues).toHaveLength(0);
   });
+
+  it('allows multi-loader universal mods on matching Forge/NeoForge instances', () => {
+    const tilMod = mod({
+      filename: 'theimpossiblelibrary-0.4.7.jar',
+      detectedLoader: 'Fabric',
+      detectedLoaders: ['Fabric', 'Forge', 'NeoForge'],
+      detectedMcVersion: '>=1.16.5',
+      detectedMcVersions: { Fabric: '>=1.16.5' },
+    });
+
+    expect(findIncompatibleMods([tilMod], { loaderType: 'Forge', mcVersion: '1.20.1' })).toHaveLength(0);
+    expect(findIncompatibleMods([tilMod], { loaderType: 'Forge', mcVersion: '1.12.2' })).toHaveLength(0);
+    expect(findIncompatibleMods([tilMod], { loaderType: 'NeoForge', mcVersion: '1.21.1' })).toHaveLength(0);
+
+    const fabricOld = findIncompatibleMods([tilMod], { loaderType: 'Fabric', mcVersion: '1.12.2' });
+    expect(fabricOld).toHaveLength(1);
+    expect(fabricOld[0].reasons).toEqual(['mcVersion']);
+  });
+
+  it('checks per-loader MC version requirements on dual-metadata JARs', () => {
+    const dualMod = mod({
+      filename: 'dual.jar',
+      detectedLoader: 'Fabric',
+      detectedLoaders: ['Fabric', 'Forge'],
+      detectedMcVersion: '>=1.20.1',
+      detectedMcVersions: { Fabric: '>=1.20.1', Forge: '[1.20.1,1.20.2)' },
+    });
+
+    expect(findIncompatibleMods([dualMod], { loaderType: 'Forge', mcVersion: '1.20.1' })).toHaveLength(0);
+    const forgeMismatch = findIncompatibleMods([dualMod], { loaderType: 'Forge', mcVersion: '1.20.4' });
+    expect(forgeMismatch).toHaveLength(1);
+    expect(forgeMismatch[0].reasons).toEqual(['mcVersion']);
+  });
 });
