@@ -177,6 +177,20 @@ fn read_archive_entry_string<R: Read + std::io::Seek>(
     Some(content)
 }
 
+fn read_nested_jar_bytes<R: Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    entry_name: &str,
+) -> Option<Vec<u8>> {
+    let mut nested_f = archive.by_name(entry_name).ok()?;
+    let mut buf = Vec::new();
+    nested_f
+        .by_ref()
+        .take(MAX_NESTED_JAR_BYTES)
+        .read_to_end(&mut buf)
+        .ok()?;
+    (!buf.is_empty()).then_some(buf)
+}
+
 fn normalize_mcmod_dep(raw: &str, only_explicit_required: bool) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -577,16 +591,9 @@ impl ModParser {
 
         let nested_paths = Self::resolve_jij_nested_paths(archive, flags);
         for path in nested_paths {
-            let mut buf = Vec::new();
-            if let Ok(mut nested_f) = archive.by_name(&path) {
-                let _ = nested_f
-                    .by_ref()
-                    .take(MAX_NESTED_JAR_BYTES)
-                    .read_to_end(&mut buf);
-            }
-            if buf.is_empty() {
+            let Some(buf) = read_nested_jar_bytes(archive, &path) else {
                 continue;
-            }
+            };
             if let Ok(mut nested_archive) = zip::ZipArchive::new(std::io::Cursor::new(buf)) {
                 let mut inner_s = None;
                 for inner_name in inner_candidates {
@@ -817,25 +824,22 @@ impl ModParser {
             if let Some(jars) = json.get("jars").and_then(|v| v.as_array()) {
                 for j in jars {
                     if let Some(file_path) = j.get("file").and_then(|v| v.as_str()) {
-                        let mut buf = Vec::new();
-                        if let Ok(mut nested_f) = archive.by_name(file_path) {
-                            let _ = nested_f.read_to_end(&mut buf);
-                        }
-                        if !buf.is_empty() {
-                            if let Ok(mut nested_archive) =
-                                zip::ZipArchive::new(std::io::Cursor::new(buf))
+                        let Some(buf) = read_nested_jar_bytes(archive, file_path) else {
+                            continue;
+                        };
+                        if let Ok(mut nested_archive) =
+                            zip::ZipArchive::new(std::io::Cursor::new(buf))
+                        {
+                            if let Some(inner_s) =
+                                read_archive_entry_string(&mut nested_archive, "fabric.mod.json")
                             {
-                                if let Some(inner_s) =
-                                    read_archive_entry_string(&mut nested_archive, "fabric.mod.json")
+                                if let Ok(inner_json) =
+                                    serde_json::from_str::<serde_json::Value>(&inner_s)
                                 {
-                                    if let Ok(inner_json) =
-                                        serde_json::from_str::<serde_json::Value>(&inner_s)
+                                    if let Some(id) =
+                                        inner_json.get("id").and_then(|v| v.as_str())
                                     {
-                                        if let Some(id) =
-                                            inner_json.get("id").and_then(|v| v.as_str())
-                                        {
-                                            meta.provides.push(id.to_string());
-                                        }
+                                        meta.provides.push(id.to_string());
                                     }
                                 }
                             }
