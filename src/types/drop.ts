@@ -13,7 +13,9 @@ export interface InspectedDropFile {
   kind: DetectedFileKind;
   displayName?: string | null;
   detectedLoader?: string | null;
+  detectedLoaders?: string[];
   detectedMcVersion?: string | null;
+  detectedMcVersions?: Record<string, string>;
   size: number;
   isDir: boolean;
 }

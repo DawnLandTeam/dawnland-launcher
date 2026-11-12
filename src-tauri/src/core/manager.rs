@@ -2790,7 +2790,12 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let cache_key = format!("{}_{}_{}_{}", actual_filename, metadata.len(), mtime, loader_type);
+        let cache_key = crate::core::mod_parser::build_mod_cache_key(
+            &actual_filename,
+            metadata.len(),
+            mtime,
+            &loader_type,
+        );
 
         let meta = resolve_mod_metadata(&path, &cache_key, &mut cache_entries, &parser, base_dir, skip_parsing.unwrap_or(false), Some(loader_type.clone())).await;
         let icon_url = get_mod_icon_url(&meta, &parser, &cache_key);
@@ -3000,9 +3005,13 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
         Err(_) => return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: 0 }),
     };
     let loader_type = instance.loader_type.clone();
+    if loader_type.eq_ignore_ascii_case("vanilla") {
+        return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: jar_entries.len() });
+    }
 
     // Parse all mod metadata in a blocking thread (parse_mod uses sync IO)
     let base_dir_for_parser = base_dir.clone();
+    let loader_type_for_parser = loader_type.clone();
     let metas = tokio::task::spawn_blocking(move || {
         let parser = crate::core::mod_parser::ModParser::new(&base_dir_for_parser);
         let mut cache = parser.load_all_cache();
@@ -3016,12 +3025,17 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
             } else {
                 (0, 0)
             };
-            let cache_key = format!("{}_{}_{}_{}", filename, size, mtime, loader_type);
+            let cache_key = crate::core::mod_parser::build_mod_cache_key(
+                filename,
+                size,
+                mtime,
+                &loader_type_for_parser,
+            );
 
             if let Some(cached_meta) = cache.get(&cache_key) {
                 cached_meta.clone()
             } else {
-                let parsed_meta = parser.parse_mod(path, &cache_key, Some(&loader_type));
+                let parsed_meta = parser.parse_mod(path, &cache_key, Some(&loader_type_for_parser));
                 parser.set_cache_entry(&cache_key, &parsed_meta);
                 cache.insert(cache_key, parsed_meta.clone());
                 parsed_meta
@@ -3031,9 +3045,24 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
     .await
     .map_err(|e| format!("Blocking task failed: {}", e))?;
 
+    let warnings = evaluate_prelaunch_warnings(&metas, &loader_type);
+
+    tracing::info!("Prelaunch check: {} mods, {} warnings", metas.len(), warnings.len());
+    Ok(PrelaunchCheckResult { warnings, mod_count: metas.len() })
+}
+
+/// Evaluate missing mod dependency warnings from parsed mod metadata for a target instance loader.
+fn evaluate_prelaunch_warnings(
+    metas: &[crate::core::mod_parser::ModMetadata],
+    loader_type: &str,
+) -> Vec<PrelaunchWarning> {
+    if loader_type.eq_ignore_ascii_case("vanilla") {
+        return Vec::new();
+    }
+
     // Collect installed mod ids (lowercase for case-insensitive matching)
     let mut installed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for meta in &metas {
+    for meta in metas {
         if let Some(ref id) = meta.mod_id {
             installed_ids.insert(id.to_lowercase());
         }
@@ -3042,16 +3071,40 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
         }
     }
 
+    let is_forge_family = loader_type.eq_ignore_ascii_case("forge")
+        || loader_type.eq_ignore_ascii_case("neoforge");
+    let is_fabric_family = loader_type.eq_ignore_ascii_case("fabric")
+        || loader_type.eq_ignore_ascii_case("quilt");
+    let has_sinytra_connector = is_forge_family
+        && (installed_ids.contains("connector")
+            || installed_ids.contains("connectormod")
+            || installed_ids.contains("sinytra_connector"));
+
     // Platform-level dependencies that are always present
     const PLATFORM_DEPS: &[&str] = &[
         "minecraft", "java", "fabricloader", "quilt_loader", "quiltloader",
-        "forge", "neoforge", "minecraftforge",
+        "forge", "neoforge", "minecraftforge", "fml", "mcp",
     ];
 
     let mut warnings = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for meta in &metas {
+    for meta in metas {
+        let meta_is_fabric = meta.detected_loader.as_deref().is_some_and(|l| {
+            l.eq_ignore_ascii_case("fabric") || l.eq_ignore_ascii_case("quilt")
+        });
+        let meta_is_forge = meta.detected_loader.as_deref().is_some_and(|l| {
+            l.eq_ignore_ascii_case("forge") || l.eq_ignore_ascii_case("neoforge")
+        });
+
+        // Do not report cross-loader dependencies unless a bridge (Sinytra Connector) is present
+        if is_forge_family && meta_is_fabric && !has_sinytra_connector {
+            continue;
+        }
+        if is_fabric_family && meta_is_forge {
+            continue;
+        }
+
         let display_name = meta.name.clone()
             .or_else(|| meta.mod_id.clone())
             .unwrap_or_default();
@@ -3074,8 +3127,7 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
         }
     }
 
-    tracing::info!("Prelaunch check: {} mods, {} warnings", metas.len(), warnings.len());
-    Ok(PrelaunchCheckResult { warnings, mod_count: metas.len() })
+    warnings
 }
 
 /// Delete a local mod file
@@ -5168,6 +5220,71 @@ mod tests {
             tokio::fs::read_to_string(&child_b_json).await.unwrap(),
             orig_child_b
         );
+    }
+
+    #[test]
+    fn test_evaluate_prelaunch_warnings_cross_loader_and_sinytra() {
+        use crate::core::mod_parser::ModMetadata;
+
+        let fabric_mod = ModMetadata {
+            mod_id: Some("sodium".to_string()),
+            name: Some("Sodium".to_string()),
+            version: Some("0.5.0".to_string()),
+            has_icon: false,
+            depends: vec!["fabric".to_string(), "fabricloader".to_string()],
+            provides: vec![],
+            detected_loader: Some("Fabric".to_string()),
+        };
+
+        // Forge without Sinytra Connector: Fabric fallback metadata must not emit "missing: fabric"
+        let warnings_no_connector = evaluate_prelaunch_warnings(std::slice::from_ref(&fabric_mod), "Forge");
+        assert!(warnings_no_connector.is_empty());
+
+        // Forge with Sinytra Connector, missing Fabric API
+        let connector_mod = ModMetadata {
+            mod_id: Some("connector".to_string()),
+            name: Some("Sinytra Connector".to_string()),
+            version: Some("1.0.0".to_string()),
+            has_icon: false,
+            depends: vec![],
+            provides: vec![],
+            detected_loader: Some("Forge".to_string()),
+        };
+        let warnings_with_connector =
+            evaluate_prelaunch_warnings(&[fabric_mod.clone(), connector_mod.clone()], "Forge");
+        assert_eq!(warnings_with_connector.len(), 1);
+        assert_eq!(warnings_with_connector[0].dependency_id, "fabric");
+        assert_eq!(warnings_with_connector[0].required_by, "Sodium");
+
+        // Forge with Sinytra Connector + Forgified Fabric API providing "fabric"
+        let ffapi_mod = ModMetadata {
+            mod_id: Some("fabric_api".to_string()),
+            name: Some("Forgified Fabric API".to_string()),
+            version: Some("0.92.0".to_string()),
+            has_icon: false,
+            depends: vec![],
+            provides: vec!["fabric".to_string(), "fabric-api".to_string()],
+            detected_loader: Some("Forge".to_string()),
+        };
+        let warnings_satisfied =
+            evaluate_prelaunch_warnings(&[fabric_mod, connector_mod, ffapi_mod], "Forge");
+        assert!(warnings_satisfied.is_empty());
+    }
+
+    #[test]
+    fn test_evaluate_prelaunch_warnings_vanilla_skips_checks() {
+        use crate::core::mod_parser::ModMetadata;
+
+        let forge_mod = ModMetadata {
+            mod_id: Some("example".to_string()),
+            name: Some("Example".to_string()),
+            version: Some("1.0.0".to_string()),
+            has_icon: false,
+            depends: vec!["missing_lib".to_string()],
+            provides: vec![],
+            detected_loader: Some("Forge".to_string()),
+        };
+        assert!(evaluate_prelaunch_warnings(&[forge_mod], "Vanilla").is_empty());
     }
 }
 

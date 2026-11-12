@@ -151,6 +151,32 @@ function isLoaderCompatible(modLoader: string, instanceLoader: string): boolean 
   return false;
 }
 
+function findMcVersionRequirement(
+  file: InspectedDropFile,
+  matchedLoader: string | undefined,
+  instLoader: string,
+): string | null | undefined {
+  const map = file.detectedMcVersions;
+  if (map && Object.keys(map).length > 0) {
+    const lookupOrder: string[] = [];
+    if (matchedLoader) lookupOrder.push(matchedLoader.toLowerCase());
+    if (instLoader && !lookupOrder.includes(instLoader)) lookupOrder.push(instLoader);
+    if (instLoader === 'quilt' && !lookupOrder.includes('fabric')) lookupOrder.push('fabric');
+
+    for (const keyLower of lookupOrder) {
+      for (const [k, v] of Object.entries(map)) {
+        if (k.toLowerCase() === keyLower && v) {
+          return v;
+        }
+      }
+    }
+    // If loaders were matched (e.g. universal TIL Forge entry) without an entry in `detectedMcVersions`,
+    // avoid falsely checking another loader's range (like Fabric >=1.16.5 on Forge 1.12.2).
+    if (matchedLoader) return null;
+  }
+  return file.detectedMcVersion;
+}
+
 /** Collect incompatibility issues for dropped Mod files against the target instance. */
 export function findIncompatibleMods(
   files: InspectedDropFile[],
@@ -162,15 +188,28 @@ export function findIncompatibleMods(
   for (const file of files) {
     if (file.kind !== 'Mod') continue;
     const reasons: ModIncompatReason[] = [];
+    const candidateLoaders =
+      file.detectedLoaders && file.detectedLoaders.length > 0
+        ? file.detectedLoaders
+        : file.detectedLoader
+          ? [file.detectedLoader]
+          : [];
 
+    let matchedLoader: string | undefined;
     if (instLoader === 'vanilla' || instLoader === '') {
       reasons.push('vanilla');
-    } else if (file.detectedLoader && !isLoaderCompatible(file.detectedLoader, instLoader)) {
-      reasons.push('loader');
+    } else if (candidateLoaders.length > 0) {
+      matchedLoader =
+        candidateLoaders.find((l) => l.toLowerCase() === instLoader) ??
+        candidateLoaders.find((l) => isLoaderCompatible(l, instLoader));
+      if (!matchedLoader) {
+        reasons.push('loader');
+      }
     }
 
-    if (file.detectedMcVersion && instance.mcVersion) {
-      const ok = isMcVersionSatisfied(file.detectedMcVersion, instance.mcVersion);
+    const mcRequirement = findMcVersionRequirement(file, matchedLoader, instLoader);
+    if (mcRequirement && instance.mcVersion) {
+      const ok = isMcVersionSatisfied(mcRequirement, instance.mcVersion);
       if (ok === false) reasons.push('mcVersion');
     }
 
@@ -178,8 +217,9 @@ export function findIncompatibleMods(
       issues.push({
         file,
         reasons,
-        modLoader: file.detectedLoader,
-        requiredMcVersion: file.detectedMcVersion,
+        modLoader:
+          candidateLoaders.length > 0 ? candidateLoaders.join(' / ') : file.detectedLoader,
+        requiredMcVersion: mcRequirement ?? file.detectedMcVersion,
       });
     }
   }
