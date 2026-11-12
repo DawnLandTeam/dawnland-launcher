@@ -25,7 +25,7 @@ import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
 import CrashReportModal from "../components/CrashReportModal.vue";
 import InstanceIcon from "../components/InstanceIcon.vue";
 import { useI18n } from "vue-i18n";
-import { fetchApi } from "../utils/api";
+
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { useStatistics } from "../composables/useStatistics";
 import { useInstances } from "../composables/useInstances";
@@ -223,13 +223,9 @@ onMounted(async () => {
 
 // Fetch announcement
   try {
-    const backendUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-  const res = await fetchApi(`${backendUrl}/api/launcher/announcement`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.announcements && data.announcements.length > 0) {
-        announcements.value = data.announcements;
-      }
+    const data = await invoke<{ announcements?: string[] }>("fetch_launcher_announcement");
+    if (data?.announcements && data.announcements.length > 0) {
+      announcements.value = data.announcements;
     }
   } catch (err) {
     console.error("Failed to fetch announcement:", err);

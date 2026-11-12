@@ -14,10 +14,10 @@ import DTooltip from '../components/ui/DTooltip.vue';
 import { useLogStore } from '../composables/useLogStore';
 import { useRoute, useRouter } from "vue-router";
 import { getVersion } from "@tauri-apps/api/app";
-import { setUpdateAvailable, hasUpdateAvailable, parseUpdateData, openUpdateModal } from "../composables/useUpdate";
+import { setUpdateAvailable, hasUpdateAvailable, openUpdateModal, type CustomUpdate } from "../composables/useUpdate";
 import { trackEvent, getErrorType, sanitizeTrackingUrl } from "../utils/analytics";
 import { getErrorMessage } from "../utils/error";
-import { normalizeUpdateChannel, getUpdateChannelQuery } from "../utils/updateChannel";
+import { normalizeUpdateChannel } from "../utils/updateChannel";
 import { toast } from "../composables/useToast";
 import { formatSpeed, formatBytes } from "../utils/format";
 
@@ -313,17 +313,11 @@ function changeUpdateChannel(channel: string) {
 async function checkForUpdates() {
   isCheckingUpdate.value = true;
   try {
-    const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
-    const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-    const channel = getUpdateChannelQuery();
-    const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${appVersion.value}${channel}`);
-    if (res.status === 200) {
-      const data = await res.json();
-      const update = parseUpdateData(data, targetOS);
-      if (update && update.version !== appVersion.value) {
-        openUpdateModal(update);
-        return;
-      }
+    const channel = normalizeUpdateChannel(localStorage.getItem('updateChannel'));
+    const update = await invoke<CustomUpdate | null>("check_launcher_update", { channel });
+    if (update && update.version !== appVersion.value) {
+      openUpdateModal(update);
+      return;
     }
     setUpdateAvailable(null);
     alert(t('settings.about.upToDate'));

@@ -84,12 +84,14 @@ pub static PRESET_DOWNLOAD_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::ne
         }
         attempt.follow()
     });
-    reqwest::Client::builder()
+    crate::core::utils::http_client_builder()
         .connect_timeout(std::time::Duration::from_secs(15))
         .redirect(policy)
-        .user_agent("Dawnland-Launcher/1.0")
         .build()
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to build preset download HTTP client: {}", e);
+            crate::core::utils::get_http_client().clone()
+        })
 });
 
 /// Represents a scanned installed instance.
@@ -3530,7 +3532,7 @@ pub async fn install_mod_to_instance(
     let mc_version = item.mc_version;
     let loader = item.loader_type;
 
-    let client = reqwest::Client::new();
+    let client = crate::core::utils::get_http_client().clone();
 
     let raw_filename = extract_filename_from_url(&download_url, &project_id);
     let filename = std::path::Path::new(&raw_filename)
@@ -5788,11 +5790,11 @@ impl crate::core::task::ExecutableTask for InstallModTask {
         ctx: crate::core::task::TaskContext,
     ) -> Result<(), crate::core::task::TaskError> {
         ctx.init_sub_tasks(self.prepare_sub_tasks()).await;
-        let client = reqwest::Client::new();
+        let client = crate::core::utils::get_http_client();
         let (target_dir_path, version_id_opt) = self.get_target_dir().await?;
 
-        self.download_main_mod(&ctx.with_sub_task("main"), &client, &target_dir_path, &version_id_opt).await?;
-        self.download_dependencies(&ctx, &client, &target_dir_path, &version_id_opt).await?;
+        self.download_main_mod(&ctx.with_sub_task("main"), client, &target_dir_path, &version_id_opt).await?;
+        self.download_dependencies(&ctx, client, &target_dir_path, &version_id_opt).await?;
 
         Ok(())
     }
@@ -5820,7 +5822,7 @@ impl crate::core::task::ExecutableTask for InstallDatapackTask {
         ctx: crate::core::task::TaskContext,
     ) -> Result<(), crate::core::task::TaskError> {
         let options = &self.options;
-        let client = reqwest::Client::new();
+        let client = crate::core::utils::get_http_client();
 
         let target_dir_path = if let Some(td) = &options.target_dir {
             let p = std::path::PathBuf::from(td);
@@ -5848,7 +5850,7 @@ impl crate::core::task::ExecutableTask for InstallDatapackTask {
         .await;
 
         let sub_ctx = ctx.with_sub_task("download");
-        download_mod_file_task(&sub_ctx, &client, &options.download_url, &target_path)
+        download_mod_file_task(&sub_ctx, client, &options.download_url, &target_path)
             .await
             .map_err(crate::core::task::TaskError::ExecutionError)?;
 
@@ -5899,7 +5901,7 @@ impl crate::core::task::ExecutableTask for InstallResourcepackTask {
     ) -> Result<(), crate::core::task::TaskError> {
         let options = &self.options;
 
-        let client = reqwest::Client::new();
+        let client = crate::core::utils::get_http_client();
 
         let target_dir_path = if let Some(vid) = &options.instance_id {
             let base_dir = crate::core::mojang::get_minecraft_base();
@@ -5924,7 +5926,7 @@ impl crate::core::task::ExecutableTask for InstallResourcepackTask {
         let target_path = target_dir_path.join(&filename);
 
         if !target_path.exists() {
-            download_mod_file_task(&ctx, &client, &options.download_url, &target_path)
+            download_mod_file_task(&ctx, client, &options.download_url, &target_path)
                 .await
                 .map_err(crate::core::task::TaskError::ExecutionError)?;
         } else {
@@ -5962,7 +5964,7 @@ impl crate::core::task::ExecutableTask for InstallShaderpackTask {
     ) -> Result<(), crate::core::task::TaskError> {
         let options = &self.options;
 
-        let client = reqwest::Client::new();
+        let client = crate::core::utils::get_http_client();
 
         let target_dir_path = if let Some(vid) = &options.instance_id {
             let base_dir = crate::core::mojang::get_minecraft_base();
@@ -5987,7 +5989,7 @@ impl crate::core::task::ExecutableTask for InstallShaderpackTask {
         let target_path = target_dir_path.join(&filename);
 
         if !target_path.exists() {
-            download_mod_file_task(&ctx, &client, &options.download_url, &target_path)
+            download_mod_file_task(&ctx, client, &options.download_url, &target_path)
                 .await
                 .map_err(crate::core::task::TaskError::ExecutionError)?;
         } else {
@@ -6055,7 +6057,7 @@ impl crate::core::task::ExecutableTask for InstallWorldTask {
         ctx: crate::core::task::TaskContext,
     ) -> Result<(), crate::core::task::TaskError> {
         let options = &self.options;
-        let client = reqwest::Client::new();
+        let client = crate::core::utils::get_http_client();
         
         let target_dir_path = if let Some(vid) = &options.instance_id {
             let base_dir = crate::core::mojang::get_minecraft_base();
@@ -6088,7 +6090,7 @@ impl crate::core::task::ExecutableTask for InstallWorldTask {
 
         let download_ctx = ctx.with_sub_task("download");
         download_ctx.update_progress(0, 100, "Downloading world file...").await;
-        download_mod_file_task(&download_ctx, &client, &options.download_url, &temp_zip_path)
+        download_mod_file_task(&download_ctx, client, &options.download_url, &temp_zip_path)
             .await.map_err(crate::core::task::TaskError::ExecutionError)?;
 
         let extract_ctx = ctx.with_sub_task("extract");

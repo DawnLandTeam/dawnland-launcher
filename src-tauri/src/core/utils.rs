@@ -1,15 +1,25 @@
 use std::sync::OnceLock;
 
+/// Unified HTTP User-Agent shared across all launcher requests (`DawnlandLauncher/{version}`).
+pub const APP_USER_AGENT: &str = concat!("DawnlandLauncher/", env!("CARGO_PKG_VERSION"));
+
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// Returns a `reqwest::ClientBuilder` pre-configured with the unified launcher User-Agent.
+pub fn http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder().user_agent(APP_USER_AGENT)
+}
 
 pub fn get_http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        http_client_builder()
             .connect_timeout(std::time::Duration::from_secs(15))
             .read_timeout(std::time::Duration::from_secs(30))
-            .user_agent("Dawnland-Launcher/1.0")
             .build()
-            .unwrap_or_default()
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to build shared HTTP client: {}", e);
+                reqwest::Client::new()
+            })
     })
 }
 
@@ -304,5 +314,56 @@ mod tests {
             std::cmp::Ordering::Equal
         ); // Note: Current logic drops non-numbers
         assert_eq!(compare_versions("1.2", "1.2.3"), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn test_app_user_agent_format() {
+        assert_eq!(
+            APP_USER_AGENT,
+            format!("DawnlandLauncher/{}", env!("CARGO_PKG_VERSION"))
+        );
+        assert!(APP_USER_AGENT.starts_with("DawnlandLauncher/"));
+    }
+
+    #[tokio::test]
+    async fn test_shared_http_client_sends_unified_user_agent() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/ua-check")
+            .match_header("user-agent", APP_USER_AGENT)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let res = get_http_client()
+            .get(format!("{}/ua-check", server.url()))
+            .send()
+            .await
+            .expect("request via shared client should succeed");
+        assert_eq!(res.status(), 200);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_http_client_builder_sends_unified_user_agent() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/builder-ua-check")
+            .match_header("user-agent", APP_USER_AGENT)
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let client = http_client_builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("custom client should build");
+        let res = client
+            .get(format!("{}/builder-ua-check", server.url()))
+            .send()
+            .await
+            .expect("request via custom builder should succeed");
+        assert_eq!(res.status(), 200);
+        mock.assert_async().await;
     }
 }

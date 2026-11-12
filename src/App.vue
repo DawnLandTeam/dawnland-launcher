@@ -6,8 +6,7 @@ import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import MainLayout from "./layouts/MainLayout.vue";
 import UpdaterModal from "./components/UpdaterModal.vue";
 import PrivacyPolicyModal from "./components/PrivacyPolicyModal.vue";
-import { setUpdateAvailable, parseUpdateData, isUpdateModalOpen, globalUpdateInfo, openUpdateModal } from "./composables/useUpdate";
-import { getVersion } from "@tauri-apps/api/app";
+import { setUpdateAvailable, isUpdateModalOpen, globalUpdateInfo, openUpdateModal, type CustomUpdate } from "./composables/useUpdate";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
 import { useTaskStore } from "./composables/useTaskStore";
@@ -21,8 +20,7 @@ import DeepLinkReceiveModal, { type DeepLinkData } from "./components/DeepLinkRe
 import { toast } from "./composables/useToast";
 import { parseDeepLinkUrl } from "./utils/deepLink";
 import { trackEvent, sanitizeTrackingUrl, getErrorType } from "./utils/analytics";
-import { getUpdateChannelQuery } from "./utils/updateChannel";
-import { fetchApi } from "./utils/api";
+import { normalizeUpdateChannel } from "./utils/updateChannel";
 import { initGlobalLaunchState } from "./composables/useLaunchState";
 
 // isUpdateModalOpen managed globally in useUpdate
@@ -94,14 +92,10 @@ onMounted(async () => {
 
   // Fetch Client Config (e.g. CurseForge API Key)
   try {
-    const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-    const res = await fetchApi(`${baseUrl}/api/client-config`);
-    if (res.ok) {
-      const configData = await res.json();
-      if (configData.curseforgeApiKey) {
-        await invoke('set_curseforge_api_key', { key: configData.curseforgeApiKey });
-        console.log("Successfully loaded dynamic CurseForge API Key from backend.");
-      }
+    const configData = await invoke<{ curseforgeApiKey?: string | null }>("fetch_client_config");
+    if (configData?.curseforgeApiKey) {
+      await invoke('set_curseforge_api_key', { key: configData.curseforgeApiKey });
+      console.log("Successfully loaded dynamic CurseForge API Key from backend.");
     }
   } catch (error) {
     console.error("Failed to fetch client config:", error);
@@ -110,22 +104,15 @@ onMounted(async () => {
   // Delay the update check slightly to ensure network and plugins are fully initialized
   setTimeout(async () => {
     try {
-      const currentVersion = await getVersion();
-      const targetOS = navigator.userAgent.includes("Windows") ? "windows-standalone" : "linux-standalone";
-      const baseUrl = import.meta.env.VITE_WEB_BACKEND_URL || 'http://localhost:3030';
-      const channel = getUpdateChannelQuery();
-      const res = await fetch(`${baseUrl}/api/launcher/update/${targetOS}/${currentVersion}${channel}`);
-      if (res.status === 200) {
-        const data = await res.json();
-        const update = parseUpdateData(data, targetOS);
-        if (update && update.version !== currentVersion) {
-          console.log(`Update available: ${update.version}`);
-          setUpdateAvailable(update);
-          if (showPrivacyModal.value) {
-            hasPendingUpdate.value = true;
-          } else {
-            openUpdateModal(update);
-          }
+      const channel = normalizeUpdateChannel(localStorage.getItem('updateChannel'));
+      const update = await invoke<CustomUpdate | null>("check_launcher_update", { channel });
+      if (update) {
+        console.log(`Update available: ${update.version}`);
+        setUpdateAvailable(update);
+        if (showPrivacyModal.value) {
+          hasPendingUpdate.value = true;
+        } else {
+          openUpdateModal(update);
         }
       }
     } catch (error) {

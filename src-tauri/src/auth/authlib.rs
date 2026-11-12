@@ -1,5 +1,5 @@
 use crate::error::{AppError, DawnlandError};
-use reqwest::Client;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -165,7 +165,7 @@ pub async fn remove_authlib_server(url: String) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn get_authlib_meta(url: String) -> Result<YggdrasilRootResponse, AppError> {
-    let client = Client::new();
+    let client = crate::core::utils::get_http_client();
     let res = client.get(&url).send().await?;
 
     if !res.status().is_success() {
@@ -185,7 +185,7 @@ pub async fn authenticate_authlib_user(
     password: String,
 ) -> Result<AuthlibAuthResult, AppError> {
     let client_token = Uuid::new_v4().to_string();
-    let client = Client::new();
+    let client = crate::core::utils::get_http_client();
 
     let auth_url = if url.ends_with('/') {
         format!("{}authserver/authenticate", url)
@@ -246,7 +246,7 @@ pub async fn authenticate_authlib_user(
 }
 
 pub async fn validate_authlib_token(url: &str, access_token: &str, client_token: &str) -> Result<bool, AppError> {
-    let client = Client::new();
+    let client = crate::core::utils::get_http_client();
     let auth_url = format!("{}/authserver/validate", url.trim_end_matches('/'));
 
     let req_body = ValidateRequest {
@@ -259,7 +259,7 @@ pub async fn validate_authlib_token(url: &str, access_token: &str, client_token:
 }
 
 pub async fn refresh_authlib_token(url: &str, access_token: &str, client_token: &str, selected_profile: Option<YggdrasilProfile>) -> Result<AuthenticateResponse, AppError> {
-    let client = Client::new();
+    let client = crate::core::utils::get_http_client();
     let auth_url = format!("{}/authserver/refresh", url.trim_end_matches('/'));
 
     let req_body = RefreshRequest {
