@@ -197,6 +197,7 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             register_deep_link();
 
+            let app_handle_for_gc = app.handle().clone();
             let base_dir = core::mojang::get_minecraft_base();
             let cache_dir = base_dir.join(".mod_cache");
             if let Err(e) = app.asset_protocol_scope().allow_directory(&cache_dir, true) {
@@ -244,9 +245,7 @@ pub fn run() {
                 }
             });
 
-            tauri::async_runtime::spawn(async move {
-                crate::core::cache::cleanup_expired_cache().await;
-            });
+            crate::core::cache::trigger_startup_gc(app_handle_for_gc);
 
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(target_os = "windows")]
@@ -316,6 +315,7 @@ pub fn run() {
             greet,
             core::cache::clean_dawnland_cache,
             core::cache::clean_global_mod_cache,
+            core::cache::clean_unreferenced_cache,
             commands::get_system_info,
             commands::get_system_locale,
             commands::get_system_memory,

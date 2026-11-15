@@ -37,6 +37,20 @@ export interface LauncherAiConfig {
   unlockContextSize?: boolean;
 }
 
+export type CacheRetentionPolicy = 'immediate' | '24h' | '7d';
+
+export interface CacheGcReport {
+  freedBytes: number;
+  removedPoolObjects: number;
+  removedTmpFiles: number;
+  removedModCacheEntries: number;
+  removedModIcons: number;
+  removedVersionCaches: number;
+  removedAssets: number;
+  removedLibraries: number;
+  skippedReason?: string | null;
+}
+
 export interface LauncherSettings {
   enableInstanceInheritance: boolean;
   downloadSource: 'official' | 'bmclapi';
@@ -46,6 +60,9 @@ export interface LauncherSettings {
   aiConfig?: LauncherAiConfig;
   enableGlobalGameSettings: boolean;
   enableGlobalModCache: boolean;
+  autoCleanCache?: boolean;
+  cacheRetentionPolicy?: CacheRetentionPolicy;
+  autoCleanSharedAssets?: boolean;
   enableJvmTuner: boolean;
   uiLanguage?: string | null;
   resourceNaming?: ResourceNamingSettings;

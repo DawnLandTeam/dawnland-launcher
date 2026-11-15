@@ -66,6 +66,11 @@ impl RunningInstances {
         }
         map.keys().cloned().collect()
     }
+
+    /// Returns true if at least one tracked game process is still alive.
+    pub async fn has_running_instances(&self) -> bool {
+        !self.get_running_instances().await.is_empty()
+    }
 }
 
 #[tauri::command]
@@ -1145,7 +1150,7 @@ pub async fn extract_natives(version_id: &str, libraries: &[Library]) -> Result<
 }
 
 /// Check if a library should be used on the current platform.
-fn should_use_library(lib: &Library, os: &str, arch: &str) -> bool {
+pub(crate) fn should_use_library(lib: &Library, os: &str, arch: &str) -> bool {
     let Some(rules) = &lib.rules else {
         return true; // No rules = apply to all
     };
@@ -2492,6 +2497,9 @@ pub async fn launch_instance(
         account_uuid
     );
 
+    // Coordinate with active cache GC sweeps and protect shared assets/libraries until process exit.
+    let launch_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
+
     // Reject launching while an install, update, or other mutating task is active for this instance
     if let Some(task_manager) = app.try_state::<crate::core::task::TaskManager>() {
         if task_manager.is_instance_busy(&version_id).await || task_manager.is_instance_starting(&version_id) {
@@ -3497,6 +3505,7 @@ pub async fn launch_instance(
     let start_time = std::time::SystemTime::now();
 
     tokio::spawn(async move {
+        let _launch_permit = launch_permit;
         // Wait for process to exit
         match child.wait().await {
             Ok(status) => {
@@ -3563,6 +3572,8 @@ pub async fn launch_instance(
                 }
             }
         }
+        drop(_launch_permit);
+        crate::core::cache::on_active_task_finished(app_handle_clone);
     });
 
     Ok(())

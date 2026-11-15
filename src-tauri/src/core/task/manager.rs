@@ -387,6 +387,19 @@ impl TaskManager {
             .unwrap_or(false)
     }
 
+    /// Returns true if any task is active or any instance is still in startup setup.
+    pub async fn has_active_tasks(&self) -> bool {
+        if self
+            .starting_instances
+            .read()
+            .map(|set| !set.is_empty())
+            .unwrap_or(true)
+        {
+            return true;
+        }
+        !self.active_tasks.read().await.is_empty()
+    }
+
     pub fn task_context<'a>(&'a self, tasks: &'a [TaskState]) -> crate::core::manager::InstanceTaskContext<'a> {
         crate::core::manager::InstanceTaskContext {
             starting_instances: Some(&self.starting_instances),
@@ -507,6 +520,7 @@ impl TaskManager {
         task_type: TaskType,
         executable: T,
     ) -> Result<String, TaskError> {
+        let op_permit = crate::core::cache::acquire_operation_permit(Some(&self.app_handle)).await;
         let task_lock = self.get_task_lock(&id).await;
         let _task_guard = task_lock.lock().await;
 
@@ -603,6 +617,7 @@ impl TaskManager {
                 active_tasks: Arc<RwLock<HashMap<String, Arc<TaskWorkerHandle>>>>,
                 task_token: Arc<CancellationToken>,
                 finished: bool,
+                op_permit: Option<crate::core::cache::GcOperationPermit>,
             }
             impl TaskSpawnGuard {
                 fn mark_done(&mut self) {
@@ -618,11 +633,15 @@ impl TaskManager {
                         let active_tasks = self.active_tasks.clone();
                         let task_id = self.task_id.clone();
                         let task_token = self.task_token.clone();
+                        let op_permit = self.op_permit.take();
                         tokio::spawn(async move {
                             let mut active = active_tasks.write().await;
                             if active.get(&task_id).is_some_and(|h| Arc::ptr_eq(&h.cancel_token, &task_token)) {
                                 active.remove(&task_id);
                             }
+                            drop(active);
+                            drop(op_permit);
+                            crate::core::cache::notify_deferred_gc();
                         });
                     }
                 }
@@ -633,6 +652,7 @@ impl TaskManager {
                 active_tasks: manager.active_tasks.clone(),
                 task_token: task_token.clone(),
                 finished: false,
+                op_permit: Some(op_permit),
             };
 
             let start_cancelled = {
@@ -837,6 +857,7 @@ impl TaskManager {
                                             }
                                         } else {
                                             let _ = manager.app_handle.emit("instances-changed", ());
+                                            crate::core::cache::trigger_auto_gc(manager.app_handle.clone());
                                         }
                                     }
                                 }
@@ -910,6 +931,7 @@ impl TaskManager {
                 active.remove(&id_clone);
             }
             drop(active);
+            drop(spawn_guard.op_permit.take());
 
             let is_instance_mutating = {
                 let state = state_arc.read().await;
@@ -918,6 +940,8 @@ impl TaskManager {
             if is_instance_mutating {
                 let _ = manager.app_handle.emit("instances-changed", ());
             }
+
+            crate::core::cache::on_active_task_finished(manager.app_handle.clone());
         }.instrument(span));
 
         Ok(id)
@@ -1049,6 +1073,7 @@ impl TaskManager {
             // Reset instance config to Ready if instance exists and config exists
             if let Some(ref inst_id) = handle.instance_id {
                 if !handle.task_type.is_dependency() && crate::core::fs_utils::is_safe_single_name(inst_id) {
+                    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&self.app_handle)).await;
                     let instance_lock = self.get_instance_lock(inst_id).await;
                     let _instance_guard = instance_lock.lock().await;
 
@@ -1068,6 +1093,7 @@ impl TaskManager {
             if let Ok(Some(state)) = self.db.get_task(id).await {
                 if let Some(ref inst_id) = state.task_type.instance_id() {
                     if !state.task_type.is_dependency() && crate::core::fs_utils::is_safe_single_name(inst_id) {
+                        let _op_permit = crate::core::cache::acquire_operation_permit(Some(&self.app_handle)).await;
                         let instance_lock = self.get_instance_lock(inst_id).await;
                         let _instance_guard = instance_lock.lock().await;
 

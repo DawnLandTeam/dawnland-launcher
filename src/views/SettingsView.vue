@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onActivated, watch, onUnmounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
 import DCombobox from "../components/ui/DCombobox.vue";
@@ -18,6 +18,8 @@ import {
 } from '../composables/useResourceNaming';
 import type {
   AssetCategory,
+  CacheGcReport,
+  CacheRetentionPolicy,
   FilenameFormatMode,
   FilenamePreset,
   LauncherSettings,
@@ -42,6 +44,9 @@ const { t, locale } = useI18n();
 
 // App version state
 const appVersion = ref('0.0.0');
+
+let isSettingsUnmounted = false;
+let unlistenCacheGc: UnlistenFn | null = null;
 
 onMounted(async () => {
   trackEvent("Settings Viewed");
@@ -92,9 +97,26 @@ onMounted(async () => {
     delete downloadingModels.value[filename];
     loadLocalModels(); // refresh list
   });
+
+  listen<CacheGcReport>('cache-gc-completed', (event) => {
+    if (!isSettingsUnmounted && event.payload.skippedReason == null) {
+      lastGcReport.value = event.payload;
+    }
+  }).then((unlistenFn) => {
+    if (isSettingsUnmounted) {
+      unlistenFn();
+    } else {
+      unlistenCacheGc = unlistenFn;
+    }
+  });
 });
 
 onUnmounted(() => {
+  isSettingsUnmounted = true;
+  if (unlistenCacheGc) {
+    unlistenCacheGc();
+    unlistenCacheGc = null;
+  }
   window.removeEventListener('authlib-servers-updated', loadAuthlibServers);
 });
 
@@ -185,7 +207,17 @@ const maxConcurrentDownloads = ref(32);
 const enableTelemetry = ref(false);
 const enableGlobalGameSettings = ref(false);
 const enableGlobalModCache = ref(true);
+const autoCleanCache = ref(true);
+const cacheRetentionPolicy = ref<CacheRetentionPolicy>('immediate');
+const autoCleanSharedAssets = ref(false);
+const lastGcReport = ref<CacheGcReport | null>(null);
 const enableJvmTuner = ref(true);
+
+const cacheRetentionOptions = computed(() => [
+  { label: t('settings.general.cacheRetentionImmediate'), value: 'immediate' },
+  { label: t('settings.general.cacheRetention24h'), value: '24h' },
+  { label: t('settings.general.cacheRetention7d'), value: '7d' },
+]);
 
 // Community resource naming & translation state
 const filenameMode = ref<FilenameFormatMode>(DEFAULT_RESOURCE_NAMING_SETTINGS.filenameMode);
@@ -329,19 +361,13 @@ async function cleanGlobalModCache() {
   if (isCleaningCache.value) return;
   isCleaningCache.value = true;
   try {
-    const freed = await invoke<number>('clean_global_mod_cache');
-    let formattedSize = "0 B";
-    if (freed > 0) {
-      if (freed < 1024) {
-        formattedSize = `${freed} B`;
-      } else if (freed < 1024 * 1024) {
-        formattedSize = `${(freed / 1024).toFixed(2)} KB`;
-      } else if (freed < 1024 * 1024 * 1024) {
-        formattedSize = `${(freed / 1024 / 1024).toFixed(2)} MB`;
-      } else {
-        formattedSize = `${(freed / 1024 / 1024 / 1024).toFixed(2)} GB`;
-      }
+    const report = await invoke<CacheGcReport>('clean_unreferenced_cache');
+    if (report.skippedReason === 'active_task') {
+      toast.info(t('settings.general.cleanCacheSkippedActive'));
+      return;
     }
+    lastGcReport.value = report;
+    const formattedSize = formatBytes(report.freedBytes, 2);
     toast.success(t('settings.general.cleanCacheSuccess', { size: formattedSize }));
   } catch (e) {
     console.error('Failed to clean cache:', e);
@@ -384,6 +410,9 @@ async function loadLauncherSettings() {
     enableTelemetry.value = settings.enableTelemetry === true;
     enableGlobalGameSettings.value = settings.enableGlobalGameSettings === true;
     enableGlobalModCache.value = settings.enableGlobalModCache ?? true;
+    autoCleanCache.value = settings.autoCleanCache ?? true;
+    cacheRetentionPolicy.value = settings.cacheRetentionPolicy ?? 'immediate';
+    autoCleanSharedAssets.value = settings.autoCleanSharedAssets === true;
     enableJvmTuner.value = settings.enableJvmTuner ?? true;
     if (settings.globalMaxMemory) {
       defaultMaxMemory.value = settings.globalMaxMemory;
@@ -442,6 +471,9 @@ function buildLauncherSettingsSnapshot(): LauncherSettings {
     enableTelemetry: enableTelemetry.value,
     enableGlobalGameSettings: enableGlobalGameSettings.value,
     enableGlobalModCache: enableGlobalModCache.value,
+    autoCleanCache: autoCleanCache.value,
+    cacheRetentionPolicy: cacheRetentionPolicy.value,
+    autoCleanSharedAssets: autoCleanSharedAssets.value,
     enableJvmTuner: enableJvmTuner.value,
     globalMaxMemory: defaultMaxMemory.value,
     uiLanguage: locale.value,
@@ -1019,28 +1051,99 @@ const clearLogs = () => {
       </div>
 
       <!-- Global Mod Cache -->
-      <div class="relative z-24 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between gap-4 shadow-sm">
-        <div class="flex items-center gap-2.5">
-          <RefreshCw class="w-[18px] h-[18px] text-primary shrink-0" />
-          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
-            {{ $t('settings.general.globalModCacheTitle') }}
-            <DTooltip :content="$t('settings.general.globalModCacheDesc')">
-              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
-                <CircleHelp :size="15" />
-              </span>
-            </DTooltip>
-          </h2>
+      <div class="relative z-24 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md space-y-3.5 shadow-sm">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex items-center gap-2.5">
+            <RefreshCw class="w-[18px] h-[18px] text-primary shrink-0" />
+            <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
+              {{ $t('settings.general.globalModCacheTitle') }}
+              <DTooltip :content="$t('settings.general.globalModCacheDesc')">
+                <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                  <CircleHelp :size="15" />
+                </span>
+              </DTooltip>
+            </h2>
+          </div>
+          <div class="flex items-center gap-3 shrink-0">
+            <DButton
+              v-if="enableGlobalModCache"
+              variant="outline"
+              size="sm"
+              @click="cleanGlobalModCache"
+              :disabled="isCleaningCache"
+            >
+              <Loader2 v-if="isCleaningCache" class="w-4 h-4 mr-1.5 animate-spin" />
+              <Trash2 v-else class="w-4 h-4 mr-1.5" />
+              {{ $t('settings.general.cleanGlobalModCache') }}
+            </DButton>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="enableGlobalModCache" @change="saveLauncherSettings" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
         </div>
-        <div class="flex items-center gap-3 shrink-0">
-          <DButton variant="outline" size="sm" @click="cleanGlobalModCache" :disabled="isCleaningCache">
-            <Loader2 v-if="isCleaningCache" class="w-4 h-4 mr-1.5 animate-spin" />
-            <Trash2 v-else class="w-4 h-4 mr-1.5" />
-            {{ $t('settings.general.cleanGlobalModCache') }}
-          </DButton>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="enableGlobalModCache" @change="saveLauncherSettings" class="sr-only peer">
-            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
-          </label>
+
+        <div
+          v-if="enableGlobalModCache"
+          class="pt-3 border-t border-black/5 dark:border-white/5 space-y-3"
+        >
+          <div class="flex items-center justify-between gap-4">
+            <span class="text-sm font-medium flex items-center gap-1.5 text-foreground">
+              {{ $t('settings.general.autoCleanCacheTitle') }}
+              <DTooltip :content="$t('settings.general.autoCleanCacheDesc')">
+                <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                  <CircleHelp :size="14" />
+                </span>
+              </DTooltip>
+            </span>
+            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+              <input type="checkbox" v-model="autoCleanCache" @change="saveLauncherSettings" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
+
+          <div class="flex items-center justify-between gap-4">
+            <span class="text-sm font-medium text-foreground">
+              {{ $t('settings.general.cacheRetentionPolicyTitle') }}
+            </span>
+            <DSelect
+              v-model="cacheRetentionPolicy"
+              :options="cacheRetentionOptions"
+              :disabled="!autoCleanCache"
+              @update:model-value="saveLauncherSettings"
+              class="min-w-[240px]"
+            />
+          </div>
+
+          <div class="flex items-center justify-between gap-4">
+            <span class="text-sm font-medium flex items-center gap-1.5 text-foreground">
+              {{ $t('settings.general.autoCleanSharedAssetsTitle') }}
+              <DTooltip :content="$t('settings.general.autoCleanSharedAssetsDesc')">
+                <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                  <CircleHelp :size="14" />
+                </span>
+              </DTooltip>
+            </span>
+            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+              <input type="checkbox" v-model="autoCleanSharedAssets" @change="saveLauncherSettings" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+            </label>
+          </div>
+
+          <p
+            v-if="lastGcReport && lastGcReport.freedBytes > 0"
+            class="text-xs text-muted-foreground pt-1"
+          >
+            {{
+              $t('settings.general.lastCacheCleaned', {
+                size: formatBytes(lastGcReport.freedBytes, 2),
+                pools: lastGcReport.removedPoolObjects + lastGcReport.removedTmpFiles,
+                modCache: lastGcReport.removedModCacheEntries + lastGcReport.removedModIcons,
+                versions: lastGcReport.removedVersionCaches,
+                shared: lastGcReport.removedAssets + lastGcReport.removedLibraries,
+              })
+            }}
+          </p>
         </div>
       </div>
 
