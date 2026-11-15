@@ -849,6 +849,9 @@ async fn auto_install_fabric_api(
         size: file.file_size,
         enabled: true,
         managed_by_modpack: false,
+        original_filename: Some(safe_filename.to_string()),
+        original_rel_path: Some(rel_path_str.clone()),
+        display_name_zh: None,
     };
 
     if let Err(e) = crate::core::manager::save_asset_to_manifest(instance_name, rel_path_str, record).await {
@@ -1042,6 +1045,9 @@ mod tests {
                 size: None,
                 enabled: true,
                 managed_by_modpack: false,
+                original_filename: Some("my-custom-name.jar".to_string()),
+                original_rel_path: Some("mods/my-custom-name.jar".to_string()),
+                display_name_zh: None,
             },
         );
         let manifest_content = serde_json::to_string(&manifest).unwrap();

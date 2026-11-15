@@ -1447,6 +1447,9 @@ mod tests {
             target_dir: None,
             dependencies: None,
             keep_both: None,
+            slug: None,
+            original_filename: None,
+            version_number: None,
         };
         // Mod task has an instance_id, but must NOT be treated as core installation or update
         assert!(!(mod_download.is_core_installation() || mod_download.is_update()));

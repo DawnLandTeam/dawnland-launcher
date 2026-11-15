@@ -316,6 +316,7 @@ async fn analyze_modrinth(
             // Get asset record from manifest
             let asset_key = format!("mods/{}", m_filename);
             let asset_record = manifest.assets.get(&asset_key).cloned();
+            let export_rel_path = restore_export_rel_path(&manifest, &asset_key, &m_filename);
             
             async move {
                 let current = completed_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -336,7 +337,7 @@ async fn analyze_modrinth(
                 if let Some(ref record) = asset_record {
                     if let (Some(sha1), Some(sha512), Some(url)) = (record.hash_sha1.clone(), record.hash_sha512.clone(), record.download_url.clone()) {
                         let mr_json = serde_json::json!({
-                            "path": format!("mods/{}", m_filename),
+                            "path": export_rel_path,
                             "hashes": {
                                 "sha1": sha1,
                                 "sha512": sha512
@@ -383,7 +384,7 @@ async fn analyze_modrinth(
                         if let Ok(file_resp) = resp.json::<MrVersionFileResponse>().await {
                             if let Some(target_file) = file_resp.files.iter().find(|f| f.hashes.get("sha1").map(|s| s.as_str()) == Some(&sha1)) {
                                 let mr_json = serde_json::json!({
-                                    "path": format!("mods/{}", m_filename),
+                                    "path": export_rel_path,
                                     "hashes": {
                                         "sha1": sha1,
                                         "sha512": sha512
@@ -440,7 +441,7 @@ async fn analyze_modrinth(
                                         let mr_sha512 = target_file.hashes.get("sha512").cloned().unwrap_or_default();
                                         if !mr_sha1.is_empty() {
                                             let mr_json = serde_json::json!({
-                                                "path": format!("mods/{}", m_filename),
+                                                "path": export_rel_path,
                                                 "hashes": {
                                                     "sha1": mr_sha1,
                                                     "sha512": mr_sha512
@@ -737,8 +738,9 @@ pub async fn build_export_instance(
                 };
 
                 if !sha1.is_empty() && !sha512.is_empty() {
+                    let restored_path = restore_export_rel_path(&manifest, path_key, "");
                     extra_mr_files.push(serde_json::json!({
-                        "path": path_key,
+                        "path": restored_path,
                         "hashes": {
                             "sha1": sha1,
                             "sha512": sha512
@@ -768,6 +770,15 @@ pub async fn build_export_instance(
 
         if packaged_online {
             let _ = tokio::fs::remove_file(overrides_dir.join(path_key)).await;
+        } else {
+            let restored_path = restore_export_rel_path(&manifest, path_key, "");
+            if restored_path != *path_key {
+                let copied_current = overrides_dir.join(path_key);
+                let copied_original = overrides_dir.join(&restored_path);
+                if copied_current.exists() && !copied_original.exists() {
+                    let _ = tokio::fs::rename(&copied_current, &copied_original).await;
+                }
+            }
         }
     }
 
@@ -776,7 +787,9 @@ pub async fn build_export_instance(
     if !analysis_result.unmatched_mods.is_empty() {
         let _ = fs::create_dir_all(&dst_mod_dir).await;
         for unmatched in analysis_result.unmatched_mods {
-            copy_jar_if_exists_with_logging(&mods_dir.join(&unmatched.filename), &dst_mod_dir.join(&unmatched.filename)).await;
+            let asset_key = format!("mods/{}", unmatched.filename);
+            let export_filename = restore_export_filename(&manifest, &asset_key, &unmatched.filename);
+            copy_jar_if_exists_with_logging(&mods_dir.join(&unmatched.filename), &dst_mod_dir.join(&export_filename)).await;
         }
     }
 
@@ -1195,6 +1208,132 @@ pub async fn resolve_manual_match(
         Ok(ResolveResponse::Choices { choices })
     }
 }
+
+fn restore_export_filename(
+    manifest: &crate::models::instance::AssetManifest,
+    path_key: &str,
+    fallback_filename: &str,
+) -> String {
+    if let Some(rec) = manifest.assets.get(path_key) {
+        if let Some(ref orig) = rec.original_filename {
+            if !orig.trim().is_empty() && crate::core::fs_utils::is_safe_single_name(orig) {
+                return orig.clone();
+            }
+        }
+        if let Some(ref orig_rel) = rec.original_rel_path {
+            if let Some(leaf) = std::path::Path::new(orig_rel).file_name().and_then(|n| n.to_str()) {
+                if !leaf.trim().is_empty() && crate::core::fs_utils::is_safe_single_name(leaf) {
+                    return leaf.to_string();
+                }
+            }
+        }
+    }
+    if !fallback_filename.is_empty() {
+        fallback_filename.to_string()
+    } else {
+        std::path::Path::new(path_key)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path_key)
+            .to_string()
+    }
+}
+
+fn restore_export_rel_path(
+    manifest: &crate::models::instance::AssetManifest,
+    path_key: &str,
+    fallback_filename: &str,
+) -> String {
+    if let Some(rec) = manifest.assets.get(path_key) {
+        if let Some(ref orig_rel) = rec.original_rel_path {
+            let norm = orig_rel.replace('\\', "/");
+            if crate::core::fs_utils::is_safe_relative_path(&norm) {
+                return norm;
+            }
+        }
+        if let Some(ref orig_name) = rec.original_filename {
+            if !orig_name.trim().is_empty() && crate::core::fs_utils::is_safe_single_name(orig_name) {
+                if let Some((dir, _)) = path_key.rsplit_once('/') {
+                    return format!("{}/{}", dir, orig_name);
+                }
+                return orig_name.clone();
+            }
+        }
+    }
+    if !fallback_filename.is_empty() && path_key.starts_with("mods/") {
+        format!("mods/{}", fallback_filename)
+    } else {
+        path_key.to_string()
+    }
+}
+
+#[cfg(test)]
+mod export_naming_tests {
+    use super::*;
+
+    #[test]
+    fn test_export_restores_original_filename_and_rel_path() {
+        let mut manifest = crate::models::instance::AssetManifest::default();
+        manifest.assets.insert(
+            "mods/[机械动力] create-1.21.1-6.0.4.jar".to_string(),
+            crate::models::instance::AssetRecord {
+                category: crate::models::instance::AssetCategory::Mod,
+                source_type: crate::models::instance::AssetSourceType::Modrinth,
+                project_id: Some("LNytGkhc".to_string()),
+                version_id: Some("v1".to_string()),
+                download_url: None,
+                hash_sha1: None,
+                hash_sha512: None,
+                size: None,
+                enabled: true,
+                managed_by_modpack: true,
+                original_filename: Some("create-1.21.1-6.0.4.jar".to_string()),
+                original_rel_path: Some("mods/create-1.21.1-6.0.4.jar".to_string()),
+                display_name_zh: Some("机械动力".to_string()),
+            },
+        );
+        manifest.assets.insert(
+            "resourcepacks/[清爽界面] ClearUI.zip".to_string(),
+            crate::models::instance::AssetRecord {
+                category: crate::models::instance::AssetCategory::ResourcePack,
+                source_type: crate::models::instance::AssetSourceType::LocalImport,
+                project_id: None,
+                version_id: None,
+                download_url: None,
+                hash_sha1: None,
+                hash_sha512: None,
+                size: None,
+                enabled: true,
+                managed_by_modpack: false,
+                original_filename: Some("ClearUI.zip".to_string()),
+                original_rel_path: None,
+                display_name_zh: Some("清爽界面".to_string()),
+            },
+        );
+
+        assert_eq!(
+            restore_export_rel_path(
+                &manifest,
+                "mods/[机械动力] create-1.21.1-6.0.4.jar",
+                "[机械动力] create-1.21.1-6.0.4.jar"
+            ),
+            "mods/create-1.21.1-6.0.4.jar"
+        );
+        assert_eq!(
+            restore_export_filename(
+                &manifest,
+                "mods/[机械动力] create-1.21.1-6.0.4.jar",
+                "[机械动力] create-1.21.1-6.0.4.jar"
+            ),
+            "create-1.21.1-6.0.4.jar"
+        );
+        assert_eq!(
+            restore_export_rel_path(&manifest, "resourcepacks/[清爽界面] ClearUI.zip", ""),
+            "resourcepacks/ClearUI.zip"
+        );
+    }
+}
+
 
 
 

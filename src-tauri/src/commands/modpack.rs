@@ -241,6 +241,21 @@ impl ExecutableTask for InstallModpackTask {
                     ModpackType::Modrinth(_) => "Modrinth",
                 };
 
+                let existing_assets_map: std::collections::HashMap<String, crate::models::instance::AssetRecord> = {
+                    let assets_json_path = instance_dir.join("assets.json");
+                    if assets_json_path.exists() {
+                        tokio::fs::read_to_string(&assets_json_path)
+                            .await
+                            .ok()
+                            .and_then(|c| serde_json::from_str::<crate::models::instance::AssetManifest>(&c).ok())
+                            .map(|m| m.assets)
+                            .unwrap_or_default()
+                    } else {
+                        std::collections::HashMap::new()
+                    }
+                };
+                let naming_settings = crate::core::settings::get_launcher_settings().await;
+
                 let (mc_version, loader, tasks, overrides_folder, modpack_version) = match modpack {
                     ModpackType::CurseForge(manifest) => {
                         ctx_resolve
@@ -256,6 +271,15 @@ impl ExecutableTask for InstallModpackTask {
                             .unwrap_or_default();
                         let mp_version = manifest.version.clone();
 
+                        let mut file_id_to_cf_pid: std::collections::HashMap<u32, u32> =
+                            std::collections::HashMap::new();
+                        let mut unique_cf_pids: std::collections::HashSet<i64> =
+                            std::collections::HashSet::new();
+                        for mf in &manifest.files {
+                            file_id_to_cf_pid.insert(mf.file_id, mf.project_id);
+                            unique_cf_pids.insert(mf.project_id as i64);
+                        }
+
                         let file_ids: Vec<u32> = manifest.files.iter().map(|f| f.file_id).collect();
 
                         // Get URLs from Proxy
@@ -265,26 +289,108 @@ impl ExecutableTask for InstallModpackTask {
 
                         check_cancel!();
 
+                        let cf_projects = crate::core::curseforge::get_cf_projects_batch(
+                            unique_cf_pids.into_iter().collect(),
+                        )
+                        .await
+                        .unwrap_or_default();
+                        let cf_proj_map: std::collections::HashMap<String, crate::core::modrinth::UnifiedModProject> =
+                            cf_projects.into_iter().map(|p| (p.project_id.clone(), p)).collect();
+
+                        let lookup_specs: Vec<_> = resolved_files
+                            .iter()
+                            .map(|file| {
+                                let cf_pid = file
+                                    .id
+                                    .parse::<u32>()
+                                    .ok()
+                                    .and_then(|fid| file_id_to_cf_pid.get(&fid).copied())
+                                    .map(|p| p.to_string())
+                                    .unwrap_or_default();
+                                let proj = cf_proj_map.get(&cf_pid);
+                                (
+                                    cf_pid,
+                                    proj.map(|p| p.slug.clone()),
+                                    proj.map(|p| p.title.clone()),
+                                )
+                            })
+                            .collect();
+
+                        let specs_for_db = lookup_specs.clone();
+                        let zh_lookups = tokio::task::spawn_blocking(move || {
+                            let db = crate::core::translation::TranslationDb::open_default().ok();
+                            specs_for_db
+                                .into_iter()
+                                .map(|(pid, slug, title)| {
+                                    db.as_ref().and_then(|d| {
+                                        d.lookup(
+                                            &crate::models::instance::AssetCategory::Mod,
+                                            Some("curseforge"),
+                                            if pid.is_empty() { None } else { Some(pid.as_str()) },
+                                            slug.as_deref(),
+                                            None,
+                                            title.as_deref(),
+                                        )
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .await
+                        .unwrap_or_else(|_| vec![None; resolved_files.len()]);
+
+                        let mut used_filenames: std::collections::HashSet<String> =
+                            std::collections::HashSet::new();
                         let mut tasks = Vec::new();
-                        for file in resolved_files {
+                        for ((file, (cf_pid, slug_opt, title_opt)), zh_opt) in resolved_files
+                            .into_iter()
+                            .zip(lookup_specs.into_iter())
+                            .zip(zh_lookups.into_iter())
+                        {
                             if !crate::core::fs_utils::is_safe_single_name(&file.filename) {
                                 tracing::warn!("Skipping unsafe CurseForge mod filename in modpack: {}", file.filename);
                                 continue;
                             }
-                            let mut dest = instance_dir.join("mods").join(&file.filename);
-                            let disabled_dest = instance_dir
-                                .join("mods")
-                                .join(format!("{}.disable", file.filename));
-                            if disabled_dest.exists() {
-                                dest = disabled_dest;
-                            }
+
+                            let orig_filename = file.filename.clone();
+                            let orig_rel_path = format!("mods/{}", orig_filename);
+                            let category = determine_asset_category(&orig_rel_path);
+
+                            let final_enabled_name = plan_modpack_filename(
+                                &naming_settings,
+                                &category,
+                                &orig_filename,
+                                "curseforge",
+                                slug_opt.as_deref(),
+                                title_opt.as_deref(),
+                                Some(&mc_version),
+                                Some(&loader),
+                                zh_opt.as_ref(),
+                                &mut used_filenames,
+                            );
+                            let final_rel_enabled = format!("mods/{}", final_enabled_name);
+                            let is_disabled = is_modpack_asset_disabled(
+                                &instance_dir,
+                                &existing_assets_map,
+                                &orig_rel_path,
+                                &orig_filename,
+                                &final_rel_enabled,
+                            );
+
+                            let disk_filename = if is_disabled {
+                                format!("{}.disable", final_enabled_name)
+                            } else {
+                                final_enabled_name.clone()
+                            };
+                            let dest = instance_dir.join("mods").join(&disk_filename);
 
                             let download_url_clone = file.download_url.clone();
                             let hash_clone = file.hash.clone();
-                            let project_id_clone = project_id.clone();
                             let file_id_str = file.id.to_string();
-                            let rel_path_str = dest.strip_prefix(&instance_dir).unwrap_or(&dest).to_string_lossy().replace("\\", "/");
-                            let category = determine_asset_category(&rel_path_str);
+                            let record_pid = if !cf_pid.is_empty() {
+                                Some(cf_pid)
+                            } else {
+                                project_id.clone()
+                            };
                             
                             tasks.push(DownloadTask::new(
                                 file.download_url,
@@ -293,18 +399,21 @@ impl ExecutableTask for InstallModpackTask {
                                 file.file_size,
                             ).with_asset_record(
                                 instance_name.clone(),
-                                rel_path_str,
+                                final_rel_enabled,
                                 crate::models::instance::AssetRecord {
                                     category,
                                     source_type: crate::models::instance::AssetSourceType::CurseForge,
-                                    project_id: project_id_clone,
+                                    project_id: record_pid,
                                     version_id: Some(file_id_str),
                                     download_url: Some(download_url_clone),
                                     hash_sha1: hash_clone,
                                     hash_sha512: None,
                                     size: file.file_size,
-                                    enabled: !dest.to_string_lossy().ends_with(".disable"),
+                                    enabled: !is_disabled,
                                     managed_by_modpack: true,
+                                    original_filename: Some(orig_filename),
+                                    original_rel_path: Some(orig_rel_path),
+                                    display_name_zh: zh_opt.map(|l| l.zh_short_name),
                                 }
                             ));
                         }
@@ -323,27 +432,121 @@ impl ExecutableTask for InstallModpackTask {
                         }
                         let mp_version = manifest.version_id.clone();
 
+                        let all_sha1s: Vec<String> = manifest
+                            .files
+                            .iter()
+                            .filter_map(|f| f.hashes.get("sha1").map(|s| s.to_ascii_lowercase()))
+                            .collect();
+                        let mut hash_map = resolve_modrinth_pack_hashes(&all_sha1s).await;
+
+                        // Query translations in a single blocking SQLite batch
+                        let lookup_inputs: Vec<_> = manifest
+                            .files
+                            .iter()
+                            .map(|f| {
+                                let rel = f.path.replace("\\", "/");
+                                let cat = determine_asset_category(&rel);
+                                let hm = f
+                                    .hashes
+                                    .get("sha1")
+                                    .and_then(|s| hash_map.get(&s.to_ascii_lowercase()));
+                                let orig_name = std::path::Path::new(&rel)
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                (
+                                    cat,
+                                    hm.map(|h| h.project_id.clone()),
+                                    hm.map(|h| h.slug.clone()),
+                                    hm.and_then(|h| h.raw_name.clone()),
+                                    orig_name,
+                                )
+                            })
+                            .collect();
+
+                        let inputs_for_db = lookup_inputs.clone();
+                        let zh_lookups = tokio::task::spawn_blocking(move || {
+                            let db = crate::core::translation::TranslationDb::open_default().ok();
+                            inputs_for_db
+                                .into_iter()
+                                .map(|(cat, pid, slug, title, _)| {
+                                    db.as_ref().and_then(|d| {
+                                        d.lookup(
+                                            &cat,
+                                            Some("modrinth"),
+                                            pid.as_deref(),
+                                            slug.as_deref(),
+                                            None,
+                                            title.as_deref(),
+                                        )
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .await
+                        .unwrap_or_else(|_| vec![None; manifest.files.len()]);
+
+                        let mut used_by_dir: std::collections::HashMap<String, std::collections::HashSet<String>> =
+                            std::collections::HashMap::new();
                         let mut tasks = Vec::new();
-                        for file in manifest.files {
+                        for ((file, (cat, pid_opt, slug_opt, title_opt, orig_filename)), zh_opt) in manifest
+                            .files
+                            .into_iter()
+                            .zip(lookup_inputs.into_iter())
+                            .zip(zh_lookups.into_iter())
+                        {
                             if !crate::core::fs_utils::is_safe_relative_path(&file.path) {
                                 tracing::warn!("Skipping unsafe Modrinth file path in modpack: {}", file.path);
                                 continue;
                             }
                             if let Some(url) = file.downloads.first() {
-                                let mut dest = instance_dir.join(&file.path);
-                                if let Some(filename) = dest.file_name().and_then(|n| n.to_str()) {
-                                    let disabled_dest =
-                                        dest.with_file_name(format!("{}.disable", filename));
-                                    if disabled_dest.exists() {
-                                        dest = disabled_dest;
-                                    }
-                                }
+                                let orig_rel_path = file.path.clone().replace("\\", "/");
+                                let (parent_rel, _) = orig_rel_path
+                                    .rsplit_once('/')
+                                    .map(|(d, f)| (d, f))
+                                    .unwrap_or(("", orig_filename.as_str()));
+                                let dir_used = used_by_dir.entry(parent_rel.to_string()).or_default();
+
+                                let final_enabled_name = plan_modpack_filename(
+                                    &naming_settings,
+                                    &cat,
+                                    &orig_filename,
+                                    "modrinth",
+                                    slug_opt.as_deref(),
+                                    title_opt.as_deref(),
+                                    Some(&mc_version),
+                                    Some(&loader),
+                                    zh_opt.as_ref(),
+                                    dir_used,
+                                );
+                                let final_rel_enabled = if parent_rel.is_empty() {
+                                    final_enabled_name.clone()
+                                } else {
+                                    format!("{}/{}", parent_rel, final_enabled_name)
+                                };
+
+                                let is_disabled = is_modpack_asset_disabled(
+                                    &instance_dir,
+                                    &existing_assets_map,
+                                    &orig_rel_path,
+                                    &orig_filename,
+                                    &final_rel_enabled,
+                                );
+                                let disk_rel = if is_disabled {
+                                    format!("{}.disable", final_rel_enabled)
+                                } else {
+                                    final_rel_enabled.clone()
+                                };
+                                let dest = instance_dir.join(&disk_rel);
 
                                 let hash = file.hashes.get("sha1").cloned();
+                                let version_id_opt = hash
+                                    .as_deref()
+                                    .and_then(|s| hash_map.remove(&s.to_ascii_lowercase()))
+                                    .and_then(|h| h.version_id);
                                 let hash_clone = hash.clone();
                                 let url_clone = url.clone();
-                                let rel_path_str = file.path.clone().replace("\\", "/");
-                                let category = determine_asset_category(&rel_path_str);
                                 
                                 tasks.push(DownloadTask::new(
                                     url.clone(),
@@ -352,18 +555,21 @@ impl ExecutableTask for InstallModpackTask {
                                     Some(file.file_size),
                                 ).with_asset_record(
                                     instance_name.clone(),
-                                    rel_path_str,
+                                    final_rel_enabled,
                                     crate::models::instance::AssetRecord {
-                                        category,
+                                        category: cat,
                                         source_type: crate::models::instance::AssetSourceType::Modrinth,
-                                        project_id: None,
-                                        version_id: None,
+                                        project_id: pid_opt,
+                                        version_id: version_id_opt,
                                         download_url: Some(url_clone),
                                         hash_sha1: hash_clone,
                                         hash_sha512: file.hashes.get("sha512").cloned(),
                                         size: Some(file.file_size),
-                                        enabled: !dest.to_string_lossy().ends_with(".disable"),
+                                        enabled: !is_disabled,
                                         managed_by_modpack: true,
+                                        original_filename: Some(orig_filename),
+                                        original_rel_path: Some(orig_rel_path),
+                                        display_name_zh: zh_opt.map(|l| l.zh_short_name),
                                     }
                                 ));
                             }
@@ -480,7 +686,7 @@ impl ExecutableTask for InstallModpackTask {
         let mut expected_mod_paths = std::collections::HashSet::new();
         for task in &tasks {
             if let Some((path_key, record)) = &task.asset_record {
-                expected_mod_paths.insert(path_key.clone());
+                expected_mod_paths.insert(path_key.trim_end_matches(".disable").to_string());
                 manifest.assets.insert(path_key.clone(), record.clone());
             }
         }
@@ -664,35 +870,7 @@ impl ExecutableTask for InstallModpackTask {
             }
 
             // Smart cleanup for existing managed_by_modpack records
-            let mut to_remove = Vec::new();
-            for (path_key, record) in &manifest.assets {
-                if record.managed_by_modpack {
-                    let mut found = false;
-                    for expected in &expected_mod_paths {
-                        let normalized_expected = expected.trim_end_matches(".disable");
-                        let normalized_path_key = path_key.trim_end_matches(".disable");
-                        if normalized_expected == normalized_path_key {
-                            found = true;
-                            break;
-                        }
-                    }
-                    
-                    if !found {
-                        to_remove.push(path_key.clone());
-                    }
-                }
-            }
-            for path_key in to_remove {
-                if !crate::core::fs_utils::is_safe_relative_path(&path_key) {
-                    tracing::warn!("Skipping unsafe modpack asset path during cleanup: {}", path_key);
-                    manifest.assets.remove(&path_key);
-                    continue;
-                }
-                tracing::info!("Removing old modpack file from assets: {}", path_key);
-                let _ = tokio::fs::remove_file(instance_dir.join(&path_key)).await;
-                let _ = tokio::fs::remove_file(instance_dir.join(format!("{}.disable", path_key))).await;
-                manifest.assets.remove(&path_key);
-            }
+            cleanup_outdated_modpack_assets(&mut manifest, &instance_dir, &expected_mod_paths).await;
         }
         
         // Write the fully updated assets.json atomically with shared MANIFEST_LOCK
@@ -705,6 +883,34 @@ impl ExecutableTask for InstallModpackTask {
             }
         }
         drop(_lock);
+
+        // Apply active naming rules to override mods/packs installed by overrides/
+        let post_settings = crate::core::settings::get_launcher_settings().await;
+        if post_settings.resource_naming.enable_online_translation
+            && crate::core::settings::resolve_active_template(&post_settings) != "{stem}{ext}"
+        {
+            if let Ok(db) = tokio::task::spawn_blocking(crate::core::translation::TranslationDb::open_default).await.and_then(|r| Ok(r)) {
+                if let Ok(db) = db {
+                    if let Ok(plan) = crate::core::resource_rename_ops::build_rename_plan_for_instance(
+                        &instance_dir,
+                        instance_name,
+                        &post_settings,
+                        &db,
+                        false,
+                        None,
+                    )
+                    .await
+                    {
+                        let _ = crate::core::resource_rename_ops::execute_rename_plan_in_instance(
+                            &instance_dir,
+                            &plan,
+                            None,
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
 
         // 6. Cleanup Temp
         tracing::info!("Cleaning up temporary directory {:?}", temp_dir);
@@ -1445,4 +1651,296 @@ pub async fn get_modpack_info(zip_path: String) -> Result<ModpackArchiveInfo, Ap
     .map_err(|e| DawnlandError::ProcessError(format!("Task join error: {}", e)))??;
 
     Ok(info)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_modpack_filename(
+    settings: &crate::core::settings::LauncherSettings,
+    category: &crate::models::instance::AssetCategory,
+    orig_filename: &str,
+    source: &str,
+    slug: Option<&str>,
+    en_name: Option<&str>,
+    mc_version: Option<&str>,
+    loader: Option<&str>,
+    zh_lookup: Option<&crate::core::translation::TranslationLookupResult>,
+    used_names: &mut std::collections::HashSet<String>,
+) -> String {
+    let ctx = crate::core::resource_naming::ResourceNamingContext {
+        original_filename: orig_filename.to_string(),
+        category: category.clone().into(),
+        zh_name: zh_lookup.map(|l| l.zh_short_name.clone()),
+        zh_full_name: zh_lookup.map(|l| l.zh_name.clone()),
+        en_name: en_name.map(str::to_string),
+        slug: slug.map(str::to_string),
+        version: None,
+        mc_version: mc_version.filter(|s| !s.is_empty()).map(str::to_string),
+        loader: loader.filter(|s| !s.is_empty()).map(str::to_string),
+        source: Some(source.to_string()),
+    };
+
+    let desired = crate::core::resource_naming::resolve_filename_for_download(settings, &ctx);
+    if !used_names.contains(&desired) {
+        used_names.insert(desired.clone());
+        return desired;
+    }
+
+    let (stem, ext) = crate::core::resource_naming::split_stem_and_ext(&desired);
+    for idx in 2..=99 {
+        let candidate = format!("{} ({}){}", stem, idx, ext);
+        if !used_names.contains(&candidate) {
+            used_names.insert(candidate.clone());
+            return candidate;
+        }
+    }
+    desired
+}
+
+fn is_modpack_asset_disabled(
+    instance_dir: &std::path::Path,
+    existing_assets: &std::collections::HashMap<String, crate::models::instance::AssetRecord>,
+    orig_rel_path: &str,
+    orig_filename: &str,
+    final_rel_enabled: &str,
+) -> bool {
+    let norm_final = final_rel_enabled.trim_end_matches(".disable");
+    let norm_orig = orig_rel_path.trim_end_matches(".disable");
+
+    if instance_dir.join(format!("{}.disable", norm_final)).exists()
+        || instance_dir.join(format!("{}.disable", norm_orig)).exists()
+    {
+        return true;
+    }
+
+    existing_assets.iter().any(|(k, rec)| {
+        let k_norm = k.trim_end_matches(".disable");
+        let match_path = k_norm == norm_final
+            || k_norm == norm_orig
+            || rec
+                .original_rel_path
+                .as_deref()
+                .map(|p| p.trim_end_matches(".disable") == norm_orig)
+                .unwrap_or(false)
+            || rec.original_filename.as_deref() == Some(orig_filename);
+        if !match_path {
+            return false;
+        }
+        !rec.enabled || instance_dir.join(format!("{}.disable", k_norm)).exists()
+    })
+}
+
+async fn resolve_modrinth_pack_hashes(
+    sha1s: &[String],
+) -> std::collections::HashMap<String, crate::core::translation::HashMappingEntry> {
+    let unique_sha1s: Vec<String> = sha1s
+        .iter()
+        .map(|s| s.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    if unique_sha1s.is_empty() {
+        return std::collections::HashMap::new();
+    }
+
+    let sha1_clone = unique_sha1s.clone();
+    let mut map = tokio::task::spawn_blocking(move || {
+        let mut out = std::collections::HashMap::new();
+        if let Ok(db) = crate::core::translation::TranslationDb::open_default() {
+            for s in sha1_clone {
+                if let Some(m) = db.get_hash_mapping(&s) {
+                    out.insert(s, m);
+                }
+            }
+        }
+        out
+    })
+    .await
+    .unwrap_or_default();
+
+    let missing: Vec<String> = unique_sha1s
+        .into_iter()
+        .filter(|s| !map.contains_key(s))
+        .collect();
+
+    if !missing.is_empty() {
+        if let Ok(matches) = crate::core::modrinth::get_modrinth_version_files_by_hashes(missing).await {
+            let pids: Vec<String> = matches
+                .iter()
+                .map(|m| m.project_id.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            let projects = crate::core::modrinth::get_modrinth_projects_batch(pids)
+                .await
+                .unwrap_or_default();
+            let proj_map: std::collections::HashMap<String, crate::core::modrinth::UnifiedModProject> =
+                projects.into_iter().map(|p| (p.project_id.clone(), p)).collect();
+
+            let mut new_entries = Vec::new();
+            for m in matches {
+                let sha_lower = m.sha1.to_ascii_lowercase();
+                let proj = proj_map.get(&m.project_id);
+                let entry = crate::core::translation::HashMappingEntry {
+                    sha1: sha_lower.clone(),
+                    cf_murmur2: None,
+                    source: "modrinth".to_string(),
+                    project_id: m.project_id,
+                    slug: proj.map(|p| p.slug.clone()).unwrap_or_default(),
+                    version_id: Some(m.version_id),
+                    category: "mod".to_string(),
+                    raw_name: proj.map(|p| p.title.clone()),
+                };
+                new_entries.push(entry.clone());
+                map.insert(sha_lower, entry);
+            }
+
+            if !new_entries.is_empty() {
+                let _ = tokio::task::spawn_blocking(move || {
+                    if let Ok(db) = crate::core::translation::TranslationDb::open_default() {
+                        let _ = db.save_hash_mappings(&new_entries);
+                    }
+                })
+                .await;
+            }
+        }
+    }
+
+    map
+}
+
+pub async fn cleanup_outdated_modpack_assets(
+    manifest: &mut crate::models::instance::AssetManifest,
+    instance_dir: &std::path::Path,
+    expected_mod_paths: &std::collections::HashSet<String>,
+) {
+    let mut to_remove = Vec::new();
+    for (path_key, record) in &manifest.assets {
+        if record.managed_by_modpack {
+            let normalized_path_key = path_key.trim_end_matches(".disable");
+            let found = expected_mod_paths
+                .iter()
+                .any(|expected| expected.trim_end_matches(".disable") == normalized_path_key);
+            if !found {
+                to_remove.push(path_key.clone());
+            }
+        }
+    }
+    for path_key in to_remove {
+        if !crate::core::fs_utils::is_safe_relative_path(&path_key) {
+            tracing::warn!("Skipping unsafe modpack asset path during cleanup: {}", path_key);
+            manifest.assets.remove(&path_key);
+            continue;
+        }
+        tracing::info!("Removing old modpack file from assets: {}", path_key);
+        let _ = tokio::fs::remove_file(instance_dir.join(&path_key)).await;
+        let _ = tokio::fs::remove_file(instance_dir.join(format!("{}.disable", path_key))).await;
+        manifest.assets.remove(&path_key);
+    }
+}
+
+#[cfg(test)]
+mod modpack_naming_tests {
+    use super::*;
+    use crate::core::settings::{FilenameFormatMode, FilenamePreset, ResourceNamingSettings};
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_modpack_rename_update_cleanup_and_disable_state() {
+        let dir = tempdir().unwrap();
+        let inst_dir = dir.path();
+        tokio::fs::create_dir_all(inst_dir.join("mods")).await.unwrap();
+
+        let old_renamed_disabled = "[机械动力] create-1.0.jar.disable";
+        let removed_mod = "[植物魔法] botania-1.0.jar";
+        tokio::fs::write(inst_dir.join("mods").join(old_renamed_disabled), b"old")
+            .await
+            .unwrap();
+        tokio::fs::write(inst_dir.join("mods").join(removed_mod), b"removed")
+            .await
+            .unwrap();
+
+        let mut manifest = crate::models::instance::AssetManifest::default();
+        manifest.assets.insert(
+            "mods/[机械动力] create-1.0.jar".to_string(),
+            crate::models::instance::AssetRecord {
+                category: crate::models::instance::AssetCategory::Mod,
+                source_type: crate::models::instance::AssetSourceType::Modrinth,
+                project_id: Some("LNytGkhc".to_string()),
+                version_id: Some("v1".to_string()),
+                download_url: None,
+                hash_sha1: None,
+                hash_sha512: None,
+                size: Some(3),
+                enabled: false,
+                managed_by_modpack: true,
+                original_filename: Some("create-1.0.jar".to_string()),
+                original_rel_path: Some("mods/create-1.0.jar".to_string()),
+                display_name_zh: Some("机械动力".to_string()),
+            },
+        );
+        manifest.assets.insert(
+            "mods/[植物魔法] botania-1.0.jar".to_string(),
+            crate::models::instance::AssetRecord {
+                category: crate::models::instance::AssetCategory::Mod,
+                source_type: crate::models::instance::AssetSourceType::Modrinth,
+                project_id: Some("botania".to_string()),
+                version_id: Some("v1".to_string()),
+                download_url: None,
+                hash_sha1: None,
+                hash_sha512: None,
+                size: Some(7),
+                enabled: true,
+                managed_by_modpack: true,
+                original_filename: Some("botania-1.0.jar".to_string()),
+                original_rel_path: Some("mods/botania-1.0.jar".to_string()),
+                display_name_zh: Some("植物魔法".to_string()),
+            },
+        );
+
+        let mut settings = crate::core::settings::LauncherSettings::default();
+        settings.resource_naming = ResourceNamingSettings {
+            filename_mode: FilenameFormatMode::Preset,
+            filename_preset: FilenamePreset::BracketPrefix,
+            ..Default::default()
+        };
+        let lookup = crate::core::translation::TranslationLookupResult {
+            zh_name: "机械动力 (Create)".to_string(),
+            zh_short_name: "机械动力".to_string(),
+            zh_summary: None,
+            wiki_id: Some(123),
+            trust_level: crate::core::translation::TRUST_VERIFIED,
+            source_tag: "consensus".to_string(),
+        };
+
+        let mut used = std::collections::HashSet::new();
+        let next_name = plan_modpack_filename(
+            &settings,
+            &crate::models::instance::AssetCategory::Mod,
+            "create-1.0.jar",
+            "modrinth",
+            Some("create"),
+            Some("Create"),
+            Some("1.21.1"),
+            Some("neoforge"),
+            Some(&lookup),
+            &mut used,
+        );
+        assert_eq!(next_name, "[机械动力] create-1.0.jar");
+        assert!(is_modpack_asset_disabled(
+            inst_dir,
+            &manifest.assets,
+            "mods/create-1.0.jar",
+            "create-1.0.jar",
+            "mods/[机械动力] create-1.0.jar"
+        ));
+
+        let mut expected = std::collections::HashSet::new();
+        expected.insert("mods/[机械动力] create-1.0.jar".to_string());
+        cleanup_outdated_modpack_assets(&mut manifest, inst_dir, &expected).await;
+
+        assert!(manifest.assets.contains_key("mods/[机械动力] create-1.0.jar"));
+        assert!(!manifest.assets.contains_key("mods/[植物魔法] botania-1.0.jar"));
+        assert!(!inst_dir.join("mods").join(removed_mod).exists());
+        assert!(inst_dir.join("mods").join(old_renamed_disabled).exists());
+    }
 }

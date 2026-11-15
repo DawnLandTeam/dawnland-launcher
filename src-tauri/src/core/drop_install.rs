@@ -1299,6 +1299,9 @@ async fn import_single_mod(
                 size,
                 enabled: !installed_filename.ends_with(".disable"),
                 managed_by_modpack: false,
+                original_filename: Some(canonical_filename.to_string()),
+                original_rel_path: Some(format!("mods/{}", canonical_filename)),
+                display_name_zh: None,
             },
         )
         .await;
@@ -1428,6 +1431,9 @@ async fn import_single_mod(
             size,
             enabled: !installed_filename.ends_with(".disable"),
             managed_by_modpack: false,
+            original_filename: Some(canonical_filename.to_string()),
+            original_rel_path: Some(rel_key.clone()),
+            display_name_zh: None,
         },
     )
     .await;
@@ -1515,6 +1521,9 @@ async fn import_single_pack(
                 size,
                 enabled: true,
                 managed_by_modpack: false,
+                original_filename: Some(ctx.filename.to_string()),
+                original_rel_path: Some(rel_key.clone()),
+                display_name_zh: None,
             },
         )
         .await;
@@ -1620,6 +1629,9 @@ async fn import_single_pack(
             size,
             enabled: true,
             managed_by_modpack: false,
+            original_filename: Some(ctx.filename.to_string()),
+            original_rel_path: Some(rel_key.clone()),
+            display_name_zh: None,
         },
     )
     .await;
@@ -1755,6 +1767,9 @@ async fn import_single_datapack(
                 size,
                 enabled: true,
                 managed_by_modpack: false,
+                original_filename: Some(ctx.filename.to_string()),
+                original_rel_path: Some(rel_key.clone()),
+                display_name_zh: None,
             },
         )
         .await;
@@ -1860,6 +1875,9 @@ async fn import_single_datapack(
             size,
             enabled: true,
             managed_by_modpack: false,
+            original_filename: Some(ctx.filename.to_string()),
+            original_rel_path: Some(rel_key.clone()),
+            display_name_zh: None,
         },
     )
     .await;
@@ -1935,6 +1953,9 @@ async fn import_single_world(
                     size: Some(0),
                     enabled: true,
                     managed_by_modpack: false,
+                    original_filename: Some(ctx.filename.to_string()),
+                    original_rel_path: Some(rel_key.clone()),
+                    display_name_zh: None,
                 },
             )
             .await;
@@ -1996,6 +2017,9 @@ async fn import_single_world(
                 size: Some(0),
                 enabled: true,
                 managed_by_modpack: false,
+                original_filename: Some(ctx.filename.to_string()),
+                original_rel_path: Some(rel_key.clone()),
+                display_name_zh: None,
             },
         )
         .await;
@@ -2064,6 +2088,9 @@ async fn import_single_world(
                         size: Some(0),
                         enabled: true,
                         managed_by_modpack: false,
+                        original_filename: Some(world_folder.clone()),
+                        original_rel_path: Some(rel_key.clone()),
+                        display_name_zh: None,
                     },
                 )
                 .await;

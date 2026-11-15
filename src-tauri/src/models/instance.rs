@@ -122,7 +122,7 @@ pub enum LoaderType {
     Quilt,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum AssetCategory {
     Mod,
     ResourcePack,
@@ -160,6 +160,12 @@ pub struct AssetRecord {
     pub enabled: bool,
     #[serde(default)]
     pub managed_by_modpack: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_rel_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name_zh: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -189,6 +195,12 @@ struct AssetRecordProxy {
     #[serde(default = "default_true")]
     enabled: bool,
     managed_by_modpack: Option<bool>,
+    #[serde(default)]
+    original_filename: Option<String>,
+    #[serde(default)]
+    original_rel_path: Option<String>,
+    #[serde(default)]
+    display_name_zh: Option<String>,
 }
 
 fn deserialize_assets_and_migrate<'de, D>(deserializer: D) -> Result<HashMap<String, AssetRecord>, D::Error>
@@ -215,6 +227,9 @@ where
             size: proxy.size,
             enabled: proxy.enabled,
             managed_by_modpack: managed,
+            original_filename: proxy.original_filename,
+            original_rel_path: proxy.original_rel_path,
+            display_name_zh: proxy.display_name_zh,
         });
     }
     Ok(map)

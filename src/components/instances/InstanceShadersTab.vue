@@ -18,6 +18,18 @@
             <Search class="w-4 h-4 text-muted-foreground" />
           </template>
         </DInput>
+
+        <DButton
+          variant="outline"
+          @click="showRenameModal = true"
+          :disabled="!resourceNamingSettings.enableOnlineTranslation"
+          :title="!resourceNamingSettings.enableOnlineTranslation
+            ? $t('instances.resourceNaming.disabledTip', '已在设置中关闭译名与重命名功能')
+            : $t('instances.resourceNaming.batchRenameBtnTip', '按设置重命名或还原原始文件名')"
+        >
+          <FolderSync class="w-4 h-4 mr-1.5" />
+          {{ $t('instances.resourceNaming.batchRenameBtn', '整理文件名') }}
+        </DButton>
         
         <DButton variant="outline" @click="loadAssets" class="px-3" :disabled="loading">
           <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': loading }" />
@@ -50,16 +62,31 @@
           </div>
           
           <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm truncate" :title="asset.filename">{{ asset.filename }}</div>
+            <div class="font-medium text-sm truncate" :title="getAssetDisplay(asset).primaryTitle">
+              {{ getAssetDisplay(asset).primaryTitle }}
+            </div>
             <div class="text-xs text-muted-foreground mt-1 flex items-center gap-2">
               <span v-if="asset.managedByModpack" class="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] border border-primary/20">{{ $t('instances.modpack', 'Modpack') }}</span>
               <span v-else class="bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded text-[10px] border">{{ $t('instances.manual', 'Manual') }}</span>
               <span v-if="asset.isDir" :title="$t('instances.folderSizeSkipped')" class="cursor-help underline decoration-dotted decoration-muted-foreground underline-offset-2">{{ $t('instances.folder') }}</span>
               <span v-else>{{ formatSize(asset.size) }}</span>
+              <span v-if="getAssetDisplay(asset).secondaryDetail" class="truncate" :title="getAssetDisplay(asset).secondaryDetail">
+                {{ getAssetDisplay(asset).secondaryDetail }}
+              </span>
             </div>
           </div>
           
           <div class="flex items-center gap-2 flex-shrink-0">
+            <DButton
+              v-if="!asset.isDir && resourceNamingSettings.enableOnlineTranslation"
+              variant="ghost"
+              size="sm"
+              class="px-2"
+              :title="$t('instances.resourceNaming.editTranslationTitle', '自定义中文译名')"
+              @click="openEditTranslation(asset)"
+            >
+              <Languages class="w-4 h-4 text-muted-foreground" />
+            </DButton>
             <DButton 
               variant="danger" 
               size="sm" 
@@ -93,6 +120,21 @@
         </div>
       </div>
     </AlertDialog>
+
+    <ResourceRenameModal
+      :open="showRenameModal"
+      :instance-id="instanceId"
+      :categories="['ShaderPack']"
+      @update:open="showRenameModal = $event"
+      @applied="loadAssets"
+    />
+
+    <ResourceTranslationEditModal
+      :open="showEditTranslationModal"
+      :target="editingTranslationTarget"
+      @update:open="showEditTranslationModal = $event"
+      @saved="loadAssets"
+    />
   </div>
 </template>
 
@@ -101,14 +143,19 @@ import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
-import { Sparkles, Search, Download, Trash2, FolderArchive, Folder, RefreshCw } from '@lucide/vue';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { Sparkles, Search, Download, Trash2, FolderArchive, Folder, RefreshCw, FolderSync, Languages } from '@lucide/vue';
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from '../ui/alert-dialog';
 import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
+import ResourceRenameModal from './ResourceRenameModal.vue';
+import ResourceTranslationEditModal, { type TranslationEditTarget } from './ResourceTranslationEditModal.vue';
+import { formatResourceDisplay, useResourceNaming } from '../../composables/useResourceNaming';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
 import { INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
 import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
+import { RESOURCE_NAMING_UPDATED_EVENT, type LocalAssetItem } from '../../types/resourceNaming';
 
 const props = defineProps<{
   instanceId: string;
@@ -116,13 +163,10 @@ const props = defineProps<{
 
 const router = useRouter();
 const { t } = useI18n();
-
-interface LocalAssetItem {
-  filename: string;
-  isDir: boolean;
-  size: number;
-  managedByModpack?: boolean;
-}
+const { resourceNamingSettings, refreshResourceNamingSettings } = useResourceNaming();
+const showRenameModal = ref(false);
+const showEditTranslationModal = ref(false);
+const editingTranslationTarget = ref<TranslationEditTarget | null>(null);
 
 const assets = ref<LocalAssetItem[]>([]);
 const loading = ref(false);
@@ -132,10 +176,36 @@ const showDeleteConfirm = ref(false);
 const assetToDelete = ref<LocalAssetItem | null>(null);
 const isDeleting = ref(false);
 
+function getAssetDisplay(asset: LocalAssetItem) {
+  return formatResourceDisplay(resourceNamingSettings.value.managementDisplayStyle, {
+    zhName: asset.zhName,
+    rawName: null,
+    filename: asset.filename,
+    originalFilename: asset.originalFilename,
+  });
+}
+
+function openEditTranslation(asset: LocalAssetItem) {
+  editingTranslationTarget.value = {
+    category: 'ShaderPack',
+    instanceId: props.instanceId,
+    relPath: `shaderpacks/${asset.filename}`,
+    filename: asset.originalFilename || asset.filename,
+    source: asset.source ?? null,
+    projectId: asset.projectId ?? null,
+    slug: asset.slug ?? null,
+    rawName: asset.originalFilename || asset.filename,
+    currentZhName: asset.zhName ?? null,
+  };
+  showEditTranslationModal.value = true;
+}
+
 const filteredAssets = computed(() => {
   if (!searchQuery.value) return assets.value;
   const q = searchQuery.value.toLowerCase();
   return assets.value.filter(asset => 
+    (asset.zhName && asset.zhName.toLowerCase().includes(q)) ||
+    (asset.originalFilename && asset.originalFilename.toLowerCase().includes(q)) ||
     asset.filename.toLowerCase().includes(q)
   );
 });
@@ -185,16 +255,38 @@ function handleAssetsUpdated(event: Event) {
   }
 }
 
-onMounted(() => {
+function handleNamingSettingsUpdated() {
+  refreshResourceNamingSettings();
+}
+
+let unlistenTranslationUpdate: UnlistenFn | null = null;
+
+onMounted(async () => {
   window.addEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+  window.addEventListener(RESOURCE_NAMING_UPDATED_EVENT, handleNamingSettingsUpdated);
+  try {
+    unlistenTranslationUpdate = await listen<{ instanceId: string }>('instance-translations-updated', (ev) => {
+      if (ev.payload?.instanceId === props.instanceId) {
+        loadAssets();
+      }
+    });
+  } catch {
+    // non-tauri test env
+  }
 });
 
 onActivated(() => {
+  refreshResourceNamingSettings();
   loadAssets();
 });
 
 onUnmounted(() => {
   window.removeEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+  window.removeEventListener(RESOURCE_NAMING_UPDATED_EVENT, handleNamingSettingsUpdated);
+  if (unlistenTranslationUpdate) {
+    unlistenTranslationUpdate();
+    unlistenTranslationUpdate = null;
+  }
 });
 
 function confirmDelete(asset: LocalAssetItem) {

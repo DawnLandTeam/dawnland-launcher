@@ -56,6 +56,12 @@ pub enum TaskType {
         file_id: String,
         dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
         keep_both: Option<bool>,
+        #[serde(default)]
+        slug: Option<String>,
+        #[serde(default)]
+        original_filename: Option<String>,
+        #[serde(default)]
+        version_number: Option<String>,
     },
     InstallResourcepack {
         source: String,
@@ -65,6 +71,12 @@ pub enum TaskType {
         target_dir: Option<String>,
         download_url: String,
         file_id: String,
+        #[serde(default)]
+        slug: Option<String>,
+        #[serde(default)]
+        original_filename: Option<String>,
+        #[serde(default)]
+        version_number: Option<String>,
     },
     InstallShaderpack {
         source: String,
@@ -74,6 +86,12 @@ pub enum TaskType {
         target_dir: Option<String>,
         download_url: String,
         file_id: String,
+        #[serde(default)]
+        slug: Option<String>,
+        #[serde(default)]
+        original_filename: Option<String>,
+        #[serde(default)]
+        version_number: Option<String>,
     },
     InstallDatapack {
         source: String,
@@ -83,6 +101,12 @@ pub enum TaskType {
         target_dir: Option<String>,
         download_url: String,
         file_id: String,
+        #[serde(default)]
+        slug: Option<String>,
+        #[serde(default)]
+        original_filename: Option<String>,
+        #[serde(default)]
+        version_number: Option<String>,
     },
     InstallPreset {
         preset_name: String,

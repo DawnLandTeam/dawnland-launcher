@@ -13,6 +13,8 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from "../../composables/useToast";
 import { useTaskStatusReload } from "../../composables/useTaskStatusReload";
 import { useInstances } from "../../composables/useInstances";
+import { searchProjectsWithChineseSupport } from "../../composables/useResourceNaming";
+import type { EnrichedModProject, UnifiedModProject } from "../../types/resourceNaming";
 
 // UI Components
 import { DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
@@ -33,18 +35,6 @@ interface UnifiedCategory {
   id: string;
   name: string;
   icon: string;
-}
-interface UnifiedModProject {
-  source: string;
-  project_id: string;
-  slug: string;
-  title: string;
-  description: string;
-  icon_url?: string;
-  downloads: number;
-  author: string;
-  mc_versions: string[];
-  loaders: string[];
 }
 
 interface UnifiedDependency {
@@ -88,7 +78,7 @@ const searchSource = ref<"modrinth" | "curseforge">("curseforge");
 
 const isSearching = ref(false);
 const hasSearched = ref(false);
-const searchResults = ref<UnifiedModProject[]>([]);
+const searchResults = ref<EnrichedModProject[]>([]);
 const error = ref("");
 
 // Downloading State
@@ -104,7 +94,7 @@ const isFetchingFiles = ref(false);
 
 // Dependency Dialog State
 const showDependencyDialog = ref(false);
-const pendingMod = ref<UnifiedModProject | null>(null);
+const pendingMod = ref<EnrichedModProject | null>(null);
 const pendingTargetDir = ref<string | null>(null);
 const pendingDependencies = ref<UnifiedDependency[]>([]);
 const pendingDependencyTitles = ref<Record<string, string>>({});
@@ -379,22 +369,24 @@ async function performSearch(isLoadMore = false) {
   error.value = "";
 
   try {
-    let results: UnifiedModProject[] = [];
-    const args = {
-      query: searchQuery.value,
-      mcVersions: selectedInstanceId.value 
-        ? [installedInstances.value.find(i => i.id === selectedInstanceId.value)?.mcVersion].filter(Boolean) as string[]
-        : selectedMcVersion.value,
-      loaders: selectedInstanceId.value 
-        ? [installedInstances.value.find(i => i.id === selectedInstanceId.value)?.loaderType.toLowerCase()].filter(Boolean) as string[]
-        : selectedLoader.value,
-      categories: selectedCategory.value,
-      offset: currentPage.value * 20,
-      limit: 20
-    };
-
-    const targetCommand = searchSource.value === "modrinth" ? "search_modrinth_datapacks" : "search_curseforge_datapacks";
-    results = await invoke<UnifiedModProject[]>(targetCommand, args);
+    const searchCommand = searchSource.value === "modrinth" ? "search_modrinth_datapacks" : "search_curseforge_datapacks";
+    const { projects: results } = await searchProjectsWithChineseSupport({
+      category: "Datapack",
+      searchCommand,
+      args: {
+        query: searchQuery.value,
+        mcVersions: selectedInstanceId.value 
+          ? [installedInstances.value.find(i => i.id === selectedInstanceId.value)?.mcVersion].filter(Boolean) as string[]
+          : selectedMcVersion.value,
+        loaders: selectedInstanceId.value 
+          ? [installedInstances.value.find(i => i.id === selectedInstanceId.value)?.loaderType.toLowerCase()].filter(Boolean) as string[]
+          : selectedLoader.value,
+        categories: selectedCategory.value,
+        offset: currentPage.value * 20,
+        limit: 20
+      },
+      resolveMissingOnline: currentPage.value === 0,
+    });
     
     if (results.length < 20) {
       hasMore.value = false;
@@ -478,6 +470,9 @@ async function startActualDownload(mod: UnifiedModProject, fileId: string, targe
           file_id: latestFile.id,
           download_url: latestFile.download_url,
           target_dir: targetDir,
+          slug: mod.slug,
+          original_filename: latestFile.filename,
+          version_number: latestFile.version_number,
         }
       });
     } else if (selectedInstanceId.value) {
@@ -490,6 +485,9 @@ async function startActualDownload(mod: UnifiedModProject, fileId: string, targe
           pack_name: mod.title,
           file_id: latestFile.id,
           download_url: latestFile.download_url,
+          slug: mod.slug,
+          original_filename: latestFile.filename,
+          version_number: latestFile.version_number,
         }
       });
     }
@@ -671,10 +669,13 @@ onUnmounted(() => {
           <!-- Info -->
           <div class="flex-1 min-w-0 flex flex-col justify-center gap-1.5">
             <!-- Line 1: Title and Badges -->
-            <div class="flex items-center gap-3">
-              <h3 class="font-bold text-base text-neutral-900 dark:text-zinc-100 truncate" :title="mod.title">
-                {{ mod.title }}
+            <div class="flex items-center gap-2 min-w-0">
+              <h3 class="font-bold text-base text-neutral-900 dark:text-zinc-100 truncate" :title="mod.zhTitle || mod.title">
+                {{ mod.zhTitle || mod.title }}
               </h3>
+              <span v-if="mod.zhTitle && mod.zhTitle !== mod.title" class="text-xs text-neutral-400 dark:text-zinc-500 truncate">
+                {{ mod.title }}
+              </span>
               <div class="flex items-center gap-1.5 shrink-0">
                 <span v-for="l in mod.loaders" :key="l" class="flex items-center gap-1 px-1.5 py-0.5 bg-neutral-100 dark:bg-zinc-800/50 border border-neutral-200/80 dark:border-zinc-700/80 rounded text-[10px] font-medium text-neutral-600 dark:text-zinc-300 capitalize">
                   <svg v-if="l.toLowerCase() === 'fabric'" class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 2.4c5.302 0 9.6 4.298 9.6 9.6s-4.298 9.6-9.6 9.6S2.4 17.302 2.4 12 6.698 2.4 12 2.4zm-4.8 4.8v9.6h2.4V7.2H7.2zm4.8 0v9.6h2.4V7.2h-2.4z"/></svg>
@@ -690,7 +691,7 @@ onUnmounted(() => {
             <!-- Line 2: Description and Stats -->
             <div class="flex items-center justify-between gap-4">
               <p class="text-sm text-neutral-500 dark:text-zinc-400 truncate">
-                {{ mod.description }}
+                {{ mod.zhSummary || mod.description }}
               </p>
               <p class="text-xs text-neutral-400 dark:text-zinc-500 shrink-0">
                 By {{ mod.author }} • {{ formatNumber(mod.downloads) }} ↓
