@@ -2028,6 +2028,7 @@ struct EnrichQuery {
     embedded_zh: Option<String>,
 }
 
+#[derive(Default, Clone)]
 struct EnrichResult {
     zh_name: Option<String>,
     zh_summary: Option<String>,
@@ -2117,6 +2118,7 @@ async fn batch_enrich_local_metadata(queries: Vec<EnrichQuery>) -> Vec<EnrichRes
 }
 
 async fn load_sanitized_manifest(instance_dir: &std::path::Path) -> crate::models::instance::AssetManifest {
+    let _lock = MANIFEST_LOCK.lock().await;
     let assets_path = instance_dir.join("assets.json");
     let mut manifest = if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
         serde_json::from_str::<crate::models::instance::AssetManifest>(&content).unwrap_or_default()
@@ -2126,7 +2128,6 @@ async fn load_sanitized_manifest(instance_dir: &std::path::Path) -> crate::model
     let (_, dirty) =
         crate::core::resource_rename_ops::sanitize_polluted_modpack_manifest(instance_dir, &mut manifest).await;
     if dirty {
-        let _lock = MANIFEST_LOCK.lock().await;
         if let Ok(json) = serde_json::to_string_pretty(&manifest) {
             let _ = crate::core::fs_utils::write_file_atomic(&assets_path, json.as_bytes()).await;
         }
@@ -2201,9 +2202,10 @@ pub async fn get_installed_datapacks(version_id: String, world_name: String) -> 
 
     let enriched = batch_enrich_local_metadata(queries).await;
     let mut datapacks = Vec::with_capacity(raw_items.len());
-    for ((filename, is_dir, size, managed, original_filename, manifest_zh), er) in
-        raw_items.into_iter().zip(enriched.into_iter())
+    for (idx, (filename, is_dir, size, managed, original_filename, manifest_zh)) in
+        raw_items.into_iter().enumerate()
     {
+        let er = enriched.get(idx).cloned().unwrap_or_default();
         datapacks.push(LocalDatapackItem {
             filename,
             is_dir,
@@ -2329,9 +2331,10 @@ async fn get_assets_in_dir(dir: std::path::PathBuf, version_id: &str, prefix: &s
 
     let enriched = batch_enrich_local_metadata(queries).await;
     let mut assets = Vec::with_capacity(raw_items.len());
-    for ((filename, is_dir, size, managed, original_filename, manifest_zh), er) in
-        raw_items.into_iter().zip(enriched.into_iter())
+    for (idx, (filename, is_dir, size, managed, original_filename, manifest_zh)) in
+        raw_items.into_iter().enumerate()
     {
+        let er = enriched.get(idx).cloned().unwrap_or_default();
         assets.push(LocalAssetItem {
             filename,
             is_dir,
@@ -3071,7 +3074,8 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
     }
 
     let enriched = batch_enrich_local_metadata(queries).await;
-    for ((m, manifest_zh), er) in mods.iter_mut().zip(manifest_zhs.into_iter()).zip(enriched.into_iter()) {
+    for (idx, (m, manifest_zh)) in mods.iter_mut().zip(manifest_zhs.into_iter()).enumerate() {
+        let er = enriched.get(idx).cloned().unwrap_or_default();
         m.zh_name = er.zh_name.or(manifest_zh);
         m.zh_summary = er.zh_summary;
         m.source = er.source;
@@ -4097,6 +4101,13 @@ pub async fn install_mod_to_instance(
                     )
                     .await;
                     let fname = dep_resolved.final_filename;
+                    if !crate::core::fs_utils::is_safe_single_name(&fname) {
+                        return Err("Invalid dependency filename".to_string());
+                    }
+                    let dep_path = mods_dir.join(&fname);
+                    if !dep_path.starts_with(&mods_dir) {
+                        return Err("Target path escapes mods directory".to_string());
+                    }
                     if let Some((old_fname, _)) = installed_map.get(&dep_key) {
                         if old_fname != &fname {
                             let _ = tokio::fs::remove_file(mods_dir.join(old_fname)).await;
@@ -4106,7 +4117,6 @@ pub async fn install_mod_to_instance(
                         )
                         .await;
                     }
-                    let dep_path = mods_dir.join(&fname);
                     if !dep_path.exists() {
                         if let Some(ref c) = ctx {
                             let _ = download_mod_file_task(c, &client, &url, &dep_path).await;
@@ -5841,6 +5851,9 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
                             )
                             .await;
                             let clean_filename = resolved.final_filename.as_str();
+                            if !crate::core::fs_utils::is_safe_single_name(clean_filename) {
+                                return Err(crate::core::task::TaskError::ExecutionError(format!("Unsafe resolved preset filename: {}", clean_filename)));
+                            }
                             let target_path = target_dir.join(clean_filename);
                             if !target_path.starts_with(&target_dir) {
                                 return Err(crate::core::task::TaskError::ExecutionError("Target path escapes asset directory".to_string()));
@@ -6123,7 +6136,18 @@ impl InstallModTask {
         .await;
 
         let filename = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&filename) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved mod filename rejected: {}",
+                filename
+            )));
+        }
         let target_path = target_dir_path.join(&filename);
+        if !target_path.starts_with(&target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes mods directory".to_string(),
+            ));
+        }
 
         if let Some(_vid) = version_id_opt {
             if !options.keep_both.unwrap_or(false) {
@@ -6240,6 +6264,18 @@ impl InstallModTask {
         )
         .await;
         let fname = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&fname) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved dependency filename rejected: {}",
+                fname
+            )));
+        }
+        let dep_path = ctx.target_dir_path.join(&fname);
+        if !dep_path.starts_with(&ctx.target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes mods directory".to_string(),
+            ));
+        }
 
         if let Some(_v_id) = ctx.version_id_opt {
             if let Some((old_fname, _)) = installed_map.get(&dep_key) {
@@ -6250,7 +6286,6 @@ impl InstallModTask {
             }
         }
 
-        let dep_path = ctx.target_dir_path.join(&fname);
         if !dep_path.exists() {
             download_mod_file_task(ctx.dep_ctx, ctx.client, &url, &dep_path).await.map_err(crate::core::task::TaskError::ExecutionError)?;
         } else {
@@ -6439,7 +6474,18 @@ impl crate::core::task::ExecutableTask for InstallDatapackTask {
         )
         .await;
         let filename = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&filename) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved datapack filename rejected: {}",
+                filename
+            )));
+        }
         let target_path = target_dir_path.join(&filename);
+        if !target_path.starts_with(&target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes datapacks directory".to_string(),
+            ));
+        }
 
         ctx.init_sub_tasks(vec![crate::core::task::state::SubTaskState {
             key: "download".to_string(),
@@ -6565,7 +6611,18 @@ impl crate::core::task::ExecutableTask for InstallResourcepackTask {
         )
         .await;
         let filename = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&filename) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved resourcepack filename rejected: {}",
+                filename
+            )));
+        }
         let target_path = target_dir_path.join(&filename);
+        if !target_path.starts_with(&target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes resourcepacks directory".to_string(),
+            ));
+        }
 
         if !target_path.exists() {
             download_mod_file_task(&ctx, client, &options.download_url, &target_path)
@@ -6668,7 +6725,18 @@ impl crate::core::task::ExecutableTask for InstallShaderpackTask {
         )
         .await;
         let filename = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&filename) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved shaderpack filename rejected: {}",
+                filename
+            )));
+        }
         let target_path = target_dir_path.join(&filename);
+        if !target_path.starts_with(&target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes shaderpacks directory".to_string(),
+            ));
+        }
 
         if !target_path.exists() {
             download_mod_file_task(&ctx, client, &options.download_url, &target_path)
