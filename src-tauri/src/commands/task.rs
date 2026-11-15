@@ -200,6 +200,9 @@ pub async fn retry_task(
             file_id,
             dependencies,
             keep_both,
+            slug,
+            original_filename,
+            version_number,
         } => {
             let executable = crate::core::manager::InstallModTask {
                 options: crate::core::manager::InstallModOptions {
@@ -212,6 +215,9 @@ pub async fn retry_task(
                     file_id,
                     dependencies,
                     keep_both,
+                    slug,
+                    original_filename,
+                    version_number,
                 },
             };
             task_manager
@@ -227,6 +233,9 @@ pub async fn retry_task(
             target_dir,
             download_url,
             file_id,
+            slug,
+            original_filename,
+            version_number,
         } => {
             let executable = crate::core::manager::InstallResourcepackTask {
                 options: crate::core::manager::InstallResourcepackOptions {
@@ -237,6 +246,9 @@ pub async fn retry_task(
                     target_dir,
                     download_url,
                     file_id,
+                    slug,
+                    original_filename,
+                    version_number,
                 },
             };
             task_manager
@@ -288,6 +300,9 @@ pub async fn retry_task(
             target_dir,
             download_url,
             file_id,
+            slug,
+            original_filename,
+            version_number,
         } => {
             let executable = crate::core::manager::InstallShaderpackTask {
                 options: crate::core::manager::InstallShaderpackOptions {
@@ -298,6 +313,9 @@ pub async fn retry_task(
                     target_dir,
                     download_url,
                     file_id,
+                    slug,
+                    original_filename,
+                    version_number,
                 },
             };
             task_manager
@@ -338,6 +356,9 @@ pub async fn retry_task(
             target_dir,
             download_url,
             file_id,
+            slug,
+            original_filename,
+            version_number,
         } => {
             let executable = crate::core::manager::InstallDatapackTask {
                 options: crate::core::manager::InstallDatapackOptions {
@@ -348,6 +369,9 @@ pub async fn retry_task(
                     target_dir,
                     download_url,
                     file_id,
+                    slug,
+                    original_filename,
+                    version_number,
                 },
             };
             task_manager
@@ -447,6 +471,9 @@ pub async fn task_create(
                 file_id: options.file_id.clone(),
                 dependencies: options.dependencies.clone(),
                 keep_both: options.keep_both,
+                slug: options.slug.clone(),
+                original_filename: options.original_filename.clone(),
+                version_number: options.version_number.clone(),
             };
 
             let executable = crate::core::manager::InstallModTask { options };
@@ -468,6 +495,9 @@ pub async fn task_create(
                 target_dir: options.target_dir.clone(),
                 download_url: options.download_url.clone(),
                 file_id: options.file_id.clone(),
+                slug: options.slug.clone(),
+                original_filename: options.original_filename.clone(),
+                version_number: options.version_number.clone(),
             };
 
             let executable = crate::core::manager::InstallResourcepackTask { options };
@@ -489,6 +519,9 @@ pub async fn task_create(
                 target_dir: options.target_dir.clone(),
                 download_url: options.download_url.clone(),
                 file_id: options.file_id.clone(),
+                slug: options.slug.clone(),
+                original_filename: options.original_filename.clone(),
+                version_number: options.version_number.clone(),
             };
 
             let executable = crate::core::manager::InstallDatapackTask { options };
@@ -510,6 +543,9 @@ pub async fn task_create(
                 target_dir: options.target_dir.clone(),
                 download_url: options.download_url.clone(),
                 file_id: options.file_id.clone(),
+                slug: options.slug.clone(),
+                original_filename: options.original_filename.clone(),
+                version_number: options.version_number.clone(),
             };
 
             let executable = crate::core::manager::InstallShaderpackTask { options };

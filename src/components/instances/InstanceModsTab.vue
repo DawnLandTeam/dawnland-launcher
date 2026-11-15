@@ -33,6 +33,18 @@
             <Search class="w-4 h-4 text-muted-foreground" />
           </template>
         </DInput>
+
+        <DButton
+          variant="outline"
+          @click="showRenameModal = true"
+          :disabled="!resourceNamingSettings.enableOnlineTranslation"
+          :title="!resourceNamingSettings.enableOnlineTranslation
+            ? $t('instances.resourceNaming.disabledTip', '已在设置中关闭译名与重命名功能')
+            : $t('instances.resourceNaming.batchRenameBtnTip', '按设置重命名或还原原始文件名')"
+        >
+          <FolderSync class="w-4 h-4 mr-1.5" />
+          {{ $t('instances.resourceNaming.batchRenameBtn', '整理文件名') }}
+        </DButton>
         
         <DButton variant="outline" @click="loadMods" class="px-3" :disabled="loading">
           <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': loading }" />
@@ -66,16 +78,31 @@
           </div>
           
           <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm truncate" :title="mod.name || mod.filename">{{ mod.name || mod.filename }}</div>
+            <div class="font-medium text-sm truncate" :title="getModDisplay(mod).primaryTitle">
+              {{ getModDisplay(mod).primaryTitle }}
+            </div>
             <div class="text-xs text-muted-foreground mt-1 flex items-center gap-2">
               <span v-if="mod.managedByModpack" class="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] border border-primary/20">{{ $t('instances.modpack', 'Modpack') }}</span>
               <span v-else class="bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded text-[10px] border">{{ $t('instances.manual', 'Manual') }}</span>
               <span v-if="mod.version && !mod.version.includes('${')" class="bg-secondary px-1.5 py-0.5 rounded">{{ mod.version }}</span>
-              <span class="truncate">{{ mod.filename }}</span>
+              <span class="truncate" :title="getModDisplay(mod).secondaryDetail || mod.filename">
+                {{ getModDisplay(mod).secondaryDetail || mod.filename }}
+              </span>
             </div>
           </div>
           
           <div class="flex items-center gap-2 flex-shrink-0">
+            <DButton
+              v-if="resourceNamingSettings.enableOnlineTranslation"
+              variant="ghost"
+              size="sm"
+              class="px-2"
+              :title="$t('instances.resourceNaming.editTranslationTitle', '自定义中文译名')"
+              @click="openEditTranslation(mod)"
+            >
+              <Languages class="w-4 h-4 text-muted-foreground" />
+            </DButton>
+
             <DButton 
               :variant="mod.enabled ? 'outline' : 'secondary'"
               size="sm"
@@ -135,6 +162,21 @@
       @update:open="showInstallDialog = $event"
       @success="handleInstallSuccess"
     />
+
+    <ResourceRenameModal
+      :open="showRenameModal"
+      :instance-id="instanceId"
+      :categories="['Mod']"
+      @update:open="showRenameModal = $event"
+      @applied="loadMods"
+    />
+
+    <ResourceTranslationEditModal
+      :open="showEditTranslationModal"
+      :target="editingTranslationTarget"
+      @update:open="showEditTranslationModal = $event"
+      @saved="loadMods"
+    />
   </div>
 </template>
 
@@ -143,16 +185,21 @@ import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import { Package, Search, Puzzle, Download, Trash2, RefreshCw, AlertCircle } from '@lucide/vue';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { Package, Search, Puzzle, Download, Trash2, RefreshCw, AlertCircle, FolderSync, Languages } from '@lucide/vue';
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from '../ui/alert-dialog';
 import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
 import ModLoaderInstallDialog from './ModLoaderInstallDialog.vue';
+import ResourceRenameModal from './ResourceRenameModal.vue';
+import ResourceTranslationEditModal, { type TranslationEditTarget } from './ResourceTranslationEditModal.vue';
 import { useInstances } from '../../composables/useInstances';
+import { formatResourceDisplay, useResourceNaming } from '../../composables/useResourceNaming';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
 import { INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
 import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
+import { RESOURCE_NAMING_UPDATED_EVENT, type LocalModItem } from '../../types/resourceNaming';
 
 const props = defineProps<{
   instanceId: string;
@@ -160,7 +207,11 @@ const props = defineProps<{
 }>();
 
 const { instances, fetchInstances } = useInstances();
+const { resourceNamingSettings, refreshResourceNamingSettings } = useResourceNaming();
 const showInstallDialog = ref(false);
+const showRenameModal = ref(false);
+const showEditTranslationModal = ref(false);
+const editingTranslationTarget = ref<TranslationEditTarget | null>(null);
 
 const currentInstance = computed(() => {
   if (props.instance) return props.instance;
@@ -179,16 +230,8 @@ async function handleInstallSuccess() {
 const router = useRouter();
 const { t } = useI18n();
 
-interface LocalMod {
-  filename: string;
-  enabled: boolean;
-  size: number;
-  modId?: string;
-  name?: string;
-  version?: string;
-  iconUrl?: string;
+interface LocalMod extends LocalModItem {
   isToggling?: boolean;
-  managedByModpack?: boolean;
 }
 
 const mods = ref<LocalMod[]>([]);
@@ -199,11 +242,38 @@ const showDeleteConfirm = ref(false);
 const modToDelete = ref<LocalMod | null>(null);
 const isDeleting = ref(false);
 
+function getModDisplay(mod: LocalMod) {
+  return formatResourceDisplay(resourceNamingSettings.value.managementDisplayStyle, {
+    zhName: mod.zhName,
+    rawName: mod.name,
+    filename: mod.filename,
+    originalFilename: mod.originalFilename,
+  });
+}
+
+function openEditTranslation(mod: LocalMod) {
+  const safeModId = mod.modId && mod.modId.toLowerCase() !== 'examplemod' ? mod.modId : null;
+  editingTranslationTarget.value = {
+    category: 'Mod',
+    instanceId: props.instanceId,
+    relPath: `mods/${mod.filename}`,
+    filename: mod.originalFilename || mod.filename,
+    source: mod.source ?? null,
+    projectId: mod.projectId ?? null,
+    slug: mod.slug ?? safeModId,
+    rawName: mod.name ?? mod.originalFilename ?? mod.filename,
+    currentZhName: mod.zhName ?? null,
+  };
+  showEditTranslationModal.value = true;
+}
+
 const filteredMods = computed(() => {
   if (!searchQuery.value) return mods.value;
   const q = searchQuery.value.toLowerCase();
   return mods.value.filter(mod => 
-    (mod.name && mod.name.toLowerCase().includes(q)) || 
+    (mod.zhName && mod.zhName.toLowerCase().includes(q)) ||
+    (mod.name && mod.name.toLowerCase().includes(q)) ||
+    (mod.originalFilename && mod.originalFilename.toLowerCase().includes(q)) ||
     mod.filename.toLowerCase().includes(q)
   );
 });
@@ -220,7 +290,7 @@ async function loadMods() {
   const seq = ++loadSeq;
   loading.value = true;
   try {
-    const result = await invoke<LocalMod[]>('get_installed_mods', { versionId: currentInstanceId });
+    const result = await invoke<LocalModItem[]>('get_installed_mods', { versionId: currentInstanceId });
     if (seq !== loadSeq || props.instanceId !== currentInstanceId) {
       return;
     }
@@ -256,16 +326,38 @@ function handleAssetsUpdated(event: Event) {
   }
 }
 
-onMounted(() => {
+function handleNamingSettingsUpdated() {
+  refreshResourceNamingSettings();
+}
+
+let unlistenTranslationUpdate: UnlistenFn | null = null;
+
+onMounted(async () => {
   window.addEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+  window.addEventListener(RESOURCE_NAMING_UPDATED_EVENT, handleNamingSettingsUpdated);
+  try {
+    unlistenTranslationUpdate = await listen<{ instanceId: string }>('instance-translations-updated', (ev) => {
+      if (ev.payload?.instanceId === props.instanceId) {
+        loadMods();
+      }
+    });
+  } catch {
+    // non-tauri test env
+  }
 });
 
 onActivated(() => {
+  refreshResourceNamingSettings();
   loadMods();
 });
 
 onUnmounted(() => {
   window.removeEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+  window.removeEventListener(RESOURCE_NAMING_UPDATED_EVENT, handleNamingSettingsUpdated);
+  if (unlistenTranslationUpdate) {
+    unlistenTranslationUpdate();
+    unlistenTranslationUpdate = null;
+  }
 });
 
 async function toggleMod(mod: LocalMod) {

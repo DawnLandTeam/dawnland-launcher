@@ -905,3 +905,125 @@ pub async fn get_modrinth_loaders() -> Result<Vec<String>, String> {
 
     Ok(result)
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModrinthHashMatch {
+    pub sha1: String,
+    pub project_id: String,
+    pub version_id: String,
+    pub version_number: String,
+    pub filename: Option<String>,
+}
+
+/// Batch lookup Modrinth version files by SHA-1 hashes (`POST /v2/version_files`).
+pub async fn get_modrinth_version_files_by_hashes(
+    hashes: Vec<String>,
+) -> Result<Vec<ModrinthHashMatch>, String> {
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    #[derive(Serialize)]
+    struct HashesReq<'a> {
+        hashes: &'a [String],
+        algorithm: &'static str,
+    }
+
+    let client = crate::core::utils::get_http_client().clone();
+    let mut matches = Vec::new();
+
+    for chunk in hashes.chunks(200) {
+        let url = format!("{}/version_files", MODRINTH_BASE_URL);
+        let resp = client
+            .post(&url)
+            .header("Accept", "application/json")
+            .header("User-Agent", "DawnlandLauncher/1.0")
+            .json(&HashesReq {
+                hashes: chunk,
+                algorithm: "sha1",
+            })
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("Modrinth version_files request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Modrinth version_files API error: {}", resp.status()));
+        }
+
+        let map: std::collections::HashMap<String, ModrinthVersion> = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse Modrinth version_files response: {}", e))?;
+
+        for (sha1, ver) in map {
+            matches.push(ModrinthHashMatch {
+                sha1,
+                project_id: ver.project_id,
+                version_id: ver.id,
+                version_number: ver.version_number,
+                filename: ver.files.first().map(|f| f.filename.clone()),
+            });
+        }
+    }
+
+    Ok(matches)
+}
+
+/// Batch fetch Modrinth project metadata (`GET /v2/projects?ids=[...]`).
+pub async fn get_modrinth_projects_batch(
+    ids: Vec<String>,
+) -> Result<Vec<UnifiedModProject>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let client = crate::core::utils::get_http_client().clone();
+    let mut projects = Vec::new();
+
+    for chunk in ids.chunks(150) {
+        let ids_json = serde_json::to_string(chunk).unwrap_or_else(|_| "[]".to_string());
+        let url = format!(
+            "{}/projects?ids={}",
+            MODRINTH_BASE_URL,
+            urlencoding::encode(&ids_json)
+        );
+        let resp = client
+            .get(&url)
+            .header("Accept", "application/json")
+            .header("User-Agent", "DawnlandLauncher/1.0")
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("Modrinth batch projects request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Modrinth batch projects API error: {}", resp.status()));
+        }
+
+        let list: Vec<ModrinthProjectDetails> = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse Modrinth batch projects response: {}", e))?;
+
+        for p in list {
+            projects.push(UnifiedModProject {
+                source: "modrinth".to_string(),
+                project_id: p.project_id,
+                slug: p.slug,
+                title: p.title,
+                description: p.description,
+                icon_url: p.icon_url,
+                downloads: p.downloads,
+                author: p.author.unwrap_or_else(|| "Unknown".to_string()),
+                mc_versions: p.game_versions.unwrap_or_default(),
+                loaders: p.loaders.unwrap_or_default(),
+                download_url: None,
+                file_id: None,
+            });
+        }
+    }
+
+    Ok(projects)
+}

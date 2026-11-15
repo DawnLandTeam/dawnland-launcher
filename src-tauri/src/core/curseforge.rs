@@ -1263,3 +1263,151 @@ pub async fn get_curseforge_loaders() -> Result<Vec<String>, String> {
         "Cauldron".to_string(),
     ])
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CfFingerprintMatchResult {
+    pub fingerprint: u32,
+    pub project_id: String,
+    pub file_id: String,
+    pub file_name: String,
+}
+
+/// Batch lookup CurseForge project/file matches by MurmurHash2 fingerprints.
+pub async fn get_cf_files_by_fingerprints(
+    fingerprints: Vec<u32>,
+) -> Result<Vec<CfFingerprintMatchResult>, String> {
+    if fingerprints.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    #[derive(Serialize)]
+    struct FingerprintReq {
+        fingerprints: Vec<u32>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ExactMatchFile {
+        id: i64,
+        mod_id: i64,
+        file_name: String,
+        file_fingerprint: u32,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ExactMatch {
+        id: i64,
+        file: ExactMatchFile,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FingerprintData {
+        #[serde(default)]
+        exact_matches: Vec<ExactMatch>,
+    }
+    #[derive(Deserialize)]
+    struct FingerprintResp {
+        data: FingerprintData,
+    }
+
+    let client = crate::core::utils::get_http_client().clone();
+    let mut results = Vec::new();
+
+    for chunk in fingerprints.chunks(200) {
+        let cf_url = build_cf_url("/fingerprints/432", None);
+        let req_builder = match cf_request(&client, reqwest::Method::POST, &cf_url) {
+            Ok(r) => r,
+            Err(e) => return Err(e),
+        };
+        let resp = req_builder
+            .json(&FingerprintReq {
+                fingerprints: chunk.to_vec(),
+            })
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("CurseForge fingerprints request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("CurseForge fingerprints API error: {}", resp.status()));
+        }
+
+        let parsed: FingerprintResp = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse fingerprints response: {}", e))?;
+
+        for m in parsed.data.exact_matches {
+            let pid = if m.file.mod_id > 0 { m.file.mod_id } else { m.id };
+            results.push(CfFingerprintMatchResult {
+                fingerprint: m.file.file_fingerprint,
+                project_id: pid.to_string(),
+                file_id: m.file.id.to_string(),
+                file_name: m.file.file_name,
+            });
+        }
+    }
+
+    Ok(results)
+}
+
+/// Batch fetch CurseForge project summaries (`POST /v1/mods`).
+pub async fn get_cf_projects_batch(mod_ids: Vec<i64>) -> Result<Vec<UnifiedModProject>, String> {
+    if mod_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct BatchModsReq {
+        mod_ids: Vec<i64>,
+    }
+
+    let client = crate::core::utils::get_http_client().clone();
+    let mut projects = Vec::new();
+
+    for chunk in mod_ids.chunks(200) {
+        let cf_url = build_cf_url("/mods", None);
+        let req_builder = cf_request(&client, reqwest::Method::POST, &cf_url)?;
+        let resp = req_builder
+            .json(&BatchModsReq {
+                mod_ids: chunk.to_vec(),
+            })
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("CurseForge batch mods request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("CurseForge batch mods API error: {}", resp.status()));
+        }
+
+        let parsed: CfSearchResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse batch mods response: {}", e))?;
+
+        for m in parsed.data {
+            projects.push(UnifiedModProject {
+                source: "curseforge".to_string(),
+                project_id: m.id.to_string(),
+                slug: m.slug,
+                title: m.name,
+                description: m.summary,
+                icon_url: m.logo.and_then(|l| l.thumbnail_url),
+                downloads: m.download_count as u64,
+                author: m
+                    .authors
+                    .first()
+                    .map(|a| a.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                mc_versions: Vec::new(),
+                loaders: Vec::new(),
+                download_url: None,
+                file_id: None,
+            });
+        }
+    }
+
+    Ok(projects)
+}

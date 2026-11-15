@@ -13,6 +13,7 @@ dependencies = [
  "craftping",
  "dirs",
  "fastnbt",
+ "flate2",
  "futures",
  "futures-util",
  "hex",

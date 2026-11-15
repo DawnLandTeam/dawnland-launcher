@@ -1984,6 +1984,14 @@ pub struct LocalModItem {
     pub icon_url: Option<String>,
     pub managed_by_modpack: bool,
     pub provides: Vec<String>,
+    pub original_filename: Option<String>,
+    pub zh_name: Option<String>,
+    pub zh_summary: Option<String>,
+    pub source: Option<String>,
+    pub project_id: Option<String>,
+    pub slug: Option<String>,
+    pub wiki_id: Option<u32>,
+    pub trust_level: Option<u8>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1992,34 +2000,165 @@ pub struct LocalDatapackItem {
     pub is_dir: bool,
     pub size: u64,
     pub managed_by_modpack: bool,
+    pub original_filename: Option<String>,
+    pub zh_name: Option<String>,
+    pub zh_summary: Option<String>,
+    pub source: Option<String>,
+    pub project_id: Option<String>,
+    pub slug: Option<String>,
+    pub wiki_id: Option<u32>,
+    pub trust_level: Option<u8>,
+}
+
+fn asset_source_to_str(src: &crate::models::instance::AssetSourceType) -> Option<String> {
+    match src {
+        crate::models::instance::AssetSourceType::Modrinth => Some("modrinth".to_string()),
+        crate::models::instance::AssetSourceType::CurseForge => Some("curseforge".to_string()),
+        _ => None,
+    }
+}
+
+struct EnrichQuery {
+    category: crate::models::instance::AssetCategory,
+    source: Option<String>,
+    project_id: Option<String>,
+    sha1: Option<String>,
+    mod_id: Option<String>,
+    raw_name: Option<String>,
+    embedded_zh: Option<String>,
+}
+
+#[derive(Default, Clone)]
+struct EnrichResult {
+    zh_name: Option<String>,
+    zh_summary: Option<String>,
+    source: Option<String>,
+    project_id: Option<String>,
+    slug: Option<String>,
+    wiki_id: Option<u32>,
+    trust_level: Option<u8>,
+}
+
+async fn batch_enrich_local_metadata(queries: Vec<EnrichQuery>) -> Vec<EnrichResult> {
+    if queries.is_empty() {
+        return Vec::new();
+    }
+    tokio::task::spawn_blocking(move || {
+        let db = crate::core::translation::TranslationDb::open_default().ok();
+        queries
+            .into_iter()
+            .map(|q| {
+                let hash_map = db
+                    .as_ref()
+                    .and_then(|d| q.sha1.as_deref().and_then(|s| d.get_hash_mapping(s)));
+                let source = hash_map
+                    .as_ref()
+                    .map(|h| h.source.clone())
+                    .or_else(|| q.source.clone());
+                let project_id = hash_map
+                    .as_ref()
+                    .map(|h| h.project_id.clone())
+                    .or_else(|| q.project_id.clone());
+                let slug = hash_map
+                    .as_ref()
+                    .map(|h| h.slug.clone())
+                    .filter(|s| !s.is_empty());
+                let raw_name = hash_map
+                    .as_ref()
+                    .and_then(|h| h.raw_name.clone())
+                    .or_else(|| q.raw_name.clone());
+
+                let found = db.as_ref().and_then(|d| {
+                    d.lookup(
+                        &q.category,
+                        source.as_deref(),
+                        project_id.as_deref(),
+                        slug.as_deref(),
+                        q.mod_id.as_deref(),
+                        raw_name.as_deref(),
+                    )
+                });
+
+                if let Some(t) = found {
+                    EnrichResult {
+                        zh_name: Some(t.zh_name),
+                        zh_summary: t.zh_summary,
+                        source,
+                        project_id,
+                        slug,
+                        wiki_id: t.wiki_id,
+                        trust_level: Some(t.trust_level),
+                    }
+                } else if let Some(emb) = q.embedded_zh {
+                    EnrichResult {
+                        zh_name: Some(emb),
+                        zh_summary: None,
+                        source,
+                        project_id,
+                        slug,
+                        wiki_id: None,
+                        trust_level: Some(crate::core::translation::TRUST_AUTHOR_LANG),
+                    }
+                } else {
+                    EnrichResult {
+                        zh_name: None,
+                        zh_summary: None,
+                        source,
+                        project_id,
+                        slug,
+                        wiki_id: None,
+                        trust_level: None,
+                    }
+                }
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+async fn load_sanitized_manifest(instance_dir: &std::path::Path) -> crate::models::instance::AssetManifest {
+    let _lock = MANIFEST_LOCK.lock().await;
+    let assets_path = instance_dir.join("assets.json");
+    let mut manifest = if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+        serde_json::from_str::<crate::models::instance::AssetManifest>(&content).unwrap_or_default()
+    } else {
+        crate::models::instance::AssetManifest::default()
+    };
+    let (_, dirty) =
+        crate::core::resource_rename_ops::sanitize_polluted_modpack_manifest(instance_dir, &mut manifest).await;
+    if dirty {
+        if let Ok(json) = serde_json::to_string_pretty(&manifest) {
+            let _ = crate::core::fs_utils::write_file_atomic(&assets_path, json.as_bytes()).await;
+        }
+    }
+    manifest
 }
 
 #[tauri::command]
 pub async fn get_installed_datapacks(version_id: String, world_name: String) -> Result<Vec<LocalDatapackItem>, String> {
     let base_dir = get_minecraft_base();
-    let datapacks_dir = base_dir.join("versions").join(&version_id).join("saves").join(&world_name).join("datapacks");
+    let instance_dir = base_dir.join("versions").join(&version_id);
+    let datapacks_dir = instance_dir.join("saves").join(&world_name).join("datapacks");
 
     if !tokio::fs::try_exists(&datapacks_dir).await.unwrap_or(false) {
         return Ok(Vec::new());
     }
     
-    let mut managed_files = std::collections::HashMap::new();
-    let assets_path = base_dir.join("versions").join(&version_id).join("assets.json");
+    let mut manifest_records: std::collections::HashMap<String, crate::models::instance::AssetRecord> = std::collections::HashMap::new();
     let prefix = format!("saves/{}/datapacks/", world_name);
-    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
-        if let Ok(manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
-            for (path_key, record) in manifest.assets {
-                if path_key.starts_with(&prefix) {
-                    if let Some(filename) = std::path::Path::new(&path_key).file_name() {
-                        let base_name = filename.to_string_lossy().to_string();
-                        managed_files.insert(base_name, record.managed_by_modpack);
-                    }
-                }
+    let manifest = load_sanitized_manifest(&instance_dir).await;
+    for (path_key, record) in manifest.assets {
+        if path_key.starts_with(&prefix) {
+            if let Some(filename) = std::path::Path::new(&path_key).file_name() {
+                let base_name = filename.to_string_lossy().to_string();
+                manifest_records.insert(base_name, record);
             }
         }
     }
 
-    let mut datapacks = Vec::new();
+    let mut raw_items = Vec::new();
+    let mut queries = Vec::new();
     let mut entries = tokio::fs::read_dir(&datapacks_dir)
         .await
         .map_err(|e| format!("Failed to read datapacks directory: {}", e))?;
@@ -2042,13 +2181,44 @@ pub async fn get_installed_datapacks(version_id: String, world_name: String) -> 
             continue;
         }
 
-        let managed = managed_files.get(&filename).copied().unwrap_or(false);
+        let rec_opt = manifest_records.get(&filename);
+        let original_filename = rec_opt
+            .and_then(|r| r.original_filename.clone())
+            .or_else(|| Some(crate::core::resource_naming::strip_known_zh_prefixes(&filename)));
+        let (stem, _) = crate::core::resource_naming::split_stem_and_ext(
+            original_filename.as_deref().unwrap_or(&filename),
+        );
+        queries.push(EnrichQuery {
+            category: crate::models::instance::AssetCategory::Datapack,
+            source: rec_opt.and_then(|r| asset_source_to_str(&r.source_type)),
+            project_id: rec_opt.and_then(|r| r.project_id.clone()),
+            sha1: rec_opt.and_then(|r| r.hash_sha1.clone()),
+            mod_id: None,
+            raw_name: if stem.is_empty() { None } else { Some(stem) },
+            embedded_zh: rec_opt.and_then(|r| r.display_name_zh.clone()),
+        });
+        raw_items.push((filename, is_dir, metadata.len(), rec_opt.map(|r| r.managed_by_modpack).unwrap_or(false), original_filename, rec_opt.and_then(|r| r.display_name_zh.clone())));
+    }
 
+    let enriched = batch_enrich_local_metadata(queries).await;
+    let mut datapacks = Vec::with_capacity(raw_items.len());
+    for (idx, (filename, is_dir, size, managed, original_filename, manifest_zh)) in
+        raw_items.into_iter().enumerate()
+    {
+        let er = enriched.get(idx).cloned().unwrap_or_default();
         datapacks.push(LocalDatapackItem {
             filename,
             is_dir,
-            size: metadata.len(),
+            size,
             managed_by_modpack: managed,
+            original_filename,
+            zh_name: er.zh_name.or(manifest_zh),
+            zh_summary: er.zh_summary,
+            source: er.source,
+            project_id: er.project_id,
+            slug: er.slug,
+            wiki_id: er.wiki_id,
+            trust_level: er.trust_level,
         });
     }
 
@@ -2091,6 +2261,14 @@ pub struct LocalAssetItem {
     pub is_dir: bool,
     pub size: u64,
     pub managed_by_modpack: bool,
+    pub original_filename: Option<String>,
+    pub zh_name: Option<String>,
+    pub zh_summary: Option<String>,
+    pub source: Option<String>,
+    pub project_id: Option<String>,
+    pub slug: Option<String>,
+    pub wiki_id: Option<u32>,
+    pub trust_level: Option<u8>,
 }
 
 async fn get_assets_in_dir(dir: std::path::PathBuf, version_id: &str, prefix: &str) -> Result<Vec<LocalAssetItem>, String> {
@@ -2098,23 +2276,29 @@ async fn get_assets_in_dir(dir: std::path::PathBuf, version_id: &str, prefix: &s
         return Ok(Vec::new());
     }
 
-    let mut managed_files = std::collections::HashMap::new();
+    let category = if prefix.starts_with("shaderpacks") {
+        crate::models::instance::AssetCategory::ShaderPack
+    } else if prefix.starts_with("saves") {
+        crate::models::instance::AssetCategory::Save
+    } else {
+        crate::models::instance::AssetCategory::ResourcePack
+    };
+
+    let mut manifest_records: std::collections::HashMap<String, crate::models::instance::AssetRecord> = std::collections::HashMap::new();
     let base_dir = get_minecraft_base();
-    let assets_path = base_dir.join("versions").join(version_id).join("assets.json");
-    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
-        if let Ok(manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
-            for (path_key, record) in manifest.assets {
-                if path_key.starts_with(prefix) {
-                    if let Some(filename) = std::path::Path::new(&path_key).file_name() {
-                        let base_name = filename.to_string_lossy().to_string();
-                        managed_files.insert(base_name, record.managed_by_modpack);
-                    }
-                }
+    let instance_dir = base_dir.join("versions").join(version_id);
+    let manifest = load_sanitized_manifest(&instance_dir).await;
+    for (path_key, record) in manifest.assets {
+        if path_key.starts_with(prefix) {
+            if let Some(filename) = std::path::Path::new(&path_key).file_name() {
+                let base_name = filename.to_string_lossy().to_string();
+                manifest_records.insert(base_name, record);
             }
         }
     }
 
-    let mut assets = Vec::new();
+    let mut raw_items = Vec::new();
+    let mut queries = Vec::new();
     let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
     while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
         let path = entry.path();
@@ -2123,18 +2307,47 @@ async fn get_assets_in_dir(dir: std::path::PathBuf, version_id: &str, prefix: &s
         
         let mut size = metadata.len();
         if metadata.is_dir() {
-            // Very naive size calculation for directories, could be slow for huge worlds
-            // For now, we skip deep recursion to avoid blocking, returning 0
             size = 0;
         }
 
-        let managed = managed_files.get(&filename).copied().unwrap_or(false);
+        let rec_opt = manifest_records.get(&filename);
+        let original_filename = rec_opt
+            .and_then(|r| r.original_filename.clone())
+            .or_else(|| Some(crate::core::resource_naming::strip_known_zh_prefixes(&filename)));
+        let (stem, _) = crate::core::resource_naming::split_stem_and_ext(
+            original_filename.as_deref().unwrap_or(&filename),
+        );
+        queries.push(EnrichQuery {
+            category: category.clone(),
+            source: rec_opt.and_then(|r| asset_source_to_str(&r.source_type)),
+            project_id: rec_opt.and_then(|r| r.project_id.clone()),
+            sha1: rec_opt.and_then(|r| r.hash_sha1.clone()),
+            mod_id: None,
+            raw_name: if stem.is_empty() { None } else { Some(stem) },
+            embedded_zh: rec_opt.and_then(|r| r.display_name_zh.clone()),
+        });
+        raw_items.push((filename, metadata.is_dir(), size, rec_opt.map(|r| r.managed_by_modpack).unwrap_or(false), original_filename, rec_opt.and_then(|r| r.display_name_zh.clone())));
+    }
 
+    let enriched = batch_enrich_local_metadata(queries).await;
+    let mut assets = Vec::with_capacity(raw_items.len());
+    for (idx, (filename, is_dir, size, managed, original_filename, manifest_zh)) in
+        raw_items.into_iter().enumerate()
+    {
+        let er = enriched.get(idx).cloned().unwrap_or_default();
         assets.push(LocalAssetItem {
             filename,
-            is_dir: metadata.is_dir(),
+            is_dir,
             size,
             managed_by_modpack: managed,
+            original_filename,
+            zh_name: er.zh_name.or(manifest_zh),
+            zh_summary: er.zh_summary,
+            source: er.source,
+            project_id: er.project_id,
+            slug: er.slug,
+            wiki_id: er.wiki_id,
+            trust_level: er.trust_level,
         });
     }
     Ok(assets)
@@ -2286,6 +2499,14 @@ pub async fn get_custom_assets(asset_type: String) -> Result<Vec<LocalAssetItem>
                 is_dir,
                 size: size_bytes,
                 managed_by_modpack: false,
+                original_filename: None,
+                zh_name: None,
+                zh_summary: None,
+                source: None,
+                project_id: None,
+                slug: None,
+                wiki_id: None,
+                trust_level: None,
             });
         }
     }
@@ -2326,6 +2547,14 @@ pub async fn get_asset_presets(asset_type: String) -> Result<Vec<LocalAssetItem>
                 is_dir: false,
                 size: size_bytes,
                 managed_by_modpack: false,
+                original_filename: None,
+                zh_name: None,
+                zh_summary: None,
+                source: None,
+                project_id: None,
+                slug: None,
+                wiki_id: None,
+                trust_level: None,
             });
         }
     }
@@ -2476,6 +2705,9 @@ pub async fn apply_custom_asset_to_instance(
         size,
         enabled: true,
         managed_by_modpack: false,
+        original_filename: None,
+        original_rel_path: None,
+        display_name_zh: None,
     }).await?;
 
     Ok(())
@@ -2585,6 +2817,9 @@ pub async fn download_resolved_preset(
                 file_id: rm.file_id,
                 dependencies: rm.dependencies,
                 keep_both: Some(false),
+                slug: None,
+                original_filename: None,
+                version_number: None,
             }
         ).await.map_err(|e| format!("{:?}", e))?;
     }
@@ -2742,16 +2977,13 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
     let loader_type = instance.loader_type.clone();
 
     let mut mods = Vec::new();
-    let mut managed_files = std::collections::HashMap::new();
-    let assets_path = base_dir.join("versions").join(&version_id).join("assets.json");
-    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
-        if let Ok(manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
-            for (path_key, record) in manifest.assets {
-                if let Some(filename) = std::path::Path::new(&path_key).file_name() {
-                    let base_name = filename.to_string_lossy().to_string().trim_end_matches(".disable").to_string();
-                    managed_files.insert(base_name, record.managed_by_modpack);
-                }
-            }
+    let mut manifest_records: std::collections::HashMap<String, crate::models::instance::AssetRecord> = std::collections::HashMap::new();
+    let instance_dir = base_dir.join("versions").join(&version_id);
+    let manifest = load_sanitized_manifest(&instance_dir).await;
+    for (path_key, record) in manifest.assets {
+        if let Some(filename) = std::path::Path::new(&path_key).file_name() {
+            let base_name = filename.to_string_lossy().to_string().trim_end_matches(".disable").to_string();
+            manifest_records.insert(base_name, record);
         }
     }
 
@@ -2761,6 +2993,8 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
 
     let parser = crate::core::mod_parser::ModParser::new(base_dir);
     let mut cache_entries = parser.load_all_cache();
+    let mut queries = Vec::new();
+    let mut manifest_zhs = Vec::new();
 
     while let Some(entry) = entries
         .next_entry()
@@ -2800,7 +3034,23 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
         let meta = resolve_mod_metadata(&path, &cache_key, &mut cache_entries, &parser, base_dir, skip_parsing.unwrap_or(false), Some(loader_type.clone())).await;
         let icon_url = get_mod_icon_url(&meta, &parser, &cache_key);
 
-        let is_managed = managed_files.get(&actual_filename).copied().unwrap_or(false);
+        let rec_opt = manifest_records.get(&actual_filename);
+        let is_managed = rec_opt.map(|r| r.managed_by_modpack).unwrap_or(false);
+        let original_filename = rec_opt
+            .and_then(|r| r.original_filename.clone())
+            .or_else(|| Some(crate::core::resource_naming::strip_known_zh_prefixes(&actual_filename)));
+        let manifest_zh = rec_opt.and_then(|r| r.display_name_zh.clone());
+
+        queries.push(EnrichQuery {
+            category: crate::models::instance::AssetCategory::Mod,
+            source: rec_opt.and_then(|r| asset_source_to_str(&r.source_type)),
+            project_id: rec_opt.and_then(|r| r.project_id.clone()),
+            sha1: rec_opt.and_then(|r| r.hash_sha1.clone()),
+            mod_id: meta.mod_id.clone(),
+            raw_name: meta.name.clone(),
+            embedded_zh: manifest_zh.clone().or(meta.zh_name_embedded.clone()),
+        });
+        manifest_zhs.push(manifest_zh);
 
         mods.push(LocalModItem {
             filename: actual_filename,
@@ -2812,7 +3062,27 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
             icon_url,
             managed_by_modpack: is_managed,
             provides: meta.provides,
+            original_filename,
+            zh_name: None,
+            zh_summary: None,
+            source: None,
+            project_id: None,
+            slug: None,
+            wiki_id: None,
+            trust_level: None,
         });
+    }
+
+    let enriched = batch_enrich_local_metadata(queries).await;
+    for (idx, (m, manifest_zh)) in mods.iter_mut().zip(manifest_zhs).enumerate() {
+        let er = enriched.get(idx).cloned().unwrap_or_default();
+        m.zh_name = er.zh_name.or(manifest_zh);
+        m.zh_summary = er.zh_summary;
+        m.source = er.source;
+        m.project_id = er.project_id;
+        m.slug = er.slug;
+        m.wiki_id = er.wiki_id;
+        m.trust_level = er.trust_level;
     }
 
     // Sort by filename
@@ -3327,6 +3597,32 @@ pub async fn register_manual_asset_full(
     version_id: Option<&str>,
     download_url: &str,
 ) -> Result<(), String> {
+    register_manual_asset_with_naming(
+        instance_id,
+        path_key,
+        category,
+        source_str,
+        project_id,
+        version_id,
+        download_url,
+        None,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn register_manual_asset_with_naming(
+    instance_id: &str,
+    path_key: &str,
+    category: crate::models::instance::AssetCategory,
+    source_str: &str,
+    project_id: &str,
+    version_id: Option<&str>,
+    download_url: &str,
+    original_filename: Option<String>,
+    display_name_zh: Option<String>,
+) -> Result<(), String> {
     let base_dir = crate::core::mojang::get_minecraft_base();
     let full_path = base_dir.join("versions").join(instance_id).join(path_key);
     
@@ -3360,7 +3656,37 @@ pub async fn register_manual_asset_full(
         size,
         enabled: !filename.ends_with(".disable"),
         managed_by_modpack: false,
+        original_filename,
+        original_rel_path: None,
+        display_name_zh,
     }).await
+}
+
+pub async fn set_asset_naming_metadata(
+    instance_id: &str,
+    path_key: &str,
+    original_filename: Option<String>,
+    display_name_zh: Option<String>,
+) {
+    let _lock = MANIFEST_LOCK.lock().await;
+    let base_dir = get_minecraft_base();
+    let instance_dir = base_dir.join("versions").join(instance_id);
+    let assets_path = instance_dir.join("assets.json");
+    if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
+        if let Ok(mut manifest) = serde_json::from_str::<crate::models::instance::AssetManifest>(&content) {
+            if let Some(rec) = manifest.assets.get_mut(path_key) {
+                if rec.original_filename.is_none() && original_filename.is_some() {
+                    rec.original_filename = original_filename;
+                }
+                if display_name_zh.is_some() {
+                    rec.display_name_zh = display_name_zh;
+                }
+                if let Ok(json) = serde_json::to_string_pretty(&manifest) {
+                    let _ = crate::core::fs_utils::write_file_atomic(&assets_path, json.as_bytes()).await;
+                }
+            }
+        }
+    }
 }
 
 pub async fn save_asset_to_manifest(instance_id: &str, path_key: String, record: crate::models::instance::AssetRecord) -> Result<(), String> {
@@ -3529,6 +3855,9 @@ async fn save_installed_mods_json(
                     size,
                     enabled: !filename.ends_with(".disable"),
                     managed_by_modpack: false,
+                    original_filename: None,
+                    original_rel_path: None,
+                    display_name_zh: None,
                 });
             }
         }
@@ -3586,11 +3915,41 @@ pub async fn install_mod_to_instance(
 
     let client = crate::core::utils::get_http_client().clone();
 
-    let raw_filename = extract_filename_from_url(&download_url, &project_id);
-    let filename = std::path::Path::new(&raw_filename)
+    let raw_filename = options
+        .original_filename
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| extract_filename_from_url(&download_url, &project_id));
+    let mut installed_map = load_installed_mods_json(&version_id).await;
+    let mod_key = format!("{}_{}", mod_source, project_id);
+    let ignore_old: Vec<String> = installed_map
+        .get(&mod_key)
+        .map(|(old_f, _)| vec![old_f.clone()])
+        .unwrap_or_default();
+
+    let resolved = crate::core::resource_rename_ops::resolve_download_target(
+        crate::core::resource_rename_ops::DownloadTargetInput {
+            target_dir: mods_dir.clone(),
+            category: crate::models::instance::AssetCategory::Mod,
+            raw_original_filename: raw_filename,
+            source: Some(mod_source.clone()),
+            project_id: Some(project_id.clone()),
+            slug: options.slug.clone(),
+            mod_id: None,
+            en_name: options.mod_name.clone(),
+            version_number: options.version_number.clone(),
+            mc_version: Some(mc_version.clone()),
+            loader: Some(loader.clone()),
+            zh_name_override: None,
+            existing_paths_to_ignore: ignore_old,
+        },
+    )
+    .await;
+
+    let filename = std::path::Path::new(&resolved.final_filename)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(&raw_filename)
+        .unwrap_or(&resolved.final_filename)
         .to_string();
     if !crate::core::fs_utils::is_safe_single_name(&filename) {
         return Err("Invalid mod filename".to_string());
@@ -3608,9 +3967,6 @@ pub async fn install_mod_to_instance(
 
     let path_lock = get_path_lock(&target_path);
     let _path_guard = path_lock.lock().await;
-
-    let mut installed_map = load_installed_mods_json(&version_id).await;
-    let mod_key = format!("{}_{}", mod_source, project_id);
 
     // Remove old version if it exists and filename differs
     let keep_old = keep_both.unwrap_or(false);
@@ -3648,6 +4004,13 @@ pub async fn install_mod_to_instance(
     installed_map.retain(|_, (v, _)| v != &filename);
     installed_map.insert(mod_key, (filename.clone(), Some(download_url.clone())));
     save_installed_mods_json(&version_id, &installed_map).await;
+    set_asset_naming_metadata(
+        &version_id,
+        &format!("mods/{}", filename),
+        Some(resolved.original_filename),
+        resolved.display_name_zh,
+    )
+    .await;
 
     // Await dependency resolution and downloading sequentially
     if let Some(deps) = dependencies {
@@ -3660,10 +4023,10 @@ pub async fn install_mod_to_instance(
             );
             for dep in req_deps {
                 let dep_key = format!("{}_{}", mod_source, dep.project_id);
-
-                if mod_source == "modrinth" {
+                let resolved_pair: Option<(String, String)> = if mod_source == "modrinth" {
                     if let Some(vid) = dep.version_id {
                         tracing::info!("Fetching Modrinth dependency version: {}", vid);
+                        let mut found_pair = None;
                         if let Ok(res) = client
                             .get(format!("https://api.modrinth.com/v2/version/{}", vid))
                             .send()
@@ -3676,118 +4039,104 @@ pub async fn install_mod_to_instance(
                                             primary.get("url").and_then(|u| u.as_str()),
                                             primary.get("filename").and_then(|f| f.as_str()),
                                         ) {
-                                            if let Some((old_fname, _)) = installed_map.get(&dep_key) {
-                                                if old_fname != fname {
-                                                    let _ = tokio::fs::remove_file(
-                                                        mods_dir.join(old_fname),
-                                                    )
-                                                    .await;
-                                                }
-                                                let _ = tokio::fs::remove_file(
-                                                    mods_dir.join(format!("{}.disable", old_fname)),
-                                                )
-                                                .await;
-                                            }
-                                            let dep_path = mods_dir.join(fname);
-                                            if !dep_path.exists() {
-                                                if let Some(ref c) = ctx {
-                                                    let _ = download_mod_file_task(c, &client, url, &dep_path).await;
-                                                } else {
-                                                    let _ = download_mod_file_stream(
-                                                        &app, &client, url, &dep_path, fname,
-                                                    )
-                                                    .await;
-                                                }
-                                            }
-                                            // Enforce 1-to-1 mapping
-                                            installed_map.retain(|_, (v, _)| v != fname);
-                                            installed_map.insert(dep_key, (fname.to_string(), Some(url.to_string())));
-                                            save_installed_mods_json(&version_id, &installed_map)
-                                                .await;
+                                            found_pair = Some((url.to_string(), fname.to_string()));
                                         }
                                     }
                                 }
                             }
                         }
+                        found_pair
                     } else {
                         let pid = &dep.project_id;
                         tracing::info!(
                             "Fetching Modrinth dependency project (latest compatible): {}",
                             pid
                         );
-                        if let Ok(files) = crate::core::modrinth::get_modrinth_mod_files(
+                        crate::core::modrinth::get_modrinth_mod_files(
                             pid.clone(),
                             mc_version.clone(),
                             vec![loader.clone()],
                         )
                         .await
-                        {
-                            if let Some(primary) = files.first() {
-                                let fname = &primary.filename;
-                                let url = &primary.download_url;
-
-                                if let Some((old_fname, _)) = installed_map.get(&dep_key) {
-                                    if old_fname != fname {
-                                        let _ =
-                                            tokio::fs::remove_file(mods_dir.join(old_fname)).await;
-                                    }
-                                    let _ = tokio::fs::remove_file(
-                                        mods_dir.join(format!("{}.disable", old_fname)),
-                                    )
-                                    .await;
-                                }
-                                let dep_path = mods_dir.join(fname);
-                                if !dep_path.exists() {
-                                    if let Some(ref c) = ctx {
-                                        let _ = download_mod_file_task(c, &client, url, &dep_path).await;
-                                    } else {
-                                        let _ = download_mod_file_stream(
-                                            &app, &client, url, &dep_path, fname,
-                                        )
-                                        .await;
-                                    }
-                                }
-                                // Enforce 1-to-1 mapping
-                                installed_map.retain(|_, (v, _)| v != fname);
-                                installed_map.insert(dep_key, (fname.to_string(), Some(url.to_string())));
-                                save_installed_mods_json(&version_id, &installed_map).await;
-                            }
-                        }
+                        .ok()
+                        .and_then(|files| files.into_iter().next())
+                        .map(|primary| (primary.download_url, primary.filename))
                     }
                 } else if mod_source == "curseforge" {
                     tracing::info!("Fetching CurseForge dependency project: {}", dep.project_id);
-                    if let Ok(files) = crate::core::curseforge::get_cf_mod_files(
+                    crate::core::curseforge::get_cf_mod_files(
                         dep.project_id.clone(),
                         mc_version.clone(),
                         vec![loader.clone()],
                     )
                     .await
-                    {
-                        if let Some(primary) = files.first() {
-                            let fname = &primary.filename;
-                            let url = &primary.download_url;
+                    .ok()
+                    .and_then(|files| files.into_iter().next())
+                    .map(|primary| (primary.download_url, primary.filename))
+                } else {
+                    None
+                };
 
-                            if let Some((old_fname, _)) = installed_map.get(&dep_key) {
-                                if old_fname != fname {
-                                    let _ = tokio::fs::remove_file(mods_dir.join(old_fname)).await;
-                                }
-                                let _ = tokio::fs::remove_file(
-                                    mods_dir.join(format!("{}.disable", old_fname)),
-                                )
-                                .await;
-                            }
-                            let dep_path = mods_dir.join(fname);
-                            if !dep_path.exists() {
-                                let _ =
-                                    download_mod_file_stream(&app, &client, url, &dep_path, fname)
-                                        .await;
-                            }
-                            // Enforce 1-to-1 mapping
-                            installed_map.retain(|_, (v, _)| v != fname);
-                            installed_map.insert(dep_key, (fname.to_string(), Some(url.to_string())));
-                            save_installed_mods_json(&version_id, &installed_map).await;
+                if let Some((url, raw_fname)) = resolved_pair {
+                    let ignore_old: Vec<String> = installed_map
+                        .get(&dep_key)
+                        .map(|(old_f, _)| vec![old_f.clone()])
+                        .unwrap_or_default();
+                    let dep_resolved = crate::core::resource_rename_ops::resolve_download_target(
+                        crate::core::resource_rename_ops::DownloadTargetInput {
+                            target_dir: mods_dir.clone(),
+                            category: crate::models::instance::AssetCategory::Mod,
+                            raw_original_filename: raw_fname,
+                            source: Some(mod_source.clone()),
+                            project_id: Some(dep.project_id.clone()),
+                            slug: None,
+                            mod_id: None,
+                            en_name: dep.name.clone(),
+                            version_number: None,
+                            mc_version: Some(mc_version.clone()),
+                            loader: Some(loader.clone()),
+                            zh_name_override: None,
+                            existing_paths_to_ignore: ignore_old,
+                        },
+                    )
+                    .await;
+                    let fname = dep_resolved.final_filename;
+                    if !crate::core::fs_utils::is_safe_single_name(&fname) {
+                        return Err("Invalid dependency filename".to_string());
+                    }
+                    let dep_path = mods_dir.join(&fname);
+                    if !dep_path.starts_with(&mods_dir) {
+                        return Err("Target path escapes mods directory".to_string());
+                    }
+                    if let Some((old_fname, _)) = installed_map.get(&dep_key) {
+                        if old_fname != &fname {
+                            let _ = tokio::fs::remove_file(mods_dir.join(old_fname)).await;
+                        }
+                        let _ = tokio::fs::remove_file(
+                            mods_dir.join(format!("{}.disable", old_fname)),
+                        )
+                        .await;
+                    }
+                    if !dep_path.exists() {
+                        if let Some(ref c) = ctx {
+                            let _ = download_mod_file_task(c, &client, &url, &dep_path).await;
+                        } else {
+                            let _ = download_mod_file_stream(
+                                &app, &client, &url, &dep_path, &fname,
+                            )
+                            .await;
                         }
                     }
+                    installed_map.retain(|_, (v, _)| v != &fname);
+                    installed_map.insert(dep_key, (fname.clone(), Some(url)));
+                    save_installed_mods_json(&version_id, &installed_map).await;
+                    set_asset_naming_metadata(
+                        &version_id,
+                        &format!("mods/{}", fname),
+                        Some(dep_resolved.original_filename),
+                        dep_resolved.display_name_zh,
+                    )
+                    .await;
                 }
             }
         }
@@ -4324,6 +4673,9 @@ mod tests {
                 target_dir: None,
                 dependencies: None,
                 keep_both: None,
+                slug: None,
+                original_filename: None,
+                version_number: None,
             },
         );
         mod_task.status = crate::core::task::TaskStatus::Running;
@@ -4471,6 +4823,9 @@ mod tests {
                 target_dir: None,
                 dependencies: None,
                 keep_both: None,
+                slug: None,
+                original_filename: None,
+                version_number: None,
             },
         );
         running_mod.status = crate::core::task::TaskStatus::Running;
@@ -5234,6 +5589,7 @@ mod tests {
             depends: vec!["fabric".to_string(), "fabricloader".to_string()],
             provides: vec![],
             detected_loader: Some("Fabric".to_string()),
+            zh_name_embedded: None,
         };
 
         // Forge without Sinytra Connector: Fabric fallback metadata must not emit "missing: fabric"
@@ -5249,6 +5605,7 @@ mod tests {
             depends: vec![],
             provides: vec![],
             detected_loader: Some("Forge".to_string()),
+            zh_name_embedded: None,
         };
         let warnings_with_connector =
             evaluate_prelaunch_warnings(&[fabric_mod.clone(), connector_mod.clone()], "Forge");
@@ -5265,6 +5622,7 @@ mod tests {
             depends: vec![],
             provides: vec!["fabric".to_string(), "fabric-api".to_string()],
             detected_loader: Some("Forge".to_string()),
+            zh_name_embedded: None,
         };
         let warnings_satisfied =
             evaluate_prelaunch_warnings(&[fabric_mod, connector_mod, ffapi_mod], "Forge");
@@ -5283,6 +5641,7 @@ mod tests {
             depends: vec!["missing_lib".to_string()],
             provides: vec![],
             detected_loader: Some("Forge".to_string()),
+            zh_name_embedded: None,
         };
         assert!(evaluate_prelaunch_warnings(&[forge_mod], "Vanilla").is_empty());
     }
@@ -5466,12 +5825,34 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
                             } else {
                                 extract_filename_from_url(&m.download_url, &m.project_id)
                             };
-                            let clean_filename = std::path::Path::new(&raw_filename)
+                            let raw_leaf = std::path::Path::new(&raw_filename)
                                 .file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("");
-                            if clean_filename.is_empty() || !crate::core::fs_utils::is_safe_single_name(clean_filename) {
+                            if raw_leaf.is_empty() || !crate::core::fs_utils::is_safe_single_name(raw_leaf) {
                                 return Err(crate::core::task::TaskError::ExecutionError(format!("Invalid filename '{}'", raw_filename)));
+                            }
+                            let resolved = crate::core::resource_rename_ops::resolve_download_target(
+                                crate::core::resource_rename_ops::DownloadTargetInput {
+                                    target_dir: target_dir.clone(),
+                                    category: category.clone(),
+                                    raw_original_filename: raw_leaf.to_string(),
+                                    source: Some(m.source.clone()),
+                                    project_id: Some(m.project_id.clone()),
+                                    slug: None,
+                                    mod_id: None,
+                                    en_name: Some(m.project_name.clone()),
+                                    version_number: None,
+                                    mc_version: None,
+                                    loader: None,
+                                    zh_name_override: None,
+                                    existing_paths_to_ignore: vec![raw_leaf.to_string()],
+                                },
+                            )
+                            .await;
+                            let clean_filename = resolved.final_filename.as_str();
+                            if !crate::core::fs_utils::is_safe_single_name(clean_filename) {
+                                return Err(crate::core::task::TaskError::ExecutionError(format!("Unsafe resolved preset filename: {}", clean_filename)));
                             }
                             let target_path = target_dir.join(clean_filename);
                             if !target_path.starts_with(&target_dir) {
@@ -5565,7 +5946,7 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
                                 ctx.update_progress(100, 100, "File already exists and matches").await;
                             }
 
-                            register_manual_asset_full(
+                            register_manual_asset_with_naming(
                                 &instance_id,
                                 &format!("{}/{}", folder_name, clean_filename),
                                 category,
@@ -5573,6 +5954,8 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
                                 &m.project_id,
                                 if m.file_id.is_empty() { None } else { Some(&m.file_id) },
                                 &m.download_url,
+                                Some(resolved.original_filename),
+                                resolved.display_name_zh,
                             ).await.map_err(crate::core::task::TaskError::ExecutionError)?;
                         }
                         _ => {
@@ -5593,6 +5976,9 @@ impl crate::core::task::ExecutableTask for InstallPresetTask {
                                     file_id: m.file_id.clone(),
                                     dependencies: m.dependencies.clone(),
                                     keep_both: Some(false),
+                                    slug: None,
+                                    original_filename: None,
+                                    version_number: None,
                                 },
                                 Some(ctx.clone()),
                             ).await;
@@ -5635,6 +6021,12 @@ pub struct InstallModOptions {
     pub file_id: String,
     pub dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
     pub keep_both: Option<bool>,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub original_filename: Option<String>,
+    #[serde(default)]
+    pub version_number: Option<String>,
 }
 
 pub struct DownloadDependencyContext<'a> {
@@ -5702,12 +6094,62 @@ impl InstallModTask {
         version_id_opt: &Option<String>,
     ) -> Result<(), crate::core::task::TaskError> {
         let options = &self.options;
-        let filename = extract_filename_from_url(&options.download_url, &options.project_id);
-        let target_path = target_dir_path.join(&filename);
+        let raw_filename = options
+            .original_filename
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| extract_filename_from_url(&options.download_url, &options.project_id));
         let mut installed_map = if let Some(vid) = version_id_opt { load_installed_mods_json(vid).await } else { std::collections::HashMap::new() };
         let mod_key = format!("{}_{}", options.source, options.project_id);
+        let ignore_old: Vec<String> = installed_map
+            .get(&mod_key)
+            .map(|(old_f, _)| vec![old_f.clone()])
+            .unwrap_or_default();
 
-        if let Some(vid) = version_id_opt {
+        let (mc_ver, loader_type) = if let Some(vid) = version_id_opt {
+            if let Ok(item) = get_instance_details(vid.clone()).await {
+                (Some(item.mc_version), Some(item.loader_type))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        let resolved = crate::core::resource_rename_ops::resolve_download_target(
+            crate::core::resource_rename_ops::DownloadTargetInput {
+                target_dir: target_dir_path.to_path_buf(),
+                category: crate::models::instance::AssetCategory::Mod,
+                raw_original_filename: raw_filename,
+                source: Some(options.source.clone()),
+                project_id: Some(options.project_id.clone()),
+                slug: options.slug.clone(),
+                mod_id: None,
+                en_name: options.mod_name.clone(),
+                version_number: options.version_number.clone(),
+                mc_version: mc_ver,
+                loader: loader_type,
+                zh_name_override: None,
+                existing_paths_to_ignore: ignore_old,
+            },
+        )
+        .await;
+
+        let filename = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&filename) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved mod filename rejected: {}",
+                filename
+            )));
+        }
+        let target_path = target_dir_path.join(&filename);
+        if !target_path.starts_with(target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes mods directory".to_string(),
+            ));
+        }
+
+        if let Some(_vid) = version_id_opt {
             if !options.keep_both.unwrap_or(false) {
                 if let Some((old_filename, _)) = installed_map.get(&mod_key) {
                     if old_filename != &filename {
@@ -5726,8 +6168,15 @@ impl InstallModTask {
 
         if let Some(vid) = version_id_opt {
             installed_map.retain(|_, (v, _)| v != &filename);
-            installed_map.insert(mod_key, (filename, Some(options.download_url.clone())));
+            installed_map.insert(mod_key, (filename.clone(), Some(options.download_url.clone())));
             save_installed_mods_json(vid, &installed_map).await;
+            set_asset_naming_metadata(
+                vid,
+                &format!("mods/{}", filename),
+                Some(resolved.original_filename),
+                resolved.display_name_zh,
+            )
+            .await;
         }
         Ok(())
     }
@@ -5778,21 +6227,57 @@ impl InstallModTask {
         let dep_key = format!("{}_{}", self.options.source, ctx.dep.project_id);
         let has_instance = ctx.version_id_opt.is_some();
         
-        let (url, fname) = if self.options.source == "modrinth" {
+        let (url, raw_fname) = if self.options.source == "modrinth" {
             self.resolve_modrinth_dep(ctx.dep, ctx.client, has_instance, ctx.mc_version, ctx.loader).await?
         } else if self.options.source == "curseforge" {
             self.resolve_curseforge_dep(ctx.dep, ctx.client, has_instance, ctx.mc_version, ctx.loader).await?
         } else {
             return Err(crate::core::task::TaskError::ExecutionError("Unknown source".to_string()));
         };
-        if !crate::core::fs_utils::is_safe_single_name(&fname) {
+        if !crate::core::fs_utils::is_safe_single_name(&raw_fname) {
             return Err(crate::core::task::TaskError::ExecutionError(format!(
                 "Unsafe dependency filename rejected: {}",
-                fname
+                raw_fname
             )));
         }
 
-        if let Some(v_id) = ctx.version_id_opt {
+        let ignore_old: Vec<String> = installed_map
+            .get(&dep_key)
+            .map(|(old_f, _)| vec![old_f.clone()])
+            .unwrap_or_default();
+        let resolved = crate::core::resource_rename_ops::resolve_download_target(
+            crate::core::resource_rename_ops::DownloadTargetInput {
+                target_dir: ctx.target_dir_path.to_path_buf(),
+                category: crate::models::instance::AssetCategory::Mod,
+                raw_original_filename: raw_fname,
+                source: Some(self.options.source.clone()),
+                project_id: Some(ctx.dep.project_id.clone()),
+                slug: None,
+                mod_id: None,
+                en_name: ctx.dep.name.clone(),
+                version_number: None,
+                mc_version: if ctx.mc_version.is_empty() { None } else { Some(ctx.mc_version.to_string()) },
+                loader: if ctx.loader.is_empty() { None } else { Some(ctx.loader.to_string()) },
+                zh_name_override: None,
+                existing_paths_to_ignore: ignore_old,
+            },
+        )
+        .await;
+        let fname = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&fname) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved dependency filename rejected: {}",
+                fname
+            )));
+        }
+        let dep_path = ctx.target_dir_path.join(&fname);
+        if !dep_path.starts_with(ctx.target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes mods directory".to_string(),
+            ));
+        }
+
+        if let Some(_v_id) = ctx.version_id_opt {
             if let Some((old_fname, _)) = installed_map.get(&dep_key) {
                 if old_fname != &fname {
                     let _ = tokio::fs::remove_file(ctx.target_dir_path.join(old_fname)).await;
@@ -5801,7 +6286,6 @@ impl InstallModTask {
             }
         }
 
-        let dep_path = ctx.target_dir_path.join(&fname);
         if !dep_path.exists() {
             download_mod_file_task(ctx.dep_ctx, ctx.client, &url, &dep_path).await.map_err(crate::core::task::TaskError::ExecutionError)?;
         } else {
@@ -5810,8 +6294,15 @@ impl InstallModTask {
 
         if let Some(v_id) = ctx.version_id_opt {
             installed_map.retain(|_, (v, _)| v != &fname);
-            installed_map.insert(dep_key, (fname, Some(url.to_string())));
+            installed_map.insert(dep_key, (fname.clone(), Some(url.to_string())));
             save_installed_mods_json(v_id, installed_map).await;
+            set_asset_naming_metadata(
+                v_id,
+                &format!("mods/{}", fname),
+                Some(resolved.original_filename),
+                resolved.display_name_zh,
+            )
+            .await;
         }
         Ok(())
     }
@@ -5930,6 +6421,12 @@ pub struct InstallDatapackOptions {
     pub target_dir: Option<String>,
     pub download_url: String,
     pub file_id: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub original_filename: Option<String>,
+    #[serde(default)]
+    pub version_number: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -5953,8 +6450,42 @@ impl crate::core::task::ExecutableTask for InstallDatapackTask {
             ));
         };
 
-        let filename = extract_filename_from_url(&options.download_url, &options.project_id);
+        let raw_filename = options
+            .original_filename
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| extract_filename_from_url(&options.download_url, &options.project_id));
+        let resolved = crate::core::resource_rename_ops::resolve_download_target(
+            crate::core::resource_rename_ops::DownloadTargetInput {
+                target_dir: target_dir_path.clone(),
+                category: crate::models::instance::AssetCategory::Datapack,
+                raw_original_filename: raw_filename,
+                source: Some(options.source.clone()),
+                project_id: Some(options.project_id.clone()),
+                slug: options.slug.clone(),
+                mod_id: None,
+                en_name: Some(options.pack_name.clone()),
+                version_number: options.version_number.clone(),
+                mc_version: None,
+                loader: None,
+                zh_name_override: None,
+                existing_paths_to_ignore: Vec::new(),
+            },
+        )
+        .await;
+        let filename = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&filename) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved datapack filename rejected: {}",
+                filename
+            )));
+        }
         let target_path = target_dir_path.join(&filename);
+        if !target_path.starts_with(&target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes datapacks directory".to_string(),
+            ));
+        }
 
         ctx.init_sub_tasks(vec![crate::core::task::state::SubTaskState {
             key: "download".to_string(),
@@ -5988,7 +6519,18 @@ impl crate::core::task::ExecutableTask for InstallDatapackTask {
         if let Some(vid) = instance_id_opt {
             let rest: std::path::PathBuf = components.collect();
             let path_key = rest.join(&filename).to_string_lossy().replace("\\", "/");
-            register_manual_asset_with_metadata(&vid, &path_key, crate::models::instance::AssetCategory::Datapack, &options.source, &options.project_id, &options.download_url).await;
+            let _ = register_manual_asset_with_naming(
+                &vid,
+                &path_key,
+                crate::models::instance::AssetCategory::Datapack,
+                &options.source,
+                &options.project_id,
+                Some(&options.file_id),
+                &options.download_url,
+                Some(resolved.original_filename),
+                resolved.display_name_zh,
+            )
+            .await;
         }
 
         Ok(())
@@ -6008,6 +6550,12 @@ pub struct InstallResourcepackOptions {
     pub target_dir: Option<String>,
     pub download_url: String,
     pub file_id: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub original_filename: Option<String>,
+    #[serde(default)]
+    pub version_number: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -6039,8 +6587,42 @@ impl crate::core::task::ExecutableTask for InstallResourcepackTask {
             ));
         };
 
-        let filename = extract_filename_from_url(&options.download_url, &options.project_id);
+        let raw_filename = options
+            .original_filename
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| extract_filename_from_url(&options.download_url, &options.project_id));
+        let resolved = crate::core::resource_rename_ops::resolve_download_target(
+            crate::core::resource_rename_ops::DownloadTargetInput {
+                target_dir: target_dir_path.clone(),
+                category: crate::models::instance::AssetCategory::ResourcePack,
+                raw_original_filename: raw_filename,
+                source: Some(options.source.clone()),
+                project_id: Some(options.project_id.clone()),
+                slug: options.slug.clone(),
+                mod_id: None,
+                en_name: Some(options.pack_name.clone()),
+                version_number: options.version_number.clone(),
+                mc_version: None,
+                loader: None,
+                zh_name_override: None,
+                existing_paths_to_ignore: Vec::new(),
+            },
+        )
+        .await;
+        let filename = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&filename) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved resourcepack filename rejected: {}",
+                filename
+            )));
+        }
         let target_path = target_dir_path.join(&filename);
+        if !target_path.starts_with(&target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes resourcepacks directory".to_string(),
+            ));
+        }
 
         if !target_path.exists() {
             download_mod_file_task(&ctx, client, &options.download_url, &target_path)
@@ -6051,7 +6633,18 @@ impl crate::core::task::ExecutableTask for InstallResourcepackTask {
         }
 
         if let Some(vid) = &options.instance_id {
-            register_manual_asset_with_metadata(vid, &format!("resourcepacks/{}", filename), crate::models::instance::AssetCategory::ResourcePack, &options.source, &options.project_id, &options.download_url).await;
+            let _ = register_manual_asset_with_naming(
+                vid,
+                &format!("resourcepacks/{}", filename),
+                crate::models::instance::AssetCategory::ResourcePack,
+                &options.source,
+                &options.project_id,
+                Some(&options.file_id),
+                &options.download_url,
+                Some(resolved.original_filename),
+                resolved.display_name_zh,
+            )
+            .await;
         }
 
         Ok(())
@@ -6071,6 +6664,12 @@ pub struct InstallShaderpackOptions {
     pub target_dir: Option<String>,
     pub download_url: String,
     pub file_id: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub original_filename: Option<String>,
+    #[serde(default)]
+    pub version_number: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -6102,8 +6701,42 @@ impl crate::core::task::ExecutableTask for InstallShaderpackTask {
             ));
         };
 
-        let filename = extract_filename_from_url(&options.download_url, &options.project_id);
+        let raw_filename = options
+            .original_filename
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| extract_filename_from_url(&options.download_url, &options.project_id));
+        let resolved = crate::core::resource_rename_ops::resolve_download_target(
+            crate::core::resource_rename_ops::DownloadTargetInput {
+                target_dir: target_dir_path.clone(),
+                category: crate::models::instance::AssetCategory::ShaderPack,
+                raw_original_filename: raw_filename,
+                source: Some(options.source.clone()),
+                project_id: Some(options.project_id.clone()),
+                slug: options.slug.clone(),
+                mod_id: None,
+                en_name: Some(options.pack_name.clone()),
+                version_number: options.version_number.clone(),
+                mc_version: None,
+                loader: None,
+                zh_name_override: None,
+                existing_paths_to_ignore: Vec::new(),
+            },
+        )
+        .await;
+        let filename = resolved.final_filename;
+        if !crate::core::fs_utils::is_safe_single_name(&filename) {
+            return Err(crate::core::task::TaskError::ExecutionError(format!(
+                "Unsafe resolved shaderpack filename rejected: {}",
+                filename
+            )));
+        }
         let target_path = target_dir_path.join(&filename);
+        if !target_path.starts_with(&target_dir_path) {
+            return Err(crate::core::task::TaskError::ExecutionError(
+                "Target path escapes shaderpacks directory".to_string(),
+            ));
+        }
 
         if !target_path.exists() {
             download_mod_file_task(&ctx, client, &options.download_url, &target_path)
@@ -6114,7 +6747,18 @@ impl crate::core::task::ExecutableTask for InstallShaderpackTask {
         }
 
         if let Some(vid) = &options.instance_id {
-            register_manual_asset_with_metadata(vid, &format!("shaderpacks/{}", filename), crate::models::instance::AssetCategory::ShaderPack, &options.source, &options.project_id, &options.download_url).await;
+            let _ = register_manual_asset_with_naming(
+                vid,
+                &format!("shaderpacks/{}", filename),
+                crate::models::instance::AssetCategory::ShaderPack,
+                &options.source,
+                &options.project_id,
+                Some(&options.file_id),
+                &options.download_url,
+                Some(resolved.original_filename),
+                resolved.display_name_zh,
+            )
+            .await;
         }
 
         Ok(())

@@ -28,5 +28,8 @@ pub mod settings;
 pub mod ai;
 pub mod hash;
 pub mod jvm_tuner;
+pub mod resource_naming;
+pub mod resource_rename_ops;
 pub mod statistics;
 pub mod drop_install;
+pub mod translation;

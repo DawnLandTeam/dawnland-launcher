@@ -61,6 +61,7 @@ tokio-rusqlite = "0.7.0"
 async-trait = "0.1.89"
 tokio-util = "0.7.18"
 chrono = "0.4.45"
+flate2 = "1"
 thiserror = "2.0.18"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 fastnbt = "2.6.1"

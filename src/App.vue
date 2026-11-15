@@ -40,11 +40,20 @@ onMounted(async () => {
   // Show window immediately to prevent blank startup if subsequent awaits fail
   getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
 
-  // Check Privacy Policy
+  // Check Privacy Policy & initial UI language sync
   try {
-    const settings = await invoke<any>("load_launcher_settings");
+    const settings = await invoke<{
+      enableTelemetry?: boolean | null;
+      resourceNaming?: { autoSyncTranslations?: boolean };
+    }>("load_launcher_settings");
     if (settings.enableTelemetry === null || settings.enableTelemetry === undefined) {
       showPrivacyModal.value = true;
+    }
+    if (localStorage.getItem('userSelectedLanguage') === 'true') {
+      await invoke("sync_ui_language", { language: locale.value }).catch(() => {});
+    }
+    if (settings.resourceNaming?.autoSyncTranslations !== false) {
+      invoke("sync_translations_from_backend", { forceFull: false }).catch(() => {});
     }
   } catch (err) {
     console.error("Failed to check privacy settings:", err);
@@ -84,6 +93,7 @@ onMounted(async () => {
           locale.value = detected;
           localStorage.setItem('language', detected);
         }
+        await invoke("sync_ui_language", { language: detected }).catch(() => {});
       }
     } catch (e) {
       console.warn("Failed to get system locale from Rust:", e);

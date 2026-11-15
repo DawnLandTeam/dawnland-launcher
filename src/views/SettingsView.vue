@@ -6,11 +6,25 @@ import { open } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
 import DCombobox from "../components/ui/DCombobox.vue";
 import DSidebarTabs, { type SidebarTab } from '../components/ui/DSidebarTabs.vue';
-import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText, Edit, X, RefreshCw, Gauge, CircleHelp } from "@lucide/vue";
+import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText, Edit, X, RefreshCw, Gauge, CircleHelp, Sparkles } from "@lucide/vue";
 import { useI18n } from 'vue-i18n';
 import DSelect from '../components/ui/DSelect.vue';
+import DMultiSelect from '../components/ui/DMultiSelect.vue';
 import DButton from '../components/ui/DButton.vue';
 import DTooltip from '../components/ui/DTooltip.vue';
+import {
+  DEFAULT_RESOURCE_NAMING_SETTINGS,
+  notifyResourceNamingUpdated,
+} from '../composables/useResourceNaming';
+import type {
+  AssetCategory,
+  FilenameFormatMode,
+  FilenamePreset,
+  LauncherSettings,
+  ManagementDisplayStyle,
+  TemplatePreviewResult,
+  TranslationDbStats,
+} from '../types/resourceNaming';
 import { useLogStore } from '../composables/useLogStore';
 import { useRoute, useRouter } from "vue-router";
 import { getVersion } from "@tauri-apps/api/app";
@@ -173,6 +187,139 @@ const enableGlobalGameSettings = ref(false);
 const enableGlobalModCache = ref(true);
 const enableJvmTuner = ref(true);
 
+// Community resource naming & translation state
+const filenameMode = ref<FilenameFormatMode>(DEFAULT_RESOURCE_NAMING_SETTINGS.filenameMode);
+const filenamePreset = ref<FilenamePreset>(DEFAULT_RESOURCE_NAMING_SETTINGS.filenamePreset);
+const customTemplate = ref<string>(DEFAULT_RESOURCE_NAMING_SETTINGS.customTemplate);
+const renameTargets = ref<AssetCategory[]>([...DEFAULT_RESOURCE_NAMING_SETTINGS.renameTargets]);
+const managementDisplayStyle = ref<ManagementDisplayStyle>(
+  DEFAULT_RESOURCE_NAMING_SETTINGS.managementDisplayStyle,
+);
+const enableOnlineTranslation = ref<boolean>(DEFAULT_RESOURCE_NAMING_SETTINGS.enableOnlineTranslation);
+const autoSyncTranslations = ref<boolean>(DEFAULT_RESOURCE_NAMING_SETTINGS.autoSyncTranslations);
+const templatePreview = ref<TemplatePreviewResult>({
+  rendered: '[机械动力] create-1.21.1-6.0.4.jar',
+  fallbackRendered: 'create-1.21.1-6.0.4.jar',
+  warnings: [],
+});
+const translationStats = ref<TranslationDbStats | null>(null);
+const isSyncingTranslations = ref(false);
+
+const PLACEHOLDER_TOKENS = [
+  { token: '{zh}', labelKey: 'settings.resourceNaming.tokenZh' },
+  { token: '{zhFull}', labelKey: 'settings.resourceNaming.tokenZhFull' },
+  { token: '{en}', labelKey: 'settings.resourceNaming.tokenEn' },
+  { token: '{slug}', labelKey: 'settings.resourceNaming.tokenSlug' },
+  { token: '{stem}', labelKey: 'settings.resourceNaming.tokenStem' },
+  { token: '{ext}', labelKey: 'settings.resourceNaming.tokenExt' },
+  { token: '{version}', labelKey: 'settings.resourceNaming.tokenVersion' },
+  { token: '{mcVersion}', labelKey: 'settings.resourceNaming.tokenMcVersion' },
+  { token: '{loader}', labelKey: 'settings.resourceNaming.tokenLoader' },
+  { token: '{source}', labelKey: 'settings.resourceNaming.tokenSource' },
+] as const;
+
+const filenameModeOptions = computed(() => [
+  { label: t('settings.resourceNaming.modeAuto'), value: 'auto' },
+  { label: t('settings.resourceNaming.modePreset'), value: 'preset' },
+  { label: t('settings.resourceNaming.modeCustom'), value: 'custom' },
+]);
+
+const filenamePresetOptions = computed(() => [
+  { label: '[机械动力] create-1.21.1-6.0.4.jar', value: 'bracketPrefix' },
+  { label: '【机械动力】create-1.21.1-6.0.4.jar', value: 'cnBracketPrefix' },
+  { label: '机械动力-create-1.21.1-6.0.4.jar', value: 'dashPrefix' },
+  { label: 'create-1.21.1-6.0.4-机械动力.jar', value: 'dashSuffix' },
+  { label: '机械动力-6.0.4.jar', value: 'zhVersion' },
+  { label: t('settings.resourceNaming.presetOriginal'), value: 'original' },
+]);
+
+const managementDisplayOptions = computed(() => [
+  { label: t('settings.resourceNaming.displayTranslationFirst'), value: 'translationFirst' },
+  { label: t('settings.resourceNaming.displayFilenameFirst'), value: 'filenameFirst' },
+]);
+
+const renameTargetOptions = computed(() => [
+  { label: t('instances.mods', '模组'), value: 'Mod' },
+  { label: t('instances.resourcepacks', '资源包'), value: 'ResourcePack' },
+  { label: t('downloadsCenter.tabs.shader', '光影'), value: 'ShaderPack' },
+  { label: t('downloadsCenter.tabs.datapack', '数据包'), value: 'Datapack' },
+]);
+
+function effectivePreviewTemplate(): string {
+  if (filenameMode.value === 'auto') {
+    return locale.value.toLowerCase().startsWith('zh') ? '[{zh}] {stem}{ext}' : '{stem}{ext}';
+  }
+  if (filenameMode.value === 'preset') {
+    switch (filenamePreset.value) {
+      case 'bracketPrefix':
+        return '[{zh}] {stem}{ext}';
+      case 'cnBracketPrefix':
+        return '【{zh}】{stem}{ext}';
+      case 'dashPrefix':
+        return '{zh}-{stem}{ext}';
+      case 'dashSuffix':
+        return '{stem}-{zh}{ext}';
+      case 'zhVersion':
+        return '{zh}-{version}{ext}';
+      case 'original':
+        return '{stem}{ext}';
+    }
+  }
+  return customTemplate.value || '{stem}{ext}';
+}
+
+async function refreshTemplatePreview() {
+  try {
+    templatePreview.value = await invoke<TemplatePreviewResult>('preview_resource_template', {
+      template: effectivePreviewTemplate(),
+    });
+  } catch (err) {
+    console.warn('Failed to preview template:', err);
+  }
+}
+
+async function loadTranslationStats() {
+  try {
+    translationStats.value = await invoke<TranslationDbStats>('get_translation_db_stats');
+  } catch (err) {
+    console.warn('Failed to load translation DB stats:', err);
+  }
+}
+
+async function syncTranslationsNow() {
+  if (isSyncingTranslations.value) return;
+  isSyncingTranslations.value = true;
+  try {
+    translationStats.value = await invoke<TranslationDbStats>('sync_translations_from_backend', {
+      forceFull: true,
+    });
+    toast.success(
+      t('settings.resourceNaming.syncSuccess', {
+        count: translationStats.value?.totalEntries ?? 0,
+      }),
+    );
+  } catch (err) {
+    toast.error(t('common.operationFailed'), getErrorMessage(err));
+  } finally {
+    isSyncingTranslations.value = false;
+  }
+}
+
+function appendPlaceholderToken(token: string) {
+  filenameMode.value = 'custom';
+  customTemplate.value = `${customTemplate.value}${token}`;
+  refreshTemplatePreview();
+  saveLauncherSettings();
+}
+
+watch(
+  [filenameMode, filenamePreset, customTemplate, () => locale.value],
+  () => {
+    refreshTemplatePreview();
+  },
+  { immediate: true },
+);
+
 const showGlobalGameSettingsModal = ref(false);
 const globalGameSettingsContent = ref('');
 const isSavingGlobalSettings = ref(false);
@@ -230,7 +377,7 @@ async function saveGlobalGameSettingsContent() {
 
 async function loadLauncherSettings() {
   try {
-    const settings = await invoke<any>('load_launcher_settings');
+    const settings = await invoke<LauncherSettings>('load_launcher_settings');
     enableInstanceInheritance.value = settings.enableInstanceInheritance;
     downloadSource.value = settings.downloadSource === 'bmclapi' ? 'bmclapi' : 'official';
     maxConcurrentDownloads.value = settings.maxConcurrentDownloads || 32;
@@ -244,6 +391,21 @@ async function loadLauncherSettings() {
     } else {
       hasCustomMaxMemory.value = false;
     }
+    if (settings.resourceNaming) {
+      filenameMode.value = settings.resourceNaming.filenameMode ?? 'auto';
+      filenamePreset.value = settings.resourceNaming.filenamePreset ?? 'bracketPrefix';
+      customTemplate.value = settings.resourceNaming.customTemplate || '[{zh}] {stem}{ext}';
+      renameTargets.value = settings.resourceNaming.renameTargets ?? [
+        'Mod',
+        'ResourcePack',
+        'ShaderPack',
+        'Datapack',
+      ];
+      managementDisplayStyle.value =
+        settings.resourceNaming.managementDisplayStyle ?? 'translationFirst';
+      enableOnlineTranslation.value = settings.resourceNaming.enableOnlineTranslation ?? true;
+      autoSyncTranslations.value = settings.resourceNaming.autoSyncTranslations ?? true;
+    }
     if (settings.aiConfig) {
       aiProviderType.value = settings.aiConfig.providerType === 'remoteApi' ? 'remoteApi' : 'embeddedLlm';
       aiRemoteApiKey.value = settings.aiConfig.remoteApiKey || '';
@@ -253,6 +415,8 @@ async function loadLauncherSettings() {
       aiMaxRamUsage.value = settings.aiConfig.maxRamUsage || 4096;
       aiUnlockContextSize.value = settings.aiConfig.unlockContextSize || false;
     }
+    await loadTranslationStats();
+    await refreshTemplatePreview();
   } catch (e) {
     console.error('Failed to load launcher settings:', e);
   }
@@ -261,7 +425,16 @@ async function loadLauncherSettings() {
 let isSavingLauncherSettings = false;
 let hasPendingLauncherSettingsSave = false;
 
-function buildLauncherSettingsSnapshot() {
+function buildLauncherSettingsSnapshot(): LauncherSettings {
+  const naming = {
+    filenameMode: filenameMode.value,
+    filenamePreset: filenamePreset.value,
+    customTemplate: customTemplate.value,
+    renameTargets: renameTargets.value,
+    managementDisplayStyle: managementDisplayStyle.value,
+    enableOnlineTranslation: enableOnlineTranslation.value,
+    autoSyncTranslations: autoSyncTranslations.value,
+  };
   return {
     enableInstanceInheritance: enableInstanceInheritance.value,
     downloadSource: downloadSource.value,
@@ -271,6 +444,8 @@ function buildLauncherSettingsSnapshot() {
     enableGlobalModCache: enableGlobalModCache.value,
     enableJvmTuner: enableJvmTuner.value,
     globalMaxMemory: defaultMaxMemory.value,
+    uiLanguage: locale.value,
+    resourceNaming: naming,
     aiConfig: {
       providerType: aiProviderType.value,
       remoteApiKey: aiRemoteApiKey.value,
@@ -292,9 +467,11 @@ async function saveLauncherSettings() {
   try {
     do {
       hasPendingLauncherSettingsSave = false;
+      const snapshot = buildLauncherSettingsSnapshot();
       await invoke('save_launcher_settings', {
-        settings: buildLauncherSettingsSnapshot(),
+        settings: snapshot,
       });
+      notifyResourceNamingUpdated(snapshot.resourceNaming);
     } while (hasPendingLauncherSettingsSave);
   } catch (e) {
     console.error('Failed to save launcher settings:', e);
@@ -600,6 +777,9 @@ function changeLanguage(lang: string) {
   locale.value = lang;
   localStorage.setItem('language', lang);
   localStorage.setItem('userSelectedLanguage', 'true');
+  invoke('sync_ui_language', { language: lang }).catch((err) => {
+    console.warn('Failed to sync UI language to backend:', err);
+  });
 }
 
 // --- AI State ---
@@ -881,6 +1061,170 @@ const clearLogs = () => {
           <input type="checkbox" v-model="enableJvmTuner" @change="saveLauncherSettings" class="sr-only peer">
           <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
         </label>
+      </div>
+
+      <!-- Community Resource Naming & Display Settings -->
+      <div class="relative z-[21] rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md shadow-sm space-y-4">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex items-center gap-2.5">
+            <Languages :size="18" class="text-primary shrink-0" />
+            <div>
+              <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
+                {{ $t('settings.resourceNaming.sectionTitle', '社区资源命名与译名显示') }}
+                <DTooltip :content="$t('settings.resourceNaming.sectionDesc', '自动识别并应用社区公认中文译名，支持自定义下载文件名格式与本地列表显示方式。')">
+                  <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                    <CircleHelp :size="15" />
+                  </span>
+                </DTooltip>
+              </h2>
+              <p v-if="translationStats" class="text-xs text-muted-foreground mt-0.5">
+                {{ $t('settings.resourceNaming.dbStatsSummary', { total: translationStats.totalEntries, version: translationStats.snapshotVersion }) }}
+              </p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <DButton v-if="enableOnlineTranslation" variant="outline" size="sm" :disabled="isSyncingTranslations" @click="syncTranslationsNow">
+              <Loader2 v-if="isSyncingTranslations" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
+              <RefreshCw v-else class="w-3.5 h-3.5 mr-1.5" />
+              {{ $t('settings.resourceNaming.syncDbBtn', '同步最新词库') }}
+            </DButton>
+
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-medium select-none" :class="enableOnlineTranslation ? 'text-primary' : 'text-muted-foreground'">
+                {{ enableOnlineTranslation ? $t('settings.resourceNaming.toggleEnabledLabel', '自动重命名已开启') : $t('settings.resourceNaming.toggleDisabledLabel', '已停用') }}
+              </span>
+              <label class="relative inline-flex items-center cursor-pointer" :title="$t('settings.resourceNaming.toggleTitle', '开启或关闭自动重命名与中文译名功能')">
+                <input type="checkbox" v-model="enableOnlineTranslation" @change="saveLauncherSettings" class="sr-only peer">
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Auto-rename Feature Banner -->
+        <div
+          class="rounded-md px-3.5 py-2.5 text-xs flex items-start gap-2.5 transition-colors border"
+          :class="enableOnlineTranslation 
+            ? 'bg-primary/5 border-primary/20 text-foreground' 
+            : 'bg-muted/40 border-muted text-muted-foreground'"
+        >
+          <Sparkles v-if="enableOnlineTranslation" class="w-4 h-4 mt-0.5 shrink-0 text-primary" />
+          <Info v-else class="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
+          <div class="leading-relaxed">
+            <span v-if="enableOnlineTranslation">
+              <strong class="font-semibold text-primary mr-1">{{ $t('settings.resourceNaming.autoRenameActiveTitle', '自动重命名已开启：') }}</strong>
+              {{ $t('settings.resourceNaming.autoRenameTipEnabled', '新安装的模组、资源包、光影包、数据包及整合包中的对应资源落盘时，将自动按规则规范重命名（包含中文译名），并在实例内展示译名。') }}
+            </span>
+            <span v-else>
+              <strong class="font-semibold mr-1">{{ $t('settings.resourceNaming.autoRenameInactiveTitle', '自动重命名已关闭：') }}</strong>
+              {{ $t('settings.resourceNaming.autoRenameTipDisabled', '新安装资源及整合包将保留原始英文文件名；实例管理中的“整理文件名”批量修改等功能也将一并禁用。') }}
+            </span>
+          </div>
+        </div>
+
+        <template v-if="enableOnlineTranslation">
+        <!-- Filename Format Mode -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-muted-foreground block">
+              {{ $t('settings.resourceNaming.formatModeLabel', '文件名重命名规则') }}
+            </label>
+            <DSelect
+              v-model="filenameMode"
+              :options="filenameModeOptions"
+              @update:model-value="saveLauncherSettings"
+            />
+          </div>
+
+          <div v-if="filenameMode === 'preset'" class="space-y-1.5">
+            <label class="text-xs font-medium text-muted-foreground block">
+              {{ $t('settings.resourceNaming.presetLabel', '预设文件名格式') }}
+            </label>
+            <DSelect
+              v-model="filenamePreset"
+              :options="filenamePresetOptions"
+              @update:model-value="saveLauncherSettings"
+            />
+          </div>
+
+          <div v-else-if="filenameMode === 'auto'" class="space-y-1.5">
+            <label class="text-xs font-medium text-muted-foreground block">
+              {{ $t('settings.resourceNaming.autoEffectiveLabel', '当前自动生效规则') }}
+            </label>
+            <div class="h-10 px-3 rounded-md border border-neutral-200 dark:border-zinc-800 bg-neutral-50/70 dark:bg-zinc-900/70 flex items-center text-xs font-mono text-foreground">
+              {{ effectivePreviewTemplate() }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Custom Template Editor + Placeholder Chips -->
+        <div v-if="filenameMode === 'custom'" class="space-y-2.5">
+          <div class="space-y-1">
+            <label class="text-xs font-medium text-muted-foreground block">
+              {{ $t('settings.resourceNaming.customTemplateLabel', '自定义占位符模板') }}
+            </label>
+            <DInput
+              v-model="customTemplate"
+              @change="saveLauncherSettings"
+              placeholder="[{zh}] {stem}{ext}"
+              class="font-mono text-xs"
+            />
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            <DButton
+              v-for="item in PLACEHOLDER_TOKENS"
+              :key="item.token"
+              variant="outline"
+              size="sm"
+              class="h-6 px-2 text-[11px] font-mono"
+              @click="appendPlaceholderToken(item.token)"
+            >
+              {{ item.token }} · {{ $t(item.labelKey) }}
+            </DButton>
+          </div>
+        </div>
+
+        <!-- Live Preview Box -->
+        <div class="rounded-md bg-neutral-100/80 dark:bg-zinc-800/60 border border-neutral-200/80 dark:border-zinc-700/60 p-3 space-y-1 text-xs">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-muted-foreground">{{ $t('settings.resourceNaming.previewWithZh', '有译名时预览:') }}</span>
+            <span class="font-mono font-medium text-foreground break-all">{{ templatePreview.rendered }}</span>
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-muted-foreground">{{ $t('settings.resourceNaming.previewFallback', '无译名时回退:') }}</span>
+            <span class="font-mono text-muted-foreground break-all">{{ templatePreview.fallbackRendered }}</span>
+          </div>
+          <div v-if="templatePreview.warnings.length > 0" class="text-[11px] text-amber-600 dark:text-amber-400 pt-1">
+            {{ templatePreview.warnings.map(w => $t(`settings.resourceNaming.warn.${w}`)).join(' · ') }}
+          </div>
+        </div>
+
+        <!-- Management Display Style & Scope -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-muted-foreground block">
+              {{ $t('settings.resourceNaming.displayStyleLabel', '资源管理显示样式') }}
+            </label>
+            <DSelect
+              v-model="managementDisplayStyle"
+              :options="managementDisplayOptions"
+              @update:model-value="saveLauncherSettings"
+            />
+          </div>
+
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-muted-foreground block">
+              {{ $t('settings.resourceNaming.targetsLabel', '自动重命名适用资源类型') }}
+            </label>
+            <DMultiSelect
+              v-model="renameTargets"
+              :options="renameTargetOptions"
+              @update:model-value="saveLauncherSettings"
+            />
+          </div>
+        </div>
+        </template>
       </div>
 
       <!-- Download Source Settings -->

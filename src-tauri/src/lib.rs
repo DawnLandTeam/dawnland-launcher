@@ -480,6 +480,17 @@ pub fn run() {
             // Settings commands
             core::settings::load_launcher_settings,
             core::settings::save_launcher_settings,
+            core::settings::sync_ui_language,
+            // Resource naming & translation commands
+            core::resource_naming::preview_resource_template,
+            core::translation::search_translation_candidates,
+            core::translation::get_translation_db_stats,
+            core::translation::sync_translations_from_backend,
+            core::translation::set_custom_resource_translation,
+            core::resource_rename_ops::enrich_online_projects,
+            core::resource_rename_ops::resolve_instance_translations,
+            core::resource_rename_ops::preview_resource_renames,
+            core::resource_rename_ops::apply_resource_renames,
             // AI commands
             core::ai::list_local_models,
             core::ai::download_model,

@@ -6,8 +6,8 @@ use tracing::debug;
 
 /// Bump this version whenever `ModParser` metadata extraction semantics change so
 /// stale SQLite cache entries from older versions are automatically bypassed.
-pub const MOD_PARSER_CACHE_VERSION: &str = "v3";
-const MOD_CACHE_SCHEMA_VERSION: i32 = 3;
+pub const MOD_PARSER_CACHE_VERSION: &str = "v4";
+const MOD_CACHE_SCHEMA_VERSION: i32 = 4;
 
 /// Cap metadata entry reads inside mod archives to avoid excessive memory usage on malformed JARs.
 const MAX_METADATA_READ_BYTES: u64 = 2 * 1024 * 1024;
@@ -35,6 +35,8 @@ pub struct ModMetadata {
     pub provides: Vec<String>,
     /// Metadata source loader detected while parsing (e.g. "Forge", "NeoForge", "Fabric", "Quilt").
     pub detected_loader: Option<String>,
+    /// Chinese mod name declared inside the JAR's `assets/<mod_id>/lang/zh_cn.json` if present.
+    pub zh_name_embedded: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -257,7 +259,8 @@ impl ModParser {
                 has_icon INTEGER,
                 depends TEXT DEFAULT '[]',
                 provides TEXT DEFAULT '[]',
-                detected_loader TEXT
+                detected_loader TEXT,
+                zh_name_embedded TEXT
             )",
             [],
         )?;
@@ -266,6 +269,7 @@ impl ModParser {
             "ALTER TABLE mod_cache ADD COLUMN depends TEXT DEFAULT '[]'",
             "ALTER TABLE mod_cache ADD COLUMN provides TEXT DEFAULT '[]'",
             "ALTER TABLE mod_cache ADD COLUMN detected_loader TEXT",
+            "ALTER TABLE mod_cache ADD COLUMN zh_name_embedded TEXT",
         ] {
             if let Err(e) = conn.execute(alter_sql, []) {
                 if !e.to_string().contains("duplicate column name") {
@@ -322,7 +326,7 @@ impl ModParser {
         let mut map = HashMap::new();
         if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
             if let Ok(mut stmt) = conn.prepare(
-                "SELECT cache_key, mod_id, name, version, has_icon, depends, provides, detected_loader FROM mod_cache",
+                "SELECT cache_key, mod_id, name, version, has_icon, depends, provides, detected_loader, zh_name_embedded FROM mod_cache",
             ) {
                 if let Ok(mut rows) = stmt.query([]) {
                     while let Ok(Some(row)) = rows.next() {
@@ -342,6 +346,7 @@ impl ModParser {
                                     provides: serde_json::from_str(&provides_str)
                                         .unwrap_or_default(),
                                     detected_loader: row.get(7).ok(),
+                                    zh_name_embedded: row.get(8).ok(),
                                 },
                             );
                         }
@@ -359,7 +364,7 @@ impl ModParser {
             let provides_str =
                 serde_json::to_string(&meta.provides).unwrap_or_else(|_| "[]".to_string());
             if let Err(e) = conn.execute(
-                "INSERT OR REPLACE INTO mod_cache (cache_key, mod_id, name, version, has_icon, depends, provides, detected_loader) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO mod_cache (cache_key, mod_id, name, version, has_icon, depends, provides, detected_loader, zh_name_embedded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     key,
                     meta.mod_id,
@@ -368,7 +373,8 @@ impl ModParser {
                     if meta.has_icon { 1 } else { 0 },
                     depends_str,
                     provides_str,
-                    meta.detected_loader
+                    meta.detected_loader,
+                    meta.zh_name_embedded
                 ],
             ) {
                 tracing::warn!("Failed to insert cache entry for {}: {}", key, e);
@@ -954,8 +960,44 @@ impl ModParser {
             self.parse_forge_family_meta(&mut archive, &flags, &mut meta, cache_key, is_neoforge);
         }
 
+        if let Some(ref mid) = meta.mod_id {
+            meta.zh_name_embedded = extract_embedded_zh_name(&mut archive, mid);
+        }
+
         meta
     }
+}
+
+fn extract_embedded_zh_name(archive: &mut zip::ZipArchive<File>, mod_id: &str) -> Option<String> {
+    let candidate_paths = [
+        format!("assets/{}/lang/zh_cn.json", mod_id),
+        format!("assets/{}/lang/zh_cn.json", mod_id.to_ascii_lowercase()),
+    ];
+    for path in &candidate_paths {
+        if let Some(content) = read_archive_entry_string(archive, path) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(obj) = json.as_object() {
+                    let keys = [
+                        format!("modmenu.nameTranslation.{}", mod_id),
+                        format!("modmenu.nameTranslation.{}", mod_id.to_ascii_lowercase()),
+                        format!("fml.menu.mods.info.displayName.{}", mod_id),
+                    ];
+                    for k in &keys {
+                        if let Some(val) = obj.get(k).and_then(|v| v.as_str()) {
+                            let trimmed = val.trim();
+                            if !trimmed.is_empty()
+                                && !trimmed.contains("${")
+                                && crate::core::resource_naming::contains_cjk(trimmed)
+                            {
+                                return Some(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -989,6 +1031,7 @@ mod tests {
             depends: vec!["dep_a".to_string()],
             provides: vec!["sub_a".to_string()],
             detected_loader: Some("Forge".to_string()),
+            zh_name_embedded: None,
         };
 
         parser.set_cache_entry("hash123", &meta);

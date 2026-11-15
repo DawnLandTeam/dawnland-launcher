@@ -30,6 +30,18 @@
             <Search class="w-4 h-4 text-muted-foreground" />
           </template>
         </DInput>
+
+        <DButton
+          variant="outline"
+          @click="showRenameModal = true"
+          :disabled="!selectedWorld || !resourceNamingSettings.enableOnlineTranslation"
+          :title="!resourceNamingSettings.enableOnlineTranslation
+            ? $t('instances.resourceNaming.disabledTip', '已在设置中关闭译名与重命名功能')
+            : $t('instances.resourceNaming.batchRenameBtnTip', '按设置重命名或还原原始文件名')"
+        >
+          <FolderSync class="w-4 h-4 mr-1.5" />
+          {{ $t('instances.resourceNaming.batchRenameBtn', '整理文件名') }}
+        </DButton>
         
         <DButton variant="primary" @click="handleDownloadMore" :disabled="!selectedWorld">
           <Download class="w-4 h-4 mr-2" />
@@ -63,13 +75,28 @@
           </div>
           
           <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm truncate" :title="pack.filename">{{ pack.filename }}</div>
+            <div class="font-medium text-sm truncate" :title="getPackDisplay(pack).primaryTitle">
+              {{ getPackDisplay(pack).primaryTitle }}
+            </div>
             <div class="text-xs text-muted-foreground mt-1 flex items-center gap-2">
               <span>{{ pack.is_dir ? 'Folder' : formatSize(pack.size) }}</span>
+              <span v-if="getPackDisplay(pack).secondaryDetail" class="truncate" :title="getPackDisplay(pack).secondaryDetail">
+                {{ getPackDisplay(pack).secondaryDetail }}
+              </span>
             </div>
           </div>
           
           <div class="flex items-center gap-2 flex-shrink-0">
+            <DButton
+              v-if="!pack.is_dir && resourceNamingSettings.enableOnlineTranslation"
+              variant="ghost"
+              size="sm"
+              class="px-2"
+              :title="$t('instances.resourceNaming.editTranslationTitle', '自定义中文译名')"
+              @click="openEditTranslation(pack)"
+            >
+              <Languages class="w-4 h-4 text-muted-foreground" />
+            </DButton>
             <DButton 
               variant="danger" 
               size="sm" 
@@ -103,6 +130,21 @@
         </div>
       </div>
     </AlertDialog>
+
+    <ResourceRenameModal
+      :open="showRenameModal"
+      :instance-id="instanceId"
+      :categories="['Datapack']"
+      @update:open="showRenameModal = $event"
+      @applied="loadDatapacks"
+    />
+
+    <ResourceTranslationEditModal
+      :open="showEditTranslationModal"
+      :target="editingTranslationTarget"
+      @update:open="showEditTranslationModal = $event"
+      @saved="loadDatapacks"
+    />
   </div>
 </template>
 
@@ -111,15 +153,20 @@ import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
-import { Package, Search, Download, Trash2, Globe2, FolderArchive, Folder } from '@lucide/vue';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { Package, Search, Download, Trash2, Globe2, FolderArchive, Folder, FolderSync, Languages } from '@lucide/vue';
 import { AlertDialog, AlertDialogTitle, AlertDialogDescription } from '../ui/alert-dialog';
 import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
 import DSelect from '../ui/DSelect.vue';
+import ResourceRenameModal from './ResourceRenameModal.vue';
+import ResourceTranslationEditModal, { type TranslationEditTarget } from './ResourceTranslationEditModal.vue';
+import { formatResourceDisplay, useResourceNaming } from '../../composables/useResourceNaming';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
 import { useFileDrop, INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
 import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
+import { RESOURCE_NAMING_UPDATED_EVENT, type LocalDatapackItem } from '../../types/resourceNaming';
 
 const props = defineProps<{
   instanceId: string;
@@ -127,12 +174,10 @@ const props = defineProps<{
 
 const router = useRouter();
 const { t } = useI18n();
-
-interface LocalDatapackItem {
-  filename: string;
-  is_dir: boolean;
-  size: number;
-}
+const { resourceNamingSettings, refreshResourceNamingSettings } = useResourceNaming();
+const showRenameModal = ref(false);
+const showEditTranslationModal = ref(false);
+const editingTranslationTarget = ref<TranslationEditTarget | null>(null);
 
 const loadingWorlds = ref(false);
 const worldOptions = ref<{label: string, value: string}[]>([]);
@@ -147,10 +192,37 @@ const showDeleteConfirm = ref(false);
 const packToDelete = ref<LocalDatapackItem | null>(null);
 const isDeleting = ref(false);
 
+function getPackDisplay(pack: LocalDatapackItem) {
+  return formatResourceDisplay(resourceNamingSettings.value.managementDisplayStyle, {
+    zhName: pack.zh_name,
+    rawName: null,
+    filename: pack.filename,
+    originalFilename: pack.original_filename,
+  });
+}
+
+function openEditTranslation(pack: LocalDatapackItem) {
+  if (!selectedWorld.value) return;
+  editingTranslationTarget.value = {
+    category: 'Datapack',
+    instanceId: props.instanceId,
+    relPath: `saves/${selectedWorld.value}/datapacks/${pack.filename}`,
+    filename: pack.original_filename || pack.filename,
+    source: pack.source ?? null,
+    projectId: pack.project_id ?? null,
+    slug: pack.slug ?? null,
+    rawName: pack.original_filename || pack.filename,
+    currentZhName: pack.zh_name ?? null,
+  };
+  showEditTranslationModal.value = true;
+}
+
 const filteredDatapacks = computed(() => {
   if (!searchQuery.value) return datapacks.value;
   const q = searchQuery.value.toLowerCase();
   return datapacks.value.filter(pack => 
+    (pack.zh_name && pack.zh_name.toLowerCase().includes(q)) ||
+    (pack.original_filename && pack.original_filename.toLowerCase().includes(q)) ||
     pack.filename.toLowerCase().includes(q)
   );
 });
@@ -270,19 +342,41 @@ function handleAssetsUpdated(event: Event) {
   }
 }
 
-onMounted(() => {
+function handleNamingSettingsUpdated() {
+  refreshResourceNamingSettings();
+}
+
+let unlistenTranslationUpdate: UnlistenFn | null = null;
+
+onMounted(async () => {
   setActiveDatapackWorld(selectedWorld.value || null);
   window.addEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+  window.addEventListener(RESOURCE_NAMING_UPDATED_EVENT, handleNamingSettingsUpdated);
+  try {
+    unlistenTranslationUpdate = await listen<{ instanceId: string }>('instance-translations-updated', (ev) => {
+      if (ev.payload?.instanceId === props.instanceId) {
+        loadDatapacks();
+      }
+    });
+  } catch {
+    // non-tauri test env
+  }
 });
 
 onActivated(() => {
   setActiveDatapackWorld(selectedWorld.value || null);
+  refreshResourceNamingSettings();
   loadWorlds();
 });
 
 onUnmounted(() => {
   setActiveDatapackWorld(null);
   window.removeEventListener(INSTANCE_ASSETS_UPDATED_EVENT, handleAssetsUpdated);
+  window.removeEventListener(RESOURCE_NAMING_UPDATED_EVENT, handleNamingSettingsUpdated);
+  if (unlistenTranslationUpdate) {
+    unlistenTranslationUpdate();
+    unlistenTranslationUpdate = null;
+  }
 });
 
 function confirmDelete(pack: LocalDatapackItem) {
