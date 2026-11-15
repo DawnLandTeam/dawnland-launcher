@@ -1,8 +1,45 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::debug;
+
+static MOD_CACHE_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+#[derive(Debug, Clone, Default)]
+pub struct ModCachePruneStats {
+    pub freed_bytes: u64,
+    pub db_freed_bytes: u64,
+    pub removed_entries: u64,
+    pub removed_icons: u64,
+}
+
+fn open_db_with_timeout(db_path: &Path) -> rusqlite::Result<rusqlite::Connection> {
+    let conn = rusqlite::Connection::open(db_path)?;
+    conn.busy_timeout(Duration::from_secs(3))?;
+    Ok(conn)
+}
+
+fn sanitize_icon_stem(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let safe_name = sanitized.trim_matches('.');
+    if safe_name.is_empty() {
+        "unknown_mod".to_string()
+    } else {
+        safe_name.to_string()
+    }
+}
 
 /// Bump this version whenever `ModParser` metadata extraction semantics change so
 /// stale SQLite cache entries from older versions are automatically bypassed.
@@ -249,7 +286,10 @@ impl ModParser {
     }
 
     fn init_db(&self) -> rusqlite::Result<()> {
-        let conn = rusqlite::Connection::open(&self.db_path)?;
+        let _lock = MOD_CACHE_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let conn = open_db_with_timeout(&self.db_path)?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS mod_cache (
                 cache_key TEXT PRIMARY KEY,
@@ -324,7 +364,7 @@ impl ModParser {
 
     pub fn load_all_cache(&self) -> HashMap<String, ModMetadata> {
         let mut map = HashMap::new();
-        if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
+        if let Ok(conn) = open_db_with_timeout(&self.db_path) {
             if let Ok(mut stmt) = conn.prepare(
                 "SELECT cache_key, mod_id, name, version, has_icon, depends, provides, detected_loader, zh_name_embedded FROM mod_cache",
             ) {
@@ -358,7 +398,10 @@ impl ModParser {
     }
 
     pub fn set_cache_entry(&self, key: &str, meta: &ModMetadata) {
-        if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
+        let _lock = MOD_CACHE_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Ok(conn) = open_db_with_timeout(&self.db_path) {
             let depends_str =
                 serde_json::to_string(&meta.depends).unwrap_or_else(|_| "[]".to_string());
             let provides_str =
@@ -395,23 +438,202 @@ impl ModParser {
     }
 
     pub fn get_icon_path(&self, cache_key: &str) -> PathBuf {
-        let sanitized: String = cache_key
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
-                    c
-                } else {
-                    '_'
+        self.icons_dir
+            .join(format!("{}.png", sanitize_icon_stem(cache_key)))
+    }
+
+    /// Collect active `mod_cache` key prefixes (`v4_<filename>_<size>_<mtime>_`) from all instances.
+    fn collect_live_mod_key_prefixes(base_dir: &Path) -> Result<HashSet<String>, String> {
+        let mut prefixes = HashSet::new();
+        let versions_dir = base_dir.join("versions");
+        if !versions_dir.exists() {
+            return Ok(prefixes);
+        }
+
+        let version_entries = fs::read_dir(&versions_dir)
+            .map_err(|e| format!("Failed to read versions directory for mod cache GC: {}", e))?;
+
+        for ver_entry in version_entries {
+            let ver_entry = ver_entry.map_err(|e| format!("Failed to inspect version entry: {}", e))?;
+            let ver_path = ver_entry.path();
+            if !ver_path.is_dir() {
+                continue;
+            }
+            let mods_dir = ver_path.join("mods");
+            if !mods_dir.exists() {
+                continue;
+            }
+
+            let mod_entries = fs::read_dir(&mods_dir)
+                .map_err(|e| format!("Failed to read mods directory {}: {}", mods_dir.display(), e))?;
+            for mod_entry in mod_entries {
+                let mod_entry = mod_entry.map_err(|e| format!("Failed to inspect mod entry: {}", e))?;
+                let path = mod_entry.path();
+                if !path.is_file() {
+                    continue;
                 }
-            })
-            .collect();
-        let safe_name = sanitized.trim_matches('.');
-        let final_name = if safe_name.is_empty() {
-            "unknown_mod"
-        } else {
-            safe_name
-        };
-        self.icons_dir.join(format!("{}.png", final_name))
+                let filename = mod_entry.file_name().to_string_lossy().to_string();
+                let actual_filename = if let Some(stripped) = filename.strip_suffix(".disable") {
+                    if !stripped.ends_with(".jar") {
+                        continue;
+                    }
+                    stripped
+                } else if filename.ends_with(".jar") {
+                    filename.as_str()
+                } else {
+                    continue;
+                };
+
+                let metadata = mod_entry.metadata().map_err(|e| {
+                    format!("Failed to read mod metadata {}: {}", path.display(), e)
+                })?;
+                let mtime = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                prefixes.insert(format!(
+                    "{}_{}_{}_{}_",
+                    MOD_PARSER_CACHE_VERSION,
+                    actual_filename,
+                    metadata.len(),
+                    mtime
+                ));
+            }
+        }
+
+        Ok(prefixes)
+    }
+
+    /// Prune unreferenced `cache.db` entries and orphaned icon PNGs under `<base_dir>/.mod_cache`.
+    pub fn prune_unreferenced(
+        base_dir: &Path,
+        retention_secs: u64,
+    ) -> Result<ModCachePruneStats, String> {
+        let cache_dir = base_dir.join(".mod_cache");
+        if !cache_dir.exists() {
+            return Ok(ModCachePruneStats::default());
+        }
+
+        let live_prefixes = Self::collect_live_mod_key_prefixes(base_dir)?;
+        let sanitized_prefixes: Vec<String> =
+            live_prefixes.iter().map(|p| sanitize_icon_stem(p)).collect();
+
+        let mut stats = ModCachePruneStats::default();
+        let db_path = cache_dir.join("cache.db");
+        let icons_dir = cache_dir.join("icons");
+        let mut live_icon_names: HashSet<String> = HashSet::new();
+
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        if db_path.exists() {
+            let _lock = MOD_CACHE_WRITE_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let size_before = fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+            let db_age_secs = fs::metadata(&db_path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| now_secs.saturating_sub(d.as_secs()))
+                .unwrap_or(0);
+
+            if let Ok(mut conn) = open_db_with_timeout(&db_path) {
+                let existing_keys: Vec<String> = conn
+                    .prepare("SELECT cache_key FROM mod_cache")
+                    .and_then(|mut stmt| {
+                        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                        Ok(rows.filter_map(Result::ok).collect())
+                    })
+                    .unwrap_or_default();
+
+                let mut dead_keys = Vec::new();
+                for key in existing_keys {
+                    let is_alive = live_prefixes.iter().any(|prefix| key.starts_with(prefix));
+                    if is_alive {
+                        live_icon_names.insert(format!("{}.png", sanitize_icon_stem(&key)));
+                    } else {
+                        dead_keys.push(key);
+                    }
+                }
+
+                // Respect grace window on DB rows so short-lived uninstall/reinstall within retention avoids re-parsing.
+                if !dead_keys.is_empty() && (retention_secs == 0 || db_age_secs >= retention_secs) {
+                    let tx = conn
+                        .transaction()
+                        .map_err(|e| format!("Failed to start mod_cache GC transaction: {}", e))?;
+                    {
+                        let mut del_stmt = tx
+                            .prepare("DELETE FROM mod_cache WHERE cache_key = ?")
+                            .map_err(|e| format!("Failed to prepare mod_cache delete: {}", e))?;
+                        for key in &dead_keys {
+                            if del_stmt.execute([key]).is_ok() {
+                                stats.removed_entries += 1;
+                            }
+                        }
+                    }
+                    tx.commit()
+                        .map_err(|e| format!("Failed to commit mod_cache GC transaction: {}", e))?;
+
+                    if stats.removed_entries > 0 {
+                        let _ = conn.execute_batch("VACUUM;");
+                    }
+                }
+            }
+            let size_after = fs::metadata(&db_path).map(|m| m.len()).unwrap_or(size_before);
+            stats.db_freed_bytes = size_before.saturating_sub(size_after);
+            stats.freed_bytes = stats.freed_bytes.saturating_add(stats.db_freed_bytes);
+        }
+
+        if icons_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&icons_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    if live_icon_names.contains(&file_name) {
+                        continue;
+                    }
+                    let stem = Path::new(&file_name)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("");
+                    if sanitized_prefixes.iter().any(|p| stem.starts_with(p)) {
+                        continue;
+                    }
+
+                    let metadata = match entry.metadata() {
+                        Ok(m) => m,
+                        Err(_) => continue,
+                    };
+                    if retention_secs > 0 {
+                        let file_age_secs = metadata
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| now_secs.saturating_sub(d.as_secs()))
+                            .unwrap_or(0);
+                        if file_age_secs < retention_secs {
+                            continue;
+                        }
+                    }
+
+                    let len = metadata.len();
+                    if fs::remove_file(&path).is_ok() {
+                        stats.removed_icons += 1;
+                        stats.freed_bytes = stats.freed_bytes.saturating_add(len);
+                    }
+                }
+            }
+        }
+
+        Ok(stats)
     }
 
     fn extract_icon_from_archive(
@@ -1322,5 +1544,87 @@ mandatory=true
 
         let parser = ModParser::new(dir.path());
         assert!(parser.load_all_cache().is_empty());
+    }
+
+    #[test]
+    fn test_prune_unreferenced_skips_when_mod_cache_absent() {
+        let dir = tempdir().unwrap();
+        let stats = ModParser::prune_unreferenced(dir.path(), 0).unwrap();
+        assert_eq!(stats.removed_entries, 0);
+        assert_eq!(stats.removed_icons, 0);
+        assert!(!dir.path().join(".mod_cache").exists());
+    }
+
+    #[test]
+    fn test_prune_unreferenced_preserves_enabled_and_disabled_mods_and_cleans_orphans() {
+        let dir = tempdir().unwrap();
+        let mods_dir = dir.path().join("versions").join("inst-a").join("mods");
+        fs::create_dir_all(&mods_dir).unwrap();
+
+        let enabled_jar = mods_dir.join("sodium.jar");
+        let disabled_jar = mods_dir.join("iris.jar.disable");
+        fs::write(&enabled_jar, b"sodium-bytes").unwrap();
+        fs::write(&disabled_jar, b"iris-bytes-123").unwrap();
+
+        let mtime_enabled = fs::metadata(&enabled_jar)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mtime_disabled = fs::metadata(&disabled_jar)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let parser = ModParser::new(dir.path());
+        let key_enabled = build_mod_cache_key("sodium.jar", 12, mtime_enabled, "Fabric");
+        let key_disabled = build_mod_cache_key("iris.jar", 14, mtime_disabled, "Fabric");
+        let key_orphan = build_mod_cache_key("deleted.jar", 99, 1000, "Fabric");
+
+        let meta = ModMetadata {
+            mod_id: Some("test".to_string()),
+            name: Some("Test".to_string()),
+            version: Some("1.0".to_string()),
+            has_icon: true,
+            ..Default::default()
+        };
+        parser.set_cache_entry(&key_enabled, &meta);
+        parser.set_cache_entry(&key_disabled, &meta);
+        parser.set_cache_entry(&key_orphan, &meta);
+
+        let icon_enabled = parser.get_icon_path(&key_enabled);
+        let icon_disabled = parser.get_icon_path(&key_disabled);
+        let icon_orphan = parser.get_icon_path(&key_orphan);
+        let icon_legacy = dir.path().join(".mod_cache").join("icons").join("v2_old.png");
+        fs::write(&icon_enabled, b"png1").unwrap();
+        fs::write(&icon_disabled, b"png2").unwrap();
+        fs::write(&icon_orphan, b"png3").unwrap();
+        fs::write(&icon_legacy, b"png4").unwrap();
+
+        // With 24h retention, fresh orphan icons and DB rows remain untouched.
+        let deferred = ModParser::prune_unreferenced(dir.path(), 86_400).unwrap();
+        assert_eq!(deferred.removed_entries, 0);
+        assert_eq!(deferred.removed_icons, 0);
+        assert!(icon_orphan.exists());
+
+        // With immediate retention (0s), only orphan DB entry + orphan/legacy icons are removed.
+        let stats = ModParser::prune_unreferenced(dir.path(), 0).unwrap();
+        assert_eq!(stats.removed_entries, 1);
+        assert_eq!(stats.removed_icons, 2);
+
+        let remaining = parser.load_all_cache();
+        assert!(remaining.contains_key(&key_enabled));
+        assert!(remaining.contains_key(&key_disabled));
+        assert!(!remaining.contains_key(&key_orphan));
+
+        assert!(icon_enabled.exists());
+        assert!(icon_disabled.exists());
+        assert!(!icon_orphan.exists());
+        assert!(!icon_legacy.exists());
     }
 }

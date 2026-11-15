@@ -979,6 +979,10 @@ impl ExecutableTask for InstallModpackTask {
 
         crate::core::launcher::apply_global_game_settings(&instance_dir).await;
 
+        if is_update {
+            crate::core::cache::trigger_auto_gc(ctx.app_handle.clone());
+        }
+
         tracing::info!("Modpack installation completed successfully for: {}", instance_name);
 
         Ok(())

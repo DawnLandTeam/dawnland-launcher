@@ -1476,6 +1476,7 @@ pub async fn apply_resource_renames(
                 "updatedCount": result.renamed_count,
             }),
         );
+        crate::core::cache::trigger_auto_gc(app);
     }
 
     Ok(result)

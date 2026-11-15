@@ -12,6 +12,80 @@ use tokio::time::Duration;
 
 const PROGRESS_THROTTLE_MS: u64 = 500;
 
+static ACTIVE_DOWNLOAD_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// RAII counter tracking active `download_file_core` executions for cache GC barriers.
+struct ActiveDownloadGuard;
+
+impl ActiveDownloadGuard {
+    fn new() -> Self {
+        ACTIVE_DOWNLOAD_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for ActiveDownloadGuard {
+    fn drop(&mut self) {
+        ACTIVE_DOWNLOAD_COUNT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Returns true if any download is currently in flight or any pool hash mutex is held.
+pub fn has_active_downloads() -> bool {
+    if ACTIVE_DOWNLOAD_COUNT.load(std::sync::atomic::Ordering::Acquire) > 0 {
+        return true;
+    }
+    if let Some(locks_mutex) = CACHE_LOCKS.get() {
+        let Ok(map) = locks_mutex.try_lock() else {
+            return true;
+        };
+        if map.values().any(|lock| lock.try_lock().is_err()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Non-blocking guard holding a pool object's download mutex while GC deletes it.
+pub struct GcDownloadLockGuard {
+    hash: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Drop for GcDownloadLockGuard {
+    fn drop(&mut self) {
+        self.guard.take();
+        if let Some(locks_mutex) = CACHE_LOCKS.get() {
+            if let Ok(mut map) = locks_mutex.try_lock() {
+                let should_remove = map
+                    .get(&self.hash)
+                    .is_some_and(|entry| Arc::ptr_eq(entry, &self.lock) && Arc::strong_count(entry) <= 2);
+                if should_remove {
+                    map.remove(&self.hash);
+                }
+            }
+        }
+    }
+}
+
+/// Tries to acquire the per-hash download mutex without blocking; returns `None` if busy.
+pub fn try_lock_download_for_gc(hash: &str) -> Option<GcDownloadLockGuard> {
+    let locks_mutex = CACHE_LOCKS.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut map = locks_mutex.try_lock().ok()?;
+    let lock = map
+        .entry(hash.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone();
+    drop(map);
+    let guard = lock.clone().try_lock_owned().ok()?;
+    Some(GcDownloadLockGuard {
+        hash: hash.to_string(),
+        lock,
+        guard: Some(guard),
+    })
+}
+
 static CACHE_LOCKS: std::sync::OnceLock<tokio::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = std::sync::OnceLock::new();
 
 pub async fn get_download_lock(hash: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -151,6 +225,7 @@ where
     G: Fn(u64) + Send + Sync + 'static + Clone,
 {
 
+    let _active_download_guard = ActiveDownloadGuard::new();
     tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
 
     let dest_path = task.dest_path_buf();

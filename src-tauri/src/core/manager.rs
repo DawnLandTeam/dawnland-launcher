@@ -2226,7 +2226,12 @@ pub async fn get_installed_datapacks(version_id: String, world_name: String) -> 
 }
 
 #[tauri::command]
-pub async fn delete_local_datapack(version_id: String, world_name: String, filename: String) -> Result<(), String> {
+pub async fn delete_local_datapack(
+    app: tauri::AppHandle,
+    version_id: String,
+    world_name: String,
+    filename: String,
+) -> Result<(), String> {
     if !crate::core::fs_utils::is_safe_single_name(&version_id)
         || !crate::core::fs_utils::is_safe_single_name(&world_name)
         || !crate::core::fs_utils::is_safe_single_name(&filename)
@@ -2250,7 +2255,9 @@ pub async fn delete_local_datapack(version_id: String, world_name: String, filen
     delete_asset_from_manifest(&version_id, &format!("saves/{}/datapacks/{}", world_name, filename)).await;
     // Fallback for ghost records created with backslashes due to a path serialization bug
     delete_asset_from_manifest(&version_id, &format!("saves\\{}\\datapacks\\{}", world_name, filename)).await;
-    
+
+    crate::core::cache::trigger_auto_gc(app);
+
     Ok(())
 }
 
@@ -2376,10 +2383,15 @@ pub async fn get_installed_resourcepacks(version_id: String) -> Result<Vec<Local
 }
 
 #[tauri::command]
-pub async fn delete_local_resourcepack(version_id: String, filename: String) -> Result<(), String> {
+pub async fn delete_local_resourcepack(
+    app: tauri::AppHandle,
+    version_id: String,
+    filename: String,
+) -> Result<(), String> {
     let dir = get_minecraft_base().join("versions").join(&version_id).join("resourcepacks");
     delete_asset_in_dir(dir, filename.clone()).await?;
     delete_asset_from_manifest(&version_id, &format!("resourcepacks/{}", filename)).await;
+    crate::core::cache::trigger_auto_gc(app);
     Ok(())
 }
 
@@ -2390,12 +2402,17 @@ pub async fn get_installed_shaders(version_id: String) -> Result<Vec<LocalAssetI
 }
 
 #[tauri::command]
-pub async fn delete_local_shader(version_id: String, filename: String) -> Result<(), String> {
+pub async fn delete_local_shader(
+    app: tauri::AppHandle,
+    version_id: String,
+    filename: String,
+) -> Result<(), String> {
     let dir = get_minecraft_base().join("versions").join(&version_id).join("shaderpacks");
     delete_asset_in_dir(dir, filename.clone()).await?;
     delete_asset_from_manifest(&version_id, &format!("shaderpacks/{}", filename)).await;
     // Fallback cleanup for the previous bug where shaders were incorrectly registered as resourcepacks
     delete_asset_from_manifest(&version_id, &format!("resourcepacks/{}", filename)).await;
+    crate::core::cache::trigger_auto_gc(app);
     Ok(())
 }
 
@@ -2406,10 +2423,15 @@ pub async fn get_installed_worlds(version_id: String) -> Result<Vec<LocalAssetIt
 }
 
 #[tauri::command]
-pub async fn delete_local_world(version_id: String, world_name: String) -> Result<(), String> {
+pub async fn delete_local_world(
+    app: tauri::AppHandle,
+    version_id: String,
+    world_name: String,
+) -> Result<(), String> {
     let dir = get_minecraft_base().join("versions").join(&version_id).join("saves");
     delete_asset_in_dir(dir, world_name.clone()).await?;
     delete_asset_from_manifest(&version_id, &format!("saves/{}", world_name)).await;
+    crate::core::cache::trigger_auto_gc(app);
     Ok(())
 }
 
@@ -3403,6 +3425,7 @@ fn evaluate_prelaunch_warnings(
 /// Delete a local mod file
 #[tauri::command]
 pub async fn delete_local_mod(
+    app: tauri::AppHandle,
     version_id: String,
     filename: String,
     is_enabled: Option<bool>,
@@ -3448,6 +3471,7 @@ pub async fn delete_local_mod(
     }
 
     tracing::info!("Deleted mod {} from instance {}", filename, version_id);
+    crate::core::cache::trigger_auto_gc(app);
     Ok(())
 }
 
@@ -3970,17 +3994,18 @@ pub async fn install_mod_to_instance(
 
     // Remove old version if it exists and filename differs
     let keep_old = keep_both.unwrap_or(false);
+    let mut replaced_old_file = false;
     if !keep_old {
         if let Some((old_filename, _)) = installed_map.get(&mod_key) {
             if old_filename != &filename {
                 let old_path = mods_dir.join(old_filename);
-                if old_path.exists() {
-                    let _ = tokio::fs::remove_file(old_path).await;
+                if old_path.exists() && tokio::fs::remove_file(old_path).await.is_ok() {
+                    replaced_old_file = true;
                 }
             }
             let old_path_disabled = mods_dir.join(format!("{}.disable", old_filename));
-            if old_path_disabled.exists() {
-                let _ = tokio::fs::remove_file(old_path_disabled).await;
+            if old_path_disabled.exists() && tokio::fs::remove_file(old_path_disabled).await.is_ok() {
+                replaced_old_file = true;
             }
         }
     }
@@ -4109,13 +4134,19 @@ pub async fn install_mod_to_instance(
                         return Err("Target path escapes mods directory".to_string());
                     }
                     if let Some((old_fname, _)) = installed_map.get(&dep_key) {
-                        if old_fname != &fname {
-                            let _ = tokio::fs::remove_file(mods_dir.join(old_fname)).await;
+                        if old_fname != &fname
+                            && tokio::fs::remove_file(mods_dir.join(old_fname)).await.is_ok()
+                        {
+                            replaced_old_file = true;
                         }
-                        let _ = tokio::fs::remove_file(
+                        if tokio::fs::remove_file(
                             mods_dir.join(format!("{}.disable", old_fname)),
                         )
-                        .await;
+                        .await
+                        .is_ok()
+                        {
+                            replaced_old_file = true;
+                        }
                     }
                     if !dep_path.exists() {
                         if let Some(ref c) = ctx {
@@ -4140,6 +4171,10 @@ pub async fn install_mod_to_instance(
                 }
             }
         }
+    }
+
+    if replaced_old_file {
+        crate::core::cache::trigger_auto_gc(app);
     }
 
     Ok(filename)
@@ -6153,8 +6188,11 @@ impl InstallModTask {
             if !options.keep_both.unwrap_or(false) {
                 if let Some((old_filename, _)) = installed_map.get(&mod_key) {
                     if old_filename != &filename {
-                        let _ = tokio::fs::remove_file(target_dir_path.join(old_filename)).await;
-                        let _ = tokio::fs::remove_file(target_dir_path.join(format!("{}.disable", old_filename))).await;
+                        let removed_main = tokio::fs::remove_file(target_dir_path.join(old_filename)).await.is_ok();
+                        let removed_disabled = tokio::fs::remove_file(target_dir_path.join(format!("{}.disable", old_filename))).await.is_ok();
+                        if removed_main || removed_disabled {
+                            crate::core::cache::trigger_auto_gc(main_ctx.app_handle.clone());
+                        }
                     }
                 }
             }
@@ -6280,8 +6318,11 @@ impl InstallModTask {
         if let Some(_v_id) = ctx.version_id_opt {
             if let Some((old_fname, _)) = installed_map.get(&dep_key) {
                 if old_fname != &fname {
-                    let _ = tokio::fs::remove_file(ctx.target_dir_path.join(old_fname)).await;
-                    let _ = tokio::fs::remove_file(ctx.target_dir_path.join(format!("{}.disable", old_fname))).await;
+                    let removed_main = tokio::fs::remove_file(ctx.target_dir_path.join(old_fname)).await.is_ok();
+                    let removed_disabled = tokio::fs::remove_file(ctx.target_dir_path.join(format!("{}.disable", old_fname))).await.is_ok();
+                    if removed_main || removed_disabled {
+                        crate::core::cache::trigger_auto_gc(ctx.dep_ctx.app_handle.clone());
+                    }
                 }
             }
         }

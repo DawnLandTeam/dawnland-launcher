@@ -12,6 +12,14 @@ use crate::models::instance::{AssetCategory, AssetRecord, AssetSourceType};
 static INSTANCE_LOCKS: std::sync::LazyLock<StdMutex<HashMap<String, Arc<TokioMutex<()>>>>> =
     std::sync::LazyLock::new(|| StdMutex::new(HashMap::new()));
 
+/// Returns true if any per-instance drag-and-drop import lock is currently held.
+pub fn has_busy_instance_locks() -> bool {
+    let Ok(map) = INSTANCE_LOCKS.lock() else {
+        return true;
+    };
+    map.values().any(|lock| lock.try_lock().is_err())
+}
+
 /// Get or create an asynchronous per-instance lock to serialize tasks and imports.
 pub fn get_instance_lock(instance_id: &str) -> Arc<TokioMutex<()>> {
     let mut map = INSTANCE_LOCKS.lock().unwrap_or_else(|e| e.into_inner());
@@ -2143,6 +2151,7 @@ async fn import_single_world(
 
 #[tauri::command]
 pub async fn import_dropped_files_to_instance(
+    app: tauri::AppHandle,
     instance_id: String,
     items: Vec<DropImportItem>,
     target_world: Option<String>,
@@ -2242,6 +2251,10 @@ pub async fn import_dropped_files_to_instance(
                 });
             }
         }
+    }
+
+    if overwrite && !report.succeeded.is_empty() {
+        crate::core::cache::trigger_auto_gc(app);
     }
 
     Ok(report)

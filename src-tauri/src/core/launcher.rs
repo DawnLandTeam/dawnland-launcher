@@ -1145,7 +1145,7 @@ pub async fn extract_natives(version_id: &str, libraries: &[Library]) -> Result<
 }
 
 /// Check if a library should be used on the current platform.
-fn should_use_library(lib: &Library, os: &str, arch: &str) -> bool {
+pub(crate) fn should_use_library(lib: &Library, os: &str, arch: &str) -> bool {
     let Some(rules) = &lib.rules else {
         return true; // No rules = apply to all
     };

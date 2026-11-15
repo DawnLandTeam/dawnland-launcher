@@ -134,6 +134,28 @@ impl Default for ResourceNamingSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum CacheRetentionPolicy {
+    #[default]
+    #[serde(rename = "immediate")]
+    Immediate,
+    #[serde(rename = "24h")]
+    Hours24,
+    #[serde(rename = "7d")]
+    Days7,
+}
+
+impl CacheRetentionPolicy {
+    /// Returns the grace period in seconds before unreferenced cache entries are reclaimed automatically.
+    pub fn retention_secs(self) -> u64 {
+        match self {
+            Self::Immediate => 0,
+            Self::Hours24 => 24 * 3600,
+            Self::Days7 => 7 * 24 * 3600,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LauncherSettings {
@@ -153,6 +175,12 @@ pub struct LauncherSettings {
     pub enable_global_game_settings: bool,
     #[serde(default = "default_enable_global_mod_cache")]
     pub enable_global_mod_cache: bool,
+    #[serde(default = "default_auto_clean_cache")]
+    pub auto_clean_cache: bool,
+    #[serde(default)]
+    pub cache_retention_policy: CacheRetentionPolicy,
+    #[serde(default)]
+    pub auto_clean_shared_assets: bool,
     #[serde(default = "default_enable_jvm_tuner")]
     pub enable_jvm_tuner: bool,
     #[serde(default)]
@@ -166,6 +194,10 @@ fn default_max_concurrent_downloads() -> u32 {
 }
 
 fn default_enable_global_mod_cache() -> bool {
+    true
+}
+
+fn default_auto_clean_cache() -> bool {
     true
 }
 
@@ -184,6 +216,9 @@ impl Default for LauncherSettings {
             ai_config: AiConfig::default(),
             enable_global_game_settings: false,
             enable_global_mod_cache: true,
+            auto_clean_cache: true,
+            cache_retention_policy: CacheRetentionPolicy::default(),
+            auto_clean_shared_assets: false,
             enable_jvm_tuner: true,
             ui_language: None,
             resource_naming: ResourceNamingSettings::default(),
@@ -482,7 +517,35 @@ mod tests {
         let parsed: LauncherSettings = serde_json::from_str(legacy_json).expect("deserialize legacy");
         assert!(parsed.enable_instance_inheritance);
         assert_eq!(parsed.max_concurrent_downloads, 16);
+        assert!(parsed.auto_clean_cache);
+        assert_eq!(parsed.cache_retention_policy, CacheRetentionPolicy::Immediate);
+        assert!(!parsed.auto_clean_shared_assets);
         assert_eq!(parsed.resource_naming.filename_mode, FilenameFormatMode::Auto);
         assert!(parsed.resource_naming.rename_targets.contains(&AssetCategory::Mod));
+    }
+
+    #[test]
+    fn test_cache_gc_settings_defaults_and_roundtrip() {
+        let defaults = LauncherSettings::default();
+        assert!(defaults.auto_clean_cache);
+        assert_eq!(defaults.cache_retention_policy, CacheRetentionPolicy::Immediate);
+        assert!(!defaults.auto_clean_shared_assets);
+        assert_eq!(CacheRetentionPolicy::Immediate.retention_secs(), 0);
+        assert_eq!(CacheRetentionPolicy::Hours24.retention_secs(), 86_400);
+        assert_eq!(CacheRetentionPolicy::Days7.retention_secs(), 604_800);
+
+        let raw = r#"{
+            "autoCleanCache": false,
+            "cacheRetentionPolicy": "7d",
+            "autoCleanSharedAssets": true
+        }"#;
+        let parsed: LauncherSettings = serde_json::from_str(raw).expect("deserialize cache settings");
+        assert!(!parsed.auto_clean_cache);
+        assert_eq!(parsed.cache_retention_policy, CacheRetentionPolicy::Days7);
+        assert!(parsed.auto_clean_shared_assets);
+
+        let encoded = serde_json::to_string(&parsed).expect("serialize cache settings");
+        assert!(encoded.contains(r#""cacheRetentionPolicy":"7d""#));
+        assert!(encoded.contains(r#""autoCleanSharedAssets":true"#));
     }
 }

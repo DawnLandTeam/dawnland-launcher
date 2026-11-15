@@ -837,6 +837,8 @@ impl ExecutableTask for UninstallInstanceLoaderTask {
             let _ = tokio::fs::remove_dir_all(&mods_trash).await;
         }
 
+        crate::core::cache::trigger_auto_gc(ctx.app_handle.clone());
+
         ctx.update_progress(100, 100, "Uninstallation complete").await;
         tracing::info!("Successfully uninstalled mod loader from instance '{}'", instance_id);
         Ok(())

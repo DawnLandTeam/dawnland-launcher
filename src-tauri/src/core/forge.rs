@@ -1459,6 +1459,10 @@ impl InstallForgeTask {
 
         tracing::info!("Updated instance config in: {:?}", version_dir);
 
+        if self.options.is_existing_instance.unwrap_or(false) {
+            crate::core::cache::trigger_auto_gc(ctx.app_handle.clone());
+        }
+
         // Emit complete
         ctx.update_progress(0, 0, "Complete").await;
 

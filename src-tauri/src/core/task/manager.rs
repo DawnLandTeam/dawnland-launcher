@@ -387,6 +387,19 @@ impl TaskManager {
             .unwrap_or(false)
     }
 
+    /// Returns true if any task is active or any instance is still in startup setup.
+    pub async fn has_active_tasks(&self) -> bool {
+        if self
+            .starting_instances
+            .read()
+            .map(|set| !set.is_empty())
+            .unwrap_or(true)
+        {
+            return true;
+        }
+        !self.active_tasks.read().await.is_empty()
+    }
+
     pub fn task_context<'a>(&'a self, tasks: &'a [TaskState]) -> crate::core::manager::InstanceTaskContext<'a> {
         crate::core::manager::InstanceTaskContext {
             starting_instances: Some(&self.starting_instances),
@@ -837,6 +850,7 @@ impl TaskManager {
                                             }
                                         } else {
                                             let _ = manager.app_handle.emit("instances-changed", ());
+                                            crate::core::cache::trigger_auto_gc(manager.app_handle.clone());
                                         }
                                     }
                                 }
@@ -918,6 +932,8 @@ impl TaskManager {
             if is_instance_mutating {
                 let _ = manager.app_handle.emit("instances-changed", ());
             }
+
+            crate::core::cache::on_active_task_finished(manager.app_handle.clone());
         }.instrument(span));
 
         Ok(id)
