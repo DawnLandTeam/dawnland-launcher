@@ -458,8 +458,10 @@ mod tests {
 
     #[test]
     fn test_resolve_active_template_auto_by_language() {
-        let mut settings = LauncherSettings::default();
-        settings.ui_language = Some("zh-CN".to_string());
+        let mut settings = LauncherSettings {
+            ui_language: Some("zh-CN".to_string()),
+            ..Default::default()
+        };
         assert_eq!(resolve_active_template(&settings), "[{zh}] {stem}{ext}");
 
         settings.ui_language = Some("en".to_string());

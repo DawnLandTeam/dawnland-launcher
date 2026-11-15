@@ -1170,7 +1170,7 @@ mod tests {
             source_tag: "consensus".to_string(),
             updated_at: 200,
         };
-        db.upsert_entries_batch(&[verified_entry.clone()]).unwrap();
+        db.upsert_entries_batch(std::slice::from_ref(&verified_entry)).unwrap();
         let res = db
             .lookup(&AssetCategory::Mod, None, None, Some("demo-mod"), None, None)
             .unwrap();

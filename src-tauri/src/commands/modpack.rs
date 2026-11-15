@@ -343,8 +343,8 @@ impl ExecutableTask for InstallModpackTask {
                         let mut tasks = Vec::new();
                         for ((file, (cf_pid, slug_opt, title_opt)), zh_opt) in resolved_files
                             .into_iter()
-                            .zip(lookup_specs.into_iter())
-                            .zip(zh_lookups.into_iter())
+                            .zip(lookup_specs)
+                            .zip(zh_lookups)
                         {
                             if !crate::core::fs_utils::is_safe_single_name(&file.filename) {
                                 tracing::warn!("Skipping unsafe CurseForge mod filename in modpack: {}", file.filename);
@@ -493,8 +493,8 @@ impl ExecutableTask for InstallModpackTask {
                         for ((file, (cat, pid_opt, slug_opt, title_opt, orig_filename)), zh_opt) in manifest
                             .files
                             .into_iter()
-                            .zip(lookup_inputs.into_iter())
-                            .zip(zh_lookups.into_iter())
+                            .zip(lookup_inputs)
+                            .zip(zh_lookups)
                         {
                             if !crate::core::fs_utils::is_safe_relative_path(&file.path) {
                                 tracing::warn!("Skipping unsafe Modrinth file path in modpack: {}", file.path);
@@ -504,7 +504,6 @@ impl ExecutableTask for InstallModpackTask {
                                 let orig_rel_path = file.path.clone().replace("\\", "/");
                                 let (parent_rel, _) = orig_rel_path
                                     .rsplit_once('/')
-                                    .map(|(d, f)| (d, f))
                                     .unwrap_or(("", orig_filename.as_str()));
                                 let dir_used = used_by_dir.entry(parent_rel.to_string()).or_default();
 
@@ -889,25 +888,23 @@ impl ExecutableTask for InstallModpackTask {
         if post_settings.resource_naming.enable_online_translation
             && crate::core::settings::resolve_active_template(&post_settings) != "{stem}{ext}"
         {
-            if let Ok(db) = tokio::task::spawn_blocking(crate::core::translation::TranslationDb::open_default).await.and_then(|r| Ok(r)) {
-                if let Ok(db) = db {
-                    if let Ok(plan) = crate::core::resource_rename_ops::build_rename_plan_for_instance(
+            if let Ok(Ok(db)) = tokio::task::spawn_blocking(crate::core::translation::TranslationDb::open_default).await {
+                if let Ok(plan) = crate::core::resource_rename_ops::build_rename_plan_for_instance(
+                    &instance_dir,
+                    instance_name,
+                    &post_settings,
+                    &db,
+                    false,
+                    None,
+                )
+                .await
+                {
+                    let _ = crate::core::resource_rename_ops::execute_rename_plan_in_instance(
                         &instance_dir,
-                        instance_name,
-                        &post_settings,
-                        &db,
-                        false,
+                        &plan,
                         None,
                     )
-                    .await
-                    {
-                        let _ = crate::core::resource_rename_ops::execute_rename_plan_in_instance(
-                            &instance_dir,
-                            &plan,
-                            None,
-                        )
-                        .await;
-                    }
+                    .await;
                 }
             }
         }
@@ -1897,10 +1894,12 @@ mod modpack_naming_tests {
             },
         );
 
-        let mut settings = crate::core::settings::LauncherSettings::default();
-        settings.resource_naming = ResourceNamingSettings {
-            filename_mode: FilenameFormatMode::Preset,
-            filename_preset: FilenamePreset::BracketPrefix,
+        let settings = crate::core::settings::LauncherSettings {
+            resource_naming: ResourceNamingSettings {
+                filename_mode: FilenameFormatMode::Preset,
+                filename_preset: FilenamePreset::BracketPrefix,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let lookup = crate::core::translation::TranslationLookupResult {

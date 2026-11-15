@@ -153,7 +153,7 @@ pub async fn enrich_online_projects(
 
     Ok(projects
         .into_iter()
-        .zip(final_lookups.into_iter())
+        .zip(final_lookups)
         .map(|(project, found)| {
             if let Some(t) = found {
                 EnrichedModProject {
@@ -876,7 +876,7 @@ pub async fn resolve_instance_translations(
     for ((w, spec), found) in work_items
         .iter()
         .zip(specs.iter())
-        .zip(local_results.into_iter())
+        .zip(local_results)
     {
         let hmap = all_hash_map.get(&w.sha1);
         let mod_meta = mod_meta_map.get(&w.manifest_key);
@@ -1585,11 +1585,13 @@ mod tests {
         ])
         .unwrap();
 
-        let mut settings = LauncherSettings::default();
-        settings.ui_language = Some("zh-CN".to_string());
-        settings.resource_naming = ResourceNamingSettings {
-            filename_mode: FilenameFormatMode::Preset,
-            filename_preset: FilenamePreset::BracketPrefix,
+        let settings = LauncherSettings {
+            ui_language: Some("zh-CN".to_string()),
+            resource_naming: ResourceNamingSettings {
+                filename_mode: FilenameFormatMode::Preset,
+                filename_preset: FilenamePreset::BracketPrefix,
+                ..Default::default()
+            },
             ..Default::default()
         };
 

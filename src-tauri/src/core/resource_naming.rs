@@ -310,7 +310,7 @@ pub fn resolve_unique_filename_in_dir(
 ) -> String {
     let clean = desired_filename.to_string();
     let check_conflict = |candidate: &str| -> bool {
-        if existing_paths_to_ignore.iter().any(|p| *p == candidate) {
+        if existing_paths_to_ignore.contains(&candidate) {
             return false;
         }
         let candidate_path = target_dir.join(candidate);

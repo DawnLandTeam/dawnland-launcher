@@ -3074,7 +3074,7 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
     }
 
     let enriched = batch_enrich_local_metadata(queries).await;
-    for (idx, (m, manifest_zh)) in mods.iter_mut().zip(manifest_zhs.into_iter()).enumerate() {
+    for (idx, (m, manifest_zh)) in mods.iter_mut().zip(manifest_zhs).enumerate() {
         let er = enriched.get(idx).cloned().unwrap_or_default();
         m.zh_name = er.zh_name.or(manifest_zh);
         m.zh_summary = er.zh_summary;
@@ -6143,7 +6143,7 @@ impl InstallModTask {
             )));
         }
         let target_path = target_dir_path.join(&filename);
-        if !target_path.starts_with(&target_dir_path) {
+        if !target_path.starts_with(target_dir_path) {
             return Err(crate::core::task::TaskError::ExecutionError(
                 "Target path escapes mods directory".to_string(),
             ));
@@ -6271,7 +6271,7 @@ impl InstallModTask {
             )));
         }
         let dep_path = ctx.target_dir_path.join(&fname);
-        if !dep_path.starts_with(&ctx.target_dir_path) {
+        if !dep_path.starts_with(ctx.target_dir_path) {
             return Err(crate::core::task::TaskError::ExecutionError(
                 "Target path escapes mods directory".to_string(),
             ));
