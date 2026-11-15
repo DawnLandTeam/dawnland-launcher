@@ -26,7 +26,9 @@ impl ActiveDownloadGuard {
 
 impl Drop for ActiveDownloadGuard {
     fn drop(&mut self) {
-        ACTIVE_DOWNLOAD_COUNT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        if ACTIVE_DOWNLOAD_COUNT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            crate::core::cache::notify_deferred_gc();
+        }
     }
 }
 
@@ -224,7 +226,7 @@ where
     C: Fn() -> bool + Send + Sync + 'static + Clone,
     G: Fn(u64) + Send + Sync + 'static + Clone,
 {
-
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app_handle)).await;
     let _active_download_guard = ActiveDownloadGuard::new();
     tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
 
@@ -895,6 +897,7 @@ pub async fn run_batch_download_task(
         return Ok(());
     }
 
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&ctx.app_handle)).await;
     let total_tasks = tasks.len();
     tracing::info!("Starting batch download of {} files", total_tasks);
 
@@ -1124,6 +1127,7 @@ pub async fn run_batch_download(
         return Ok(());
     }
 
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let total_tasks = tasks.len();
     let client = crate::core::utils::get_http_client().clone();
 

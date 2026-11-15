@@ -1092,6 +1092,7 @@ pub async fn delete_instance(
     }
 
     // Coordinate instance deletion with asset applications via per-instance lock
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let instance_lock = crate::core::drop_install::get_instance_lock(&version_id);
     let _instance_guard = instance_lock.lock().await;
 
@@ -1880,6 +1881,7 @@ pub async fn rename_instance(
     }
 
     // Acquire per-instance locks in deterministic lexicographical order to prevent deadlocks
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let (first_key, second_key) = if old_id < new_id {
         (&old_id, &new_id)
     } else {
@@ -2239,6 +2241,7 @@ pub async fn delete_local_datapack(
         return Err("Invalid instance, world, or datapack filename".to_string());
     }
 
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let base_dir = get_minecraft_base();
     let datapacks_dir = base_dir.join("versions").join(&version_id).join("saves").join(&world_name).join("datapacks");
     let target = datapacks_dir.join(&filename);
@@ -2256,6 +2259,7 @@ pub async fn delete_local_datapack(
     // Fallback for ghost records created with backslashes due to a path serialization bug
     delete_asset_from_manifest(&version_id, &format!("saves\\{}\\datapacks\\{}", world_name, filename)).await;
 
+    drop(_op_permit);
     crate::core::cache::trigger_auto_gc(app);
 
     Ok(())
@@ -2388,9 +2392,11 @@ pub async fn delete_local_resourcepack(
     version_id: String,
     filename: String,
 ) -> Result<(), String> {
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let dir = get_minecraft_base().join("versions").join(&version_id).join("resourcepacks");
     delete_asset_in_dir(dir, filename.clone()).await?;
     delete_asset_from_manifest(&version_id, &format!("resourcepacks/{}", filename)).await;
+    drop(_op_permit);
     crate::core::cache::trigger_auto_gc(app);
     Ok(())
 }
@@ -2407,11 +2413,13 @@ pub async fn delete_local_shader(
     version_id: String,
     filename: String,
 ) -> Result<(), String> {
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let dir = get_minecraft_base().join("versions").join(&version_id).join("shaderpacks");
     delete_asset_in_dir(dir, filename.clone()).await?;
     delete_asset_from_manifest(&version_id, &format!("shaderpacks/{}", filename)).await;
     // Fallback cleanup for the previous bug where shaders were incorrectly registered as resourcepacks
     delete_asset_from_manifest(&version_id, &format!("resourcepacks/{}", filename)).await;
+    drop(_op_permit);
     crate::core::cache::trigger_auto_gc(app);
     Ok(())
 }
@@ -2428,9 +2436,11 @@ pub async fn delete_local_world(
     version_id: String,
     world_name: String,
 ) -> Result<(), String> {
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let dir = get_minecraft_base().join("versions").join(&version_id).join("saves");
     delete_asset_in_dir(dir, world_name.clone()).await?;
     delete_asset_from_manifest(&version_id, &format!("saves/{}", world_name)).await;
+    drop(_op_permit);
     crate::core::cache::trigger_auto_gc(app);
     Ok(())
 }
@@ -2634,6 +2644,7 @@ pub async fn apply_custom_asset_to_instance(
     }
 
     // Coordinate apply operations with instance deletion via per-instance lock
+    let _op_permit = crate::core::cache::acquire_operation_permit(None).await;
     let instance_lock = crate::core::drop_install::get_instance_lock(&version_id);
     let _instance_guard = instance_lock.lock().await;
 
@@ -2984,6 +2995,7 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
     if !crate::core::fs_utils::is_safe_single_name(&version_id) {
         return Err("Invalid instance ID".to_string());
     }
+    let _op_permit = crate::core::cache::acquire_operation_permit(None).await;
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
@@ -3131,11 +3143,12 @@ pub async fn toggle_mod_status(
     if !crate::core::fs_utils::is_safe_single_name(&version_id) {
         return Err("Invalid instance ID".to_string());
     }
-    let base_dir = get_minecraft_base();
-    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
     if !crate::core::fs_utils::is_safe_single_name(&filename) {
         return Err("Invalid mod filename".to_string());
     }
+    let _op_permit = crate::core::cache::acquire_operation_permit(None).await;
+    let base_dir = get_minecraft_base();
+    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
     let enabled_file = mods_dir.join(&filename);
     let disabled_file = mods_dir.join(format!("{}.disable", filename));
 
@@ -3271,6 +3284,7 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
     if !crate::core::fs_utils::is_safe_single_name(&version_id) {
         return Err("Invalid instance ID".to_string());
     }
+    let _op_permit = crate::core::cache::acquire_operation_permit(None).await;
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
@@ -3435,12 +3449,13 @@ pub async fn delete_local_mod(
     if !crate::core::fs_utils::is_safe_single_name(&version_id) {
         return Err("Invalid instance ID".to_string());
     }
-    let base_dir = get_minecraft_base();
-    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
-
     if !crate::core::fs_utils::is_safe_single_name(&filename) {
         return Err("Invalid mod filename".to_string());
     }
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
+    let base_dir = get_minecraft_base();
+    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
+
     let mod_file = mods_dir.join(&filename);
     let disabled_file = mods_dir.join(format!("{}.disable", filename));
 
@@ -3495,6 +3510,7 @@ async fn download_mod_file_stream(
     use tauri::Emitter;
     use tokio::io::AsyncWriteExt;
 
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(app)).await;
     let mut response = client
         .get(url)
         .send()
@@ -3921,6 +3937,7 @@ pub async fn install_mod_to_instance(
     if !crate::core::fs_utils::is_safe_single_name(&version_id) {
         return Err("Invalid instance ID".to_string());
     }
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
@@ -4189,6 +4206,7 @@ pub async fn import_local_mod_to_instance(
     if !crate::core::fs_utils::is_safe_single_name(&version_id) {
         return Err("Invalid instance ID".to_string());
     }
+    let _op_permit = crate::core::cache::acquire_operation_permit(None).await;
     let base_dir = get_minecraft_base();
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 

@@ -309,27 +309,84 @@ pub fn get_launcher_settings_sync() -> LauncherSettings {
 
     let gen_before = SETTINGS_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
     let config_path = get_launcher_settings_path();
-    let mut settings = LauncherSettings::default();
-    if config_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&config_path) {
-            if let Ok(config) = serde_json::from_str(&content) {
-                settings = config;
+    let (settings, should_cache) = match std::fs::read_to_string(&config_path) {
+        Ok(content) => match serde_json::from_str::<LauncherSettings>(&content) {
+            Ok(config) => (config, true),
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to parse launcher settings {}: {}",
+                    config_path.display(),
+                    e
+                );
+                (LauncherSettings::default(), false)
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (LauncherSettings::default(), true),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to read launcher settings {}: {}",
+                config_path.display(),
+                e
+            );
+            (LauncherSettings::default(), false)
+        }
+    };
+
+    if should_cache {
+        if let Ok(mut cache) = SETTINGS_CACHE.write() {
+            if let Some(existing) = cache.as_ref() {
+                return existing.clone();
+            }
+            if SETTINGS_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == gen_before {
+                *cache = Some(settings.clone());
+            } else if let Some(existing) = cache.as_ref() {
+                return existing.clone();
             }
         }
     }
 
-    if let Ok(mut cache) = SETTINGS_CACHE.write() {
-        if let Some(existing) = cache.as_ref() {
-            return existing.clone();
+    settings
+}
+
+async fn read_launcher_settings_strict_at(
+    config_path: &std::path::Path,
+) -> Result<LauncherSettings, String> {
+    let _guard = SETTINGS_SAVE_LOCK.lock().await;
+    let gen_before = SETTINGS_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
+    let settings = match tokio::fs::read_to_string(config_path).await {
+        Ok(content) => serde_json::from_str::<LauncherSettings>(&content).map_err(|e| {
+            format!(
+                "Failed to parse launcher settings {}: {}",
+                config_path.display(),
+                e
+            )
+        })?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => LauncherSettings::default(),
+        Err(e) => {
+            return Err(format!(
+                "Failed to read launcher settings {}: {}",
+                config_path.display(),
+                e
+            ));
         }
-        if SETTINGS_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == gen_before {
-            *cache = Some(settings.clone());
-        } else if let Some(existing) = cache.as_ref() {
-            return existing.clone();
+    };
+
+    if config_path == get_launcher_settings_path().as_path() {
+        if let Ok(mut cache) = SETTINGS_CACHE.write() {
+            if SETTINGS_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == gen_before {
+                *cache = Some(settings.clone());
+            }
         }
     }
 
-    settings
+    Ok(settings)
+}
+
+/// Strictly loads launcher settings without substituting defaults when the settings file
+/// exists but cannot be read or parsed.
+pub async fn load_launcher_settings_strict() -> Result<LauncherSettings, String> {
+    let config_path = get_launcher_settings_path();
+    read_launcher_settings_strict_at(&config_path).await
 }
 
 pub async fn get_launcher_settings() -> LauncherSettings {
@@ -547,5 +604,31 @@ mod tests {
         let encoded = serde_json::to_string(&parsed).expect("serialize cache settings");
         assert!(encoded.contains(r#""cacheRetentionPolicy":"7d""#));
         assert!(encoded.contains(r#""autoCleanSharedAssets":true"#));
+    }
+
+    #[tokio::test]
+    async fn test_read_launcher_settings_strict_at_rejects_malformed_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("missing.json");
+        let fallback = read_launcher_settings_strict_at(&missing)
+            .await
+            .expect("missing file yields defaults");
+        assert!(fallback.auto_clean_cache);
+
+        let valid_path = dir.path().join("valid.json");
+        std::fs::write(&valid_path, r#"{"autoCleanCache":false,"cacheRetentionPolicy":"7d"}"#)
+            .expect("write valid settings");
+        let valid = read_launcher_settings_strict_at(&valid_path)
+            .await
+            .expect("valid settings parse");
+        assert!(!valid.auto_clean_cache);
+        assert_eq!(valid.cache_retention_policy, CacheRetentionPolicy::Days7);
+
+        let corrupt_path = dir.path().join("corrupt.json");
+        std::fs::write(&corrupt_path, "{ not valid json").expect("write corrupt settings");
+        let err = read_launcher_settings_strict_at(&corrupt_path)
+            .await
+            .expect_err("malformed json must error instead of returning defaults");
+        assert!(err.contains("Failed to parse launcher settings"));
     }
 }

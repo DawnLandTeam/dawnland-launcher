@@ -263,6 +263,48 @@ pub struct ModParser {
     icons_dir: PathBuf,
 }
 
+fn ensure_mod_cache_schema(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS mod_cache (
+            cache_key TEXT PRIMARY KEY,
+            mod_id TEXT,
+            name TEXT,
+            version TEXT,
+            has_icon INTEGER,
+            depends TEXT DEFAULT '[]',
+            provides TEXT DEFAULT '[]',
+            detected_loader TEXT,
+            zh_name_embedded TEXT,
+            unreferenced_since INTEGER
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS mod_icon_retention (
+            file_name TEXT PRIMARY KEY,
+            unreferenced_since INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
+    for alter_sql in [
+        "ALTER TABLE mod_cache ADD COLUMN depends TEXT DEFAULT '[]'",
+        "ALTER TABLE mod_cache ADD COLUMN provides TEXT DEFAULT '[]'",
+        "ALTER TABLE mod_cache ADD COLUMN detected_loader TEXT",
+        "ALTER TABLE mod_cache ADD COLUMN zh_name_embedded TEXT",
+        "ALTER TABLE mod_cache ADD COLUMN unreferenced_since INTEGER",
+    ] {
+        if let Err(e) = conn.execute(alter_sql, []) {
+            if !e.to_string().contains("duplicate column name") {
+                tracing::warn!("Migration error on mod_cache ({}): {}", alter_sql, e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 impl ModParser {
     pub fn new(base_dir: &Path) -> Self {
         let cache_dir = base_dir.join(".mod_cache");
@@ -290,33 +332,7 @@ impl ModParser {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let conn = open_db_with_timeout(&self.db_path)?;
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS mod_cache (
-                cache_key TEXT PRIMARY KEY,
-                mod_id TEXT,
-                name TEXT,
-                version TEXT,
-                has_icon INTEGER,
-                depends TEXT DEFAULT '[]',
-                provides TEXT DEFAULT '[]',
-                detected_loader TEXT,
-                zh_name_embedded TEXT
-            )",
-            [],
-        )?;
-
-        for alter_sql in [
-            "ALTER TABLE mod_cache ADD COLUMN depends TEXT DEFAULT '[]'",
-            "ALTER TABLE mod_cache ADD COLUMN provides TEXT DEFAULT '[]'",
-            "ALTER TABLE mod_cache ADD COLUMN detected_loader TEXT",
-            "ALTER TABLE mod_cache ADD COLUMN zh_name_embedded TEXT",
-        ] {
-            if let Err(e) = conn.execute(alter_sql, []) {
-                if !e.to_string().contains("duplicate column name") {
-                    tracing::warn!("Migration error on mod_cache ({}): {}", alter_sql, e);
-                }
-            }
-        }
+        ensure_mod_cache_schema(&conn)?;
 
         // Invalidate stale cache entries whenever parser metadata schema changes
         let user_version: i32 = conn
@@ -507,12 +523,42 @@ impl ModParser {
     }
 
     /// Prune unreferenced `cache.db` entries and orphaned icon PNGs under `<base_dir>/.mod_cache`.
+    /// Prune unreferenced `cache.db` entries and orphaned icon PNGs under `<base_dir>/.mod_cache`.
     pub fn prune_unreferenced(
         base_dir: &Path,
         retention_secs: u64,
     ) -> Result<ModCachePruneStats, String> {
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Self::prune_unreferenced_at(base_dir, retention_secs, now_secs)
+    }
+
+    fn prune_unreferenced_at(
+        base_dir: &Path,
+        retention_secs: u64,
+        now_secs: u64,
+    ) -> Result<ModCachePruneStats, String> {
         let cache_dir = base_dir.join(".mod_cache");
-        if !cache_dir.exists() {
+        let cache_meta = match fs::symlink_metadata(&cache_dir) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(ModCachePruneStats::default());
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Failed to inspect mod cache directory {}: {}",
+                    cache_dir.display(),
+                    e
+                ));
+            }
+        };
+        if cache_meta.file_type().is_symlink() || !cache_meta.file_type().is_dir() {
+            tracing::warn!(
+                "Skipping mod cache GC because {} is a symlink or not a directory",
+                cache_dir.display()
+            );
             return Ok(ModCachePruneStats::default());
         }
 
@@ -525,110 +571,294 @@ impl ModParser {
         let icons_dir = cache_dir.join("icons");
         let mut live_icon_names: HashSet<String> = HashSet::new();
 
-        let now_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let _lock = MOD_CACHE_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if db_path.exists() {
-            let _lock = MOD_CACHE_WRITE_LOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let size_before = fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
-            let db_age_secs = fs::metadata(&db_path)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| now_secs.saturating_sub(d.as_secs()))
-                .unwrap_or(0);
-
-            if let Ok(mut conn) = open_db_with_timeout(&db_path) {
-                let existing_keys: Vec<String> = conn
-                    .prepare("SELECT cache_key FROM mod_cache")
-                    .and_then(|mut stmt| {
-                        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-                        Ok(rows.filter_map(Result::ok).collect())
-                    })
-                    .unwrap_or_default();
-
-                let mut dead_keys = Vec::new();
-                for key in existing_keys {
-                    let is_alive = live_prefixes.iter().any(|prefix| key.starts_with(prefix));
-                    if is_alive {
-                        live_icon_names.insert(format!("{}.png", sanitize_icon_stem(&key)));
-                    } else {
-                        dead_keys.push(key);
-                    }
+        let db_meta_opt = match fs::symlink_metadata(&db_path) {
+            Ok(m) => {
+                if m.file_type().is_symlink() || !m.file_type().is_file() {
+                    tracing::warn!(
+                        "Skipping mod cache GC because {} is a symlink or not a regular file",
+                        db_path.display()
+                    );
+                    return Ok(ModCachePruneStats::default());
                 }
+                Some(m)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to inspect mod cache DB {}: {}",
+                    db_path.display(),
+                    e
+                ));
+            }
+        };
 
-                // Respect grace window on DB rows so short-lived uninstall/reinstall within retention avoids re-parsing.
-                if !dead_keys.is_empty() && (retention_secs == 0 || db_age_secs >= retention_secs) {
-                    let tx = conn
-                        .transaction()
-                        .map_err(|e| format!("Failed to start mod_cache GC transaction: {}", e))?;
+        let icons_dir_valid = match fs::symlink_metadata(&icons_dir) {
+            Ok(m) => {
+                if m.file_type().is_symlink() || !m.file_type().is_dir() {
+                    tracing::warn!(
+                        "Skipping mod icon GC because {} is a symlink or not a directory",
+                        icons_dir.display()
+                    );
+                    false
+                } else {
+                    true
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to inspect mod icon directory {}: {}",
+                    icons_dir.display(),
+                    e
+                ));
+            }
+        };
+
+        let mut conn_opt = if let Some(db_meta) = db_meta_opt {
+            let size_before = db_meta.len();
+            let mut conn = open_db_with_timeout(&db_path)
+                .map_err(|e| format!("Failed to open mod_cache DB {}: {}", db_path.display(), e))?;
+            ensure_mod_cache_schema(&conn)
+                .map_err(|e| format!("Failed to ensure mod_cache schema: {}", e))?;
+
+            let rows: Vec<(String, Option<String>, Option<i64>)> = {
+                let mut stmt = conn
+                    .prepare("SELECT cache_key, mod_id, unreferenced_since FROM mod_cache")
+                    .map_err(|e| format!("Failed to query mod_cache rows: {}", e))?;
+                let mapped = stmt
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<i64>>(2)?,
+                        ))
+                    })
+                    .map_err(|e| format!("Failed to read mod_cache rows: {}", e))?;
+                mapped
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| format!("Failed to collect mod_cache rows: {}", e))?
+            };
+
+            let mut reactivated_keys = Vec::new();
+            let mut newly_dead_keys = Vec::new();
+            let mut delete_keys = Vec::new();
+
+            for (key, mod_id_opt, unref_opt) in rows {
+                let is_alive = live_prefixes.iter().any(|prefix| key.starts_with(prefix));
+                if is_alive {
+                    live_icon_names.insert(format!("{}.png", sanitize_icon_stem(&key)));
+                    if let Some(mod_id) =
+                        mod_id_opt.as_deref().map(str::trim).filter(|s| !s.is_empty())
                     {
-                        let mut del_stmt = tx
-                            .prepare("DELETE FROM mod_cache WHERE cache_key = ?")
-                            .map_err(|e| format!("Failed to prepare mod_cache delete: {}", e))?;
-                        for key in &dead_keys {
-                            if del_stmt.execute([key]).is_ok() {
-                                stats.removed_entries += 1;
+                        live_icon_names.insert(format!("{}.png", sanitize_icon_stem(mod_id)));
+                    }
+                    if unref_opt.is_some() {
+                        reactivated_keys.push(key);
+                    }
+                } else if retention_secs == 0 {
+                    delete_keys.push(key);
+                } else {
+                    match unref_opt {
+                        None => newly_dead_keys.push(key),
+                        Some(since_secs) => {
+                            let since = u64::try_from(since_secs).unwrap_or(now_secs);
+                            if now_secs.saturating_sub(since) >= retention_secs {
+                                delete_keys.push(key);
                             }
                         }
                     }
-                    tx.commit()
-                        .map_err(|e| format!("Failed to commit mod_cache GC transaction: {}", e))?;
+                }
+            }
 
-                    if stats.removed_entries > 0 {
-                        let _ = conn.execute_batch("VACUUM;");
+            if !reactivated_keys.is_empty()
+                || !newly_dead_keys.is_empty()
+                || !delete_keys.is_empty()
+            {
+                let tx = conn
+                    .transaction()
+                    .map_err(|e| format!("Failed to start mod_cache GC transaction: {}", e))?;
+                if !reactivated_keys.is_empty() {
+                    let mut reactivate_stmt = tx
+                        .prepare("UPDATE mod_cache SET unreferenced_since = NULL WHERE cache_key = ?")
+                        .map_err(|e| format!("Failed to prepare mod_cache reactivate: {}", e))?;
+                    for key in &reactivated_keys {
+                        reactivate_stmt.execute([key]).map_err(|e| {
+                            format!("Failed to clear mod_cache unreferenced_since: {}", e)
+                        })?;
+                    }
+                }
+                if !newly_dead_keys.is_empty() {
+                    let now_i64 = i64::try_from(now_secs).unwrap_or(i64::MAX);
+                    let mut mark_stmt = tx
+                        .prepare("UPDATE mod_cache SET unreferenced_since = ? WHERE cache_key = ? AND unreferenced_since IS NULL")
+                        .map_err(|e| format!("Failed to prepare mod_cache retention mark: {}", e))?;
+                    for key in &newly_dead_keys {
+                        mark_stmt
+                            .execute(rusqlite::params![now_i64, key])
+                            .map_err(|e| {
+                                format!("Failed to mark mod_cache unreferenced_since: {}", e)
+                            })?;
+                    }
+                }
+                if !delete_keys.is_empty() {
+                    let mut del_stmt = tx
+                        .prepare("DELETE FROM mod_cache WHERE cache_key = ?")
+                        .map_err(|e| format!("Failed to prepare mod_cache delete: {}", e))?;
+                    for key in &delete_keys {
+                        if del_stmt.execute([key]).is_ok() {
+                            stats.removed_entries += 1;
+                        }
+                    }
+                }
+                tx.commit()
+                    .map_err(|e| format!("Failed to commit mod_cache GC transaction: {}", e))?;
+
+                if stats.removed_entries > 0 {
+                    let _ = conn.execute_batch("VACUUM;");
+                }
+            }
+
+            let size_after = fs::symlink_metadata(&db_path)
+                .map(|m| m.len())
+                .unwrap_or(size_before);
+            stats.db_freed_bytes = size_before.saturating_sub(size_after);
+            stats.freed_bytes = stats.freed_bytes.saturating_add(stats.db_freed_bytes);
+            Some(conn)
+        } else {
+            None
+        };
+
+        if icons_dir_valid {
+            let entries = fs::read_dir(&icons_dir)
+                .map_err(|e| format!("Failed to read icons dir {}: {}", icons_dir.display(), e))?;
+
+            let mut candidate_orphans: Vec<(PathBuf, String, u64)> = Vec::new();
+            let mut live_files_on_disk: Vec<String> = Vec::new();
+
+            for entry in entries.flatten() {
+                let Ok(ft) = entry.file_type() else {
+                    continue;
+                };
+                if ft.is_symlink() || !ft.is_file() {
+                    continue;
+                }
+                let path = entry.path();
+                let Ok(metadata) = fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+                    continue;
+                }
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let stem = Path::new(&file_name)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                if live_icon_names.contains(&file_name)
+                    || sanitized_prefixes.iter().any(|p| stem.starts_with(p))
+                {
+                    live_files_on_disk.push(file_name);
+                } else {
+                    candidate_orphans.push((path, file_name, metadata.len()));
+                }
+            }
+
+            if retention_secs > 0 && !candidate_orphans.is_empty() && conn_opt.is_none() {
+                if let Ok(conn) = open_db_with_timeout(&db_path) {
+                    if ensure_mod_cache_schema(&conn).is_ok() {
+                        conn_opt = Some(conn);
                     }
                 }
             }
-            let size_after = fs::metadata(&db_path).map(|m| m.len()).unwrap_or(size_before);
-            stats.db_freed_bytes = size_before.saturating_sub(size_after);
-            stats.freed_bytes = stats.freed_bytes.saturating_add(stats.db_freed_bytes);
-        }
 
-        if icons_dir.exists() {
-            if let Ok(entries) = fs::read_dir(&icons_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if !path.is_file() {
-                        continue;
-                    }
-                    let file_name = entry.file_name().to_string_lossy().to_string();
-                    if live_icon_names.contains(&file_name) {
-                        continue;
-                    }
-                    let stem = Path::new(&file_name)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("");
-                    if sanitized_prefixes.iter().any(|p| stem.starts_with(p)) {
-                        continue;
-                    }
+            let existing_icon_retention: HashMap<String, u64> =
+                if let Some(conn) = conn_opt.as_ref() {
+                    conn.prepare("SELECT file_name, unreferenced_since FROM mod_icon_retention")
+                        .and_then(|mut stmt| {
+                            let mapped = stmt.query_map([], |row| {
+                                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                            })?;
+                            Ok(mapped
+                                .filter_map(Result::ok)
+                                .map(|(name, ts)| (name, u64::try_from(ts).unwrap_or(now_secs)))
+                                .collect())
+                        })
+                        .unwrap_or_default()
+                } else {
+                    HashMap::new()
+                };
 
-                    let metadata = match entry.metadata() {
-                        Ok(m) => m,
-                        Err(_) => continue,
-                    };
-                    if retention_secs > 0 {
-                        let file_age_secs = metadata
-                            .modified()
-                            .ok()
-                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                            .map(|d| now_secs.saturating_sub(d.as_secs()))
-                            .unwrap_or(0);
-                        if file_age_secs < retention_secs {
-                            continue;
+            let mut icon_retention_marks: Vec<String> = Vec::new();
+            let mut icon_retention_clears: Vec<String> = live_files_on_disk;
+            let mut surviving_orphans: HashSet<String> = HashSet::new();
+
+            for (path, file_name, len) in candidate_orphans {
+                let should_delete = if retention_secs == 0 {
+                    true
+                } else if let Some(&since) = existing_icon_retention.get(&file_name) {
+                    now_secs.saturating_sub(since) >= retention_secs
+                } else {
+                    icon_retention_marks.push(file_name.clone());
+                    false
+                };
+
+                if should_delete {
+                    match fs::remove_file(&path) {
+                        Ok(()) => {
+                            stats.removed_icons += 1;
+                            stats.freed_bytes = stats.freed_bytes.saturating_add(len);
+                            icon_retention_clears.push(file_name);
+                        }
+                        Err(_) => {
+                            surviving_orphans.insert(file_name);
                         }
                     }
+                } else {
+                    surviving_orphans.insert(file_name);
+                }
+            }
 
-                    let len = metadata.len();
-                    if fs::remove_file(&path).is_ok() {
-                        stats.removed_icons += 1;
-                        stats.freed_bytes = stats.freed_bytes.saturating_add(len);
+            for tracked_name in existing_icon_retention.keys() {
+                if !surviving_orphans.contains(tracked_name)
+                    && !icon_retention_clears.contains(tracked_name)
+                {
+                    icon_retention_clears.push(tracked_name.clone());
+                }
+            }
+
+            if let Some(conn) = conn_opt.as_mut() {
+                if !icon_retention_marks.is_empty() || !icon_retention_clears.is_empty() {
+                    let tx = conn.transaction().map_err(|e| {
+                        format!("Failed to start mod_icon_retention transaction: {}", e)
+                    })?;
+                    if !icon_retention_marks.is_empty() {
+                        let now_i64 = i64::try_from(now_secs).unwrap_or(i64::MAX);
+                        let mut ins_stmt = tx
+                            .prepare("INSERT OR IGNORE INTO mod_icon_retention (file_name, unreferenced_since) VALUES (?, ?)")
+                            .map_err(|e| format!("Failed to prepare mod_icon_retention insert: {}", e))?;
+                        for name in &icon_retention_marks {
+                            ins_stmt
+                                .execute(rusqlite::params![name, now_i64])
+                                .map_err(|e| format!("Failed to insert mod_icon_retention: {}", e))?;
+                        }
                     }
+                    if !icon_retention_clears.is_empty() {
+                        let mut del_stmt = tx
+                            .prepare("DELETE FROM mod_icon_retention WHERE file_name = ?")
+                            .map_err(|e| format!("Failed to prepare mod_icon_retention delete: {}", e))?;
+                        for name in &icon_retention_clears {
+                            del_stmt
+                                .execute([name])
+                                .map_err(|e| format!("Failed to delete mod_icon_retention: {}", e))?;
+                        }
+                    }
+                    tx.commit().map_err(|e| {
+                        format!("Failed to commit mod_icon_retention transaction: {}", e)
+                    })?;
                 }
             }
         }
@@ -1626,5 +1856,145 @@ mandatory=true
         assert!(icon_disabled.exists());
         assert!(!icon_orphan.exists());
         assert!(!icon_legacy.exists());
+    }
+
+    #[test]
+    fn test_prune_unreferenced_protects_mod_id_icons_and_tracks_unreferenced_grace_window() {
+        let dir = tempdir().unwrap();
+        let mods_dir = dir.path().join("versions").join("inst-a").join("mods");
+        fs::create_dir_all(&mods_dir).unwrap();
+
+        let live_jar = mods_dir.join("sodium.jar");
+        let temp_jar = mods_dir.join("tempmod.jar");
+        fs::write(&live_jar, b"sodium-bytes").unwrap();
+        fs::write(&temp_jar, b"temp-bytes-123").unwrap();
+
+        let mtime_live = fs::metadata(&live_jar)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mtime_temp = fs::metadata(&temp_jar)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let parser = ModParser::new(dir.path());
+        let key_live = build_mod_cache_key("sodium.jar", 12, mtime_live, "Fabric");
+        let key_temp = build_mod_cache_key("tempmod.jar", 14, mtime_temp, "Fabric");
+
+        parser.set_cache_entry(
+            &key_live,
+            &ModMetadata {
+                mod_id: Some("sodium".to_string()),
+                name: Some("Sodium".to_string()),
+                version: Some("0.5".to_string()),
+                has_icon: true,
+                ..Default::default()
+            },
+        );
+        parser.set_cache_entry(
+            &key_temp,
+            &ModMetadata {
+                mod_id: Some("temp_mod_id".to_string()),
+                name: Some("TempMod".to_string()),
+                version: Some("1.0".to_string()),
+                has_icon: true,
+                ..Default::default()
+            },
+        );
+
+        let live_mod_id_icon = parser.get_icon_path("sodium");
+        let temp_mod_id_icon = parser.get_icon_path("temp_mod_id");
+        let old_orphan_icon = parser.get_icon_path("old_orphan_icon");
+        fs::write(&live_mod_id_icon, b"live-icon").unwrap();
+        fs::write(&temp_mod_id_icon, b"temp-icon").unwrap();
+        fs::write(&old_orphan_icon, b"orphan-icon").unwrap();
+
+        // Backdate files & DB to 30 days ago to verify grace window does NOT use file mtime.
+        let thirty_days_ago = SystemTime::now() - Duration::from_secs(30 * 86_400);
+        for p in [
+            &live_mod_id_icon,
+            &temp_mod_id_icon,
+            &old_orphan_icon,
+            &parser.db_path,
+        ] {
+            let f = fs::OpenOptions::new().write(true).open(p).unwrap();
+            let _ = f.set_modified(thirty_days_ago);
+        }
+
+        // Remove tempmod.jar so key_temp & temp_mod_id_icon become unreferenced now.
+        fs::remove_file(&temp_jar).unwrap();
+
+        let t0 = 2_000_000_u64;
+        // Pass 1 at t0: records unreferenced_since = t0, removes nothing during 24h grace window.
+        let s1 = ModParser::prune_unreferenced_at(dir.path(), 86_400, t0).unwrap();
+        assert_eq!(s1.removed_entries, 0);
+        assert_eq!(s1.removed_icons, 0);
+        assert!(live_mod_id_icon.exists());
+        assert!(temp_mod_id_icon.exists());
+        assert!(old_orphan_icon.exists());
+
+        // Pass 2 at t0 + 86_399: still inside grace window.
+        let s2 = ModParser::prune_unreferenced_at(dir.path(), 86_400, t0 + 86_399).unwrap();
+        assert_eq!(s2.removed_entries, 0);
+        assert_eq!(s2.removed_icons, 0);
+        assert!(live_mod_id_icon.exists());
+        assert!(temp_mod_id_icon.exists());
+
+        // Pass 3 at t0 + 86_400: grace window elapsed -> temp row + orphan icons removed; live mod_id icon preserved.
+        let s3 = ModParser::prune_unreferenced_at(dir.path(), 86_400, t0 + 86_400).unwrap();
+        assert_eq!(s3.removed_entries, 1);
+        assert_eq!(s3.removed_icons, 2);
+        assert!(live_mod_id_icon.exists());
+        assert!(!temp_mod_id_icon.exists());
+        assert!(!old_orphan_icon.exists());
+
+        // Immediate prune (0s) also preserves live mod_id icon.
+        let s4 = ModParser::prune_unreferenced_at(dir.path(), 0, t0 + 86_500).unwrap();
+        assert_eq!(s4.removed_entries, 0);
+        assert_eq!(s4.removed_icons, 0);
+        assert!(live_mod_id_icon.exists());
+    }
+
+    #[test]
+    fn test_prune_unreferenced_skips_symlinked_icons_dir() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let victim = outside.path().join("do_not_delete.png");
+        fs::write(&victim, b"important").unwrap();
+
+        let _parser = ModParser::new(dir.path());
+        let icons_dir = dir.path().join(".mod_cache").join("icons");
+        fs::remove_dir_all(&icons_dir).unwrap();
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.path(), &icons_dir).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd")
+                .args([
+                    "/C",
+                    "mklink",
+                    "/J",
+                    &icons_dir.to_string_lossy(),
+                    &outside.path().to_string_lossy(),
+                ])
+                .status();
+            if status.map(|s| !s.success()).unwrap_or(true) {
+                return;
+            }
+        }
+
+        let stats = ModParser::prune_unreferenced_at(dir.path(), 0, 2_000_000).unwrap();
+        assert_eq!(stats.removed_icons, 0);
+        assert!(victim.exists());
     }
 }

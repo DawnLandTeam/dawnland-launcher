@@ -2163,6 +2163,7 @@ pub async fn import_dropped_files_to_instance(
         return Err(DawnlandError::Unknown("Invalid instance ID".to_string()).into());
     }
 
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let instance_lock = get_instance_lock(&instance_id);
     let _instance_guard = instance_lock.lock().await;
 

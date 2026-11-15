@@ -1430,6 +1430,7 @@ pub async fn apply_resource_renames(
         return Err("Instance is currently running; stop the game before batch renaming".to_string());
     }
 
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
     let instance_dir = get_minecraft_base().join("versions").join(&instance_id);
     if !tokio::fs::try_exists(&instance_dir).await.unwrap_or(false) {
         return Err(format!("Instance not found: {}", instance_id));
