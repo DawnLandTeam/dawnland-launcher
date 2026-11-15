@@ -300,16 +300,8 @@ static SETTINGS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 static SETTINGS_SAVE_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-pub fn get_launcher_settings_sync() -> LauncherSettings {
-    if let Ok(cache) = SETTINGS_CACHE.read() {
-        if let Some(settings) = cache.as_ref() {
-            return settings.clone();
-        }
-    }
-
-    let gen_before = SETTINGS_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
-    let config_path = get_launcher_settings_path();
-    let (settings, should_cache) = match std::fs::read_to_string(&config_path) {
+fn read_launcher_settings_from_disk(config_path: &std::path::Path) -> (LauncherSettings, bool) {
+    match std::fs::read_to_string(config_path) {
         Ok(content) => match serde_json::from_str::<LauncherSettings>(&content) {
             Ok(config) => (config, true),
             Err(e) => {
@@ -330,14 +322,22 @@ pub fn get_launcher_settings_sync() -> LauncherSettings {
             );
             (LauncherSettings::default(), false)
         }
-    };
+    }
+}
 
-    if should_cache {
-        if let Ok(mut cache) = SETTINGS_CACHE.write() {
-            if let Some(existing) = cache.as_ref() {
-                return existing.clone();
-            }
-            if SETTINGS_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == gen_before {
+fn finalize_launcher_settings_cache(
+    settings: LauncherSettings,
+    should_cache: bool,
+    gen_before: u64,
+    cache_lock: &RwLock<Option<LauncherSettings>>,
+    generation: &std::sync::atomic::AtomicU64,
+) -> LauncherSettings {
+    if let Ok(mut cache) = cache_lock.write() {
+        if let Some(existing) = cache.as_ref() {
+            return existing.clone();
+        }
+        if should_cache {
+            if generation.load(std::sync::atomic::Ordering::SeqCst) == gen_before {
                 *cache = Some(settings.clone());
             } else if let Some(existing) = cache.as_ref() {
                 return existing.clone();
@@ -346,6 +346,27 @@ pub fn get_launcher_settings_sync() -> LauncherSettings {
     }
 
     settings
+}
+
+fn get_launcher_settings_sync_with(
+    config_path: &std::path::Path,
+    cache_lock: &RwLock<Option<LauncherSettings>>,
+    generation: &std::sync::atomic::AtomicU64,
+) -> LauncherSettings {
+    if let Ok(cache) = cache_lock.read() {
+        if let Some(settings) = cache.as_ref() {
+            return settings.clone();
+        }
+    }
+
+    let gen_before = generation.load(std::sync::atomic::Ordering::SeqCst);
+    let (settings, should_cache) = read_launcher_settings_from_disk(config_path);
+    finalize_launcher_settings_cache(settings, should_cache, gen_before, cache_lock, generation)
+}
+
+pub fn get_launcher_settings_sync() -> LauncherSettings {
+    let config_path = get_launcher_settings_path();
+    get_launcher_settings_sync_with(&config_path, &SETTINGS_CACHE, &SETTINGS_GENERATION)
 }
 
 async fn read_launcher_settings_strict_at(
@@ -404,19 +425,14 @@ pub async fn save_launcher_settings(settings: LauncherSettings) -> Result<(), St
     save_launcher_settings_internal(settings).await
 }
 
-pub async fn save_launcher_settings_internal(settings: LauncherSettings) -> Result<(), String> {
-    let _guard = SETTINGS_SAVE_LOCK.lock().await;
+async fn persist_launcher_settings_locked(settings: LauncherSettings) -> Result<(), String> {
     SETTINGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
     let config_path = get_launcher_settings_path();
     let content = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize launcher settings: {}", e))?;
 
-    if let Some(parent) = config_path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-    }
-
-    tokio::fs::write(&config_path, content)
+    crate::core::fs_utils::write_file_atomic(&config_path, content.as_bytes())
         .await
         .map_err(|e| format!("Failed to write launcher settings: {}", e))?;
 
@@ -426,6 +442,11 @@ pub async fn save_launcher_settings_internal(settings: LauncherSettings) -> Resu
     }
 
     Ok(())
+}
+
+pub async fn save_launcher_settings_internal(settings: LauncherSettings) -> Result<(), String> {
+    let _guard = SETTINGS_SAVE_LOCK.lock().await;
+    persist_launcher_settings_locked(settings).await
 }
 
 #[tauri::command]
@@ -440,23 +461,7 @@ pub async fn sync_ui_language(language: String) -> Result<(), String> {
         return Ok(());
     }
     settings.ui_language = Some(trimmed);
-    SETTINGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-    let config_path = get_launcher_settings_path();
-    let content = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("Failed to serialize launcher settings: {}", e))?;
-    if let Some(parent) = config_path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    tokio::fs::write(&config_path, content)
-        .await
-        .map_err(|e| format!("Failed to write launcher settings: {}", e))?;
-
-    if let Ok(mut cache) = SETTINGS_CACHE.write() {
-        SETTINGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        *cache = Some(settings);
-    }
-    Ok(())
+    persist_launcher_settings_locked(settings).await
 }
 
 pub fn replace_download_url(url: &str, source: &DownloadSource) -> String {
@@ -630,5 +635,55 @@ mod tests {
             .await
             .expect_err("malformed json must error instead of returning defaults");
         assert!(err.contains("Failed to parse launcher settings"));
+    }
+
+    #[test]
+    fn test_sync_settings_falls_back_to_cache_on_corrupt_disk_and_skips_caching_defaults() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let corrupt_path = dir.path().join("launcher_settings.json");
+        std::fs::write(&corrupt_path, "{ truncated").expect("write corrupt settings");
+
+        // 1. Cold cache + corrupt disk returns defaults without poisoning the cache with defaults.
+        let cold_cache = RwLock::new(None);
+        let generation = std::sync::atomic::AtomicU64::new(0);
+        let cold_res = get_launcher_settings_sync_with(&corrupt_path, &cold_cache, &generation);
+        assert!(cold_res.auto_clean_cache);
+        assert_eq!(cold_res.cache_retention_policy, CacheRetentionPolicy::Immediate);
+        assert!(cold_cache.read().expect("read lock").is_none());
+
+        // 2. Concurrent cache fill after read failure returns the cached settings instead of defaults.
+        let custom = LauncherSettings {
+            auto_clean_cache: false,
+            cache_retention_policy: CacheRetentionPolicy::Days7,
+            global_max_memory: Some(8192),
+            ..Default::default()
+        };
+
+        let race_cache = RwLock::new(None);
+        let race_gen = std::sync::atomic::AtomicU64::new(0);
+        let gen_before = race_gen.load(std::sync::atomic::Ordering::SeqCst);
+        let (disk_settings, should_cache) = read_launcher_settings_from_disk(&corrupt_path);
+        assert!(!should_cache);
+        {
+            let mut guard = race_cache.write().expect("write lock");
+            race_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *guard = Some(custom.clone());
+        }
+        let raced = finalize_launcher_settings_cache(
+            disk_settings,
+            should_cache,
+            gen_before,
+            &race_cache,
+            &race_gen,
+        );
+        assert!(!raced.auto_clean_cache);
+        assert_eq!(raced.cache_retention_policy, CacheRetentionPolicy::Days7);
+        assert_eq!(raced.global_max_memory, Some(8192));
+
+        // 3. Warm cache + corrupt disk always returns the warm cache entry.
+        let warm = get_launcher_settings_sync_with(&corrupt_path, &race_cache, &race_gen);
+        assert!(!warm.auto_clean_cache);
+        assert_eq!(warm.cache_retention_policy, CacheRetentionPolicy::Days7);
+        assert_eq!(warm.global_max_memory, Some(8192));
     }
 }
