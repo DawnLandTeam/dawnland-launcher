@@ -355,7 +355,7 @@ impl ExecutableTask for InstallModpackTask {
                             let orig_rel_path = format!("mods/{}", orig_filename);
                             let category = determine_asset_category(&orig_rel_path);
 
-                            let final_enabled_name = plan_modpack_filename(
+                            let mut final_enabled_name = plan_modpack_filename(
                                 &naming_settings,
                                 &category,
                                 &orig_filename,
@@ -367,6 +367,14 @@ impl ExecutableTask for InstallModpackTask {
                                 zh_opt.as_ref(),
                                 &mut used_filenames,
                             );
+                            if !crate::core::fs_utils::is_safe_single_name(&final_enabled_name) {
+                                tracing::warn!(
+                                    "Unsafe planned modpack filename '{}', falling back to original: {}",
+                                    final_enabled_name,
+                                    orig_filename
+                                );
+                                final_enabled_name = orig_filename.clone();
+                            }
                             let final_rel_enabled = format!("mods/{}", final_enabled_name);
                             let is_disabled = is_modpack_asset_disabled(
                                 &instance_dir,
@@ -382,6 +390,10 @@ impl ExecutableTask for InstallModpackTask {
                                 final_enabled_name.clone()
                             };
                             let dest = instance_dir.join("mods").join(&disk_filename);
+                            if !dest.starts_with(&instance_dir) {
+                                tracing::warn!("Modpack destination path escapes instance directory: {:?}", dest);
+                                continue;
+                            }
 
                             let download_url_clone = file.download_url.clone();
                             let hash_clone = file.hash.clone();
@@ -507,7 +519,7 @@ impl ExecutableTask for InstallModpackTask {
                                     .unwrap_or(("", orig_filename.as_str()));
                                 let dir_used = used_by_dir.entry(parent_rel.to_string()).or_default();
 
-                                let final_enabled_name = plan_modpack_filename(
+                                let mut final_enabled_name = plan_modpack_filename(
                                     &naming_settings,
                                     &cat,
                                     &orig_filename,
@@ -519,6 +531,14 @@ impl ExecutableTask for InstallModpackTask {
                                     zh_opt.as_ref(),
                                     dir_used,
                                 );
+                                if !crate::core::fs_utils::is_safe_single_name(&final_enabled_name) {
+                                    tracing::warn!(
+                                        "Unsafe planned modpack filename '{}', falling back to original: {}",
+                                        final_enabled_name,
+                                        orig_filename
+                                    );
+                                    final_enabled_name = orig_filename.clone();
+                                }
                                 let final_rel_enabled = if parent_rel.is_empty() {
                                     final_enabled_name.clone()
                                 } else {
@@ -538,6 +558,10 @@ impl ExecutableTask for InstallModpackTask {
                                     final_rel_enabled.clone()
                                 };
                                 let dest = instance_dir.join(&disk_rel);
+                                if !dest.starts_with(&instance_dir) {
+                                    tracing::warn!("Modpack destination path escapes instance directory: {:?}", dest);
+                                    continue;
+                                }
 
                                 let hash = file.hashes.get("sha1").cloned();
                                 let version_id_opt = hash
@@ -1676,7 +1700,10 @@ fn plan_modpack_filename(
         source: Some(source.to_string()),
     };
 
-    let desired = crate::core::resource_naming::resolve_filename_for_download(settings, &ctx);
+    let mut desired = crate::core::resource_naming::resolve_filename_for_download(settings, &ctx);
+    if !crate::core::fs_utils::is_safe_single_name(&desired) {
+        desired = orig_filename.to_string();
+    }
     if !used_names.contains(&desired) {
         used_names.insert(desired.clone());
         return desired;
@@ -1685,6 +1712,9 @@ fn plan_modpack_filename(
     let (stem, ext) = crate::core::resource_naming::split_stem_and_ext(&desired);
     for idx in 2..=99 {
         let candidate = format!("{} ({}){}", stem, idx, ext);
+        if !crate::core::fs_utils::is_safe_single_name(&candidate) {
+            continue;
+        }
         if !used_names.contains(&candidate) {
             used_names.insert(candidate.clone());
             return candidate;
@@ -1941,5 +1971,71 @@ mod modpack_naming_tests {
         assert!(!manifest.assets.contains_key("mods/[植物魔法] botania-1.0.jar"));
         assert!(!inst_dir.join("mods").join(removed_mod).exists());
         assert!(inst_dir.join("mods").join(old_renamed_disabled).exists());
+    }
+
+    #[test]
+    fn test_plan_modpack_filename_rejects_unsafe_traversal_and_escapes() {
+        use crate::core::settings::{FilenameFormatMode, LauncherSettings, ResourceNamingSettings};
+
+        // 1. Slashes and traversal in metadata are sanitized and result is a safe single filename
+        let settings = LauncherSettings {
+            resource_naming: ResourceNamingSettings {
+                filename_mode: FilenameFormatMode::Custom,
+                custom_template: "{zh}-{slug}-{stem}{ext}".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let lookup = crate::core::translation::TranslationLookupResult {
+            zh_name: "../../../evil".to_string(),
+            zh_short_name: "../evil".to_string(),
+            zh_summary: None,
+            wiki_id: None,
+            trust_level: crate::core::translation::TRUST_VERIFIED,
+            source_tag: "consensus".to_string(),
+        };
+
+        let mut used = std::collections::HashSet::new();
+        let planned = plan_modpack_filename(
+            &settings,
+            &crate::models::instance::AssetCategory::Mod,
+            "normal-mod-1.0.jar",
+            "modrinth",
+            Some("evil/slug"),
+            Some("evil/name"),
+            Some("1.21.1"),
+            Some("fabric"),
+            Some(&lookup),
+            &mut used,
+        );
+
+        assert!(crate::core::fs_utils::is_safe_single_name(&planned));
+        assert!(!planned.contains('/') && !planned.contains('\\'));
+
+        // 2. Unsafe names that fail is_safe_single_name fall back to orig_filename
+        let unsafe_settings = LauncherSettings {
+            resource_naming: ResourceNamingSettings {
+                filename_mode: FilenameFormatMode::Custom,
+                custom_template: "CON.jar".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut used2 = std::collections::HashSet::new();
+        let fallback = plan_modpack_filename(
+            &unsafe_settings,
+            &crate::models::instance::AssetCategory::Mod,
+            "normal-mod-1.0.jar",
+            "curseforge",
+            None,
+            None,
+            None,
+            None,
+            None,
+            &mut used2,
+        );
+        assert_eq!(fallback, "normal-mod-1.0.jar");
+        assert!(crate::core::fs_utils::is_safe_single_name(&fallback));
     }
 }
