@@ -10,7 +10,68 @@ permissions:
   contents: write
 
 jobs:
+  prepare-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: [ 'self-hosted', 'Linux' ]
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.ensure_release.outputs.release_id }}
+      is_draft: ${{ steps.ensure_release.outputs.is_draft }}
+      is_prerelease: ${{ steps.ensure_release.outputs.is_prerelease }}
+    steps:
+      - name: Ensure single GitHub Draft Release exists
+        id: ensure_release
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const tag = context.ref.replace(/^refs\/tags\//, '');
+            if (!tag) {
+              throw new Error(`Unexpected ref without tag: ${context.ref}`);
+            }
+            const version = tag.replace(/^v/, '');
+            let existing = null;
+
+            // listReleases includes draft releases when authenticated with contents:write,
+            // whereas getReleaseByTag returns 404 for drafts.
+            for await (const response of github.paginate.iterator(
+              github.rest.repos.listReleases,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100
+              }
+            )) {
+              existing = response.data.find((r) => r.tag_name === tag);
+              if (existing) break;
+            }
+
+            if (existing) {
+              console.log(`Found existing release #${existing.id} for tag ${tag} (draft=${existing.draft}, prerelease=${existing.prerelease})`);
+              core.setOutput('release_id', String(existing.id));
+              core.setOutput('is_draft', String(Boolean(existing.draft)));
+              core.setOutput('is_prerelease', String(Boolean(existing.prerelease)));
+              return;
+            }
+
+            const created = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `v${version}`,
+              draft: true,
+              prerelease: false,
+              body: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
+            });
+
+            console.log(`Created draft release #${created.data.id} for tag ${tag}`);
+            core.setOutput('release_id', String(created.data.id));
+            core.setOutput('is_draft', 'true');
+            core.setOutput('is_prerelease', 'false');
+
   publish-tauri:
+    needs: prepare-release
+    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     environment: release
@@ -181,46 +242,15 @@ jobs:
           }
           "
 
-      - name: Check if release exists
-        id: check_release
+      - name: Upload Artifacts to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
-        with:
-          script: |
-            try {
-              const version = '${{ github.ref_name }}';
-              await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: version
-              });
-              core.setOutput('exists', 'true');
-            } catch (error) {
-              if (error.status === 404) {
-                core.setOutput('exists', 'false');
-              } else {
-                throw error;
-              }
-            }
-
-      - name: Create GitHub Release and Upload Artifacts
-        if: startsWith(github.ref, 'refs/tags/v') && steps.check_release.outputs.exists == 'false'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: 'v${{ env.VERSION }}'
-          draft: true
-          prerelease: false
-          body: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
-          files: ${{ env.RELEASE_FILES }}
-
-      - name: Upload Artifacts to Existing GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') && steps.check_release.outputs.exists == 'true'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
+          tag_name: ${{ github.ref_name }}
+          draft: ${{ needs.prepare-release.outputs.is_draft }}
+          prerelease: ${{ needs.prepare-release.outputs.is_prerelease }}
           files: ${{ env.RELEASE_FILES }}
 
 
