@@ -145,8 +145,7 @@
       "editTranslationTitle": "Custom Display Name",
       "customZhLabel": "Localized Name / Alias",
       "customZhPlaceholder": "e.g. 机械动力 (Create)",
-      "customZhHint": "User overrides take highest priority and are never overwritten by automatic sync; brackets are stripped when renaming files.",
-      "submitFeedbackOption": "Also submit to community lexicon moderation queue to improve consensus naming"
+      "customZhHint": "User overrides take highest priority and are never overwritten by automatic sync; brackets are stripped when renaming files."
     },
     "downloadMoreMods": "Download More Mods",
     "noLocalMods": "No mods installed for this instance",

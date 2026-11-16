@@ -145,8 +145,7 @@
       "editTranslationTitle": "自定义中文译名",
       "customZhLabel": "中文译名 / 别名",
       "customZhPlaceholder": "例如：机械动力 (Create)",
-      "customZhHint": "用户自定义译名拥有最高优先级，不会被自动同步覆盖；重命名文件名时会自动截取括号前短名。",
-      "submitFeedbackOption": "同时提交至社区词库审核队列，帮助改进大众统一译名"
+      "customZhHint": "用户自定义译名拥有最高优先级，不会被自动同步覆盖；重命名文件名时会自动截取括号前短名。"
     },
     "downloadMoreMods": "下载更多模组",
     "noLocalMods": "该实例还没有安装任何模组",

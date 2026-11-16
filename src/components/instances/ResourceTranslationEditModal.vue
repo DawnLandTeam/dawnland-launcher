@@ -32,7 +32,6 @@ const emit = defineEmits<{
 }>();
 
 const zhInput = ref('');
-const submitFeedback = ref(true);
 const isSaving = ref(false);
 
 watch(
@@ -40,7 +39,6 @@ watch(
   ([isOpen, targetVal]) => {
     if (isOpen && targetVal) {
       zhInput.value = targetVal.currentZhName || '';
-      submitFeedback.value = true;
     }
   },
 );
@@ -64,7 +62,6 @@ async function handleSave() {
       zhName: trimmed,
       instanceId: props.target.instanceId,
       relPath: props.target.relPath,
-      submitFeedback: submitFeedback.value,
     });
     toast.success('已保存自定义译名');
     emit('saved', result);
@@ -103,15 +100,6 @@ async function handleSave() {
           {{ $t('instances.resourceNaming.customZhHint', '用户自定义译名拥有最高优先级，不会被后续自动同步覆盖；重命名文件名时会自动截取括号前短名。') }}
         </p>
       </div>
-
-      <label class="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-        <input
-          type="checkbox"
-          v-model="submitFeedback"
-          class="rounded border-neutral-300 dark:border-zinc-700 accent-emerald-600"
-        />
-        {{ $t('instances.resourceNaming.submitFeedbackOption', '同时提交至社区词库审核队列，帮助改进大众统一译名') }}
-      </label>
 
       <div class="flex justify-end gap-2 pt-2">
         <DButton variant="outline" size="sm" @click="emit('update:open', false)" :disabled="isSaving">

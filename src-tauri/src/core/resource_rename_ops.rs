@@ -15,9 +15,8 @@ use crate::core::settings::{
     get_launcher_settings, resolve_active_template, should_rename_category, LauncherSettings,
 };
 use crate::core::translation::{
-    category_to_key, lookup_translation_async, resolve_online_translations, HashMappingEntry,
-    OnlineResolveQueryItem, TranslationDb, TranslationEntry, TranslationLookupResult,
-    TRUST_AUTHOR_LANG,
+    category_to_key, lookup_translation_async, HashMappingEntry, TranslationDb, TranslationEntry,
+    TranslationLookupResult, TRUST_AUTHOR_LANG,
 };
 use crate::models::instance::{AssetCategory, AssetManifest, AssetRecord, AssetSourceType};
 use serde::{Deserialize, Serialize};
@@ -501,7 +500,7 @@ async fn read_instance_mc_and_loader(instance_dir: &Path, instance_id: &str) -> 
 }
 
 /// Event-driven background identification of instance resources via SHA-1 / CurseForge MurmurHash2,
-/// local JAR `zh_cn.json` extraction, `translations.db` matching, and optional backend resolution.
+/// local JAR `zh_cn.json` extraction, and local `translations.db` matching.
 /// Emits `"instance-translations-updated"` when any new metadata or translation is written.
 #[tauri::command]
 pub async fn resolve_instance_translations(
@@ -786,7 +785,7 @@ pub async fn resolve_instance_translations(
         .unwrap_or_default()
     };
 
-    // Step 6: Lookup translations locally; collect unresolved items for optional backend resolution
+    // Step 6: Lookup translations locally from translations.db
     struct ItemLookupSpec {
         manifest_key: String,
         category: AssetCategory,
