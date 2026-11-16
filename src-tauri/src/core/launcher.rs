@@ -235,32 +235,42 @@ fn arg_references_game_dir(arg_raw: &str, game_dir: &Path) -> bool {
     false
 }
 
+/// Process attributes inspected when identifying companion / watchdog processes.
+pub struct CompanionCandidate<'a> {
+    pub pid: u32,
+    pub parent_os_pid: Option<u32>,
+    pub cmd: &'a [String],
+    pub cwd: Option<&'a Path>,
+}
+
+/// Target Minecraft instance identity used to match companion / watchdog processes.
+pub struct CompanionTarget<'a> {
+    pub target_pid: u32,
+    pub game_dir: &'a Path,
+    pub self_pid: u32,
+    pub allow_direct_child: bool,
+}
+
 /// Pure helper to check whether a process's metadata matches the signature of a watchdog / companion process
 /// for a specific Minecraft instance (e.g. Crash Assistant, watchdog monitors).
 pub fn matches_companion_criteria(
-    cmd: &[String],
-    cwd: Option<&Path>,
-    parent_os_pid: Option<u32>,
-    target_pid: u32,
-    game_dir: &Path,
-    proc_pid: u32,
-    self_pid: u32,
-    allow_direct_child: bool,
+    candidate: &CompanionCandidate<'_>,
+    target: &CompanionTarget<'_>,
 ) -> bool {
-    if proc_pid == 0 || proc_pid == self_pid || proc_pid == target_pid {
+    if candidate.pid == 0 || candidate.pid == target.self_pid || candidate.pid == target.target_pid {
         return false;
     }
 
     // 1. Direct child in OS process tree (only while target_pid is still known alive)
-    if allow_direct_child {
-        if let Some(ppid) = parent_os_pid {
-            if ppid == target_pid {
+    if target.allow_direct_child {
+        if let Some(ppid) = candidate.parent_os_pid {
+            if ppid == target.target_pid {
                 return true;
             }
         }
     }
 
-    let target_pid_str = target_pid.to_string();
+    let target_pid_str = target.target_pid.to_string();
 
     // 2. Check command line arguments for watchdog / companion patterns
     let mut has_parent_pid_flag = false;
@@ -268,11 +278,11 @@ pub fn matches_companion_criteria(
     let mut has_crash_assistant_cue = false;
     let mut matches_game_dir = false;
 
-    for (idx, arg_raw) in cmd.iter().enumerate() {
+    for (idx, arg_raw) in candidate.cmd.iter().enumerate() {
         let arg = arg_raw.trim().to_lowercase();
         if arg == "-parentpid" || arg == "--parentpid" {
             has_parent_pid_flag = true;
-            if let Some(next_arg) = cmd.get(idx + 1) {
+            if let Some(next_arg) = candidate.cmd.get(idx + 1) {
                 if next_arg.trim() == target_pid_str {
                     matches_parent_pid = true;
                 }
@@ -293,7 +303,7 @@ pub fn matches_companion_criteria(
             has_crash_assistant_cue = true;
         }
 
-        if arg_references_game_dir(arg_raw, game_dir) {
+        if arg_references_game_dir(arg_raw, target.game_dir) {
             matches_game_dir = true;
         }
     }
@@ -312,8 +322,8 @@ pub fn matches_companion_criteria(
     }
 
     // 3. Check cwd strictly under game_dir
-    if let Some(cwd_path) = cwd {
-        if path_is_same_or_under(cwd_path, game_dir) {
+    if let Some(cwd_path) = candidate.cwd {
+        if path_is_same_or_under(cwd_path, target.game_dir) {
             let cwd_lower = cwd_path.to_string_lossy().to_lowercase();
             if has_crash_assistant_cue || cwd_lower.contains("crash_assistant") {
                 return true;
@@ -326,29 +336,21 @@ pub fn matches_companion_criteria(
 
 pub fn is_instance_companion_process(
     process: &sysinfo::Process,
-    parent_pid: u32,
-    game_dir: &Path,
-    self_pid: u32,
-    allow_direct_child: bool,
+    target: &CompanionTarget<'_>,
 ) -> bool {
     let cmd_strings: Vec<String> = process
         .cmd()
         .iter()
         .map(|s| s.to_string_lossy().into_owned())
         .collect();
-    let parent_os_pid = process.parent().map(|p| p.as_u32());
-    let proc_pid = process.pid().as_u32();
+    let candidate = CompanionCandidate {
+        pid: process.pid().as_u32(),
+        parent_os_pid: process.parent().map(|p| p.as_u32()),
+        cmd: &cmd_strings,
+        cwd: process.cwd(),
+    };
 
-    matches_companion_criteria(
-        &cmd_strings,
-        process.cwd(),
-        parent_os_pid,
-        parent_pid,
-        game_dir,
-        proc_pid,
-        self_pid,
-        allow_direct_child,
-    )
+    matches_companion_criteria(&candidate, target)
 }
 
 /// Pre-emptively terminates all companion / watchdog processes (like Crash Assistant)
@@ -360,17 +362,16 @@ pub async fn terminate_instance_companions(
 ) {
     let mut sys = sysinfo::System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-    let self_pid = std::process::id();
+    let target = CompanionTarget {
+        target_pid: parent_pid,
+        game_dir,
+        self_pid: std::process::id(),
+        allow_direct_child,
+    };
 
     let mut companion_pids = Vec::new();
     for (pid, process) in sys.processes() {
-        if is_instance_companion_process(
-            process,
-            parent_pid,
-            game_dir,
-            self_pid,
-            allow_direct_child,
-        ) {
+        if is_instance_companion_process(process, &target) {
             companion_pids.push(pid.as_u32());
         }
     }
@@ -4507,176 +4508,178 @@ mod tests {
         let target_pid = 1234;
         let self_pid = 9999;
 
+        let target_with_direct = CompanionTarget {
+            target_pid,
+            game_dir,
+            self_pid,
+            allow_direct_child: true,
+        };
+        let target_no_direct = CompanionTarget {
+            target_pid,
+            game_dir,
+            self_pid,
+            allow_direct_child: false,
+        };
+
         // 1. Direct child process in OS process tree (only when allow_direct_child is true)
-        assert!(matches_companion_criteria(
-            &["java.exe".to_string()],
-            None,
-            Some(target_pid),
-            target_pid,
-            game_dir,
-            5555,
-            self_pid,
-            true,
-        ));
-        assert!(!matches_companion_criteria(
-            &["java.exe".to_string()],
-            None,
-            Some(target_pid),
-            target_pid,
-            game_dir,
-            5555,
-            self_pid,
-            false,
-        ));
+        let direct_child_cmd = ["java.exe".to_string()];
+        let direct_child = CompanionCandidate {
+            pid: 5555,
+            parent_os_pid: Some(target_pid),
+            cmd: &direct_child_cmd,
+            cwd: None,
+        };
+        assert!(matches_companion_criteria(&direct_child, &target_with_direct));
+        assert!(!matches_companion_criteria(&direct_child, &target_no_direct));
 
         // 2. Separate process with -parentPID flag matching target PID
+        let parent_pid_cmd = [
+            "java.exe".to_string(),
+            "-jar".to_string(),
+            "local/crash_assistant/app.jar".to_string(),
+            "-parentPID".to_string(),
+            "1234".to_string(),
+        ];
         assert!(matches_companion_criteria(
-            &[
-                "java.exe".to_string(),
-                "-jar".to_string(),
-                "local/crash_assistant/app.jar".to_string(),
-                "-parentPID".to_string(),
-                "1234".to_string(),
-            ],
-            None,
-            Some(1),
-            target_pid,
-            game_dir,
-            5556,
-            self_pid,
-            false,
+            &CompanionCandidate {
+                pid: 5556,
+                parent_os_pid: Some(1),
+                cmd: &parent_pid_cmd,
+                cwd: None,
+            },
+            &target_no_direct,
         ));
 
         // 3. Process with -parentPID=1234
+        let parent_pid_eq_cmd = [
+            "java.exe".to_string(),
+            "-parentPID=1234".to_string(),
+        ];
         assert!(matches_companion_criteria(
-            &[
-                "java.exe".to_string(),
-                "-parentPID=1234".to_string(),
-            ],
-            None,
-            None,
-            target_pid,
-            game_dir,
-            5557,
-            self_pid,
-            false,
+            &CompanionCandidate {
+                pid: 5557,
+                parent_os_pid: None,
+                cmd: &parent_pid_eq_cmd,
+                cwd: None,
+            },
+            &target_no_direct,
         ));
 
         // 4. Crash Assistant located inside instance game_dir (without conflicting -parentPID)
+        let in_game_dir_cmd = [
+            "javaw.exe".to_string(),
+            "-jar".to_string(),
+            "C:/mc/versions/CursedWalking/local/crash_assistant/app.jar".to_string(),
+        ];
         assert!(matches_companion_criteria(
-            &[
-                "javaw.exe".to_string(),
-                "-jar".to_string(),
-                "C:/mc/versions/CursedWalking/local/crash_assistant/app.jar".to_string(),
-            ],
-            None,
-            None,
-            target_pid,
-            game_dir,
-            5558,
-            self_pid,
-            false,
+            &CompanionCandidate {
+                pid: 5558,
+                parent_os_pid: None,
+                cmd: &in_game_dir_cmd,
+                cwd: None,
+            },
+            &target_no_direct,
         ));
 
         // 5. Prefix-sharing PID (-parentPID=12345 or -parentPID 12345) must NOT match 1234
+        let prefix_eq_cmd = [
+            "java.exe".to_string(),
+            "-jar".to_string(),
+            "local/crash_assistant/app.jar".to_string(),
+            "-parentPID=12345".to_string(),
+        ];
         assert!(!matches_companion_criteria(
-            &[
-                "java.exe".to_string(),
-                "-jar".to_string(),
-                "local/crash_assistant/app.jar".to_string(),
-                "-parentPID=12345".to_string(),
-            ],
-            None,
-            None,
-            target_pid,
-            game_dir,
-            5559,
-            self_pid,
-            false,
+            &CompanionCandidate {
+                pid: 5559,
+                parent_os_pid: None,
+                cmd: &prefix_eq_cmd,
+                cwd: None,
+            },
+            &target_no_direct,
         ));
+        let prefix_split_cmd = [
+            "java.exe".to_string(),
+            "-jar".to_string(),
+            "local/crash_assistant/app.jar".to_string(),
+            "-parentPID".to_string(),
+            "12345".to_string(),
+        ];
         assert!(!matches_companion_criteria(
-            &[
-                "java.exe".to_string(),
-                "-jar".to_string(),
-                "local/crash_assistant/app.jar".to_string(),
-                "-parentPID".to_string(),
-                "12345".to_string(),
-            ],
-            None,
-            None,
-            target_pid,
-            game_dir,
-            5560,
-            self_pid,
-            false,
+            &CompanionCandidate {
+                pid: 5560,
+                parent_os_pid: None,
+                cmd: &prefix_split_cmd,
+                cwd: None,
+            },
+            &target_no_direct,
         ));
 
         // 6. Another instance's Crash Assistant with a different -parentPID must NOT match even in same game_dir
+        let other_instance_pid_cmd = [
+            "java.exe".to_string(),
+            "-jar".to_string(),
+            "C:/mc/versions/CursedWalking/local/crash_assistant/app.jar".to_string(),
+            "-parentPID".to_string(),
+            "8888".to_string(),
+        ];
         assert!(!matches_companion_criteria(
-            &[
-                "java.exe".to_string(),
-                "-jar".to_string(),
-                "C:/mc/versions/CursedWalking/local/crash_assistant/app.jar".to_string(),
-                "-parentPID".to_string(),
-                "8888".to_string(),
-            ],
-            Some(Path::new("C:/mc/versions/CursedWalking/local/crash_assistant")),
-            None,
-            target_pid,
-            game_dir,
-            5561,
-            self_pid,
-            false,
+            &CompanionCandidate {
+                pid: 5561,
+                parent_os_pid: None,
+                cmd: &other_instance_pid_cmd,
+                cwd: Some(Path::new("C:/mc/versions/CursedWalking/local/crash_assistant")),
+            },
+            &target_no_direct,
         ));
 
         // 7. Prefix-sharing game_dir (CursedWalking2 vs CursedWalking) must NOT match via args or cwd
+        let prefix_dir_cmd = [
+            "javaw.exe".to_string(),
+            "-jar".to_string(),
+            "C:/mc/versions/CursedWalking2/local/crash_assistant/app.jar".to_string(),
+        ];
         assert!(!matches_companion_criteria(
-            &[
-                "javaw.exe".to_string(),
-                "-jar".to_string(),
-                "C:/mc/versions/CursedWalking2/local/crash_assistant/app.jar".to_string(),
-            ],
-            Some(Path::new("C:/mc/versions/CursedWalking2/local/crash_assistant")),
-            None,
-            target_pid,
-            game_dir,
-            5562,
-            self_pid,
-            false,
+            &CompanionCandidate {
+                pid: 5562,
+                parent_os_pid: None,
+                cmd: &prefix_dir_cmd,
+                cwd: Some(Path::new("C:/mc/versions/CursedWalking2/local/crash_assistant")),
+            },
+            &target_no_direct,
         ));
 
         // 8. Unrelated process should NOT match
+        let unrelated_cmd = ["chrome.exe".to_string(), "--type=renderer".to_string()];
         assert!(!matches_companion_criteria(
-            &["chrome.exe".to_string(), "--type=renderer".to_string()],
-            Some(Path::new("C:/Program Files/Google/Chrome")),
-            Some(8888),
-            target_pid,
-            game_dir,
-            7777,
-            self_pid,
-            true,
+            &CompanionCandidate {
+                pid: 7777,
+                parent_os_pid: Some(8888),
+                cmd: &unrelated_cmd,
+                cwd: Some(Path::new("C:/Program Files/Google/Chrome")),
+            },
+            &target_with_direct,
         ));
 
         // 9. Self PID or target PID should never be considered a companion
+        let launcher_cmd = ["launcher.exe".to_string()];
         assert!(!matches_companion_criteria(
-            &["launcher.exe".to_string()],
-            None,
-            None,
-            target_pid,
-            game_dir,
-            self_pid,
-            self_pid,
-            true,
+            &CompanionCandidate {
+                pid: self_pid,
+                parent_os_pid: None,
+                cmd: &launcher_cmd,
+                cwd: None,
+            },
+            &target_with_direct,
         ));
+        let target_cmd = ["java.exe".to_string()];
         assert!(!matches_companion_criteria(
-            &["java.exe".to_string()],
-            None,
-            None,
-            target_pid,
-            game_dir,
-            target_pid,
-            self_pid,
-            true,
+            &CompanionCandidate {
+                pid: target_pid,
+                parent_os_pid: None,
+                cmd: &target_cmd,
+                cwd: None,
+            },
+            &target_with_direct,
         ));
     }
 
