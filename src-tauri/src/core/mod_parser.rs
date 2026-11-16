@@ -43,14 +43,46 @@ fn sanitize_icon_stem(raw: &str) -> String {
 
 /// Bump this version whenever `ModParser` metadata extraction semantics change so
 /// stale SQLite cache entries from older versions are automatically bypassed.
-pub const MOD_PARSER_CACHE_VERSION: &str = "v4";
-const MOD_CACHE_SCHEMA_VERSION: i32 = 4;
+pub const MOD_PARSER_CACHE_VERSION: &str = "v5";
+const MOD_CACHE_SCHEMA_VERSION: i32 = 5;
+const TMP_ICON_ORPHAN_GRACE_SECS: u64 = 300;
 
 /// Cap metadata entry reads inside mod archives to avoid excessive memory usage on malformed JARs.
 const MAX_METADATA_READ_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ICON_READ_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_NESTED_JAR_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_JIJ_DEPTH: usize = 3;
+
+/// Resolve the canonical icon stem for a mod, preferring non-empty `mod_id` and falling back to `cache_key`.
+pub fn resolve_icon_stem<'a>(mod_id: Option<&'a str>, cache_key: &'a str) -> &'a str {
+    mod_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cache_key)
+}
+
+fn is_non_empty_regular_file(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0)
+}
+
+fn remove_zero_byte_regular_file(path: &Path) {
+    if fs::symlink_metadata(path)
+        .is_ok_and(|m| !m.file_type().is_symlink() && m.file_type().is_file() && m.len() == 0)
+    {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn icon_match_key(name: &str) -> String {
+    #[cfg(windows)]
+    {
+        name.to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        name.to_string()
+    }
+}
 
 /// Build a consistent SQLite cache key for a mod JAR under a specific target loader.
 pub fn build_mod_cache_key(filename: &str, size: u64, mtime: u64, loader_type: &str) -> String {
@@ -74,6 +106,20 @@ pub struct ModMetadata {
     pub detected_loader: Option<String>,
     /// Chinese mod name declared inside the JAR's `assets/<mod_id>/lang/zh_cn.json` if present.
     pub zh_name_embedded: Option<String>,
+}
+
+impl ModMetadata {
+    /// Return true when no mod metadata or icon was extracted from the archive.
+    pub fn is_empty(&self) -> bool {
+        self.mod_id.is_none()
+            && self.name.is_none()
+            && self.version.is_none()
+            && !self.has_icon
+            && self.depends.is_empty()
+            && self.provides.is_empty()
+            && self.detected_loader.is_none()
+            && self.zh_name_embedded.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -257,6 +303,7 @@ fn normalize_mcmod_dep(raw: &str, only_explicit_required: bool) -> Option<String
     }
 }
 
+#[derive(Clone)]
 pub struct ModParser {
     cache_dir: PathBuf,
     db_path: PathBuf,
@@ -305,6 +352,16 @@ fn ensure_mod_cache_schema(conn: &rusqlite::Connection) -> rusqlite::Result<()> 
     Ok(())
 }
 
+fn invalidate_stale_mod_cache_entries(conn: &rusqlite::Connection) {
+    let user_version: i32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(0);
+    if user_version < MOD_CACHE_SCHEMA_VERSION {
+        let _ = conn.execute("DELETE FROM mod_cache", []);
+        let _ = conn.execute(&format!("PRAGMA user_version = {}", MOD_CACHE_SCHEMA_VERSION), []);
+    }
+}
+
 impl ModParser {
     pub fn new(base_dir: &Path) -> Self {
         let cache_dir = base_dir.join(".mod_cache");
@@ -335,13 +392,7 @@ impl ModParser {
         ensure_mod_cache_schema(&conn)?;
 
         // Invalidate stale cache entries whenever parser metadata schema changes
-        let user_version: i32 = conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap_or(0);
-        if user_version < MOD_CACHE_SCHEMA_VERSION {
-            let _ = conn.execute("DELETE FROM mod_cache", []);
-            let _ = conn.execute(&format!("PRAGMA user_version = {}", MOD_CACHE_SCHEMA_VERSION), []);
-        }
+        invalidate_stale_mod_cache_entries(&conn);
 
         // Migration from old cache.json
         let json_path = self.cache_dir.join("cache.json");
@@ -458,7 +509,29 @@ impl ModParser {
             .join(format!("{}.png", sanitize_icon_stem(cache_key)))
     }
 
-    /// Collect active `mod_cache` key prefixes (`v4_<filename>_<size>_<mtime>_`) from all instances.
+    /// Return ordered icon path candidates for `meta` (`<mod_id>.png` first, then `<cache_key>.png`).
+    pub fn icon_candidate_paths(&self, meta: &ModMetadata, cache_key: &str) -> Vec<PathBuf> {
+        if !meta.has_icon {
+            return Vec::new();
+        }
+        let preferred_stem = resolve_icon_stem(meta.mod_id.as_deref(), cache_key);
+        let preferred = self.get_icon_path(preferred_stem);
+        let fallback = self.get_icon_path(cache_key);
+        if fallback == preferred {
+            vec![preferred]
+        } else {
+            vec![preferred, fallback]
+        }
+    }
+
+    /// Resolve an existing, non-empty cached icon file path for `meta` and `cache_key`.
+    pub fn find_existing_icon_path(&self, meta: &ModMetadata, cache_key: &str) -> Option<PathBuf> {
+        self.icon_candidate_paths(meta, cache_key)
+            .into_iter()
+            .find(|p| is_non_empty_regular_file(p))
+    }
+
+    /// Collect active `mod_cache` key prefixes (`v5_<filename>_<size>_<mtime>_`) from all instances.
     fn collect_live_mod_key_prefixes(base_dir: &Path) -> Result<HashSet<String>, String> {
         let mut prefixes = HashSet::new();
         let versions_dir = base_dir.join("versions");
@@ -563,8 +636,10 @@ impl ModParser {
         }
 
         let live_prefixes = Self::collect_live_mod_key_prefixes(base_dir)?;
-        let sanitized_prefixes: Vec<String> =
-            live_prefixes.iter().map(|p| sanitize_icon_stem(p)).collect();
+        let sanitized_prefixes: Vec<String> = live_prefixes
+            .iter()
+            .map(|p| icon_match_key(&sanitize_icon_stem(p)))
+            .collect();
 
         let mut stats = ModCachePruneStats::default();
         let db_path = cache_dir.join("cache.db");
@@ -624,6 +699,7 @@ impl ModParser {
                 .map_err(|e| format!("Failed to open mod_cache DB {}: {}", db_path.display(), e))?;
             ensure_mod_cache_schema(&conn)
                 .map_err(|e| format!("Failed to ensure mod_cache schema: {}", e))?;
+            invalidate_stale_mod_cache_entries(&conn);
 
             let rows: Vec<(String, Option<String>, Option<i64>)> = {
                 let mut stmt = conn
@@ -650,12 +726,15 @@ impl ModParser {
             for (key, mod_id_opt, unref_opt) in rows {
                 let is_alive = live_prefixes.iter().any(|prefix| key.starts_with(prefix));
                 if is_alive {
-                    live_icon_names.insert(format!("{}.png", sanitize_icon_stem(&key)));
-                    if let Some(mod_id) =
-                        mod_id_opt.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                    {
-                        live_icon_names.insert(format!("{}.png", sanitize_icon_stem(mod_id)));
-                    }
+                    live_icon_names.insert(icon_match_key(&format!(
+                        "{}.png",
+                        sanitize_icon_stem(&key)
+                    )));
+                    let resolved_stem = resolve_icon_stem(mod_id_opt.as_deref(), &key);
+                    live_icon_names.insert(icon_match_key(&format!(
+                        "{}.png",
+                        sanitize_icon_stem(resolved_stem)
+                    )));
                     if unref_opt.is_some() {
                         reactivated_keys.push(key);
                     }
@@ -754,12 +833,25 @@ impl ModParser {
                     continue;
                 }
                 let file_name = entry.file_name().to_string_lossy().to_string();
+                if file_name.starts_with(".tmp_") && file_name.ends_with(".png") {
+                    let is_recent_tmp = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| now_secs.saturating_sub(d.as_secs()) < TMP_ICON_ORPHAN_GRACE_SECS)
+                        .unwrap_or(true);
+                    if is_recent_tmp {
+                        continue;
+                    }
+                }
                 let stem = Path::new(&file_name)
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("");
-                if live_icon_names.contains(&file_name)
-                    || sanitized_prefixes.iter().any(|p| stem.starts_with(p))
+                let match_name = icon_match_key(&file_name);
+                let match_stem = icon_match_key(stem);
+                if live_icon_names.contains(&match_name)
+                    || sanitized_prefixes.iter().any(|p| match_stem.starts_with(p))
                 {
                     live_files_on_disk.push(file_name);
                 } else {
@@ -872,12 +964,14 @@ impl ModParser {
         icon_path: &str,
         icon_name: &str,
     ) -> bool {
-        let clean_path = icon_path.trim().trim_start_matches('/');
+        let normalized = icon_path.trim().replace('\\', "/");
+        let clean_path = normalized.trim_start_matches('/');
+        let clean_path = clean_path.strip_prefix("./").unwrap_or(clean_path);
         if clean_path.is_empty() {
             return false;
         }
         let dest_path = self.get_icon_path(icon_name);
-        if dest_path.exists() {
+        if is_non_empty_regular_file(&dest_path) {
             return true;
         }
         if let Ok(mut icon_file) = archive.by_name(clean_path) {
@@ -888,9 +982,36 @@ impl ModParser {
                 .read_to_end(&mut buffer)
                 .is_ok()
                 && !buffer.is_empty()
-                && fs::write(dest_path, &buffer).is_ok()
             {
-                return true;
+                if fs::create_dir_all(&self.icons_dir).is_err() {
+                    return false;
+                }
+                let tmp_path = self.icons_dir.join(format!(
+                    ".tmp_{}_{}.png",
+                    std::process::id(),
+                    uuid::Uuid::new_v4().simple()
+                ));
+                if fs::write(&tmp_path, &buffer).is_err() {
+                    let _ = fs::remove_file(&tmp_path);
+                    return false;
+                }
+                remove_zero_byte_regular_file(&dest_path);
+                let renamed_or_written = if fs::rename(&tmp_path, &dest_path).is_ok()
+                    || is_non_empty_regular_file(&dest_path)
+                {
+                    true
+                } else {
+                    remove_zero_byte_regular_file(&dest_path);
+                    if fs::rename(&tmp_path, &dest_path).is_ok() {
+                        true
+                    } else {
+                        let dest_is_dir_or_symlink = fs::symlink_metadata(&dest_path)
+                            .is_ok_and(|m| m.file_type().is_symlink() || m.file_type().is_dir());
+                        !dest_is_dir_or_symlink && fs::write(&dest_path, &buffer).is_ok()
+                    }
+                };
+                let _ = fs::remove_file(&tmp_path);
+                return renamed_or_written && is_non_empty_regular_file(&dest_path);
             }
         }
         false
@@ -940,7 +1061,8 @@ impl ModParser {
                             if let Some(logo_path) =
                                 first_mod.get("logoFile").and_then(|v| v.as_str())
                             {
-                                let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
+                                let icon_name =
+                                    resolve_icon_stem(meta.mod_id.as_deref(), cache_key);
                                 if self.extract_icon_from_archive(archive, logo_path, icon_name) {
                                     meta.has_icon = true;
                                 }
@@ -1151,7 +1273,7 @@ impl ModParser {
             }
 
             if let Some(logo_path) = first.get("logoFile").and_then(|v| v.as_str()) {
-                let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
+                let icon_name = resolve_icon_stem(meta.mod_id.as_deref(), cache_key);
                 if self.extract_icon_from_archive(archive, logo_path, icon_name) {
                     meta.has_icon = true;
                 }
@@ -1362,7 +1484,7 @@ impl ModParser {
             }
 
             if let Some(icon_path) = json.get("icon").and_then(|v| v.as_str()) {
-                let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
+                let icon_name = resolve_icon_stem(meta.mod_id.as_deref(), cache_key);
                 if self.extract_icon_from_archive(archive, icon_path, icon_name) {
                     meta.has_icon = true;
                 }
@@ -1373,19 +1495,20 @@ impl ModParser {
         true
     }
 
-    pub fn parse_mod(
+    /// Parse mod metadata and extract its icon, returning `None` if the archive cannot be opened or decoded.
+    pub fn try_parse_mod(
         &self,
         file_path: &Path,
         cache_key: &str,
         loader_type: Option<&str>,
-    ) -> ModMetadata {
+    ) -> Option<ModMetadata> {
         let mut meta = ModMetadata::default();
 
         let file = match File::open(file_path) {
             Ok(f) => f,
             Err(e) => {
                 debug!("Failed to open mod file {:?}: {}", file_path, e);
-                return meta;
+                return None;
             }
         };
 
@@ -1393,7 +1516,7 @@ impl ModParser {
             Ok(a) => a,
             Err(e) => {
                 debug!("Failed to read zip archive {:?}: {}", file_path, e);
-                return meta;
+                return None;
             }
         };
 
@@ -1416,7 +1539,17 @@ impl ModParser {
             meta.zh_name_embedded = extract_embedded_zh_name(&mut archive, mid);
         }
 
-        meta
+        Some(meta)
+    }
+
+    pub fn parse_mod(
+        &self,
+        file_path: &Path,
+        cache_key: &str,
+        loader_type: Option<&str>,
+    ) -> ModMetadata {
+        self.try_parse_mod(file_path, cache_key, loader_type)
+            .unwrap_or_default()
     }
 }
 
@@ -1996,5 +2129,151 @@ mandatory=true
         let stats = ModParser::prune_unreferenced_at(dir.path(), 0, 2_000_000).unwrap();
         assert_eq!(stats.removed_icons, 0);
         assert!(victim.exists());
+    }
+
+    #[test]
+    fn test_find_existing_icon_path_and_extract_repairs_missing_icons_dir() {
+        let dir = tempdir().unwrap();
+        let parser = ModParser::new(dir.path());
+
+        let jar_path = dir.path().join("euphoria.jar");
+        write_test_jar(
+            &jar_path,
+            &[
+                (
+                    "META-INF/neoforge.mods.toml",
+                    br#"[[mods]]
+modId="euphoria_patcher"
+displayName="Euphoria Patcher"
+version="1.10.5"
+logoFile="./icon.png"
+"#,
+                ),
+                ("icon.png", b"\x89PNG\r\n\x1a\nvalid-icon-bytes"),
+            ],
+        );
+
+        let cache_key = build_mod_cache_key("euphoria.jar", 100, 1, "NeoForge");
+        let meta = parser.parse_mod(&jar_path, &cache_key, Some("NeoForge"));
+        assert!(meta.has_icon);
+        let icon_path = parser.find_existing_icon_path(&meta, &cache_key).unwrap();
+        assert_eq!(
+            icon_path.file_name().and_then(|s| s.to_str()),
+            Some("euphoria_patcher.png")
+        );
+
+        // Removing the entire icons directory should return None (never a 404 fallback path)
+        fs::remove_dir_all(dir.path().join(".mod_cache").join("icons")).unwrap();
+        assert!(parser.find_existing_icon_path(&meta, &cache_key).is_none());
+
+        // Re-parsing recreates the icons directory and restores the icon file
+        let repaired = parser.parse_mod(&jar_path, &cache_key, Some("NeoForge"));
+        assert!(repaired.has_icon);
+        assert!(parser.find_existing_icon_path(&repaired, &cache_key).is_some());
+
+        // A 0-byte icon file is treated as invalid/missing and replaced on re-parse
+        fs::write(&icon_path, b"").unwrap();
+        assert!(parser.find_existing_icon_path(&repaired, &cache_key).is_none());
+        let replaced = parser.parse_mod(&jar_path, &cache_key, Some("NeoForge"));
+        assert!(replaced.has_icon);
+        assert!(fs::metadata(&icon_path).unwrap().len() > 0);
+    }
+
+    #[test]
+    fn test_prune_protects_recent_tmp_icons_and_invalidates_v4_no_icon_entries() {
+        let dir = tempdir().unwrap();
+        let cache_dir = dir.path().join(".mod_cache");
+        let icons_dir = cache_dir.join("icons");
+        fs::create_dir_all(&icons_dir).unwrap();
+        let db_path = cache_dir.join("cache.db");
+
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            ensure_mod_cache_schema(&conn).unwrap();
+            conn.execute("PRAGMA user_version = 4", []).unwrap();
+            conn.execute(
+                "INSERT INTO mod_cache (cache_key, mod_id, name, version, has_icon) VALUES (?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "v4_slash_mod.jar_100_1_NeoForge",
+                    "slash_mod",
+                    "Slash Mod",
+                    "1.0.0",
+                    0
+                ],
+            )
+            .unwrap();
+        }
+
+        // Initializing ModParser under v5 invalidates stale v4 entries (including has_icon=0)
+        let parser = ModParser::new(dir.path());
+        assert!(parser.load_all_cache().is_empty());
+
+        // Recent temporary icon file is preserved during immediate GC, while expired ones are cleaned
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let active_tmp = icons_dir.join(".tmp_1234_abcdef.png");
+        let expired_tmp = icons_dir.join(".tmp_1234_oldtmp.png");
+        fs::write(&active_tmp, b"partial-or-ready").unwrap();
+        fs::write(&expired_tmp, b"stale-tmp").unwrap();
+        let old_time = SystemTime::now() - Duration::from_secs(TMP_ICON_ORPHAN_GRACE_SECS + 60);
+        {
+            let f = fs::OpenOptions::new().write(true).open(&expired_tmp).unwrap();
+            let _ = f.set_modified(old_time);
+        }
+
+        let stats = ModParser::prune_unreferenced_at(dir.path(), 0, now_secs).unwrap();
+        assert_eq!(stats.removed_icons, 1);
+        assert!(active_tmp.exists());
+        assert!(!expired_tmp.exists());
+    }
+
+    #[test]
+    fn test_resolve_icon_stem_handles_blank_mod_id_and_preserves_case_on_windows() {
+        assert_eq!(resolve_icon_stem(None, "v4_key"), "v4_key");
+        assert_eq!(resolve_icon_stem(Some(""), "v4_key"), "v4_key");
+        assert_eq!(resolve_icon_stem(Some("   "), "v4_key"), "v4_key");
+        assert_eq!(resolve_icon_stem(Some(" euphoria "), "v4_key"), "euphoria");
+
+        let dir = tempdir().unwrap();
+        let mods_dir = dir.path().join("versions").join("inst-a").join("mods");
+        fs::create_dir_all(&mods_dir).unwrap();
+        let jar = mods_dir.join("MixedMod.jar");
+        fs::write(&jar, b"12345").unwrap();
+        let mtime = fs::metadata(&jar)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let key = build_mod_cache_key("MixedMod.jar", 5, mtime, "NeoForge");
+
+        let parser = ModParser::new(dir.path());
+        parser.set_cache_entry(
+            &key,
+            &ModMetadata {
+                mod_id: Some("mixedmod".to_string()),
+                name: Some("Mixed Mod".to_string()),
+                version: Some("1.0".to_string()),
+                has_icon: true,
+                ..Default::default()
+            },
+        );
+        let mixed_case_icon = parser.get_icon_path("MixedMod");
+        fs::write(&mixed_case_icon, b"png").unwrap();
+
+        let stats = ModParser::prune_unreferenced_at(dir.path(), 0, 2_000_000).unwrap();
+        #[cfg(windows)]
+        {
+            assert_eq!(stats.removed_icons, 0);
+            assert!(mixed_case_icon.exists());
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(stats.removed_icons, 1);
+            assert!(!mixed_case_icon.exists());
+        }
     }
 }

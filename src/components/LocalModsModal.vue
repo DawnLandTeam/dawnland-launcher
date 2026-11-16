@@ -44,7 +44,12 @@
           :class="{'opacity-60': !mod.enabled}"
         >
           <div class="w-12 h-12 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0 border">
-            <img v-if="mod.iconUrl" :src="convertFileSrc(mod.iconUrl)" class="w-full h-full object-cover" />
+            <img
+              v-if="mod.iconUrl && !mod.iconError"
+              :src="convertFileSrc(mod.iconUrl)"
+              class="w-full h-full object-cover"
+              @error="mod.iconError = true"
+            />
             <Puzzle v-else class="w-6 h-6 text-muted-foreground" />
           </div>
           
@@ -120,6 +125,7 @@ import DInput from './ui/DInput.vue';
 import DButton from './ui/DButton.vue';
 import { toast } from '../composables/useToast';
 import { getErrorMessage } from '../utils/error';
+import type { LocalModItem } from '../types/resourceNaming';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -133,15 +139,9 @@ const emit = defineEmits<{
 const router = useRouter();
 const { t } = useI18n();
 
-interface LocalMod {
-  filename: string;
-  enabled: boolean;
-  size: number;
-  modId?: string;
-  name?: string;
-  version?: string;
-  iconUrl?: string;
+interface LocalMod extends LocalModItem {
   isToggling?: boolean;
+  iconError?: boolean;
 }
 
 const mods = ref<LocalMod[]>([]);
@@ -166,10 +166,11 @@ async function loadMods() {
   
   loading.value = true;
   try {
-    const result = await invoke<any[]>('get_installed_mods', { versionId: props.instanceId });
+    const result = await invoke<LocalModItem[]>('get_installed_mods', { versionId: props.instanceId });
     mods.value = result.map(mod => ({
       ...mod,
-      isToggling: false
+      isToggling: false,
+      iconError: false
     }));
   } catch (error) {
     console.error('Failed to load mods:', error);

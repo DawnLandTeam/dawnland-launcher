@@ -73,7 +73,12 @@
           :class="{'opacity-60': !mod.enabled}"
         >
           <div class="w-12 h-12 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0 border">
-            <img v-if="mod.iconUrl" :src="convertFileSrc(mod.iconUrl)" class="w-full h-full object-cover" />
+            <img
+              v-if="mod.iconUrl && !mod.iconError"
+              :src="convertFileSrc(mod.iconUrl)"
+              class="w-full h-full object-cover"
+              @error="mod.iconError = true"
+            />
             <Puzzle v-else class="w-6 h-6 text-muted-foreground" />
           </div>
           
@@ -232,6 +237,7 @@ const { t } = useI18n();
 
 interface LocalMod extends LocalModItem {
   isToggling?: boolean;
+  iconError?: boolean;
 }
 
 const mods = ref<LocalMod[]>([]);
@@ -296,7 +302,8 @@ async function loadMods() {
     }
     mods.value = result.map(mod => ({
       ...mod,
-      isToggling: false
+      isToggling: false,
+      iconError: false
     }));
   } catch (error) {
     if (seq !== loadSeq || props.instanceId !== currentInstanceId) {

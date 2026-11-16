@@ -2940,51 +2940,75 @@ pub async fn update_preset(asset_type: String, preset_name: String, preset: Onli
 
 
 
+async fn is_non_empty_icon_file(path: &std::path::Path) -> bool {
+    tokio::fs::metadata(path)
+        .await
+        .is_ok_and(|m| m.is_file() && m.len() > 0)
+}
+
+async fn get_mod_icon_url(
+    meta: &crate::core::mod_parser::ModMetadata,
+    parser: &crate::core::mod_parser::ModParser,
+    cache_key: &str,
+) -> Option<String> {
+    for candidate in parser.icon_candidate_paths(meta, cache_key) {
+        if is_non_empty_icon_file(&candidate).await {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
 async fn resolve_mod_metadata(
     path: &std::path::Path,
     cache_key: &str,
     cache_entries: &mut std::collections::HashMap<String, crate::core::mod_parser::ModMetadata>,
     parser: &crate::core::mod_parser::ModParser,
-    base_dir: &std::path::Path,
     skip_parsing: bool,
-    loader_type: Option<String>
-) -> crate::core::mod_parser::ModMetadata {
-    if let Some(m) = cache_entries.get(cache_key) {
-        return m.clone();
+    loader_type: Option<String>,
+) -> (crate::core::mod_parser::ModMetadata, Option<String>) {
+    let cached_opt = cache_entries.get(cache_key).cloned();
+    if let Some(ref m) = cached_opt {
+        let icon_url = get_mod_icon_url(m, parser, cache_key).await;
+        if !m.has_icon || icon_url.is_some() || skip_parsing {
+            return (m.clone(), icon_url);
+        }
+        tracing::debug!(
+            "Cached icon missing on disk for {}, re-parsing archive to repair",
+            cache_key
+        );
     }
     if skip_parsing {
-        return crate::core::mod_parser::ModMetadata::default();
+        return (crate::core::mod_parser::ModMetadata::default(), None);
     }
     let path_clone = path.to_path_buf();
     let key_clone = cache_key.to_string();
-    let base_dir_clone = base_dir.to_path_buf();
+    let parser_clone = parser.clone();
     let loader_type_clone = loader_type.clone();
-    let m = tokio::task::spawn_blocking(move || {
-        let p = crate::core::mod_parser::ModParser::new(&base_dir_clone);
-        p.parse_mod(&path_clone, &key_clone, loader_type_clone.as_deref())
+    let had_cached_details = cached_opt.as_ref().is_some_and(|m| !m.is_empty());
+    let parsed_opt = tokio::task::spawn_blocking(move || {
+        let parsed =
+            parser_clone.try_parse_mod(&path_clone, &key_clone, loader_type_clone.as_deref())?;
+        if had_cached_details && parsed.is_empty() {
+            return None;
+        }
+        parser_clone.set_cache_entry(&key_clone, &parsed);
+        Some(parsed)
     })
     .await
-    .unwrap_or_default();
+    .ok()
+    .flatten();
 
-    cache_entries.insert(cache_key.to_string(), m.clone());
-    parser.set_cache_entry(cache_key, &m);
-    m
-}
+    let m = match parsed_opt {
+        Some(parsed) => {
+            cache_entries.insert(cache_key.to_string(), parsed.clone());
+            parsed
+        }
+        None => cached_opt.unwrap_or_default(),
+    };
 
-fn get_mod_icon_url(
-    meta: &crate::core::mod_parser::ModMetadata,
-    parser: &crate::core::mod_parser::ModParser,
-    cache_key: &str,
-) -> Option<String> {
-    if !meta.has_icon {
-        return None;
-    }
-    let icon_name = meta.mod_id.as_deref().unwrap_or(cache_key);
-    let mut p = parser.get_icon_path(icon_name);
-    if !p.exists() {
-        p = parser.get_icon_path(cache_key);
-    }
-    Some(p.to_string_lossy().to_string())
+    let icon_url = get_mod_icon_url(&m, parser, cache_key).await;
+    (m, icon_url)
 }
 
 /// Get list of installed mods for a specific instance
@@ -3041,6 +3065,9 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
         let metadata = tokio::fs::metadata(&path)
             .await
             .map_err(|e| e.to_string())?;
+        if !metadata.is_file() {
+            continue;
+        }
 
         let mut actual_filename = filename.clone();
         let mut enabled = true;
@@ -3065,8 +3092,15 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
             &loader_type,
         );
 
-        let meta = resolve_mod_metadata(&path, &cache_key, &mut cache_entries, &parser, base_dir, skip_parsing.unwrap_or(false), Some(loader_type.clone())).await;
-        let icon_url = get_mod_icon_url(&meta, &parser, &cache_key);
+        let (meta, icon_url) = resolve_mod_metadata(
+            &path,
+            &cache_key,
+            &mut cache_entries,
+            &parser,
+            skip_parsing.unwrap_or(false),
+            Some(loader_type.clone()),
+        )
+        .await;
 
         let rec_opt = manifest_records.get(&actual_filename);
         let is_managed = rec_opt.map(|r| r.managed_by_modpack).unwrap_or(false);
@@ -5697,6 +5731,179 @@ mod tests {
             zh_name_embedded: None,
         };
         assert!(evaluate_prelaunch_warnings(&[forge_mod], "Vanilla").is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_mod_metadata_repairs_missing_icon_and_clears_stale_has_icon() {
+        use std::io::Write;
+        use tempfile::tempdir;
+        use zip::write::SimpleFileOptions;
+
+        let dir = tempdir().expect("tempdir");
+        let jar_with_icon = dir.path().join("EuphoriaPatcher-1.10.5.jar");
+        {
+            let file = std::fs::File::create(&jar_with_icon).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = SimpleFileOptions::default();
+            zip.start_file("META-INF/neoforge.mods.toml", opts).unwrap();
+            zip.write_all(
+                br#"[[mods]]
+modId="euphoria_patcher"
+displayName="Euphoria Patcher"
+version="1.10.5"
+logoFile="icon.png"
+"#,
+            )
+            .unwrap();
+            zip.start_file("icon.png", opts).unwrap();
+            zip.write_all(b"\x89PNG\r\n\x1a\nicon-data").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let parser = crate::core::mod_parser::ModParser::new(dir.path());
+        let mut cache_entries = parser.load_all_cache();
+        let key_with_icon = crate::core::mod_parser::build_mod_cache_key(
+            "EuphoriaPatcher-1.10.5.jar",
+            100,
+            1,
+            "NeoForge",
+        );
+
+        // Initial parse populates cache.db and writes euphoria_patcher.png
+        let (meta1, url1) = resolve_mod_metadata(
+            &jar_with_icon,
+            &key_with_icon,
+            &mut cache_entries,
+            &parser,
+            false,
+            Some("NeoForge".to_string()),
+        )
+        .await;
+        assert!(meta1.has_icon);
+        let expected_icon_path = parser.get_icon_path("euphoria_patcher");
+        assert_eq!(url1.as_deref(), Some(expected_icon_path.to_string_lossy().as_ref()));
+        assert!(expected_icon_path.exists());
+
+        // Simulate deleted icon PNG while cache.db still has has_icon = true
+        tokio::fs::remove_file(&expected_icon_path).await.unwrap();
+        assert!(!expected_icon_path.exists());
+
+        // With skip_parsing = true, must return None rather than a 404 v4_...png fallback path
+        let (meta_skip, url_skip) = resolve_mod_metadata(
+            &jar_with_icon,
+            &key_with_icon,
+            &mut cache_entries,
+            &parser,
+            true,
+            Some("NeoForge".to_string()),
+        )
+        .await;
+        assert!(meta_skip.has_icon);
+        assert_eq!(url_skip, None);
+
+        // With skip_parsing = false, self-heals by re-extracting euphoria_patcher.png
+        let (meta_repaired, url_repaired) = resolve_mod_metadata(
+            &jar_with_icon,
+            &key_with_icon,
+            &mut cache_entries,
+            &parser,
+            false,
+            Some("NeoForge".to_string()),
+        )
+        .await;
+        assert!(meta_repaired.has_icon);
+        assert_eq!(
+            url_repaired.as_deref(),
+            Some(expected_icon_path.to_string_lossy().as_ref())
+        );
+        assert!(expected_icon_path.exists());
+
+        // Stale cache entry claiming has_icon = true for a JAR without an icon gets corrected
+        let jar_without_icon = dir.path().join("NoIcon.jar");
+        {
+            let file = std::fs::File::create(&jar_without_icon).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = SimpleFileOptions::default();
+            zip.start_file("META-INF/mods.toml", opts).unwrap();
+            zip.write_all(
+                br#"[[mods]]
+modId="no_icon_mod"
+displayName="No Icon Mod"
+version="1.0.0"
+logoFile="missing.png"
+"#,
+            )
+            .unwrap();
+            zip.finish().unwrap();
+        }
+        let key_without_icon =
+            crate::core::mod_parser::build_mod_cache_key("NoIcon.jar", 50, 1, "Forge");
+        let stale_meta = crate::core::mod_parser::ModMetadata {
+            mod_id: Some("no_icon_mod".to_string()),
+            name: Some("No Icon Mod".to_string()),
+            version: Some("1.0.0".to_string()),
+            has_icon: true,
+            ..Default::default()
+        };
+        parser.set_cache_entry(&key_without_icon, &stale_meta);
+        cache_entries.insert(key_without_icon.clone(), stale_meta);
+
+        let (corrected_meta, corrected_url) = resolve_mod_metadata(
+            &jar_without_icon,
+            &key_without_icon,
+            &mut cache_entries,
+            &parser,
+            false,
+            Some("Forge".to_string()),
+        )
+        .await;
+        assert!(!corrected_meta.has_icon);
+        assert_eq!(corrected_url, None);
+        let reloaded = parser.load_all_cache();
+        assert_eq!(reloaded.get(&key_without_icon).map(|m| m.has_icon), Some(false));
+
+        // When a repair parse cannot open/decode the archive, preserve the existing cached entry
+        let key_preserved =
+            crate::core::mod_parser::build_mod_cache_key("BrokenRepair.jar", 77, 1, "NeoForge");
+        let cached_rich = crate::core::mod_parser::ModMetadata {
+            mod_id: Some("preserved_mod".to_string()),
+            name: Some("Preserved Mod".to_string()),
+            version: Some("2.1.0".to_string()),
+            has_icon: true,
+            depends: vec!["some_dep".to_string()],
+            provides: vec!["sub_mod".to_string()],
+            detected_loader: Some("NeoForge".to_string()),
+            zh_name_embedded: Some("保留模组".to_string()),
+        };
+        parser.set_cache_entry(&key_preserved, &cached_rich);
+        cache_entries.insert(key_preserved.clone(), cached_rich.clone());
+
+        let corrupt_jar = dir.path().join("BrokenRepair.jar");
+        tokio::fs::write(&corrupt_jar, b"not-a-zip-archive")
+            .await
+            .unwrap();
+
+        let (preserved_meta, preserved_url) = resolve_mod_metadata(
+            &corrupt_jar,
+            &key_preserved,
+            &mut cache_entries,
+            &parser,
+            false,
+            Some("NeoForge".to_string()),
+        )
+        .await;
+        assert_eq!(preserved_meta.mod_id.as_deref(), Some("preserved_mod"));
+        assert_eq!(preserved_meta.name.as_deref(), Some("Preserved Mod"));
+        assert_eq!(preserved_meta.version.as_deref(), Some("2.1.0"));
+        assert_eq!(preserved_meta.depends, vec!["some_dep".to_string()]);
+        assert!(preserved_meta.has_icon);
+        assert_eq!(preserved_url, None);
+
+        let reloaded_after_failure = parser.load_all_cache();
+        let db_entry = reloaded_after_failure.get(&key_preserved).unwrap();
+        assert_eq!(db_entry.mod_id.as_deref(), Some("preserved_mod"));
+        assert_eq!(db_entry.name.as_deref(), Some("Preserved Mod"));
+        assert!(db_entry.has_icon);
     }
 }
 

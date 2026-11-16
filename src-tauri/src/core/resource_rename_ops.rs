@@ -512,6 +512,7 @@ pub async fn resolve_instance_translations(
     if !is_safe_single_name(&instance_id) {
         return Err("Invalid instance ID".to_string());
     }
+    let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app)).await;
 
     let base_dir = get_minecraft_base();
     let instance_dir = base_dir.join("versions").join(&instance_id);
