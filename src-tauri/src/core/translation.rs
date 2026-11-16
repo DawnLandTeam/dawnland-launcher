@@ -110,17 +110,6 @@ pub struct TranslationDbStats {
     pub last_sync_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OnlineResolveQueryItem {
-    pub category: String,
-    pub source: String,
-    pub project_id: String,
-    pub slug: String,
-    pub raw_name: String,
-    pub summary: String,
-}
-
 pub fn category_to_key(category: &AssetCategory) -> &'static str {
     match category {
         AssetCategory::Mod => "mod",
@@ -919,16 +908,7 @@ fn decode_snapshot_bytes(bytes: &[u8]) -> Result<Vec<TranslationEntry>, String> 
     }
 }
 
-/// Previously requested backend consensus/LLM translation resolution for unindexed items.
-/// Deprecated: The launcher now operates entirely on local consensus dictionary (`translations.db`),
-/// eliminating online resolution roundtrips for maximum speed, privacy, and offline resilience.
-pub async fn resolve_online_translations(
-    _items: Vec<OnlineResolveQueryItem>,
-) -> Vec<TranslationEntry> {
-    Vec::new()
-}
-
-/// Save a user-defined Chinese translation override locally and optionally submit feedback to backend.
+/// Save a user-defined Chinese translation override locally.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn set_custom_resource_translation(
@@ -940,7 +920,6 @@ pub async fn set_custom_resource_translation(
     zh_name: String,
     instance_id: Option<String>,
     rel_path: Option<String>,
-    submit_feedback: Option<bool>,
 ) -> Result<TranslationLookupResult, String> {
     let trimmed_zh = zh_name.trim().to_string();
     if trimmed_zh.is_empty() {
@@ -1025,13 +1004,13 @@ pub async fn set_custom_resource_translation(
         };
 
         let entry = TranslationEntry {
-            category: cat_key.clone(),
+            category: cat_key,
             cf_project_id: cf_pid,
             cf_slug,
             mr_project_id: mr_pid,
             mr_slug,
             mod_ids: String::new(),
-            raw_name: clean_raw_name.clone().unwrap_or_default(),
+            raw_name: clean_raw_name.unwrap_or_default(),
             zh_name: trimmed_zh.clone(),
             zh_short_name: short.clone(),
             zh_aliases: String::new(),
@@ -1048,39 +1027,6 @@ pub async fn set_custom_resource_translation(
         })
         .await
         .map_err(|e| e.to_string())??;
-    }
-
-    if submit_feedback.unwrap_or(false) {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct FeedbackPayload {
-            category: String,
-            source: String,
-            project_id: String,
-            slug: String,
-            raw_name: String,
-            suggested_zh_name: String,
-        }
-        let payload = FeedbackPayload {
-            category: cat_key,
-            source: src_lower,
-            project_id: effective_project_id.unwrap_or_default(),
-            slug: clean_slug.unwrap_or_default(),
-            raw_name: clean_raw_name.unwrap_or_default(),
-            suggested_zh_name: trimmed_zh.clone(),
-        };
-        tokio::spawn(async move {
-            let backend_url = get_web_backend_url();
-            let url = format!("{}/api/translations/feedback", backend_url);
-            if let Ok(body) = serde_json::to_string(&payload) {
-                let _ = secure_request(get_http_client(), reqwest::Method::POST, &url, &body)
-                    .header("Content-Type", "application/json")
-                    .body(body)
-                    .timeout(std::time::Duration::from_secs(8))
-                    .send()
-                    .await;
-            }
-        });
     }
 
     Ok(TranslationLookupResult {
