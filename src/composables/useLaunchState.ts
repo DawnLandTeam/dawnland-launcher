@@ -15,6 +15,7 @@ export interface InstanceStatePayload {
   missingCount?: number;
   isOpenJ9?: boolean;
   crashReport?: string;
+  intentionallyKilled?: boolean;
 }
 
 export function isInstanceActive(instanceId: string): boolean {
