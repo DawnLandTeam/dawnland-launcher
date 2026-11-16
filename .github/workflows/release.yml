@@ -9,79 +9,18 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  prepare-release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: [ 'self-hosted', 'Linux' ]
-    permissions:
-      contents: write
-    outputs:
-      release_id: ${{ steps.ensure_release.outputs.release_id }}
-      is_draft: ${{ steps.ensure_release.outputs.is_draft }}
-      is_prerelease: ${{ steps.ensure_release.outputs.is_prerelease }}
-    steps:
-      - name: Ensure single GitHub Draft Release exists
-        id: ensure_release
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
-        with:
-          script: |
-            const tag = context.ref.replace(/^refs\/tags\//, '');
-            if (!tag) {
-              throw new Error(`Unexpected ref without tag: ${context.ref}`);
-            }
-            const version = tag.replace(/^v/, '');
-            let existing = null;
-
-            // listReleases includes draft releases when authenticated with contents:write,
-            // whereas getReleaseByTag returns 404 for drafts.
-            for await (const response of github.paginate.iterator(
-              github.rest.repos.listReleases,
-              {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                per_page: 100
-              }
-            )) {
-              existing = response.data.find((r) => r.tag_name === tag);
-              if (existing) break;
-            }
-
-            if (existing) {
-              console.log(`Found existing release #${existing.id} for tag ${tag} (draft=${existing.draft}, prerelease=${existing.prerelease})`);
-              core.setOutput('release_id', String(existing.id));
-              core.setOutput('is_draft', String(Boolean(existing.draft)));
-              core.setOutput('is_prerelease', String(Boolean(existing.prerelease)));
-              return;
-            }
-
-            const created = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name: `v${version}`,
-              draft: true,
-              prerelease: false,
-              body: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
-            });
-
-            console.log(`Created draft release #${created.data.id} for tag ${tag}`);
-            core.setOutput('release_id', String(created.data.id));
-            core.setOutput('is_draft', 'true');
-            core.setOutput('is_prerelease', 'false');
-
   publish-tauri:
-    needs: prepare-release
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     environment: release
     env:
       NODE_OPTIONS: "--use-system-ca"
-      RELEASE_FILES: |
-        src-tauri/target/release/DLML.exe
-        src-tauri/target/release/DLML.exe.md5
-        src-tauri/target/release/bundle/appimage/*.AppImage
-        src-tauri/target/release/bundle/appimage/*.md5
     strategy:
       fail-fast: false
       matrix:
@@ -242,17 +181,27 @@ jobs:
           }
           "
 
-      - name: Upload Artifacts to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Windows Release Assets to Workflow Artifacts
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-x86_64'
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.ref_name }}
-          draft: ${{ needs.prepare-release.outputs.is_draft }}
-          prerelease: ${{ needs.prepare-release.outputs.is_prerelease }}
-          files: ${{ env.RELEASE_FILES }}
+          name: release-assets-${{ matrix.platform }}
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/DLML.exe
+            src-tauri/target/release/DLML.exe.md5
 
+      - name: Upload Linux Release Assets to Workflow Artifacts
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'ubuntu-22_04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.platform }}
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.md5
 
       - name: Upload Release Artifacts to Cloudflare R2
         if: startsWith(github.ref, 'refs/tags/v')
@@ -263,3 +212,155 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           VERSION: ${{ env.VERSION }}
         run: node .github/scripts/upload_to_r2.js
+
+  # Deferred until publish-tauri passes the release environment gate and all matrix builds succeed.
+  create-release:
+    needs: publish-tauri
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: [ 'self-hosted', 'Linux' ]
+    permissions:
+      contents: write
+    steps:
+      - name: Clean artifact staging directory
+        run: rm -rf release-assets
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create or Reuse Draft Release and Upload Assets by Release ID
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const tag = context.ref.replace(/^refs\/tags\//, '');
+            if (!tag) {
+              throw new Error(`Unexpected ref without tag: ${context.ref}`);
+            }
+            const version = tag.replace(/^v/, '');
+            const { owner, repo } = context.repo;
+
+            function collectFiles(dir) {
+              if (!fs.existsSync(dir)) return [];
+              const results = [];
+              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                  results.push(...collectFiles(fullPath));
+                } else if (entry.isFile()) {
+                  results.push(fullPath);
+                }
+              }
+              return results;
+            }
+
+            const files = collectFiles('release-assets');
+            const names = files.map((f) => path.basename(f));
+            const hasExe = names.includes('DLML.exe') && names.includes('DLML.exe.md5');
+            const hasAppImage =
+              names.some((n) => n.endsWith('.AppImage')) &&
+              names.some((n) => n.endsWith('.AppImage.md5'));
+
+            if (!hasExe || !hasAppImage) {
+              throw new Error(`Incomplete release assets before release creation: ${names.join(', ')}`);
+            }
+
+            async function findReleaseByTag() {
+              // listReleases includes draft releases when authenticated with contents:write,
+              // whereas getReleaseByTag returns 404 for drafts.
+              for await (const response of github.paginate.iterator(
+                github.rest.repos.listReleases,
+                { owner, repo, per_page: 100 }
+              )) {
+                const match = response.data.find((r) => r.tag_name === tag);
+                if (match) return match;
+              }
+              return null;
+            }
+
+            let release = await findReleaseByTag();
+            let createdByRun = false;
+
+            if (!release) {
+              try {
+                const created = await github.rest.repos.createRelease({
+                  owner,
+                  repo,
+                  tag_name: tag,
+                  name: `v${version}`,
+                  draft: true,
+                  prerelease: false,
+                  body: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
+                });
+                release = created.data;
+                createdByRun = true;
+                console.log(`Created draft release #${release.id} for tag ${tag}`);
+              } catch (error) {
+                if (error.status === 422) {
+                  release = await findReleaseByTag();
+                  if (!release) throw error;
+                  console.log(`Reusing existing release #${release.id} after concurrent creation`);
+                } else {
+                  throw error;
+                }
+              }
+            } else {
+              console.log(`Reusing existing release #${release.id} for tag ${tag} (draft=${release.draft}, prerelease=${release.prerelease})`);
+            }
+
+            try {
+              const existingAssets = await github.paginate(
+                github.rest.repos.listReleaseAssets,
+                { owner, repo, release_id: release.id, per_page: 100 }
+              );
+
+              for (const filePath of files) {
+                const fileName = path.basename(filePath);
+                const existingAsset = existingAssets.find((a) => a.name === fileName);
+                if (existingAsset) {
+                  console.log(`Replacing existing asset ${fileName} (#${existingAsset.id}) on release #${release.id}`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner,
+                    repo,
+                    asset_id: existingAsset.id
+                  });
+                }
+
+                const fileBuffer = fs.readFileSync(filePath);
+                console.log(`Uploading ${fileName} (${fileBuffer.length} bytes) to release #${release.id}...`);
+                await github.rest.repos.uploadReleaseAsset({
+                  owner,
+                  repo,
+                  release_id: release.id,
+                  name: fileName,
+                  data: fileBuffer,
+                  headers: {
+                    'content-type': 'application/octet-stream',
+                    'content-length': fileBuffer.length
+                  }
+                });
+              }
+            } catch (error) {
+              if (createdByRun) {
+                console.error(`Asset upload failed; removing incomplete draft release #${release.id}`);
+                try {
+                  await github.rest.repos.deleteRelease({
+                    owner,
+                    repo,
+                    release_id: release.id
+                  });
+                } catch (cleanupErr) {
+                  console.error(`Failed to delete incomplete draft release #${release.id}:`, cleanupErr);
+                }
+              }
+              throw error;
+            }
+
+      - name: Cleanup artifact staging directory
+        if: always()
+        run: rm -rf release-assets
