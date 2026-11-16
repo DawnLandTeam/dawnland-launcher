@@ -47,6 +47,7 @@ interface InstanceState {
   missingCount?: number;
   isOpenJ9?: boolean;
   crashReport?: string;
+  intentionallyKilled?: boolean;
 }
 
 interface PrelaunchWarning {
@@ -307,7 +308,7 @@ onMounted(async () => {
       }
 
       // Check if this was an intentional kill
-      const wasIntentionallyKilled = intentionallyKilledInstances.value.has(versionId);
+      const wasIntentionallyKilled = intentionallyKilledInstances.value.has(versionId) || Boolean(event.payload.intentionallyKilled);
       intentionallyKilledInstances.value.delete(versionId);
 
       // Show crash alert only if exit is confirmed abnormal (crash report present, or non-zero numeric exit code)

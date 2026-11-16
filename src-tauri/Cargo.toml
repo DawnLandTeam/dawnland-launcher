@@ -76,3 +76,9 @@ mockito = "1.7.2"
 winreg = "0.56.0"
 webview2-com = "0.38.2"
 windows-core = "0.61.2"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_Security",
+] }
