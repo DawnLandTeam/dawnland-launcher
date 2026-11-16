@@ -43,8 +43,9 @@ fn sanitize_icon_stem(raw: &str) -> String {
 
 /// Bump this version whenever `ModParser` metadata extraction semantics change so
 /// stale SQLite cache entries from older versions are automatically bypassed.
-pub const MOD_PARSER_CACHE_VERSION: &str = "v4";
-const MOD_CACHE_SCHEMA_VERSION: i32 = 4;
+pub const MOD_PARSER_CACHE_VERSION: &str = "v5";
+const MOD_CACHE_SCHEMA_VERSION: i32 = 5;
+const TMP_ICON_ORPHAN_GRACE_SECS: u64 = 300;
 
 /// Cap metadata entry reads inside mod archives to avoid excessive memory usage on malformed JARs.
 const MAX_METADATA_READ_BYTES: u64 = 2 * 1024 * 1024;
@@ -62,6 +63,14 @@ pub fn resolve_icon_stem<'a>(mod_id: Option<&'a str>, cache_key: &'a str) -> &'a
 
 fn is_non_empty_regular_file(path: &Path) -> bool {
     fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0)
+}
+
+fn remove_zero_byte_regular_file(path: &Path) {
+    if fs::symlink_metadata(path)
+        .is_ok_and(|m| !m.file_type().is_symlink() && m.file_type().is_file() && m.len() == 0)
+    {
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn icon_match_key(name: &str) -> String {
@@ -97,6 +106,20 @@ pub struct ModMetadata {
     pub detected_loader: Option<String>,
     /// Chinese mod name declared inside the JAR's `assets/<mod_id>/lang/zh_cn.json` if present.
     pub zh_name_embedded: Option<String>,
+}
+
+impl ModMetadata {
+    /// Return true when no mod metadata or icon was extracted from the archive.
+    pub fn is_empty(&self) -> bool {
+        self.mod_id.is_none()
+            && self.name.is_none()
+            && self.version.is_none()
+            && !self.has_icon
+            && self.depends.is_empty()
+            && self.provides.is_empty()
+            && self.detected_loader.is_none()
+            && self.zh_name_embedded.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -329,6 +352,16 @@ fn ensure_mod_cache_schema(conn: &rusqlite::Connection) -> rusqlite::Result<()> 
     Ok(())
 }
 
+fn invalidate_stale_mod_cache_entries(conn: &rusqlite::Connection) {
+    let user_version: i32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(0);
+    if user_version < MOD_CACHE_SCHEMA_VERSION {
+        let _ = conn.execute("DELETE FROM mod_cache", []);
+        let _ = conn.execute(&format!("PRAGMA user_version = {}", MOD_CACHE_SCHEMA_VERSION), []);
+    }
+}
+
 impl ModParser {
     pub fn new(base_dir: &Path) -> Self {
         let cache_dir = base_dir.join(".mod_cache");
@@ -359,13 +392,7 @@ impl ModParser {
         ensure_mod_cache_schema(&conn)?;
 
         // Invalidate stale cache entries whenever parser metadata schema changes
-        let user_version: i32 = conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap_or(0);
-        if user_version < MOD_CACHE_SCHEMA_VERSION {
-            let _ = conn.execute("DELETE FROM mod_cache", []);
-            let _ = conn.execute(&format!("PRAGMA user_version = {}", MOD_CACHE_SCHEMA_VERSION), []);
-        }
+        invalidate_stale_mod_cache_entries(&conn);
 
         // Migration from old cache.json
         let json_path = self.cache_dir.join("cache.json");
@@ -504,7 +531,7 @@ impl ModParser {
             .find(|p| is_non_empty_regular_file(p))
     }
 
-    /// Collect active `mod_cache` key prefixes (`v4_<filename>_<size>_<mtime>_`) from all instances.
+    /// Collect active `mod_cache` key prefixes (`v5_<filename>_<size>_<mtime>_`) from all instances.
     fn collect_live_mod_key_prefixes(base_dir: &Path) -> Result<HashSet<String>, String> {
         let mut prefixes = HashSet::new();
         let versions_dir = base_dir.join("versions");
@@ -672,6 +699,7 @@ impl ModParser {
                 .map_err(|e| format!("Failed to open mod_cache DB {}: {}", db_path.display(), e))?;
             ensure_mod_cache_schema(&conn)
                 .map_err(|e| format!("Failed to ensure mod_cache schema: {}", e))?;
+            invalidate_stale_mod_cache_entries(&conn);
 
             let rows: Vec<(String, Option<String>, Option<i64>)> = {
                 let mut stmt = conn
@@ -805,6 +833,17 @@ impl ModParser {
                     continue;
                 }
                 let file_name = entry.file_name().to_string_lossy().to_string();
+                if file_name.starts_with(".tmp_") && file_name.ends_with(".png") {
+                    let is_recent_tmp = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| now_secs.saturating_sub(d.as_secs()) < TMP_ICON_ORPHAN_GRACE_SECS)
+                        .unwrap_or(true);
+                    if is_recent_tmp {
+                        continue;
+                    }
+                }
                 let stem = Path::new(&file_name)
                     .file_stem()
                     .and_then(|s| s.to_str())
@@ -956,13 +995,23 @@ impl ModParser {
                     let _ = fs::remove_file(&tmp_path);
                     return false;
                 }
-                if fs::rename(&tmp_path, &dest_path).is_ok() {
-                    return true;
-                }
+                remove_zero_byte_regular_file(&dest_path);
+                let renamed_or_written = if fs::rename(&tmp_path, &dest_path).is_ok()
+                    || is_non_empty_regular_file(&dest_path)
+                {
+                    true
+                } else {
+                    remove_zero_byte_regular_file(&dest_path);
+                    if fs::rename(&tmp_path, &dest_path).is_ok() {
+                        true
+                    } else {
+                        let dest_is_dir_or_symlink = fs::symlink_metadata(&dest_path)
+                            .is_ok_and(|m| m.file_type().is_symlink() || m.file_type().is_dir());
+                        !dest_is_dir_or_symlink && fs::write(&dest_path, &buffer).is_ok()
+                    }
+                };
                 let _ = fs::remove_file(&tmp_path);
-                if is_non_empty_regular_file(&dest_path) {
-                    return true;
-                }
+                return renamed_or_written && is_non_empty_regular_file(&dest_path);
             }
         }
         false
@@ -1446,19 +1495,20 @@ impl ModParser {
         true
     }
 
-    pub fn parse_mod(
+    /// Parse mod metadata and extract its icon, returning `None` if the archive cannot be opened or decoded.
+    pub fn try_parse_mod(
         &self,
         file_path: &Path,
         cache_key: &str,
         loader_type: Option<&str>,
-    ) -> ModMetadata {
+    ) -> Option<ModMetadata> {
         let mut meta = ModMetadata::default();
 
         let file = match File::open(file_path) {
             Ok(f) => f,
             Err(e) => {
                 debug!("Failed to open mod file {:?}: {}", file_path, e);
-                return meta;
+                return None;
             }
         };
 
@@ -1466,7 +1516,7 @@ impl ModParser {
             Ok(a) => a,
             Err(e) => {
                 debug!("Failed to read zip archive {:?}: {}", file_path, e);
-                return meta;
+                return None;
             }
         };
 
@@ -1489,7 +1539,17 @@ impl ModParser {
             meta.zh_name_embedded = extract_embedded_zh_name(&mut archive, mid);
         }
 
-        meta
+        Some(meta)
+    }
+
+    pub fn parse_mod(
+        &self,
+        file_path: &Path,
+        cache_key: &str,
+        loader_type: Option<&str>,
+    ) -> ModMetadata {
+        self.try_parse_mod(file_path, cache_key, loader_type)
+            .unwrap_or_default()
     }
 }
 
@@ -2117,6 +2177,56 @@ logoFile="./icon.png"
         let replaced = parser.parse_mod(&jar_path, &cache_key, Some("NeoForge"));
         assert!(replaced.has_icon);
         assert!(fs::metadata(&icon_path).unwrap().len() > 0);
+    }
+
+    #[test]
+    fn test_prune_protects_recent_tmp_icons_and_invalidates_v4_no_icon_entries() {
+        let dir = tempdir().unwrap();
+        let cache_dir = dir.path().join(".mod_cache");
+        let icons_dir = cache_dir.join("icons");
+        fs::create_dir_all(&icons_dir).unwrap();
+        let db_path = cache_dir.join("cache.db");
+
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            ensure_mod_cache_schema(&conn).unwrap();
+            conn.execute("PRAGMA user_version = 4", []).unwrap();
+            conn.execute(
+                "INSERT INTO mod_cache (cache_key, mod_id, name, version, has_icon) VALUES (?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "v4_slash_mod.jar_100_1_NeoForge",
+                    "slash_mod",
+                    "Slash Mod",
+                    "1.0.0",
+                    0
+                ],
+            )
+            .unwrap();
+        }
+
+        // Initializing ModParser under v5 invalidates stale v4 entries (including has_icon=0)
+        let parser = ModParser::new(dir.path());
+        assert!(parser.load_all_cache().is_empty());
+
+        // Recent temporary icon file is preserved during immediate GC, while expired ones are cleaned
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let active_tmp = icons_dir.join(".tmp_1234_abcdef.png");
+        let expired_tmp = icons_dir.join(".tmp_1234_oldtmp.png");
+        fs::write(&active_tmp, b"partial-or-ready").unwrap();
+        fs::write(&expired_tmp, b"stale-tmp").unwrap();
+        let old_time = SystemTime::now() - Duration::from_secs(TMP_ICON_ORPHAN_GRACE_SECS + 60);
+        {
+            let f = fs::OpenOptions::new().write(true).open(&expired_tmp).unwrap();
+            let _ = f.set_modified(old_time);
+        }
+
+        let stats = ModParser::prune_unreferenced_at(dir.path(), 0, now_secs).unwrap();
+        assert_eq!(stats.removed_icons, 1);
+        assert!(active_tmp.exists());
+        assert!(!expired_tmp.exists());
     }
 
     #[test]

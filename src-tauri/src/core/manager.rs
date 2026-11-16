@@ -2967,7 +2967,8 @@ async fn resolve_mod_metadata(
     skip_parsing: bool,
     loader_type: Option<String>,
 ) -> (crate::core::mod_parser::ModMetadata, Option<String>) {
-    if let Some(m) = cache_entries.get(cache_key) {
+    let cached_opt = cache_entries.get(cache_key).cloned();
+    if let Some(ref m) = cached_opt {
         let icon_url = get_mod_icon_url(m, parser, cache_key).await;
         if !m.has_icon || icon_url.is_some() || skip_parsing {
             return (m.clone(), icon_url);
@@ -2984,18 +2985,26 @@ async fn resolve_mod_metadata(
     let key_clone = cache_key.to_string();
     let parser_clone = parser.clone();
     let loader_type_clone = loader_type.clone();
-    let m = match tokio::task::spawn_blocking(move || {
-        let parsed = parser_clone.parse_mod(&path_clone, &key_clone, loader_type_clone.as_deref());
+    let had_cached_details = cached_opt.as_ref().is_some_and(|m| !m.is_empty());
+    let parsed_opt = tokio::task::spawn_blocking(move || {
+        let parsed =
+            parser_clone.try_parse_mod(&path_clone, &key_clone, loader_type_clone.as_deref())?;
+        if had_cached_details && parsed.is_empty() {
+            return None;
+        }
         parser_clone.set_cache_entry(&key_clone, &parsed);
-        parsed
+        Some(parsed)
     })
     .await
-    {
-        Ok(parsed) => {
+    .ok()
+    .flatten();
+
+    let m = match parsed_opt {
+        Some(parsed) => {
             cache_entries.insert(cache_key.to_string(), parsed.clone());
             parsed
         }
-        Err(_) => crate::core::mod_parser::ModMetadata::default(),
+        None => cached_opt.unwrap_or_default(),
     };
 
     let icon_url = get_mod_icon_url(&m, parser, cache_key).await;
@@ -5852,6 +5861,49 @@ logoFile="missing.png"
         assert_eq!(corrected_url, None);
         let reloaded = parser.load_all_cache();
         assert_eq!(reloaded.get(&key_without_icon).map(|m| m.has_icon), Some(false));
+
+        // When a repair parse cannot open/decode the archive, preserve the existing cached entry
+        let key_preserved =
+            crate::core::mod_parser::build_mod_cache_key("BrokenRepair.jar", 77, 1, "NeoForge");
+        let cached_rich = crate::core::mod_parser::ModMetadata {
+            mod_id: Some("preserved_mod".to_string()),
+            name: Some("Preserved Mod".to_string()),
+            version: Some("2.1.0".to_string()),
+            has_icon: true,
+            depends: vec!["some_dep".to_string()],
+            provides: vec!["sub_mod".to_string()],
+            detected_loader: Some("NeoForge".to_string()),
+            zh_name_embedded: Some("保留模组".to_string()),
+        };
+        parser.set_cache_entry(&key_preserved, &cached_rich);
+        cache_entries.insert(key_preserved.clone(), cached_rich.clone());
+
+        let corrupt_jar = dir.path().join("BrokenRepair.jar");
+        tokio::fs::write(&corrupt_jar, b"not-a-zip-archive")
+            .await
+            .unwrap();
+
+        let (preserved_meta, preserved_url) = resolve_mod_metadata(
+            &corrupt_jar,
+            &key_preserved,
+            &mut cache_entries,
+            &parser,
+            false,
+            Some("NeoForge".to_string()),
+        )
+        .await;
+        assert_eq!(preserved_meta.mod_id.as_deref(), Some("preserved_mod"));
+        assert_eq!(preserved_meta.name.as_deref(), Some("Preserved Mod"));
+        assert_eq!(preserved_meta.version.as_deref(), Some("2.1.0"));
+        assert_eq!(preserved_meta.depends, vec!["some_dep".to_string()]);
+        assert!(preserved_meta.has_icon);
+        assert_eq!(preserved_url, None);
+
+        let reloaded_after_failure = parser.load_all_cache();
+        let db_entry = reloaded_after_failure.get(&key_preserved).unwrap();
+        assert_eq!(db_entry.mod_id.as_deref(), Some("preserved_mod"));
+        assert_eq!(db_entry.name.as_deref(), Some("Preserved Mod"));
+        assert!(db_entry.has_icon);
     }
 }
 
