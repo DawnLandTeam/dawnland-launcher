@@ -101,50 +101,55 @@ impl RunningInstances {
     pub async fn has_running_instances(&self) -> bool {
         !self.get_running_instances().await.is_empty()
     }
+
+    /// Removes the instance entry only if it still belongs to `launch_flag`.
+    /// Returns `true` if a newer replacement launch now owns the entry.
+    pub async fn cleanup_exited_launch(
+        &self,
+        instance_name: &str,
+        launch_flag: &Arc<AtomicBool>,
+    ) -> bool {
+        let mut map = self.0.lock().await;
+        match map.get(instance_name) {
+            Some(h) if Arc::ptr_eq(&h.intentionally_killed, launch_flag) => {
+                map.remove(instance_name);
+                false
+            }
+            Some(_) => true,
+            None => false,
+        }
+    }
 }
 
 #[cfg(windows)]
-pub fn create_instance_job_object(pid: u32) -> Result<SafeJobHandle, String> {
+pub fn create_instance_job_object(
+    process_handle: windows_sys::Win32::Foundation::HANDLE,
+) -> Result<SafeJobHandle, String> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::JobObjects::*;
-    use windows_sys::Win32::System::Threading::*;
+    use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+
+    if process_handle.is_null() || process_handle == INVALID_HANDLE_VALUE {
+        return Err("Invalid process handle for Job assignment".to_string());
+    }
 
     unsafe {
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
         if job.is_null() || job == INVALID_HANDLE_VALUE {
-            return Err("Failed to create Job Object".to_string());
+            return Err(format!(
+                "Failed to create Job Object: {}",
+                std::io::Error::last_os_error()
+            ));
         }
 
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-
-        let res = SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const std::ffi::c_void,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        );
-        if res == 0 {
-            CloseHandle(job);
-            return Err("Failed to set Job Object limits".to_string());
-        }
-
-        let process_handle = OpenProcess(
-            PROCESS_SET_QUOTA | PROCESS_TERMINATE,
-            0,
-            pid,
-        );
-        if process_handle.is_null() || process_handle == INVALID_HANDLE_VALUE {
-            CloseHandle(job);
-            return Err(format!("Failed to open process PID {} for Job assignment", pid));
-        }
-
+        // Deliberately do NOT set JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE:
+        // closing the stored handle on normal exit, crash, launcher shutdown, or handle
+        // replacement must not terminate processes that should survive those events.
+        // Forced stops explicitly call TerminateJobObject instead.
         let assign_res = AssignProcessToJobObject(job, process_handle);
-        CloseHandle(process_handle);
-
         if assign_res == 0 {
+            let err = std::io::Error::last_os_error();
             CloseHandle(job);
-            return Err(format!("Failed to assign PID {} to Job Object", pid));
+            return Err(format!("Failed to assign process handle to Job Object: {}", err));
         }
 
         Ok(SafeJobHandle(job))
@@ -152,11 +157,82 @@ pub fn create_instance_job_object(pid: u32) -> Result<SafeJobHandle, String> {
 }
 
 #[cfg(windows)]
-pub fn terminate_instance_job_object(job: &SafeJobHandle) -> bool {
+pub fn terminate_instance_job_object(job: &SafeJobHandle) -> Result<(), String> {
     use windows_sys::Win32::System::JobObjects::TerminateJobObject;
     unsafe {
-        TerminateJobObject(job.0, 0) != 0
+        if TerminateJobObject(job.0, 0) != 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "TerminateJobObject failed: {}",
+                std::io::Error::last_os_error()
+            ))
+        }
     }
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let raw = path.to_string_lossy().replace('\\', "/");
+    let trimmed = raw.trim_end_matches('/');
+    #[cfg(windows)]
+    {
+        trimmed.to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        trimmed.to_string()
+    }
+}
+
+fn path_is_same_or_under(candidate: &Path, base: &Path) -> bool {
+    let base_norm = normalize_path_for_compare(base);
+    if base_norm.is_empty() {
+        return false;
+    }
+    let cand_norm = normalize_path_for_compare(candidate);
+    cand_norm == base_norm
+        || cand_norm
+            .strip_prefix(&base_norm)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn arg_references_game_dir(arg_raw: &str, game_dir: &Path) -> bool {
+    let trimmed = arg_raw.trim().trim_matches('"').trim_matches('\'');
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let check_value = |val: &str| -> bool {
+        let clean = val.trim().trim_matches('"').trim_matches('\'');
+        if clean.is_empty() {
+            return false;
+        }
+        if path_is_same_or_under(Path::new(clean), game_dir) {
+            return true;
+        }
+        let sep = if cfg!(windows) { ';' } else { ':' };
+        if clean.contains(sep) {
+            for segment in clean.split(sep) {
+                let seg = segment.trim().trim_matches('"').trim_matches('\'');
+                if !seg.is_empty() && path_is_same_or_under(Path::new(seg), game_dir) {
+                    return true;
+                }
+            }
+        }
+        false
+    };
+
+    if check_value(trimmed) {
+        return true;
+    }
+
+    if let Some((_, rhs)) = trimmed.split_once('=') {
+        if check_value(rhs) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Pure helper to check whether a process's metadata matches the signature of a watchdog / companion process
@@ -169,20 +245,22 @@ pub fn matches_companion_criteria(
     game_dir: &Path,
     proc_pid: u32,
     self_pid: u32,
+    allow_direct_child: bool,
 ) -> bool {
     if proc_pid == 0 || proc_pid == self_pid || proc_pid == target_pid {
         return false;
     }
 
-    // 1. Direct child in OS process tree
-    if let Some(ppid) = parent_os_pid {
-        if ppid == target_pid {
-            return true;
+    // 1. Direct child in OS process tree (only while target_pid is still known alive)
+    if allow_direct_child {
+        if let Some(ppid) = parent_os_pid {
+            if ppid == target_pid {
+                return true;
+            }
         }
     }
 
     let target_pid_str = target_pid.to_string();
-    let game_dir_str = game_dir.to_string_lossy().to_lowercase();
 
     // 2. Check command line arguments for watchdog / companion patterns
     let mut has_parent_pid_flag = false;
@@ -191,16 +269,23 @@ pub fn matches_companion_criteria(
     let mut matches_game_dir = false;
 
     for (idx, arg_raw) in cmd.iter().enumerate() {
-        let arg = arg_raw.to_lowercase();
-        if arg.contains("-parentpid") {
+        let arg = arg_raw.trim().to_lowercase();
+        if arg == "-parentpid" || arg == "--parentpid" {
             has_parent_pid_flag = true;
-            if arg.contains(&format!("={}", target_pid_str)) || arg.contains(&format!(":{}", target_pid_str)) {
-                matches_parent_pid = true;
-            } else if idx + 1 < cmd.len() {
-                let next_arg = cmd[idx + 1].trim();
-                if next_arg == target_pid_str {
+            if let Some(next_arg) = cmd.get(idx + 1) {
+                if next_arg.trim() == target_pid_str {
                     matches_parent_pid = true;
                 }
+            }
+        } else if let Some(val) = arg
+            .strip_prefix("-parentpid=")
+            .or_else(|| arg.strip_prefix("--parentpid="))
+            .or_else(|| arg.strip_prefix("-parentpid:"))
+            .or_else(|| arg.strip_prefix("--parentpid:"))
+        {
+            has_parent_pid_flag = true;
+            if val.trim() == target_pid_str {
+                matches_parent_pid = true;
             }
         }
 
@@ -208,7 +293,7 @@ pub fn matches_companion_criteria(
             has_crash_assistant_cue = true;
         }
 
-        if !game_dir_str.is_empty() && arg.contains(&game_dir_str) {
+        if arg_references_game_dir(arg_raw, game_dir) {
             matches_game_dir = true;
         }
     }
@@ -217,14 +302,19 @@ pub fn matches_companion_criteria(
         return true;
     }
 
-    if has_crash_assistant_cue && (matches_game_dir || has_parent_pid_flag) {
+    // Do not fall back to directory heuristics if the process explicitly tracks a different -parentPID.
+    if has_parent_pid_flag {
+        return false;
+    }
+
+    if has_crash_assistant_cue && matches_game_dir {
         return true;
     }
 
-    // 3. Check cwd
+    // 3. Check cwd strictly under game_dir
     if let Some(cwd_path) = cwd {
-        let cwd_lower = cwd_path.to_string_lossy().to_lowercase();
-        if !game_dir_str.is_empty() && cwd_lower.starts_with(&game_dir_str) {
+        if path_is_same_or_under(cwd_path, game_dir) {
+            let cwd_lower = cwd_path.to_string_lossy().to_lowercase();
             if has_crash_assistant_cue || cwd_lower.contains("crash_assistant") {
                 return true;
             }
@@ -239,6 +329,7 @@ pub fn is_instance_companion_process(
     parent_pid: u32,
     game_dir: &Path,
     self_pid: u32,
+    allow_direct_child: bool,
 ) -> bool {
     let cmd_strings: Vec<String> = process
         .cmd()
@@ -256,47 +347,60 @@ pub fn is_instance_companion_process(
         game_dir,
         proc_pid,
         self_pid,
+        allow_direct_child,
     )
 }
 
 /// Pre-emptively terminates all companion / watchdog processes (like Crash Assistant)
-/// BEFORE terminating the main Minecraft JVM process.
-pub async fn terminate_instance_companions(parent_pid: u32, game_dir: &Path) {
+/// for a target instance.
+pub async fn terminate_instance_companions(
+    parent_pid: u32,
+    game_dir: &Path,
+    allow_direct_child: bool,
+) {
     let mut sys = sysinfo::System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let self_pid = std::process::id();
 
     let mut companion_pids = Vec::new();
     for (pid, process) in sys.processes() {
-        if is_instance_companion_process(process, parent_pid, game_dir, self_pid) {
+        if is_instance_companion_process(
+            process,
+            parent_pid,
+            game_dir,
+            self_pid,
+            allow_direct_child,
+        ) {
             companion_pids.push(pid.as_u32());
         }
     }
 
     if !companion_pids.is_empty() {
         tracing::info!(
-            "Pre-emptively terminating {} companion/watchdog processes for PID {}: {:?}",
+            "Terminating {} companion/watchdog processes for PID {}: {:?}",
             companion_pids.len(),
             parent_pid,
             companion_pids
         );
         for comp_pid in companion_pids {
-            if let Some(p) = sys.process(sysinfo::Pid::from_u32(comp_pid)) {
-                let _ = p.kill();
-            }
-            #[cfg(windows)]
-            {
-                let _ = crate::core::utils::create_hidden_command("taskkill")
-                    .args(["/F", "/PID", &comp_pid.to_string()])
-                    .output()
-                    .await;
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = crate::core::utils::create_hidden_command("kill")
-                    .args(["-9", &comp_pid.to_string()])
-                    .output()
-                    .await;
+            let killed_directly = sys
+                .process(sysinfo::Pid::from_u32(comp_pid))
+                .is_some_and(|p| p.kill());
+            if !killed_directly {
+                #[cfg(windows)]
+                {
+                    let _ = crate::core::utils::create_hidden_command("taskkill")
+                        .args(["/F", "/PID", &comp_pid.to_string()])
+                        .output()
+                        .await;
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = crate::core::utils::create_hidden_command("kill")
+                        .args(["-9", &comp_pid.to_string()])
+                        .output()
+                        .await;
+                }
             }
         }
     }
@@ -313,59 +417,87 @@ pub async fn kill_instance(
     };
 
     if let Some(handle) = handle {
-        handle.intentionally_killed.store(true, Ordering::SeqCst);
+        let was_already_killed = handle.intentionally_killed.swap(true, Ordering::SeqCst);
         let pid = handle.pid;
         let game_dir = handle.game_dir.clone();
 
         tracing::info!("Initiating force stop for instance '{}' (PID: {})", version_id, pid);
 
         // Step 1: Pre-emptively terminate all watchdog and companion processes (e.g. Crash Assistant)
-        // We do this BEFORE terminating the main game process so that watchdogs cannot detect
-        // the parent's termination and pop up GUI windows.
-        terminate_instance_companions(pid, &game_dir).await;
+        // BEFORE terminating the main game process so watchdogs cannot detect exit and pop up GUIs.
+        terminate_instance_companions(pid, &game_dir, true).await;
 
-        // Step 2: On Windows, terminate the Job Object if one was assigned.
-        // This causes the Windows kernel to terminate all remaining processes in the job atomically.
-        #[cfg(windows)]
-        if let Some(job) = &handle.job_handle {
-            terminate_instance_job_object(job);
-        }
+        // Step 2: Terminate the main game process and its full process tree/group.
+        let terminate_result: Result<(), String> = {
+            #[cfg(windows)]
+            {
+                if let Some(job) = &handle.job_handle {
+                    terminate_instance_job_object(job)
+                } else {
+                    let output = crate::core::utils::create_hidden_command("taskkill")
+                        .args(["/F", "/T", "/PID", &pid.to_string()])
+                        .output()
+                        .await
+                        .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
 
-        // Step 3: Terminate the main game process tree
-        #[cfg(windows)]
-        {
-            let output = crate::core::utils::create_hidden_command("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .output()
-                .await
-                .map_err(|e| {
-                    DawnlandError::ProcessError(format!("Failed to execute taskkill: {}", e))
-                })?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if !stderr.contains("not found") && !stderr.contains("没有找到") && !stderr.contains("PID") {
-                    tracing::warn!("taskkill notice for PID {}: {}", pid, stderr);
+                    if output.status.success() {
+                        Ok(())
+                    } else {
+                        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+                    }
                 }
             }
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = crate::core::utils::create_hidden_command("kill")
-                .args(["-9", &format!("-{}", pid)])
-                .output()
-                .await;
+            #[cfg(not(windows))]
+            {
+                let pgid_output = crate::core::utils::create_hidden_command("kill")
+                    .args(["-9", &format!("-{}", pid)])
+                    .output()
+                    .await
+                    .map_err(|e| format!("Failed to execute kill: {}", e))?;
 
-            let _ = crate::core::utils::create_hidden_command("kill")
-                .args(["-9", &pid.to_string()])
-                .output()
-                .await;
+                if pgid_output.status.success() {
+                    Ok(())
+                } else {
+                    let pid_output = crate::core::utils::create_hidden_command("kill")
+                        .args(["-9", &pid.to_string()])
+                        .output()
+                        .await
+                        .map_err(|e| format!("Failed to execute kill: {}", e))?;
+
+                    if pid_output.status.success() {
+                        Ok(())
+                    } else {
+                        let pgid_err = String::from_utf8_lossy(&pgid_output.stderr);
+                        let pid_err = String::from_utf8_lossy(&pid_output.stderr);
+                        Err(format!(
+                            "Failed to kill process group -{} ({}) and PID {} ({})",
+                            pid,
+                            pgid_err.trim(),
+                            pid,
+                            pid_err.trim()
+                        ))
+                    }
+                }
+            }
+        };
+
+        if let Err(err_msg) = terminate_result {
+            if !was_already_killed {
+                handle.intentionally_killed.store(false, Ordering::SeqCst);
+            }
+            tracing::error!(
+                "Failed to terminate instance '{}' (PID {}): {}",
+                version_id,
+                pid,
+                err_msg
+            );
+            return Err(DawnlandError::ProcessError(err_msg).into());
         }
 
-        // Step 4: Short post-termination sweep to catch any companion spawned in race window
+        // Step 3: Short post-termination sweep to catch any companion spawned in the race window
         tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            terminate_instance_companions(pid, &game_dir).await;
+            terminate_instance_companions(pid, &game_dir, false).await;
         });
 
         Ok(())
@@ -3654,14 +3786,17 @@ pub async fn launch_instance(
     tracing::info!("Game args count: {}", game_args.len());
     tracing::info!("Classpath entries: {}", classpath.len());
 
-    let mut child = match crate::core::utils::create_hidden_command(&java_executable)
-        .current_dir(&game_dir)
+    let mut cmd = crate::core::utils::create_hidden_command(&java_executable);
+    cmd.current_dir(&game_dir)
         .args(&jvm_args)
         .arg(&main_class)
         .args(&game_args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    cmd.process_group(0);
+
+    let mut child = match cmd.spawn()
     {
         Ok(c) => c,
         Err(e) => {
@@ -3676,10 +3811,10 @@ pub async fn launch_instance(
     tracing::info!("Minecraft process spawned with PID: {}", pid);
 
     #[cfg(windows)]
-    let job_handle = if pid > 0 {
-        match create_instance_job_object(pid) {
+    let job_handle = if let Some(raw_handle) = child.raw_handle() {
+        match create_instance_job_object(raw_handle as windows_sys::Win32::Foundation::HANDLE) {
             Ok(job) => {
-                tracing::info!("Assigned Minecraft PID {} to Job Object", pid);
+                tracing::info!("Assigned Minecraft PID {} to Job Object via spawned handle", pid);
                 Some(Arc::new(job))
             }
             Err(e) => {
@@ -3692,6 +3827,7 @@ pub async fn launch_instance(
     };
 
     let intentionally_killed = Arc::new(AtomicBool::new(false));
+    let intentionally_killed_for_waiter = intentionally_killed.clone();
 
     if let Some(state) = app.try_state::<RunningInstances>() {
         let mut map = state.0.lock().await;
@@ -3700,7 +3836,7 @@ pub async fn launch_instance(
             InstanceProcessHandle {
                 pid,
                 game_dir: game_dir.clone(),
-                intentionally_killed: intentionally_killed.clone(),
+                intentionally_killed,
                 #[cfg(windows)]
                 job_handle,
             },
@@ -3784,93 +3920,77 @@ pub async fn launch_instance(
     tokio::spawn(async move {
         let _launch_permit = launch_permit;
         // Wait for process to exit
-        match child.wait().await {
+        let (exit_code, wait_succeeded) = match child.wait().await {
             Ok(status) => {
-                let exit_code = status.code().unwrap_or(-1);
-                tracing::info!("Game exited with code: {}", exit_code);
-
-                // Record playtime
-                let elapsed = start_time.elapsed().unwrap_or_default().as_secs();
-                if let Some(stats_db) = app_handle_clone.try_state::<crate::core::statistics::StatisticsDb>() {
-                    if let Err(e) = stats_db.add_playtime(version_id_clone.clone(), elapsed as i64).await {
-                        tracing::warn!("Failed to add playtime statistics: {}", e);
-                    }
-                }
-
-                // Restore window visibility when game exits
-                let _ = window_clone.show();
-                let _ = window_clone.unminimize();
-                let _ = window_clone.set_focus();
-
-                // Check whether this instance was intentionally killed by the user
-                let was_intentionally_killed = if let Some(state) = app_handle_clone.try_state::<RunningInstances>() {
-                    let map = state.0.lock().await;
-                    map.get(&version_id_clone)
-                        .map(|h| h.intentionally_killed.load(Ordering::SeqCst))
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
-
-                // Notify frontend game has exited with exit code
-                let mut crash_report_content: Option<String> = None;
-                if !was_intentionally_killed {
-                    let (report_content, is_real_crash) = crate::core::ai::get_latest_crash_report(&game_dir_clone, start_time).await;
-                    if exit_code != 0 || is_real_crash {
-                        crash_report_content = report_content;
-                    }
-                }
-
-                let _ = app_handle_clone.emit(
-                    "instance-state-changed",
-                    serde_json::json!({
-                        "versionId": version_id_clone,
-                        "status": "exited",
-                        "exitCode": exit_code,
-                        "isOpenJ9": is_openj9,
-                        "crashReport": crash_report_content,
-                        "intentionallyKilled": was_intentionally_killed
-                    }),
-                );
-
-                if let Some(state) = app_handle_clone.try_state::<RunningInstances>() {
-                    let mut map = state.0.lock().await;
-                    map.remove(&version_id_clone);
-                }
+                let code = status.code().unwrap_or(-1);
+                tracing::info!("Game exited with code: {}", code);
+                (code, true)
             }
             Err(e) => {
                 tracing::error!("Failed to wait for game process: {}", e);
-                // Restore window on error too
-                let _ = window_clone.show();
-                let _ = window_clone.unminimize();
-                let _ = window_clone.set_focus();
+                (-1, false)
+            }
+        };
 
-                let was_intentionally_killed = if let Some(state) = app_handle_clone.try_state::<RunningInstances>() {
-                    let map = state.0.lock().await;
-                    map.get(&version_id_clone)
-                        .map(|h| h.intentionally_killed.load(Ordering::SeqCst))
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
-
-                let _ = app_handle_clone.emit(
-                    "instance-state-changed",
-                    serde_json::json!({
-                        "versionId": version_id_clone,
-                        "status": "exited",
-                        "exitCode": -1,
-                        "isOpenJ9": is_openj9,
-                        "intentionallyKilled": was_intentionally_killed
-                    }),
-                );
-
-                if let Some(state) = app_handle_clone.try_state::<RunningInstances>() {
-                    let mut map = state.0.lock().await;
-                    map.remove(&version_id_clone);
+        if wait_succeeded {
+            let elapsed = start_time.elapsed().unwrap_or_default().as_secs();
+            if let Some(stats_db) = app_handle_clone.try_state::<crate::core::statistics::StatisticsDb>() {
+                if let Err(e) = stats_db.add_playtime(version_id_clone.clone(), elapsed as i64).await {
+                    tracing::warn!("Failed to add playtime statistics: {}", e);
                 }
             }
         }
+
+        // Only remove state and emit exit if this waiter still owns the current entry
+        // (i.e. it has not been replaced by a newer launch of the same instance).
+        let is_replaced = if let Some(state) = app_handle_clone.try_state::<RunningInstances>() {
+            state
+                .cleanup_exited_launch(&version_id_clone, &intentionally_killed_for_waiter)
+                .await
+        } else {
+            false
+        };
+
+        if !is_replaced {
+            // Restore window visibility when game exits
+            let _ = window_clone.show();
+            let _ = window_clone.unminimize();
+            let _ = window_clone.set_focus();
+
+            // Read the retained flag directly so map purges cannot turn a forced stop into a crash
+            let was_intentionally_killed = intentionally_killed_for_waiter.load(Ordering::SeqCst);
+
+            let mut crash_report_content: Option<String> = None;
+            if wait_succeeded && !was_intentionally_killed {
+                let (report_content, is_real_crash) =
+                    crate::core::ai::get_latest_crash_report(&game_dir_clone, start_time).await;
+                if exit_code != 0 || is_real_crash {
+                    crash_report_content = report_content;
+                }
+            }
+
+            let mut payload = serde_json::json!({
+                "versionId": version_id_clone,
+                "status": "exited",
+                "exitCode": exit_code,
+                "isOpenJ9": is_openj9,
+                "intentionallyKilled": was_intentionally_killed
+            });
+            if wait_succeeded {
+                payload["crashReport"] = match crash_report_content {
+                    Some(report) => serde_json::Value::String(report),
+                    None => serde_json::Value::Null,
+                };
+            }
+
+            let _ = app_handle_clone.emit("instance-state-changed", payload);
+        } else {
+            tracing::info!(
+                "Skipping exit cleanup for instance '{}' (replaced by a newer launch)",
+                version_id_clone
+            );
+        }
+
         drop(_launch_permit);
         crate::core::cache::on_active_task_finished(app_handle_clone);
     });
@@ -4387,7 +4507,7 @@ mod tests {
         let target_pid = 1234;
         let self_pid = 9999;
 
-        // 1. Direct child process in OS process tree
+        // 1. Direct child process in OS process tree (only when allow_direct_child is true)
         assert!(matches_companion_criteria(
             &["java.exe".to_string()],
             None,
@@ -4396,6 +4516,17 @@ mod tests {
             game_dir,
             5555,
             self_pid,
+            true,
+        ));
+        assert!(!matches_companion_criteria(
+            &["java.exe".to_string()],
+            None,
+            Some(target_pid),
+            target_pid,
+            game_dir,
+            5555,
+            self_pid,
+            false,
         ));
 
         // 2. Separate process with -parentPID flag matching target PID
@@ -4413,6 +4544,7 @@ mod tests {
             game_dir,
             5556,
             self_pid,
+            false,
         ));
 
         // 3. Process with -parentPID=1234
@@ -4427,9 +4559,10 @@ mod tests {
             game_dir,
             5557,
             self_pid,
+            false,
         ));
 
-        // 4. Crash Assistant located inside instance game_dir
+        // 4. Crash Assistant located inside instance game_dir (without conflicting -parentPID)
         assert!(matches_companion_criteria(
             &[
                 "javaw.exe".to_string(),
@@ -4442,9 +4575,77 @@ mod tests {
             game_dir,
             5558,
             self_pid,
+            false,
         ));
 
-        // 5. Unrelated process should NOT match
+        // 5. Prefix-sharing PID (-parentPID=12345 or -parentPID 12345) must NOT match 1234
+        assert!(!matches_companion_criteria(
+            &[
+                "java.exe".to_string(),
+                "-jar".to_string(),
+                "local/crash_assistant/app.jar".to_string(),
+                "-parentPID=12345".to_string(),
+            ],
+            None,
+            None,
+            target_pid,
+            game_dir,
+            5559,
+            self_pid,
+            false,
+        ));
+        assert!(!matches_companion_criteria(
+            &[
+                "java.exe".to_string(),
+                "-jar".to_string(),
+                "local/crash_assistant/app.jar".to_string(),
+                "-parentPID".to_string(),
+                "12345".to_string(),
+            ],
+            None,
+            None,
+            target_pid,
+            game_dir,
+            5560,
+            self_pid,
+            false,
+        ));
+
+        // 6. Another instance's Crash Assistant with a different -parentPID must NOT match even in same game_dir
+        assert!(!matches_companion_criteria(
+            &[
+                "java.exe".to_string(),
+                "-jar".to_string(),
+                "C:/mc/versions/CursedWalking/local/crash_assistant/app.jar".to_string(),
+                "-parentPID".to_string(),
+                "8888".to_string(),
+            ],
+            Some(Path::new("C:/mc/versions/CursedWalking/local/crash_assistant")),
+            None,
+            target_pid,
+            game_dir,
+            5561,
+            self_pid,
+            false,
+        ));
+
+        // 7. Prefix-sharing game_dir (CursedWalking2 vs CursedWalking) must NOT match via args or cwd
+        assert!(!matches_companion_criteria(
+            &[
+                "javaw.exe".to_string(),
+                "-jar".to_string(),
+                "C:/mc/versions/CursedWalking2/local/crash_assistant/app.jar".to_string(),
+            ],
+            Some(Path::new("C:/mc/versions/CursedWalking2/local/crash_assistant")),
+            None,
+            target_pid,
+            game_dir,
+            5562,
+            self_pid,
+            false,
+        ));
+
+        // 8. Unrelated process should NOT match
         assert!(!matches_companion_criteria(
             &["chrome.exe".to_string(), "--type=renderer".to_string()],
             Some(Path::new("C:/Program Files/Google/Chrome")),
@@ -4453,9 +4654,10 @@ mod tests {
             game_dir,
             7777,
             self_pid,
+            true,
         ));
 
-        // 6. Self PID or target PID should never be considered a companion
+        // 9. Self PID or target PID should never be considered a companion
         assert!(!matches_companion_criteria(
             &["launcher.exe".to_string()],
             None,
@@ -4464,6 +4666,7 @@ mod tests {
             game_dir,
             self_pid,
             self_pid,
+            true,
         ));
         assert!(!matches_companion_criteria(
             &["java.exe".to_string()],
@@ -4473,6 +4676,101 @@ mod tests {
             game_dir,
             target_pid,
             self_pid,
+            true,
         ));
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_exited_launch_preserves_replacement_and_retains_kill_flag() {
+        let running = RunningInstances(Arc::new(Mutex::new(HashMap::new())));
+        let flag1 = Arc::new(AtomicBool::new(false));
+        let flag2 = Arc::new(AtomicBool::new(false));
+
+        {
+            let mut map = running.0.lock().await;
+            map.insert(
+                "inst-a".to_string(),
+                InstanceProcessHandle {
+                    pid: 1001,
+                    game_dir: PathBuf::from("C:/mc/versions/inst-a"),
+                    intentionally_killed: flag1.clone(),
+                    #[cfg(windows)]
+                    job_handle: None,
+                },
+            );
+        }
+
+        // Simulate forced stop flipping flag1, followed by stale map purge before waiter runs
+        flag1.store(true, Ordering::SeqCst);
+        {
+            let mut map = running.0.lock().await;
+            map.remove("inst-a");
+        }
+        assert!(!running.cleanup_exited_launch("inst-a", &flag1).await);
+        assert!(flag1.load(Ordering::SeqCst));
+
+        // Simulate launch 1 replaced by launch 2 before launch 1's waiter cleans up
+        {
+            let mut map = running.0.lock().await;
+            map.insert(
+                "inst-a".to_string(),
+                InstanceProcessHandle {
+                    pid: 2002,
+                    game_dir: PathBuf::from("C:/mc/versions/inst-a"),
+                    intentionally_killed: flag2.clone(),
+                    #[cfg(windows)]
+                    job_handle: None,
+                },
+            );
+        }
+        assert!(running.cleanup_exited_launch("inst-a", &flag1).await);
+        {
+            let map = running.0.lock().await;
+            assert_eq!(map.get("inst-a").map(|h| h.pid), Some(2002));
+        }
+
+        // Launch 2's own waiter removes it cleanly
+        assert!(!running.cleanup_exited_launch("inst-a", &flag2).await);
+        assert!(running.0.lock().await.is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_job_object_close_does_not_kill_but_explicit_terminate_does() {
+        use std::os::windows::io::AsRawHandle;
+        use std::os::windows::process::CommandExt;
+
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "set /p _="])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(0x08000000);
+
+        let mut child = cmd.spawn().expect("should spawn dummy cmd process");
+        let _stdin = child.stdin.take();
+
+        // Assign job using the spawned process handle and drop the job handle
+        let job = create_instance_job_object(
+            child.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE
+        )
+        .expect("should assign process to job object");
+        drop(job);
+
+        // Dropping the job handle must NOT terminate the running process
+        assert!(
+            child.try_wait().expect("try_wait failed").is_none(),
+            "closing SafeJobHandle must not terminate processes in the job"
+        );
+
+        // Assign to a new job and explicitly terminate it via TerminateJobObject
+        let job2 = create_instance_job_object(
+            child.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE
+        )
+        .expect("should assign process to second job object");
+        terminate_instance_job_object(&job2).expect("TerminateJobObject should succeed");
+
+        let status = child.wait().expect("wait after TerminateJobObject should succeed");
+        assert_eq!(status.code(), Some(0));
     }
 }
