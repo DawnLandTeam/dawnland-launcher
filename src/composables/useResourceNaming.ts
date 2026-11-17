@@ -1,5 +1,8 @@
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('useResourceNaming');
 import {
   RESOURCE_NAMING_UPDATED_EVENT,
   type AssetCategory,
@@ -41,7 +44,7 @@ export async function refreshResourceNamingSettings(): Promise<ResourceNamingSet
     }
     initialized = true;
   } catch (err) {
-    console.warn('Failed to load resource naming settings:', err);
+    logger.warn('Failed to load resource naming settings:', err);
   }
   return sharedNamingSettings.value;
 }
@@ -163,7 +166,7 @@ export async function searchProjectsWithChineseSupport(
         }
       }
     } catch (err) {
-      console.warn('Translation candidate search failed, using raw query:', err);
+      logger.warn('Translation candidate search failed, using raw query:', err);
     }
   }
 
@@ -192,7 +195,7 @@ export async function searchProjectsWithChineseSupport(
       candidates,
     };
   } catch (err) {
-    console.warn('enrich_online_projects failed, falling back to raw results:', err);
+    logger.warn('enrich_online_projects failed, falling back to raw results:', err);
     return {
       projects: rawProjects.map((p) => ({ ...p })),
       translatedQueryUsed,

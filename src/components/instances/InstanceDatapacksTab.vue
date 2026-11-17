@@ -164,6 +164,9 @@ import ResourceTranslationEditModal, { type TranslationEditTarget } from './Reso
 import { formatResourceDisplay, useResourceNaming } from '../../composables/useResourceNaming';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('InstanceDatapacksTab');
 import { useFileDrop, INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
 import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
 import { RESOURCE_NAMING_UPDATED_EVENT, type LocalDatapackItem } from '../../types/resourceNaming';
@@ -262,7 +265,7 @@ async function loadWorlds() {
     if (seq !== worldsLoadSeq || props.instanceId !== currentInstanceId) {
       return;
     }
-    console.error('Failed to load worlds:', e);
+    logger.error('Failed to load worlds:', e);
     worldOptions.value = [];
     selectedWorld.value = '';
     datapacks.value = [];
@@ -305,7 +308,7 @@ async function loadDatapacks() {
     ) {
       return;
     }
-    console.error('Failed to load datapacks:', error);
+    logger.error('Failed to load datapacks:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -399,7 +402,7 @@ async function executeDelete() {
     datapacks.value = datapacks.value.filter(p => p.filename !== packToDelete.value!.filename);
     showDeleteConfirm.value = false;
   } catch (error) {
-    console.error('Failed to delete datapack:', error);
+    logger.error('Failed to delete datapack:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)

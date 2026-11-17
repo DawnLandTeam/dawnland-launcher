@@ -1,4 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { createLogger } from "./logger";
+
+const logger = createLogger("Analytics");
 
 export function sanitizeTrackingUrl(raw?: string): string | undefined {
   if (!raw) return undefined;
@@ -48,9 +51,6 @@ export function trackEvent<K extends keyof AnalyticsEvents>(
   const props = args[0] as Record<string, any> | undefined;
   // Call the Rust command directly which will log it in the terminal and send to Aptabase
   return invoke<void>("app_track_event", { name, props }).catch((err) => {
-    // Only log errors in frontend if IPC completely fails
-    if (import.meta.env.DEV) {
-      console.error(`[Aptabase] IPC Failed to track event ${name}:`, err);
-    }
+    logger.debug(`[Aptabase] IPC Failed to track event ${name}:`, err);
   });
 }

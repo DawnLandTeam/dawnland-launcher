@@ -1,5 +1,8 @@
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('useStatistics');
 
 export interface InstanceStats {
   instanceId: string;
@@ -28,7 +31,7 @@ export function useStatistics() {
     try {
       allStats.value = await globalFetchPromise;
     } catch (e: any) {
-      console.error('Failed to fetch statistics:', e);
+      logger.error('Failed to fetch statistics:', e);
       error.value = e.message || String(e);
     } finally {
       loading.value = false;
@@ -39,7 +42,7 @@ export function useStatistics() {
     try {
       return await invoke<InstanceStats | null>('get_instance_stats', { instanceId });
     } catch (e: any) {
-      console.error(`Failed to fetch stats for ${instanceId}:`, e);
+      logger.error(`Failed to fetch stats for ${instanceId}:`, e);
       throw new Error(e.message || String(e));
     }
   };

@@ -6,6 +6,9 @@
 import { ref, watch, onMounted } from 'vue';
 import { STEVE_SKIN_BASE64, getProxiedImageBase64 } from '../utils/steve';
 import { invoke } from '@tauri-apps/api/core';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('MinecraftAvatar');
 
 const props = withDefaults(defineProps<{
   skinUrl?: string | null;
@@ -40,7 +43,7 @@ async function drawAvatar() {
     try {
       finalUrl = await getProxiedImageBase64(invoke, rawUrl);
     } catch(e) {
-      console.warn("Avatar proxy failed, falling back to default", e);
+      logger.warn("Avatar proxy failed, falling back to default", e);
     }
   }
 

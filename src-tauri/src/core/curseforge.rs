@@ -288,7 +288,7 @@ async fn search_curseforge_internal(
     limit: Option<i32>,
     class_id: i32,
 ) -> Result<Vec<UnifiedModProject>, String> {
-    tracing::info!(
+    tracing::debug!(
         "Searching CurseForge via proxy: query={}, mc_versions={:?}, loaders={:?}",
         query,
         mc_versions,
@@ -370,7 +370,7 @@ async fn search_curseforge_internal(
     let query_string = query_params.join("&");
 
     let cf_url = build_cf_url("/mods/search", Some(&query_string));
-    tracing::info!("CF API URL: {}", cf_url);
+    tracing::debug!("CF API URL: {}", cf_url);
 
     let client = crate::core::utils::get_http_client().clone();
     let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
@@ -381,7 +381,11 @@ async fn search_curseforge_internal(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        tracing::error!("CurseForge API error: {} - {}", status, body);
+        tracing::error!(
+            "CurseForge API error: {} - {}",
+            status,
+            crate::logger::redact::truncate_for_log(&body, 512)
+        );
         return Err(format!("CurseForge API error: {}", status));
     }
 
@@ -390,7 +394,7 @@ async fn search_curseforge_internal(
     let search_result: CfSearchResponse = match serde_json::from_str(&raw_text) {
         Ok(data) => data,
         Err(e) => {
-            let sample = raw_text.chars().take(1000).collect::<String>();
+            let sample = crate::logger::redact::truncate_for_log(&raw_text, 512);
             tracing::error!("Failed to parse CF JSON: {}. Raw data: {}", e, sample);
             return Err(format!("JSON Parse Error: {}", e));
         }
@@ -465,7 +469,7 @@ async fn search_curseforge_internal(
         })
         .collect();
 
-    tracing::info!("Found {} mods on CurseForge", projects.len());
+    tracing::debug!("Found {} mods on CurseForge", projects.len());
     Ok(projects)
 }
 
@@ -476,7 +480,7 @@ pub async fn get_cf_mod_files(
     mc_version: String,
     loaders: Vec<String>,
 ) -> Result<Vec<UnifiedModFile>, String> {
-    tracing::info!(
+    tracing::debug!(
         "Getting CF mod files via proxy: project_id={}, mc_version={}, loaders={:?}",
         project_id,
         mc_version,
@@ -497,7 +501,7 @@ pub async fn get_cf_mod_files(
         Some(query_string.as_str())
     };
     let cf_url = build_cf_url(&format!("/mods/{}/files", project_id), query_opt);
-    tracing::info!("CF API URL: {}", cf_url);
+    tracing::debug!("CF API URL: {}", cf_url);
 
     let client = crate::core::utils::get_http_client().clone();
     let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
@@ -586,7 +590,7 @@ pub async fn get_cf_mod_files(
     }
 
     if compatible_files.is_empty() {
-        tracing::error!(
+        tracing::warn!(
             "No compatible file found for project_id={}, target_version={}, target_loaders={:?}",
             project_id,
             mc_version,
@@ -612,7 +616,7 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
         return Ok(Vec::new());
     }
 
-    tracing::info!(
+    tracing::debug!(
         "Getting CF mod files batch via proxy for {} files",
         file_ids.len()
     );
@@ -631,7 +635,11 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        tracing::error!("CurseForge API error: {} - {}", status, body);
+        tracing::error!(
+            "CurseForge API error: {} - {}",
+            status,
+            crate::logger::redact::truncate_for_log(&body, 512)
+        );
         return Err(format!("CurseForge API error: {}", status));
     }
 
@@ -696,13 +704,13 @@ pub async fn get_cf_files_batch(file_ids: Vec<u32>) -> Result<Vec<UnifiedModFile
 /// Get detailed information about a specific mod via the web backend proxy.
 #[tauri::command]
 pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject, String> {
-    tracing::info!(
+    tracing::debug!(
         "Getting CF mod details via proxy: project_id={}",
         project_id
     );
 
     let cf_url = build_cf_url(&format!("/mods/{}", project_id), None);
-    tracing::info!("CF API URL: {}", cf_url);
+    tracing::debug!("CF API URL: {}", cf_url);
 
     let client = crate::core::utils::get_http_client().clone();
     let response = cf_request(&client, reqwest::Method::GET, &cf_url)?
@@ -765,7 +773,7 @@ pub async fn get_cf_mod_details(project_id: String) -> Result<UnifiedModProject,
 
 #[tauri::command]
 pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModProject>, String> {
-    tracing::info!("Searching CurseForge modpacks: query={}", query);
+    tracing::debug!("Searching CurseForge modpacks: query={}", query);
 
     // Build search query parameters with classId=4471 (Modpacks)
     let query_string = format!(
@@ -797,8 +805,11 @@ pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModP
     let search_result: CfSearchResponse = match serde_json::from_str(&raw_text) {
         Ok(res) => res,
         Err(e) => {
-            tracing::error!("Failed to parse CurseForge API response: {}", e);
-            tracing::error!("Raw Response: {}", raw_text);
+            tracing::error!(
+                "Failed to parse CurseForge API response: {} (raw: {})",
+                e,
+                crate::logger::redact::truncate_for_log(&raw_text, 512)
+            );
             return Err(format!("Failed to parse JSON: {}", e));
         }
     };
@@ -844,7 +855,7 @@ pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModP
         })
         .collect();
 
-    tracing::info!("Found {} CurseForge modpacks", projects.len());
+    tracing::debug!("Found {} CurseForge modpacks", projects.len());
 
     Ok(projects)
 }
@@ -853,7 +864,7 @@ pub async fn search_curseforge_modpacks(query: String) -> Result<Vec<UnifiedModP
 pub async fn get_curseforge_modpack_versions(
     project_id: String,
 ) -> Result<Vec<OnlineModpackVersion>, String> {
-    tracing::info!(
+    tracing::debug!(
         "Getting CurseForge modpack versions: project_id={}",
         project_id
     );

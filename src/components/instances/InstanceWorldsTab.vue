@@ -98,6 +98,9 @@ import DInput from '../ui/DInput.vue';
 import DButton from '../ui/DButton.vue';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('InstanceWorldsTab');
 import { INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
 import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
 
@@ -151,7 +154,7 @@ async function loadAssets() {
     if (seq !== loadSeq || props.instanceId !== currentInstanceId) {
       return;
     }
-    console.error('Failed to load worlds:', error);
+    logger.error('Failed to load worlds:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -205,7 +208,7 @@ async function executeDelete() {
     assets.value = assets.value.filter(a => a.filename !== assetToDelete.value!.filename);
     showDeleteConfirm.value = false;
   } catch (error) {
-    console.error('Failed to delete world:', error);
+    logger.error('Failed to delete world:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)

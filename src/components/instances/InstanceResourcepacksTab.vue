@@ -153,6 +153,9 @@ import ResourceTranslationEditModal, { type TranslationEditTarget } from './Reso
 import { formatResourceDisplay, useResourceNaming } from '../../composables/useResourceNaming';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('InstanceResourcepacksTab');
 import { INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
 import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
 import { RESOURCE_NAMING_UPDATED_EVENT, type LocalAssetItem } from '../../types/resourceNaming';
@@ -231,7 +234,7 @@ async function loadAssets() {
     if (seq !== loadSeq || props.instanceId !== currentInstanceId) {
       return;
     }
-    console.error('Failed to load resourcepacks:', error);
+    logger.error('Failed to load resourcepacks:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -307,7 +310,7 @@ async function executeDelete() {
     assets.value = assets.value.filter(a => a.filename !== assetToDelete.value!.filename);
     showDeleteConfirm.value = false;
   } catch (error) {
-    console.error('Failed to delete resourcepack:', error);
+    logger.error('Failed to delete resourcepack:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)

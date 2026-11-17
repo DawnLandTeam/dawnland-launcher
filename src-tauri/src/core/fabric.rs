@@ -49,7 +49,7 @@ const FABRIC_META_BASE: &str = "https://meta.fabricmc.net/v2";
 /// Returns stable versions first, then unstable versions.
 #[tauri::command]
 pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, AppError> {
-    tracing::info!("Fetching Fabric loaders for Minecraft {}", mc_version);
+    tracing::debug!("Fetching Fabric loaders for Minecraft {}", mc_version);
 
     let client = crate::core::utils::get_http_client();
 
@@ -88,7 +88,7 @@ pub async fn get_fabric_loaders(mc_version: String) -> Result<FabricLoaderList, 
     stable_versions.sort_by(|a, b| compare_versions(b, a));
     unstable_versions.sort_by(|a, b| compare_versions(b, a));
 
-    tracing::info!(
+    tracing::debug!(
         "Found {} stable + {} unstable = {} total Fabric loader versions for MC {}",
         stable_versions.len(),
         unstable_versions.len(),
@@ -404,7 +404,7 @@ impl InstallFabricTask {
 
             tracing::info!("Base vanilla {} installed successfully", mc_version);
         } else {
-            tracing::info!("Base Minecraft {} already installed, skipping", mc_version);
+            tracing::debug!("Base Minecraft {} already installed, skipping", mc_version);
             ctx.with_sub_task("download_vanilla_json")
                 .update_progress(100, 100, "Skipped (Already exists)")
                 .await;
@@ -448,7 +448,7 @@ impl InstallFabricTask {
         let fabric_url =
             crate::core::settings::replace_download_url(&fabric_url, &settings.download_source);
 
-        tracing::info!("Fetching Fabric profile from: {}", fabric_url);
+        tracing::debug!("Fetching Fabric profile from: {}", fabric_url);
 
         let profile_resp = ctx
             .cancellable(client.get(&fabric_url).send())
@@ -529,7 +529,7 @@ impl InstallFabricTask {
                 TaskError::ExecutionError(format!("Failed to write Fabric profile: {}", e))
             })?;
 
-        tracing::info!("Saved Fabric profile to: {:?}", version_json_path);
+        tracing::debug!("Saved Fabric profile to: {:?}", version_json_path);
 
         if ctx.is_cancelled() {
             return Err(TaskError::ExecutionError(
@@ -566,7 +566,7 @@ impl InstallFabricTask {
                     &download_url,
                     &settings.download_source,
                 );
-                tracing::debug!(
+                tracing::trace!(
                     "Added Fabric library: {} -> {}",
                     relative_path,
                     replaced_url
@@ -629,7 +629,7 @@ impl InstallFabricTask {
         .await
         .map_err(TaskError::ExecutionError)?;
 
-        tracing::info!("Updated instance config in: {:?}", version_dir);
+        tracing::debug!("Updated instance config in: {:?}", version_dir);
 
         if self.options.is_existing_instance.unwrap_or(false) {
             crate::core::cache::trigger_auto_gc(ctx.app_handle.clone());
@@ -705,7 +705,7 @@ async fn auto_install_fabric_api(
     }
 
     if is_fabric_api_installed(instance_dir).await {
-        tracing::info!(
+        tracing::debug!(
             "Fabric API already installed in instance {}, skipping auto-install",
             instance_name
         );

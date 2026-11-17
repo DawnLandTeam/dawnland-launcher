@@ -633,13 +633,13 @@ async fn scan_installed_instances_impl(
     app: &tauri::AppHandle,
     task_manager: &crate::core::task::TaskManager,
 ) -> Result<Vec<InstanceItem>, String> {
-    tracing::info!("Scanning installed instances...");
+    tracing::debug!("Scanning installed instances...");
 
     let base_dir = get_minecraft_base();
     let versions_dir = base_dir.join("versions");
 
     if !versions_dir.exists() {
-        tracing::info!("Versions directory does not exist, returning empty list");
+        tracing::debug!("Versions directory does not exist, returning empty list");
         return Ok(Vec::new());
     }
 
@@ -661,7 +661,7 @@ async fn scan_installed_instances_impl(
 
     crate::core::instance_icon::schedule_icon_backfill(app.clone(), icon_backfill);
 
-    tracing::info!("Found {} installed instances", instances.len());
+    tracing::debug!("Found {} installed instances", instances.len());
     Ok(instances)
 }
 
@@ -3014,7 +3014,7 @@ async fn resolve_mod_metadata(
 /// Get list of installed mods for a specific instance
 #[tauri::command]
 pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) -> Result<Vec<LocalModItem>, String> {
-    tracing::info!("Getting installed mods for instance: {}", version_id);
+    tracing::debug!("Getting installed mods for instance: {}", version_id);
 
     if !crate::core::fs_utils::is_safe_single_name(&version_id) {
         return Err("Invalid instance ID".to_string());
@@ -3024,7 +3024,7 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
     let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
 
     if !mods_dir.exists() {
-        tracing::info!("Mods directory does not exist for {}", version_id);
+        tracing::debug!("Mods directory does not exist for {}", version_id);
         return Ok(Vec::new());
     }
 
@@ -3156,7 +3156,7 @@ pub async fn get_installed_mods(version_id: String, skip_parsing: Option<bool>) 
     // Sort by filename
     mods.sort_by(|a, b| a.filename.cmp(&b.filename));
 
-    tracing::info!("Found {} mods for instance {}", mods.len(), version_id);
+    tracing::debug!("Found {} mods for instance {}", mods.len(), version_id);
     Ok(mods)
 }
 
@@ -4092,7 +4092,7 @@ pub async fn install_mod_to_instance(
     if let Some(deps) = dependencies {
         let req_deps: Vec<_> = deps.into_iter().filter(|d| d.required).collect();
         if !req_deps.is_empty() {
-            tracing::info!(
+            tracing::debug!(
                 "Found {} required dependencies for mod {}. Initiating download.",
                 req_deps.len(),
                 project_id
@@ -4101,7 +4101,7 @@ pub async fn install_mod_to_instance(
                 let dep_key = format!("{}_{}", mod_source, dep.project_id);
                 let resolved_pair: Option<(String, String)> = if mod_source == "modrinth" {
                     if let Some(vid) = dep.version_id {
-                        tracing::info!("Fetching Modrinth dependency version: {}", vid);
+                        tracing::debug!("Fetching Modrinth dependency version: {}", vid);
                         let mut found_pair = None;
                         if let Ok(res) = client
                             .get(format!("https://api.modrinth.com/v2/version/{}", vid))
@@ -4124,7 +4124,7 @@ pub async fn install_mod_to_instance(
                         found_pair
                     } else {
                         let pid = &dep.project_id;
-                        tracing::info!(
+                        tracing::debug!(
                             "Fetching Modrinth dependency project (latest compatible): {}",
                             pid
                         );
@@ -4139,7 +4139,7 @@ pub async fn install_mod_to_instance(
                         .map(|primary| (primary.download_url, primary.filename))
                     }
                 } else if mod_source == "curseforge" {
-                    tracing::info!("Fetching CurseForge dependency project: {}", dep.project_id);
+                    tracing::debug!("Fetching CurseForge dependency project: {}", dep.project_id);
                     crate::core::curseforge::get_cf_mod_files(
                         dep.project_id.clone(),
                         mc_version.clone(),

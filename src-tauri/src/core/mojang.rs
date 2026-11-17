@@ -375,7 +375,7 @@ fn matches_current_arch(rule_arch: &str) -> bool {
 /// Fetch all vanilla Minecraft versions from Mojang API.
 #[tauri::command]
 pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
-    tracing::info!("Fetching vanilla versions from Mojang...");
+    tracing::debug!("Fetching vanilla versions from Mojang...");
 
     let client = crate::core::utils::get_http_client().clone();
 
@@ -433,7 +433,7 @@ pub async fn get_vanilla_versions() -> Result<Vec<VanillaVersion>, String> {
         })
         .collect();
 
-    tracing::info!("Fetched {} versions", versions.len());
+    tracing::debug!("Fetched {} versions", versions.len());
     Ok(versions)
 }
 
@@ -535,7 +535,7 @@ impl ExecutableTask for InstallVanillaTask {
         let client = crate::core::utils::get_http_client().clone();
 
         // Step A: Download and save version JSON.
-        tracing::info!("Downloading version JSON from: {}", version_json_url);
+        tracing::debug!("Downloading version JSON from: {}", version_json_url);
         let ctx_json = ctx.with_sub_task("download_vanilla_json");
         ctx_json
             .update_progress(0, 100, "Downloading version JSON")
@@ -618,7 +618,7 @@ impl ExecutableTask for InstallVanillaTask {
                     let hash = artifact.sha1.as_ref().cloned();
 
                     if !url.is_empty() {
-                        tracing::debug!("Added library: {} -> {}", path, url);
+                        tracing::trace!("Added library: {} -> {}", path, url);
                         lib_tasks.push(DownloadTask::new(
                             url,
                             dest.to_string_lossy().to_string(),
@@ -668,7 +668,7 @@ impl ExecutableTask for InstallVanillaTask {
                         let hash = classifier.sha1.as_ref().cloned();
 
                         if !url.is_empty() {
-                            tracing::debug!("Added library (classifier): {} -> {}", path, url);
+                            tracing::trace!("Added library (classifier): {} -> {}", path, url);
                             lib_tasks.push(DownloadTask::new(
                                 url,
                                 dest.to_string_lossy().to_string(),
@@ -964,7 +964,7 @@ pub async fn get_installed_versions() -> Result<Vec<String>, String> {
     use crate::core::utils::compare_versions;
     // Sort descending (newest versions first)
     versions.sort_by(|a, b| compare_versions(b, a));
-    tracing::info!("Found {} installed versions", versions.len());
+    tracing::debug!("Found {} installed versions", versions.len());
     Ok(versions)
 }
 

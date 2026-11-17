@@ -1159,7 +1159,7 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, A
         .join(CONFIG_FILENAME);
 
     if !config_path.exists() {
-        tracing::info!("No config found for {}, using defaults", version_id);
+        tracing::debug!("No config found for {}, using defaults", version_id);
         return Ok(InstanceConfig {
             window_width: DEFAULT_WINDOW_WIDTH,
             window_height: DEFAULT_WINDOW_HEIGHT,
@@ -1186,7 +1186,7 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, A
         let _ = write_instance_config_atomic(&config_path, &config).await;
     }
 
-    tracing::info!("Loaded config for {}: {:?}", version_id, config);
+    tracing::debug!("Loaded config for {}: {:?}", version_id, config);
     Ok(config)
 }
 
@@ -1224,7 +1224,7 @@ pub async fn save_instance_config(
     })
     .await?;
 
-    tracing::info!("Saved config for {}: {:?}", version_id, final_config);
+    tracing::debug!("Saved config for {}: {:?}", version_id, final_config);
     Ok(())
 }
 
@@ -1821,7 +1821,7 @@ pub fn build_classpath(
         tracing::warn!("Patched client JAR not found in classpath! Forge may fail to launch.");
     }
 
-    tracing::info!("Built classpath with {} entries", classpath.len());
+    tracing::debug!("Built classpath with {} entries", classpath.len());
 
     // Log classpath entries for debugging
     for (i, entry) in classpath.iter().enumerate() {
@@ -1879,7 +1879,7 @@ pub async fn verify_and_collect_missing_files(
                     if !lib_path.exists() {
                         let url = artifact.url.clone().unwrap_or_default();
                         if !url.is_empty() {
-                            tracing::info!(
+                            tracing::debug!(
                                 "Missing library (Mojang): {:?} - will download from {}",
                                 lib_path,
                                 url
@@ -1926,7 +1926,7 @@ pub async fn verify_and_collect_missing_files(
                         if !lib_path.exists() {
                             let url = classifier.url.clone().unwrap_or_default();
                             if !url.is_empty() {
-                                tracing::info!(
+                                tracing::debug!(
                                     "Missing native library (Mojang): {:?} - will download from {}",
                                     lib_path,
                                     url
@@ -1957,7 +1957,7 @@ pub async fn verify_and_collect_missing_files(
                         .as_deref()
                         .unwrap_or("https://libraries.minecraft.net/");
                     let download_url = format!("{}{}", base_url, maven_path);
-                    tracing::info!(
+                    tracing::debug!(
                         "Missing library (Maven): {:?} - will download from {}",
                         lib_path,
                         download_url
@@ -1996,7 +1996,7 @@ pub async fn verify_and_collect_missing_files(
             if let Some(downloads) = version_meta.get("downloads") {
                 if let Some(client) = downloads.get("client") {
                     if let Some(url) = client.get("url").and_then(|u| u.as_str()) {
-                        tracing::info!(
+                        tracing::debug!(
                             "Missing client.jar: {:?} - will download from {}",
                             client_jar,
                             url
@@ -2079,10 +2079,14 @@ pub async fn verify_and_collect_missing_files(
         }
     }
 
-    tracing::info!(
-        "Pre-flight check: {} missing files to download",
-        missing_tasks.len()
-    );
+    if missing_tasks.is_empty() {
+        tracing::debug!("Pre-flight check: all files present");
+    } else {
+        tracing::info!(
+            "Pre-flight check: {} missing files to download",
+            missing_tasks.len()
+        );
+    }
     Ok(missing_tasks)
 }
 
@@ -2978,11 +2982,11 @@ pub async fn launch_instance(
 
     // Auto-refresh Microsoft token before launch
     if account.account_type == crate::auth::AccountType::Microsoft {
-        tracing::info!("Auto-refreshing Microsoft token before launch...");
+        tracing::debug!("Auto-refreshing Microsoft token before launch...");
         match crate::auth::refresh_microsoft_token(&account.id).await {
             Ok(updated_account) => {
                 account = updated_account;
-                tracing::info!("Successfully refreshed Microsoft token");
+                tracing::debug!("Successfully refreshed Microsoft token");
             }
             Err(e) => {
                 if e.code == "MICROSOFT_REAUTH_REQUIRED" {
@@ -2995,11 +2999,11 @@ pub async fn launch_instance(
 
     // Auto-refresh Authlib token before launch
     if account.account_type == crate::auth::AccountType::Authlib {
-        tracing::info!("Verifying Authlib token before launch...");
+        tracing::debug!("Verifying Authlib token before launch...");
         match crate::auth::ensure_authlib_token_valid(&account.id).await {
             Ok(updated_account) => {
                 account = updated_account;
-                tracing::info!("Authlib token verified/refreshed successfully");
+                tracing::debug!("Authlib token verified/refreshed successfully");
             }
             Err(e) => {
                 tracing::warn!("Failed to verify/refresh Authlib token: {}", e.message);
@@ -3108,7 +3112,7 @@ pub async fn launch_instance(
             );
             break;
         }
-        tracing::info!(
+        tracing::debug!(
             "Version inherits from {}, loading parent...",
             parent_version
         );
@@ -3266,7 +3270,7 @@ pub async fn launch_instance(
         final_base_version = parent_version;
         current_inherits = parent_meta.inherits_from;
 
-        tracing::info!("Successfully merged parent version into {}", version_id);
+        tracing::debug!("Successfully merged parent version into {}", version_id);
     }
 
     if final_base_version != version_id {
@@ -3397,12 +3401,12 @@ pub async fn launch_instance(
 
     // Extract natives
     let natives_dir = extract_natives(&version_id, libraries).await?;
-    tracing::info!("Natives extracted to: {:?}", natives_dir);
+    tracing::debug!("Natives extracted to: {:?}", natives_dir);
 
     // Build classpath
-    tracing::info!("Building classpath for version: {}", version_id);
+    tracing::debug!("Building classpath for version: {}", version_id);
     let classpath = build_classpath(&version_id, &version_meta, libraries)?;
-    tracing::info!("Classpath built with {} entries", classpath.len());
+    tracing::debug!("Classpath built with {} entries", classpath.len());
 
     // Create launch config
     let window_width = if instance_config.window_width > 0 {
@@ -3445,7 +3449,7 @@ pub async fn launch_instance(
                         .as_ref()
                         .unwrap_or(&version_meta.id);
                     let major = crate::core::java::get_recommended_java(mc_version);
-                    tracing::info!(
+                    tracing::debug!(
                         "Recommended Java major version for MC {}: {}",
                         mc_version,
                         major
@@ -3454,7 +3458,7 @@ pub async fn launch_instance(
                 });
 
             if version_meta.java_version.is_some() {
-                tracing::info!("Using Java major version from JSON: {}", recommended_major);
+                tracing::debug!("Using Java major version from JSON: {}", recommended_major);
             }
 
             // Try to find a scanned Java that matches the recommended version, or a newer one
@@ -3472,7 +3476,7 @@ pub async fn launch_instance(
                 });
 
             if let Some(j) = matched_java {
-                tracing::info!(
+                tracing::debug!(
                     "Found compatible Java: {} (Version {})",
                     j.path,
                     j.major_version
@@ -3487,7 +3491,7 @@ pub async fn launch_instance(
         }
     };
 
-    tracing::info!("Using Java executable: {}", java_executable);
+    tracing::debug!("Using Java executable: {}", java_executable);
 
     // ========== Pre-flight Check: Validate Java & Detect Version ==========
     let java_check = crate::core::utils::create_hidden_command(&java_executable)
@@ -3502,7 +3506,7 @@ pub async fn launch_instance(
         Ok(output) if output.status.success() => {
             // Parse Java version from stderr (Java prints version to stderr)
             let stderr_output = String::from_utf8_lossy(&output.stderr);
-            tracing::info!(
+            tracing::debug!(
                 "Java version check output: {}",
                 stderr_output.lines().next().unwrap_or("unknown")
             );
@@ -3511,12 +3515,12 @@ pub async fn launch_instance(
             let major_version = crate::core::java::extract_major_version(&stderr_output);
             if major_version > 0 {
                 java_major_version = major_version;
-                tracing::info!("Detected Java Major Version: {}", java_major_version);
+                tracing::debug!("Detected Java Major Version: {}", java_major_version);
             }
 
             if crate::core::java::is_openj9(&stderr_output) {
                 is_openj9 = true;
-                tracing::info!("Detected OpenJ9 JVM");
+                tracing::debug!("Detected OpenJ9 JVM");
             }
         }
         Ok(output) => {
@@ -3698,7 +3702,7 @@ pub async fn launch_instance(
     jvm_args.insert(0, format!("-Xmx{}M", max_mem));
     jvm_args.insert(0, format!("-Xms{}M", min_mem));
 
-    tracing::info!(
+    tracing::debug!(
         "Memory allocation: -Xms{}M -Xmx{}M (system recommended: {}MB)",
         min_mem,
         max_mem,
@@ -3724,7 +3728,7 @@ pub async fn launch_instance(
                 .unwrap_or(4),
         };
         let result = crate::core::jvm_tuner::generate_tuned_args(&tuning_input);
-        tracing::info!(
+        tracing::debug!(
             "JVM tuner active: profile={:?}, generated {} flags",
             result.profile,
             result.args.len()
@@ -3746,24 +3750,9 @@ pub async fn launch_instance(
     // Parse game args
     let game_args = parse_game_arguments(&version_meta, &config)?;
 
-    tracing::info!("Starting Minecraft with main class: {}", main_class);
-    tracing::info!("Full JVM args: {:?}", jvm_args);
-    let redacted_game_args: Vec<&str> = {
-        let mut out = Vec::with_capacity(game_args.len());
-        let mut redact_next = false;
-        for arg in &game_args {
-            if redact_next {
-                out.push("***");
-                redact_next = false;
-            } else {
-                if arg == "--accessToken" {
-                    redact_next = true;
-                }
-                out.push(arg.as_str());
-            }
-        }
-        out
-    };
+    let redacted_jvm_args = crate::logger::redact::redact_cli_args(&jvm_args);
+    let redacted_game_args = crate::logger::redact::redact_cli_args(&game_args);
+    tracing::debug!("Full JVM args: {:?}", redacted_jvm_args);
     tracing::debug!("Game args: {:?}", redacted_game_args);
 
     // Get the main window for behavior control
@@ -3778,14 +3767,17 @@ pub async fn launch_instance(
 
     // Spawn the process using the resolved Java executable
     tracing::info!(
-        "Spawning process: {} with main class: {}",
+        "Spawning Minecraft (java={}, java_major={}, mem=-Xms{}M/-Xmx{}M, main_class={}, game_dir={:?}, jvm_args={}, game_args={}, classpath={})",
         java_executable,
-        main_class
+        java_major_version,
+        min_mem,
+        max_mem,
+        main_class,
+        game_dir,
+        jvm_args.len(),
+        game_args.len(),
+        classpath.len()
     );
-    tracing::info!("Game directory: {:?}", game_dir);
-    tracing::info!("JVM args count: {}", jvm_args.len());
-    tracing::info!("Game args count: {}", game_args.len());
-    tracing::info!("Classpath entries: {}", classpath.len());
 
     let mut cmd = crate::core::utils::create_hidden_command(&java_executable);
     cmd.current_dir(&game_dir)
@@ -3878,36 +3870,78 @@ pub async fn launch_instance(
         .take()
         .ok_or_else(|| DawnlandError::ProcessError("Failed to capture stderr".to_string()))?;
 
-    // Spawn tasks to read output
-    let app_clone = app.clone();
+    // Spawn tasks to read output and forward via micro-batched IPC to prevent WebView flooding
+    #[derive(Clone, serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct GameLogPayload {
+        version_id: String,
+        #[serde(rename = "type")]
+        stream_type: &'static str,
+        line: String,
+    }
+
+    let (gl_tx, mut gl_rx) = tokio::sync::mpsc::channel::<GameLogPayload>(1024);
+    let app_for_logs = app.clone();
+    tokio::spawn(async move {
+        let mut batch = Vec::with_capacity(64);
+        while let Some(item) = gl_rx.recv().await {
+            batch.push(item);
+            while let Ok(next) = gl_rx.try_recv() {
+                batch.push(next);
+                if batch.len() >= 100 {
+                    break;
+                }
+            }
+            let hit_cap = batch.len() >= 100;
+            if batch.len() == 1 {
+                let _ = app_for_logs.emit("game-log", &batch[0]);
+            } else {
+                let _ = app_for_logs.emit("game-logs-batch", &batch);
+            }
+            batch.clear();
+            // Only pace when the channel has been drained; keep draining immediately under heavy log bursts
+            // so stdout/stderr reader tasks do not back up and stall the JVM.
+            if !hit_cap {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            }
+        }
+    });
+
+    let gl_tx_stdout = gl_tx.clone();
     let version_id_log1 = version_id.clone();
     tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            let _ = app_clone.emit(
-                "game-log",
-                serde_json::json!({
-                    "versionId": version_id_log1,
-                    "type": "stdout",
-                    "line": line
-                }),
-            );
+            if gl_tx_stdout
+                .send(GameLogPayload {
+                    version_id: version_id_log1.clone(),
+                    stream_type: "stdout",
+                    line,
+                })
+                .await
+                .is_err()
+            {
+                break;
+            }
         }
     });
 
-    let app_clone2 = app.clone();
+    let gl_tx_stderr = gl_tx;
     let version_id_log2 = version_id.clone();
     tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            let _ = app_clone2.emit(
-                "game-log",
-                serde_json::json!({
-                    "versionId": version_id_log2,
-                    "type": "stderr",
-                    "line": line
-                }),
-            );
+            if gl_tx_stderr
+                .send(GameLogPayload {
+                    version_id: version_id_log2.clone(),
+                    stream_type: "stderr",
+                    line,
+                })
+                .await
+                .is_err()
+            {
+                break;
+            }
         }
     });
 

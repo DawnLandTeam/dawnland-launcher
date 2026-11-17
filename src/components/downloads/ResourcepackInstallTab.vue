@@ -15,6 +15,9 @@ import { useTaskStatusReload } from "../../composables/useTaskStatusReload";
 import { useInstances } from "../../composables/useInstances";
 import { searchProjectsWithChineseSupport } from "../../composables/useResourceNaming";
 import type { EnrichedModProject, UnifiedModProject } from "../../types/resourceNaming";
+import { createLogger } from "../../utils/logger";
+
+const logger = createLogger("ResourcepackInstallTab");
 
 // UI Components
 import { DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
@@ -138,7 +141,7 @@ const loadOptions = async () => {
       availableLoaders.value = await invoke("get_curseforge_loaders");
     }
   } catch (e) {
-    console.error("Failed to fetch options:", e);
+    logger.error("Failed to fetch options:", e);
   }
 };
 
@@ -177,7 +180,7 @@ async function loadCategories() {
       categories.value = await invoke<UnifiedCategory[]>("get_curseforge_resourcepack_categories");
     }
   } catch (err) {
-    console.error("Failed to load categories:", err);
+    logger.error("Failed to load categories:", err);
     categories.value = [];
   }
 }
@@ -207,7 +210,7 @@ async function loadInstances() {
       }
     }
   } catch (err) {
-    console.error("Failed to load instances:", err);
+    logger.error("Failed to load instances:", err);
   }
 }
 

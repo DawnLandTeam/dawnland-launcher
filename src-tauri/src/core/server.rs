@@ -55,7 +55,7 @@ pub async fn get_servers(
     server_type: String,
     auth_type: String,
 ) -> Result<ServerListResponse, String> {
-    tracing::info!(
+    tracing::debug!(
         "Fetching servers: page={}, pageSize={}, search={}, version={}, serverType={}, authType={}",
         page,
         page_size,
@@ -100,7 +100,7 @@ pub async fn get_servers(
 
     let result: ServerListResponse = crate::core::utils::parse_json_response(response).await?;
 
-    tracing::info!(
+    tracing::debug!(
         "Fetched {} servers (page {}/{})",
         result.data.len(),
         result.page,
@@ -112,7 +112,7 @@ pub async fn get_servers(
 /// Fetch recommended servers from the Go backend.
 #[tauri::command]
 pub async fn get_recommended_servers() -> Result<Vec<Server>, String> {
-    tracing::info!("Fetching recommended servers");
+    tracing::debug!("Fetching recommended servers");
 
     let url = build_server_url("/recommended", None);
     tracing::debug!("Server API URL: {}", url);
@@ -127,20 +127,20 @@ pub async fn get_recommended_servers() -> Result<Vec<Server>, String> {
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        tracing::error!("Server API error: {} - {}", status, body);
+        tracing::error!("Server API error: {} - {}", status, crate::logger::redact::truncate_for_log(&body, 512));
         return Err(format!("Server API error: {}", status));
     }
 
     let result: Vec<Server> = crate::core::utils::parse_json_response(response).await?;
 
-    tracing::info!("Fetched {} recommended servers", result.len());
+    tracing::debug!("Fetched {} recommended servers", result.len());
     Ok(result)
 }
 
 /// Fetch available filter options from the Go backend.
 #[tauri::command]
 pub async fn get_filter_options() -> Result<FilterOptionsResponse, String> {
-    tracing::info!("Fetching server filter options");
+    tracing::debug!("Fetching server filter options");
 
     let url = build_server_url("/filter-options", None);
     let client = crate::core::utils::get_http_client().clone();
@@ -153,7 +153,7 @@ pub async fn get_filter_options() -> Result<FilterOptionsResponse, String> {
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        tracing::error!("Filter options API error: {} - {}", status, body);
+        tracing::error!("Filter options API error: {} - {}", status, crate::logger::redact::truncate_for_log(&body, 512));
         return Err(format!("Filter options API error: {}", status));
     }
 
@@ -162,7 +162,7 @@ pub async fn get_filter_options() -> Result<FilterOptionsResponse, String> {
         .await
         .map_err(|e| format!("Failed to parse filter options response: {}", e))?;
 
-    tracing::info!(
+    tracing::debug!(
         "Filter options: {} versions, {} server types, {} auth types",
         result.versions.len(),
         result.server_types.len(),
@@ -174,7 +174,7 @@ pub async fn get_filter_options() -> Result<FilterOptionsResponse, String> {
 /// Fetch a single server by ID from the Go backend.
 #[tauri::command]
 pub async fn get_server(id: String) -> Result<Server, String> {
-    tracing::info!("Fetching server {} from web backend", id);
+    tracing::debug!("Fetching server {} from web backend", id);
 
     let url = build_server_url(&format!("/{}", id), None);
     let client = crate::core::utils::get_http_client().clone();

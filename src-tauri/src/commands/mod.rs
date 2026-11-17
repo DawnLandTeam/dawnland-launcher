@@ -5,6 +5,7 @@ use std::env::consts;
 use sysinfo::System;
 use tauri::AppHandle;
 
+pub mod log;
 pub mod modpack;
 pub mod task;
 pub mod statistics;
@@ -18,7 +19,7 @@ pub fn get_system_info() -> Result<String, AppError> {
 
     let info = format!("Operating System: {os} | Architecture: {arch} | Family: {family}");
 
-    tracing::info!("System info requested: {}", info);
+    tracing::debug!("System info requested: {}", info);
     Ok(info)
 }
 
@@ -44,7 +45,7 @@ pub fn get_system_memory() -> Result<SystemMemoryInfo, AppError> {
     let total_mb = (total_bytes / (1024 * 1024)) as u32;
     let recommended_max_mb = (total_mb / 3).clamp(1024, 16384);
 
-    tracing::info!(
+    tracing::debug!(
         "System memory: {} MB, recommended max: {} MB",
         total_mb,
         recommended_max_mb

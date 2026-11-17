@@ -2,7 +2,7 @@
 import { ref, onMounted, onActivated, watch, onUnmounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
 import DCombobox from "../components/ui/DCombobox.vue";
 import DSidebarTabs, { type SidebarTab } from '../components/ui/DSidebarTabs.vue';
@@ -28,6 +28,8 @@ import type {
   TranslationDbStats,
 } from '../types/resourceNaming';
 import { useLogStore } from '../composables/useLogStore';
+import type { LogFileInfo, LogLevelSetting } from '../types/log';
+import { createLogger } from '../utils/logger';
 import { useRoute, useRouter } from "vue-router";
 import { getVersion } from "@tauri-apps/api/app";
 import { setUpdateAvailable, hasUpdateAvailable, openUpdateModal, type CustomUpdate } from "../composables/useUpdate";
@@ -36,6 +38,8 @@ import { getErrorMessage } from "../utils/error";
 import { normalizeUpdateChannel } from "../utils/updateChannel";
 import { toast } from "../composables/useToast";
 import { formatSpeed, formatBytes } from "../utils/format";
+
+const logger = createLogger('SettingsView');
 
 const route = useRoute();
 const router = useRouter();
@@ -53,7 +57,7 @@ onMounted(async () => {
   try {
     appVersion.value = await getVersion();
   } catch (err) {
-    console.error("Failed to get app version:", err);
+    logger.error("Failed to get app version:", err);
   }
 
   window.addEventListener('authlib-servers-updated', loadAuthlibServers);
@@ -306,7 +310,7 @@ async function refreshTemplatePreview() {
       template: effectivePreviewTemplate(),
     });
   } catch (err) {
-    console.warn('Failed to preview template:', err);
+    logger.warn('Failed to preview template:', err);
   }
 }
 
@@ -314,7 +318,7 @@ async function loadTranslationStats() {
   try {
     translationStats.value = await invoke<TranslationDbStats>('get_translation_db_stats');
   } catch (err) {
-    console.warn('Failed to load translation DB stats:', err);
+    logger.warn('Failed to load translation DB stats:', err);
   }
 }
 
@@ -370,7 +374,7 @@ async function cleanGlobalModCache() {
     const formattedSize = formatBytes(report.freedBytes, 2);
     toast.success(t('settings.general.cleanCacheSuccess', { size: formattedSize }));
   } catch (e) {
-    console.error('Failed to clean cache:', e);
+    logger.error('Failed to clean cache:', e);
     toast.error(t('settings.general.cleanCacheFailed'), getErrorMessage(e));
   } finally {
     isCleaningCache.value = false;
@@ -382,7 +386,7 @@ async function openGlobalGameSettings() {
     globalGameSettingsContent.value = await invoke<string>('get_global_game_settings');
     showGlobalGameSettingsModal.value = true;
   } catch (e) {
-    console.error('Failed to load global game settings:', e);
+    logger.error('Failed to load global game settings:', e);
     toast.error(t('settings.general.globalGameSettingsLoadFailed'), getErrorMessage(e));
   }
 }
@@ -394,12 +398,15 @@ async function saveGlobalGameSettingsContent() {
     toast.success(t('settings.general.globalGameSettingsSaveSuccess'));
     showGlobalGameSettingsModal.value = false;
   } catch (e) {
-    console.error('Failed to save global game settings:', e);
+    logger.error('Failed to save global game settings:', e);
     toast.error(t('settings.general.globalGameSettingsSaveFailed'), getErrorMessage(e));
   } finally {
     isSavingGlobalSettings.value = false;
   }
 }
+
+const configuredLogLevel = ref<LogLevelSetting | null>(null);
+const logRetentionDays = ref<number>(7);
 
 async function loadLauncherSettings() {
   try {
@@ -414,6 +421,8 @@ async function loadLauncherSettings() {
     cacheRetentionPolicy.value = settings.cacheRetentionPolicy ?? 'immediate';
     autoCleanSharedAssets.value = settings.autoCleanSharedAssets === true;
     enableJvmTuner.value = settings.enableJvmTuner ?? true;
+    configuredLogLevel.value = settings.logLevel ?? null;
+    logRetentionDays.value = settings.logRetentionDays ?? 7;
     if (settings.globalMaxMemory) {
       defaultMaxMemory.value = settings.globalMaxMemory;
       hasCustomMaxMemory.value = true;
@@ -447,7 +456,7 @@ async function loadLauncherSettings() {
     await loadTranslationStats();
     await refreshTemplatePreview();
   } catch (e) {
-    console.error('Failed to load launcher settings:', e);
+    logger.error('Failed to load launcher settings:', e);
   }
 }
 
@@ -478,6 +487,8 @@ function buildLauncherSettingsSnapshot(): LauncherSettings {
     globalMaxMemory: defaultMaxMemory.value,
     uiLanguage: locale.value,
     resourceNaming: naming,
+    logLevel: configuredLogLevel.value,
+    logRetentionDays: logRetentionDays.value,
     aiConfig: {
       providerType: aiProviderType.value,
       remoteApiKey: aiRemoteApiKey.value,
@@ -506,7 +517,7 @@ async function saveLauncherSettings() {
       notifyResourceNamingUpdated(snapshot.resourceNaming);
     } while (hasPendingLauncherSettingsSave);
   } catch (e) {
-    console.error('Failed to save launcher settings:', e);
+    logger.error('Failed to save launcher settings:', e);
     toast.error(t('settings.saveFailed'), getErrorMessage(e));
   } finally {
     isSavingLauncherSettings = false;
@@ -531,7 +542,7 @@ async function checkForUpdates() {
     setUpdateAvailable(null);
     alert(t('settings.about.upToDate'));
   } catch (err) {
-    console.error("Failed to check for updates:", err);
+    logger.error("Failed to check for updates:", err);
     alert(t('settings.about.updateFailed') + err);
   } finally {
     isCheckingUpdate.value = false;
@@ -568,7 +579,7 @@ async function loadAuthlibServers(): Promise<void> {
     const res = await invoke<AuthlibServer[]>("fetch_authlib_servers");
     authlibServers.value = res || [];
   } catch (err) {
-    console.error("Failed to load authlib servers:", err);
+    logger.error("Failed to load authlib servers:", err);
     authlibServers.value = [];
   } finally {
     isFetchingAuthlibServers.value = false;
@@ -585,7 +596,7 @@ async function addAuthlibServer(): Promise<void> {
     trackEvent("Authlib Added", { type: "manual_authlib", api: sanitizeTrackingUrl(newAuthlibUrl.value) });
     newAuthlibUrl.value = "";
   } catch (err) {
-    console.error("Failed to add authlib server:", err);
+    logger.error("Failed to add authlib server:", err);
     trackEvent("Error Occurred", { 
       context: "manual_authlib", 
       error_type: getErrorType(err), 
@@ -603,7 +614,7 @@ async function removeAuthlibServer(url: string): Promise<void> {
       await invoke("remove_authlib_server", { url });
       authlibServers.value = authlibServers.value.filter(s => s.url !== url);
     } catch (err) {
-      console.error("Failed to remove authlib server:", err);
+      logger.error("Failed to remove authlib server:", err);
     }
   }
 }
@@ -615,7 +626,7 @@ async function loadSystemMemory(): Promise<void> {
       defaultMaxMemory.value = systemMemory.value.recommendedMaxMb;
     }
   } catch (err) {
-    console.error("Failed to load system memory:", err);
+    logger.error("Failed to load system memory:", err);
   }
 }
 
@@ -625,7 +636,7 @@ async function scanLocalJavas(): Promise<void> {
   try {
     installedJavas.value = await invoke<JavaInfo[]>("scan_local_javas");
   } catch (err) {
-    console.error("Failed to scan Java installations:", err);
+    logger.error("Failed to scan Java installations:", err);
   } finally {
     isScanningJava.value = false;
   }
@@ -636,7 +647,7 @@ async function loadJavaDownloadPath(): Promise<void> {
     const path = await invoke<string | null>("get_java_download_path");
     customJavaDownloadPath.value = path || "";
   } catch (err) {
-    console.error("Failed to load custom Java download path:", err);
+    logger.error("Failed to load custom Java download path:", err);
   }
 }
 
@@ -652,7 +663,7 @@ async function loadAvailableJavas(): Promise<void> {
       }
     }
   } catch (err) {
-    console.error("Failed to fetch available Javas from API:", err);
+    logger.error("Failed to fetch available Javas from API:", err);
   } finally {
     isFetchingJavaVersions.value = false;
   }
@@ -669,7 +680,7 @@ async function chooseJavaDownloadPath(): Promise<void> {
       customJavaDownloadPath.value = selected;
     }
   } catch (err) {
-    console.error("Failed to select directory:", err);
+    logger.error("Failed to select directory:", err);
   }
 }
 
@@ -678,7 +689,7 @@ async function clearJavaDownloadPath(): Promise<void> {
     await invoke("set_java_download_path", { path: null });
     customJavaDownloadPath.value = "";
   } catch (err) {
-    console.error("Failed to clear directory:", err);
+    logger.error("Failed to clear directory:", err);
   }
 }
 
@@ -697,7 +708,7 @@ async function addManualJava(): Promise<void> {
       }
     }
   } catch (err) {
-    console.error("Failed to add manual Java:", err);
+    logger.error("Failed to add manual Java:", err);
     alert(`Failed to add Java: ${getErrorMessage(err)}`);
   }
 }
@@ -713,7 +724,7 @@ async function removeJava(path: string): Promise<void> {
       await invoke("remove_java", { path });
       installedJavas.value = installedJavas.value.filter(j => j.path !== path);
     } catch (err) {
-      console.error("Failed to remove Java:", err);
+      logger.error("Failed to remove Java:", err);
       alert(`Failed to remove Java: ${getErrorMessage(err)}`);
     }
   }
@@ -735,7 +746,7 @@ async function scanFullDisk(): Promise<void> {
     });
     await invoke("scan_full_disk");
   } catch (err) {
-    console.error("Failed to start full disk scan:", err);
+    logger.error("Failed to start full disk scan:", err);
     isFullDiskScanning.value = false;
   }
 }
@@ -768,7 +779,7 @@ async function downloadJava(majorVersion: number): Promise<void> {
     trackEvent("Java Download Completed", { majorVersion, version: javaInfo.versionString });
     
   } catch (err) {
-    console.error("Failed to download Java:", err);
+    logger.error("Failed to download Java:", err);
     trackEvent("Error Occurred", { 
       context: "java_download", 
       error_type: getErrorType(err) 
@@ -810,7 +821,7 @@ function changeLanguage(lang: string) {
   localStorage.setItem('language', lang);
   localStorage.setItem('userSelectedLanguage', 'true');
   invoke('sync_ui_language', { language: lang }).catch((err) => {
-    console.warn('Failed to sync UI language to backend:', err);
+    logger.warn('Failed to sync UI language to backend:', err);
   });
 }
 
@@ -837,7 +848,7 @@ async function testRemoteApi() {
 
     alert(t('settings.ai.testSuccess', { count: models.length }));
   } catch(e) {
-    console.error("API test failed", e);
+    logger.error("API test failed", e);
     alert(t('settings.ai.testFailed', { error: String(e) }));
   } finally {
     isTestingApi.value = false;
@@ -907,7 +918,7 @@ async function downloadModel(model: { filename: string, url?: string, urls?: {ur
     }
     await invoke('download_model', { targets, mainFilename: model.filename });
   } catch(e) {
-    console.error("Failed to start model download", e);
+    logger.error("Failed to start model download", e);
     delete downloadingModels.value[model.filename];
   }
 }
@@ -917,7 +928,7 @@ async function loadLocalModels() {
   try {
     localModels.value = await invoke<string[]>('list_local_models');
   } catch (err) {
-    console.error('Failed to load local models:', err);
+    logger.error('Failed to load local models:', err);
   } finally {
     isFetchingModels.value = false;
   }
@@ -926,28 +937,191 @@ async function loadLocalModels() {
 // Log Center State
 const logStore = useLogStore();
 const logLevelFilter = ref('ALL');
+const logSourceFilter = ref<'ALL' | 'rust' | 'frontend'>('ALL');
 const logSearchQuery = ref('');
+const logViewMode = ref<'live' | 'history'>('live');
+const logFiles = ref<LogFileInfo[]>([]);
+const selectedLogFile = ref<string>('');
+const historicalLines = ref<string[]>([]);
+const isLoadingHistory = ref(false);
+const isExportingLogs = ref(false);
+
+const runtimeLevelOptions = computed(() => [
+  {
+    label: t('settings.logs.levelAuto', {
+      level: (
+        logStore.logConfig.value.configuredLevel === null
+          ? logStore.logConfig.value.effectiveLevel
+          : import.meta.env.DEV
+            ? 'debug'
+            : 'info'
+      ).toUpperCase(),
+    }),
+    value: 'auto',
+  },
+  { label: 'ERROR', value: 'error' },
+  { label: 'WARN', value: 'warn' },
+  { label: 'INFO', value: 'info' },
+  { label: 'DEBUG', value: 'debug' },
+  { label: 'TRACE', value: 'trace' },
+]);
+
+const logSourceOptions = computed(() => [
+  { label: t('settings.logs.allSources'), value: 'ALL' },
+  { label: t('settings.logs.sourceRust'), value: 'rust' },
+  { label: t('settings.logs.sourceFrontend'), value: 'frontend' },
+]);
+
+const logFileOptions = computed(() =>
+  logFiles.value.length === 0
+    ? [{ label: t('settings.logs.noFiles'), value: '', disabled: true }]
+    : logFiles.value.map((f) => ({
+        label: `${f.name} (${formatBytes(f.sizeBytes, 1)})`,
+        value: f.name,
+      })),
+);
+
+const runtimeLogLevelModel = computed<string>({
+  get: () => logStore.logConfig.value.configuredLevel ?? 'auto',
+  set: (val: string) => {
+    const nextLevel = val === 'auto' ? null : (val as LogLevelSetting);
+    void logStore
+      .setLogLevel(nextLevel)
+      .then((updated) => {
+        configuredLogLevel.value = updated.configuredLevel;
+        logRetentionDays.value = updated.retentionDays;
+        toast.success(t('settings.logs.levelUpdated'));
+      })
+      .catch((err) => {
+        logger.error('Failed to update runtime log level:', err);
+        toast.error(t('common.operationFailed'), getErrorMessage(err));
+      });
+  },
+});
 
 const filteredLogs = computed(() => {
   let logs = logStore.globalLogs.value;
+  if (logSourceFilter.value !== 'ALL') {
+    logs = logs.filter((l) => (l.source || 'rust').toLowerCase() === logSourceFilter.value);
+  }
   if (logLevelFilter.value !== 'ALL') {
-    logs = logs.filter(l => l.level.toUpperCase() === logLevelFilter.value);
+    logs = logs.filter((l) => l.level.toUpperCase() === logLevelFilter.value);
   }
   if (logSearchQuery.value) {
     const q = logSearchQuery.value.toLowerCase();
-    logs = logs.filter(l => 
-      l.message.toLowerCase().includes(q) || 
-      (l.task_id && l.task_id.toLowerCase().includes(q))
+    logs = logs.filter(
+      (l) =>
+        l.message.toLowerCase().includes(q) ||
+        (l.target && l.target.toLowerCase().includes(q)) ||
+        (l.task_id && l.task_id.toLowerCase().includes(q)),
     );
   }
   // Reverse to show latest first
   return [...logs].reverse();
 });
 
+const filteredHistoricalLines = computed(() => {
+  if (!logSearchQuery.value) {
+    return historicalLines.value;
+  }
+  const q = logSearchQuery.value.toLowerCase();
+  return historicalLines.value.filter((line) => line.toLowerCase().includes(q));
+});
+
 const clearLogs = () => {
-  logStore.globalLogs.value = [];
-  logStore.taskLogs.value = {};
+  logStore.clearDisplayLogs();
 };
+
+async function loadSelectedLogFile(): Promise<void> {
+  if (!selectedLogFile.value) {
+    historicalLines.value = [];
+    return;
+  }
+  isLoadingHistory.value = true;
+  try {
+    historicalLines.value = await logStore.readLogFile(selectedLogFile.value, 500);
+  } catch (err) {
+    logger.error('Failed to read historical log file:', err);
+    toast.error(t('common.operationFailed'), getErrorMessage(err));
+    historicalLines.value = [];
+  } finally {
+    isLoadingHistory.value = false;
+  }
+}
+
+async function refreshLogFiles(): Promise<void> {
+  isLoadingHistory.value = true;
+  try {
+    const files = await logStore.listLogFiles();
+    logFiles.value = files;
+    if (files.length === 0) {
+      selectedLogFile.value = '';
+      historicalLines.value = [];
+      return;
+    }
+    if (!selectedLogFile.value || !files.some((f) => f.name === selectedLogFile.value)) {
+      selectedLogFile.value = files[0].name;
+    }
+    await loadSelectedLogFile();
+  } catch (err) {
+    logger.error('Failed to list log files:', err);
+    toast.error(t('common.operationFailed'), getErrorMessage(err));
+  } finally {
+    isLoadingHistory.value = false;
+  }
+}
+
+async function handleOpenLogDirectory(): Promise<void> {
+  try {
+    await logStore.openLogDirectory();
+  } catch (err) {
+    logger.error('Failed to open log directory:', err);
+    toast.error(t('common.operationFailed'), getErrorMessage(err));
+  }
+}
+
+async function handleExportDiagnosticLogs(): Promise<void> {
+  if (isExportingLogs.value) return;
+  try {
+    const defaultName = `dawnland-diagnostics-${new Date().toISOString().slice(0, 10)}.zip`;
+    const destPath = await save({
+      defaultPath: defaultName,
+      filters: [{ name: 'Zip Archive', extensions: ['zip'] }],
+    });
+    if (!destPath || typeof destPath !== 'string') return;
+    isExportingLogs.value = true;
+    const savedPath = await logStore.exportDiagnosticLogs(destPath, true);
+    toast.success(t('settings.logs.exportSuccess'), savedPath);
+  } catch (err) {
+    logger.error('Failed to export diagnostic logs:', err);
+    toast.error(t('settings.logs.exportFailed'), getErrorMessage(err));
+  } finally {
+    isExportingLogs.value = false;
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'logs') {
+    void logStore.loadLogConfig().catch((err) => {
+      logger.warn('Failed to refresh log config:', err);
+    });
+    if (logViewMode.value === 'history') {
+      void refreshLogFiles();
+    }
+  }
+});
+
+watch(logViewMode, (mode) => {
+  if (mode === 'history') {
+    void refreshLogFiles();
+  }
+});
+
+watch(selectedLogFile, (name) => {
+  if (name && logViewMode.value === 'history') {
+    void loadSelectedLogFile();
+  }
+});
 </script>
 
 <template>
@@ -1812,44 +1986,124 @@ const clearLogs = () => {
 
     <!-- Logs Tab -->
     <div v-if="activeTab === 'logs'" class="h-full flex flex-col">
-      <div class="mb-6 shrink-0">
-        <h2 class="text-lg font-bold">{{ $t('settings.tabs.logs') }}</h2>
-        <p class="text-sm text-muted-foreground">{{ $t('settings.logs.desc') }}</p>
+      <div class="flex flex-wrap items-start justify-between gap-4 mb-4 shrink-0">
+        <div>
+          <h2 class="text-lg font-bold">{{ $t('settings.tabs.logs') }}</h2>
+          <p class="text-sm text-muted-foreground">{{ $t('settings.logs.desc') }}</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-muted-foreground whitespace-nowrap">{{ $t('settings.logs.runtimeLevelLabel') }}</span>
+            <DSelect
+              v-model="runtimeLogLevelModel"
+              :options="runtimeLevelOptions"
+              class="w-36"
+            />
+          </div>
+          <DButton @click="handleOpenLogDirectory" variant="outline" size="sm" class="gap-1.5">
+            <FolderOpen class="w-4 h-4" /> {{ $t('settings.logs.openDir') }}
+          </DButton>
+          <DButton @click="handleExportDiagnosticLogs" variant="outline" size="sm" :disabled="isExportingLogs" class="gap-1.5">
+            <Loader2 v-if="isExportingLogs" class="w-4 h-4 animate-spin" />
+            <Download v-else class="w-4 h-4" />
+            {{ $t('settings.logs.exportZip') }}
+          </DButton>
+        </div>
       </div>
 
-      <div class="flex gap-4 mb-6 shrink-0">
-        <DInput v-model="logSearchQuery" :placeholder="$t('settings.logs.search')" class="flex-1" :icon="Search" />
-        <DSelect 
-          v-model="logLevelFilter" 
-          :options="[
-            {label: $t('settings.logs.allLevels'), value: 'ALL'},
-            {label: 'INFO', value: 'INFO'},
-            {label: 'WARN', value: 'WARN'},
-            {label: 'ERROR', value: 'ERROR'},
-            {label: 'DEBUG', value: 'DEBUG'}
-          ]" 
-          class="w-40" 
-        />
-        <DButton @click="clearLogs" variant="danger" class="gap-2">
-          <Trash2 class="w-4 h-4" /> {{ $t('settings.logs.clear') }}
-        </DButton>
+      <div class="flex flex-wrap items-center gap-3 mb-4 shrink-0">
+        <div class="flex items-center gap-1 rounded-lg border bg-card/40 p-1">
+          <DButton
+            :variant="logViewMode === 'live' ? 'primary' : 'ghost'"
+            size="sm"
+            @click="logViewMode = 'live'"
+          >
+            {{ $t('settings.logs.liveMode') }}
+          </DButton>
+          <DButton
+            :variant="logViewMode === 'history' ? 'primary' : 'ghost'"
+            size="sm"
+            @click="logViewMode = 'history'"
+          >
+            {{ $t('settings.logs.historyMode') }}
+          </DButton>
+        </div>
+
+        <DInput v-model="logSearchQuery" :placeholder="$t('settings.logs.search')" class="flex-1 min-w-[200px]" :icon="Search" />
+
+        <template v-if="logViewMode === 'live'">
+          <DSelect
+            v-model="logSourceFilter"
+            :options="logSourceOptions"
+            class="w-36"
+          />
+          <DSelect
+            v-model="logLevelFilter"
+            :options="[
+              { label: $t('settings.logs.allLevels'), value: 'ALL' },
+              { label: 'ERROR', value: 'ERROR' },
+              { label: 'WARN', value: 'WARN' },
+              { label: 'INFO', value: 'INFO' },
+              { label: 'DEBUG', value: 'DEBUG' },
+              { label: 'TRACE', value: 'TRACE' }
+            ]"
+            class="w-32"
+          />
+          <DButton @click="clearLogs" variant="danger" size="sm" class="gap-1.5">
+            <Trash2 class="w-4 h-4" /> {{ $t('settings.logs.clear') }}
+          </DButton>
+        </template>
+
+        <template v-else>
+          <DSelect
+            v-model="selectedLogFile"
+            :options="logFileOptions"
+            :placeholder="$t('settings.logs.selectFile')"
+            class="w-64"
+          />
+          <DButton @click="refreshLogFiles" variant="outline" size="sm" :disabled="isLoadingHistory" class="gap-1.5">
+            <RefreshCw :class="['w-4 h-4', { 'animate-spin': isLoadingHistory }]" />
+            {{ $t('settings.logs.refreshFiles') }}
+          </DButton>
+        </template>
       </div>
 
-      <div class="bg-card/50 border rounded-lg p-4 space-y-2 flex-1 overflow-y-auto relative">
+      <div v-if="logViewMode === 'live'" class="bg-card/50 border rounded-lg p-4 space-y-1.5 flex-1 overflow-y-auto relative">
         <div v-if="filteredLogs.length === 0" class="absolute inset-0 flex items-center justify-center text-muted-foreground">
           {{ $t('settings.logs.noLogs') }}
         </div>
-        <div v-for="(log, i) in filteredLogs" :key="i" class="font-mono text-sm break-all">
+        <div
+          v-for="(log, i) in filteredLogs"
+          :key="log.seq ?? `${log.timestamp}-${i}`"
+          class="font-mono text-xs sm:text-sm break-all leading-relaxed"
+        >
           <span class="text-muted-foreground mr-2">[{{ log.timestamp }}]</span>
           <span :class="{
             'text-blue-500': log.level.toUpperCase() === 'INFO',
             'text-yellow-500': log.level.toUpperCase() === 'WARN',
             'text-red-500': log.level.toUpperCase() === 'ERROR',
             'text-gray-500': log.level.toUpperCase() === 'DEBUG',
+            'text-slate-400': log.level.toUpperCase() === 'TRACE',
           }" class="font-bold mr-2">[{{ log.level.toUpperCase() }}]</span>
+          <span class="text-cyan-600 dark:text-cyan-400 mr-2">[{{ log.source === 'frontend' ? `FE:${log.target}` : log.target }}]</span>
           <span v-if="log.task_id" class="text-purple-500 mr-2">[{{ log.task_id }}]</span>
           <span class="text-foreground/90">{{ log.message }}</span>
         </div>
+      </div>
+
+      <div v-else class="bg-card/50 border rounded-lg p-4 space-y-1 flex-1 overflow-y-auto relative">
+        <div v-if="isLoadingHistory" class="absolute inset-0 flex items-center justify-center text-muted-foreground">
+          <Loader2 class="w-5 h-5 animate-spin" />
+        </div>
+        <div v-else-if="filteredHistoricalLines.length === 0" class="absolute inset-0 flex items-center justify-center text-muted-foreground">
+          {{ logFiles.length === 0 ? $t('settings.logs.noFiles') : $t('settings.logs.noLogs') }}
+        </div>
+        <div
+          v-else
+          v-for="(line, i) in filteredHistoricalLines"
+          :key="i"
+          class="font-mono text-xs break-all text-foreground/90 whitespace-pre-wrap"
+        >{{ line }}</div>
       </div>
     </div>
 

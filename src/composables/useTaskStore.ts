@@ -6,6 +6,9 @@ import { getTaskName } from '../types/task';
 import { notificationStore } from './useNotificationStore';
 import { emitInstanceAssetsUpdated } from './useFileDrop';
 import i18n from '../i18n';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('useTaskStore');
 
 // Global state
 const tasks = ref<TaskState[]>([]);
@@ -218,7 +221,7 @@ export function useTaskStore() {
         
         isInitialized.value = true;
       } catch (e) {
-        console.error('Failed to initialize task store:', e);
+        logger.error('Failed to initialize task store:', e);
       } finally {
         initPromise = null;
       }
@@ -248,7 +251,7 @@ export function useTaskStore() {
       await invoke('cancel_task', { taskId: id });
       return true;
     } catch (e) {
-      console.error('Failed to cancel task:', e);
+      logger.withTask(id).error('Failed to cancel task:', e);
       return false;
     } finally {
       processingCancels.delete(id);
@@ -260,7 +263,7 @@ export function useTaskStore() {
       await invoke('force_cancel_task', { taskId: id });
       return true;
     } catch (e) {
-      console.error('Failed to force cancel task:', e);
+      logger.withTask(id).error('Failed to force cancel task:', e);
       return false;
     }
   }
@@ -270,7 +273,7 @@ export function useTaskStore() {
       await invoke('clear_task_history');
       tasks.value = tasks.value.filter(t => t.status === 'Pending' || t.status === 'Running' || t.status === 'Paused' || t.status === 'Cancelling');
     } catch (e) {
-      console.error('Failed to clear task history:', e);
+      logger.error('Failed to clear task history:', e);
     }
   }
 
@@ -280,7 +283,7 @@ export function useTaskStore() {
     if (processingRetries.has(id)) return;
     const task = tasks.value.find(t => t.id === id);
     if (task && (task.status === 'Pending' || task.status === 'Running' || task.status === 'Cancelling' || task.status === 'Paused')) {
-      console.warn('Cannot retry an active or cancelling task:', id);
+      logger.withTask(id).warn('Cannot retry an active or cancelling task:', id);
       return;
     }
     
@@ -290,7 +293,7 @@ export function useTaskStore() {
       // Remove the old task from frontend state so it gets replaced cleanly
       tasks.value = tasks.value.filter(t => t.id !== id);
     } catch (e) {
-      console.error('Failed to retry task:', e);
+      logger.withTask(id).error('Failed to retry task:', e);
     } finally {
       processingRetries.delete(id);
     }
@@ -306,7 +309,7 @@ export function useTaskStore() {
         try {
           await invoke('delete_task', { taskId: t.id });
         } catch (e) {
-          console.error('Failed to auto-clear task', e);
+          logger.withTask(t.id).error('Failed to auto-clear task', e);
         }
       }
     }

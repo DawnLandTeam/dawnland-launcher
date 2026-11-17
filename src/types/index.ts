@@ -9,4 +9,5 @@ export * from './account';
 export * from './drop';
 export * from './modpack';
 export * from './instance';
+export * from './log';
 export * from './resourceNaming';

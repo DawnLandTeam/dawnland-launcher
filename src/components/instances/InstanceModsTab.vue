@@ -202,6 +202,9 @@ import { useInstances } from '../../composables/useInstances';
 import { formatResourceDisplay, useResourceNaming } from '../../composables/useResourceNaming';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('InstanceModsTab');
 import { INSTANCE_ASSETS_UPDATED_EVENT } from '../../composables/useFileDrop';
 import type { InstanceAssetsUpdatedDetail } from '../../types/drop';
 import { RESOURCE_NAMING_UPDATED_EVENT, type LocalModItem } from '../../types/resourceNaming';
@@ -309,7 +312,7 @@ async function loadMods() {
     if (seq !== loadSeq || props.instanceId !== currentInstanceId) {
       return;
     }
-    console.error('Failed to load mods:', error);
+    logger.error('Failed to load mods:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -381,7 +384,7 @@ async function toggleMod(mod: LocalMod) {
     });
     mod.enabled = targetState;
   } catch (error) {
-    console.error('Failed to toggle mod:', error);
+    logger.error('Failed to toggle mod:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -411,7 +414,7 @@ async function executeDelete() {
     mods.value = mods.value.filter(m => m.filename !== modToDelete.value!.filename);
     showDeleteConfirm.value = false;
   } catch (error) {
-    console.error('Failed to delete mod:', error);
+    logger.error('Failed to delete mod:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)

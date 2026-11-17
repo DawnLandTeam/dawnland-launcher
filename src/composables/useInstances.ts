@@ -3,6 +3,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { getErrorMessage } from '../utils/error';
 import { applyCachedInstanceIcons } from './useInstanceIconUpdates';
 import type { InstanceItem } from '../types';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('useInstances');
 
 const instances = ref<InstanceItem[]>([]);
 const isLoaded = ref(false);
@@ -52,7 +55,7 @@ if (typeof window !== 'undefined') {
     }
     debounceTimer = setTimeout(() => {
       debounceTimer = null;
-      executeScan().catch(console.error);
+      executeScan().catch((err) => logger.error('Failed to refresh instances on event:', err));
     }, 250);
   });
 }
@@ -63,7 +66,7 @@ export function useInstances() {
       // Return cached instances immediately, and do a debounced/throttled background refresh
       const now = Date.now();
       if (now - lastScanTime >= MIN_SCAN_INTERVAL_MS) {
-        executeScan(false).catch(console.error);
+        executeScan(false).catch((err) => logger.error('Background instance scan failed:', err));
       }
       return instances.value;
     }
@@ -71,7 +74,7 @@ export function useInstances() {
     try {
       await executeScan(force);
     } catch (e) {
-      console.error('Failed to load instances:', getErrorMessage(e));
+      logger.error('Failed to load instances:', getErrorMessage(e));
     }
     return instances.value;
   };
