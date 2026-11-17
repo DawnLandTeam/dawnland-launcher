@@ -3892,13 +3892,18 @@ pub async fn launch_instance(
                     break;
                 }
             }
+            let hit_cap = batch.len() >= 100;
             if batch.len() == 1 {
                 let _ = app_for_logs.emit("game-log", &batch[0]);
             } else {
                 let _ = app_for_logs.emit("game-logs-batch", &batch);
             }
             batch.clear();
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            // Only pace when the channel has been drained; keep draining immediately under heavy log bursts
+            // so stdout/stderr reader tasks do not back up and stall the JVM.
+            if !hit_cap {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            }
         }
     });
 

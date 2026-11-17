@@ -10,6 +10,9 @@ pub fn redact_sensitive(input: &str) -> String {
     out = redact_kv_secret(&out, "-Dhttp.proxyPassword=");
     out = redact_kv_secret(&out, "-Dhttps.proxyPassword=");
 
+    // Redact URL userinfo credentials (e.g. `https://user:pass@host`)
+    out = redact_url_credentials(&out);
+
     // Redact HTTP Bearer tokens
     out = redact_prefix_token(&out, "Bearer ");
     out = redact_prefix_token(&out, "bearer ");
@@ -17,6 +20,10 @@ pub fn redact_sensitive(input: &str) -> String {
     // Redact API keys and OpenAI-style sk- keys
     out = redact_kv_secret(&out, "x-api-key=");
     out = redact_kv_secret(&out, "x-api-key: ");
+    out = redact_kv_secret(&out, "api_key=");
+    out = redact_kv_secret(&out, "apiKey=");
+    out = redact_kv_secret(&out, "access_token=");
+    out = redact_kv_secret(&out, "token=");
     out = redact_prefix_token(&out, "sk-proj-");
     out = redact_prefix_token(&out, "sk-");
 
@@ -260,22 +267,97 @@ fn mask_path_segment_after(input: &str, prefix: &str) -> String {
     result
 }
 
+fn redact_url_credentials(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(scheme_idx) = rest.find("://") {
+        let authority_start = scheme_idx + 3;
+        result.push_str(&rest[..authority_start]);
+        let after_scheme = &rest[authority_start..];
+        let auth_len = after_scheme
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '?' | '#' | '"' | '\'' | '<' | '>'))
+            .unwrap_or(after_scheme.len());
+        let authority = &after_scheme[..auth_len];
+
+        if let Some(at_pos) = authority.rfind('@') {
+            result.push_str("***@");
+            rest = &after_scheme[at_pos + 1..];
+        } else {
+            result.push_str(authority);
+            rest = &after_scheme[auth_len..];
+        }
+    }
+
+    result.push_str(rest);
+    result
+}
+
+fn is_sensitive_json_key(key: &str) -> bool {
+    let norm: String = key
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    norm.contains("apikey")
+        || norm.contains("secret")
+        || norm.contains("password")
+        || norm.contains("passwd")
+        || norm.contains("credential")
+        || norm.contains("privatekey")
+        || norm == "authorization"
+        || norm == "bearer"
+        || norm == "token"
+        || norm.ends_with("token")
+}
+
+/// Recursively redacts secret-bearing JSON keys and sanitizes string values before diagnostic export.
+pub fn sanitize_json_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                if is_sensitive_json_key(k) {
+                    if let serde_json::Value::String(s) = v {
+                        if !s.is_empty() {
+                            *s = "***REDACTED***".to_string();
+                        }
+                    }
+                    continue;
+                }
+                sanitize_json_value(v);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                sanitize_json_value(item);
+            }
+        }
+        serde_json::Value::String(s) => {
+            *s = redact_user_paths(&redact_sensitive(s));
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_redact_sensitive_tokens_and_keys() {
-        let raw = r#"Bearer eyJhbGciOiJIUzI1NiJ9.abc --accessToken secret_mc_tok {"refresh_token":"rt_12345","remoteApiKey":"sk-abcdef123456"} x-api-key: cf_secret_key"#;
+        let raw = r#"Bearer eyJhbGciOiJIUzI1NiJ9.abc --accessToken secret_mc_tok {"refresh_token":"rt_12345","remoteApiKey":"sk-abcdef123456"} x-api-key: cf_secret_key https://user:urlpass@example.com/v1?api_key=qsecret"#;
         let redacted = redact_sensitive(raw);
         assert!(!redacted.contains("eyJhbGciOiJIUzI1NiJ9"));
         assert!(!redacted.contains("secret_mc_tok"));
         assert!(!redacted.contains("rt_12345"));
         assert!(!redacted.contains("sk-abcdef123456"));
         assert!(!redacted.contains("cf_secret_key"));
+        assert!(!redacted.contains("urlpass"));
+        assert!(!redacted.contains("qsecret"));
         assert!(redacted.contains("Bearer ***"));
         assert!(redacted.contains("--accessToken ***"));
         assert!(redacted.contains("\"refresh_token\":\"***\""));
+        assert!(redacted.contains("https://***@example.com/v1?api_key=***"));
     }
 
     #[test]
@@ -322,5 +404,29 @@ mod tests {
         let s = format!("你好世界{}", "a".repeat(100));
         let truncated = truncate_for_log(&s, 10);
         assert!(truncated.ends_with("... [truncated, total 112 bytes]"));
+    }
+
+    #[test]
+    fn test_sanitize_json_value_redacts_secret_keys_and_strings() {
+        let mut value = serde_json::json!({
+            "settings": {
+                "remoteApiKey": "my-raw-key",
+                "customSecret": "top-secret-value",
+                "authToken": "tok-abc",
+                "remoteBaseUrl": "https://user:pass@llm.example.com/v1?token=abc",
+                "customPath": "C:\\Users\\Bob\\mods",
+                "enableJvmTuner": true
+            }
+        });
+        sanitize_json_value(&mut value);
+        assert_eq!(value["settings"]["remoteApiKey"], "***REDACTED***");
+        assert_eq!(value["settings"]["customSecret"], "***REDACTED***");
+        assert_eq!(value["settings"]["authToken"], "***REDACTED***");
+        assert_eq!(
+            value["settings"]["remoteBaseUrl"],
+            "https://***@llm.example.com/v1?token=***"
+        );
+        assert_eq!(value["settings"]["customPath"], "C:\\Users\\<USER>\\mods");
+        assert_eq!(value["settings"]["enableJvmTuner"], true);
     }
 }

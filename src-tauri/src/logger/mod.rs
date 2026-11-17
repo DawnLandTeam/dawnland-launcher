@@ -170,8 +170,9 @@ pub fn shutdown() {
 /// Cleans up expired or oversized log files in the launcher log directory.
 pub async fn cleanup_old_logs(retention_days: u32, max_total_bytes: u64) {
     let dir = log_dir();
-    let today = chrono::Local::now().date_naive();
-    cleanup_old_logs_in_dir(&dir, retention_days, max_total_bytes, today).await;
+    // `tracing_appender::rolling::daily` names files using UTC dates, so compare against UTC midnight.
+    let today_utc = chrono::Utc::now().date_naive();
+    cleanup_old_logs_in_dir(&dir, retention_days, max_total_bytes, today_utc).await;
 }
 
 fn parse_log_date_from_name(name: &str) -> Option<NaiveDate> {
@@ -187,14 +188,18 @@ struct LogDiskCandidate {
     modified_secs: u64,
     size: u64,
     is_today: bool,
+    is_expired: bool,
 }
 
-/// Cleans up log files older than `retention_days` and trims oldest non-today logs when total size exceeds `max_total_bytes`.
+/// Cleans up log files older than `retention_days` and trims oldest non-active logs when total size exceeds `max_total_bytes`.
+///
+/// Both `today_utc` logs and the newest non-expired log file present in `dir` are protected so the currently open
+/// appender file is never deleted across timezone/UTC rollover boundaries.
 pub async fn cleanup_old_logs_in_dir(
     dir: &Path,
     retention_days: u32,
     max_total_bytes: u64,
-    today: NaiveDate,
+    today_utc: NaiveDate,
 ) {
     let mut entries = match tokio::fs::read_dir(dir).await {
         Ok(rd) => rd,
@@ -202,9 +207,11 @@ pub async fn cleanup_old_logs_in_dir(
     };
 
     let retention_days = retention_days.max(1) as i64;
-    let mut kept_files: Vec<LogDiskCandidate> = Vec::new();
-    let mut deleted_count = 0usize;
-    let mut freed_bytes = 0u64;
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut candidates: Vec<LogDiskCandidate> = Vec::new();
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -228,36 +235,57 @@ pub async fn cleanup_old_logs_in_dir(
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let size = meta.len();
-        let is_today = parsed_date == Some(today);
+        let is_today = parsed_date == Some(today_utc);
 
         let is_expired = if let Some(file_date) = parsed_date {
-            (today - file_date).num_days() >= retention_days
+            (today_utc - file_date).num_days() >= retention_days
         } else if modified_secs > 0 {
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
             now_secs.saturating_sub(modified_secs) >= (retention_days as u64) * 86_400
         } else {
             false
         };
 
-        if !is_today && is_expired {
-            if tokio::fs::remove_file(&path).await.is_ok() {
-                deleted_count += 1;
-                freed_bytes = freed_bytes.saturating_add(size);
-            }
-            continue;
-        }
-
-        kept_files.push(LogDiskCandidate {
+        candidates.push(LogDiskCandidate {
             path,
             name,
             parsed_date,
             modified_secs,
             size,
             is_today,
+            is_expired,
         });
+    }
+
+    // Protect the newest non-expired file in addition to `today_utc` in case UTC midnight just passed
+    // and the rolling appender still holds the previous day's file open.
+    let newest_active_name = candidates
+        .iter()
+        .filter(|c| c.is_today || !c.is_expired)
+        .max_by(|a, b| {
+            a.parsed_date
+                .cmp(&b.parsed_date)
+                .then_with(|| a.modified_secs.cmp(&b.modified_secs))
+                .then_with(|| a.name.cmp(&b.name))
+        })
+        .map(|c| c.name.clone());
+
+    let is_protected = |c: &LogDiskCandidate| {
+        c.is_today || newest_active_name.as_deref() == Some(c.name.as_str())
+    };
+
+    let mut kept_files: Vec<LogDiskCandidate> = Vec::new();
+    let mut deleted_count = 0usize;
+    let mut freed_bytes = 0u64;
+
+    for candidate in candidates {
+        if !is_protected(&candidate) && candidate.is_expired {
+            if tokio::fs::remove_file(&candidate.path).await.is_ok() {
+                deleted_count += 1;
+                freed_bytes = freed_bytes.saturating_add(candidate.size);
+            }
+            continue;
+        }
+        kept_files.push(candidate);
     }
 
     let mut total_bytes: u64 = kept_files.iter().map(|f| f.size).sum();
@@ -273,7 +301,7 @@ pub async fn cleanup_old_logs_in_dir(
             if total_bytes <= max_total_bytes {
                 break;
             }
-            if candidate.is_today {
+            if is_protected(&candidate) {
                 continue;
             }
             if tokio::fs::remove_file(&candidate.path).await.is_ok() {
@@ -369,7 +397,78 @@ pub async fn read_log_file_in_dir(
         .collect())
 }
 
-/// Exports recent redacted launcher logs, sanitized settings/system summary, and optional game latest.log to a zip file.
+/// Reads up to the trailing `max_bytes` of a log file and redacts sensitive fields/paths without loading oversized files into memory.
+async fn read_tail_redacted_bytes(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    if max_bytes == 0 {
+        return Some(Vec::new());
+    }
+
+    let mut file = tokio::fs::File::open(path).await.ok()?;
+    let file_len = file.metadata().await.ok()?.len();
+    let truncated_head = file_len > max_bytes as u64;
+    if truncated_head {
+        let start = file_len - max_bytes as u64;
+        file.seek(std::io::SeekFrom::Start(start)).await.ok()?;
+    }
+
+    let mut buf = Vec::with_capacity(file_len.min(max_bytes as u64) as usize);
+    file.take(max_bytes as u64).read_to_end(&mut buf).await.ok()?;
+
+    let raw_slice: &[u8] = if truncated_head {
+        // Advance past the first partial line (or partial UTF-8 lead bytes) after a mid-file seek.
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            &buf[pos + 1..]
+        } else {
+            let mut offset = 0;
+            while offset < buf.len() && offset < 3 && (buf[offset] & 0b1100_0000) == 0b1000_0000 {
+                offset += 1;
+            }
+            &buf[offset..]
+        }
+    } else {
+        &buf[..]
+    };
+
+    let raw_text = String::from_utf8_lossy(raw_slice);
+    let redacted = redact::redact_user_paths(&redact::redact_sensitive(&raw_text));
+    let mut bytes = redacted.into_bytes();
+    if bytes.len() > max_bytes {
+        let mut start = bytes.len() - max_bytes;
+        while start < bytes.len() && (bytes[start] & 0b1100_0000) == 0b1000_0000 {
+            start += 1;
+        }
+        bytes.drain(..start);
+    }
+    Some(bytes)
+}
+
+/// Builds a sanitized diagnostic summary JSON string from `LauncherSettings`.
+fn build_sanitized_summary_json(mut settings: LauncherSettings) -> String {
+    if settings.ai_config.remote_api_key.is_some() {
+        settings.ai_config.remote_api_key = Some("***REDACTED***".to_string());
+    }
+    if let Some(url) = settings.ai_config.remote_base_url.as_mut() {
+        *url = redact::redact_user_paths(&redact::redact_sensitive(url));
+    }
+
+    let mut summary = serde_json::json!({
+        "generatedAt": chrono::Local::now().to_rfc3339(),
+        "appVersion": env!("CARGO_PKG_VERSION"),
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "family": std::env::consts::FAMILY,
+        "effectiveLogLevel": effective_log_level(settings.log_level),
+        "settings": settings,
+    });
+    redact::sanitize_json_value(&mut summary);
+
+    let serialized = serde_json::to_string_pretty(&summary).unwrap_or_else(|_| "{}".to_string());
+    redact::redact_user_paths(&redact::redact_sensitive(&serialized))
+}
+
+/// Exports recent redacted launcher logs, sanitized settings/system summary, and bounded game latest.log tail to a zip file.
 pub async fn export_diagnostic_bundle(
     dest_path: &Path,
     include_game_logs: bool,
@@ -382,43 +481,21 @@ pub async fn export_diagnostic_bundle(
     let mut accumulated = 0usize;
 
     for info in files.into_iter().take(3) {
+        let remaining = MAX_DIAGNOSTIC_LOG_BYTES.saturating_sub(accumulated);
+        if remaining == 0 {
+            break;
+        }
         let path = dir.join(&info.name);
-        if let Ok(raw) = tokio::fs::read_to_string(&path).await {
-            let redacted = redact::redact_user_paths(&redact::redact_sensitive(&raw));
-            let bytes = redacted.into_bytes();
-            let take_bytes = if accumulated + bytes.len() > MAX_DIAGNOSTIC_LOG_BYTES {
-                let remaining = MAX_DIAGNOSTIC_LOG_BYTES.saturating_sub(accumulated);
-                if remaining == 0 {
-                    break;
-                }
-                let start = bytes.len().saturating_sub(remaining);
-                bytes[start..].to_vec()
-            } else {
-                bytes
-            };
-            accumulated += take_bytes.len();
-            payloads.push((format!("launcher/{}", info.name), take_bytes));
+        if let Some(take_bytes) = read_tail_redacted_bytes(&path, remaining).await {
+            if !take_bytes.is_empty() {
+                accumulated += take_bytes.len();
+                payloads.push((format!("launcher/{}", info.name), take_bytes));
+            }
         }
     }
 
-    // Build sanitized system and settings summary
-    let mut settings = crate::core::settings::get_launcher_settings().await;
-    if settings.ai_config.remote_api_key.is_some() {
-        settings.ai_config.remote_api_key = Some("***REDACTED***".to_string());
-    }
-
-    let summary = serde_json::json!({
-        "generatedAt": chrono::Local::now().to_rfc3339(),
-        "appVersion": env!("CARGO_PKG_VERSION"),
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-        "family": std::env::consts::FAMILY,
-        "effectiveLogLevel": effective_log_level(settings.log_level),
-        "settings": settings,
-    });
-    let summary_str = redact::redact_user_paths(
-        &serde_json::to_string_pretty(&summary).unwrap_or_else(|_| "{}".to_string()),
-    );
+    let settings = crate::core::settings::get_launcher_settings().await;
+    let summary_str = build_sanitized_summary_json(settings);
     payloads.push(("system_summary.json".to_string(), summary_str.into_bytes()));
 
     if include_game_logs {
@@ -433,12 +510,10 @@ pub async fn export_diagnostic_bundle(
                 .join("latest.log");
             if let Ok(meta) = tokio::fs::symlink_metadata(&game_log_path).await {
                 if !meta.file_type().is_symlink() && meta.is_file() {
-                    if let Ok(raw) = tokio::fs::read_to_string(&game_log_path).await {
-                        let redacted = redact::redact_user_paths(&redact::redact_sensitive(&raw));
-                        payloads.push((
-                            format!("game/{}/latest.log", inst_id),
-                            redacted.into_bytes(),
-                        ));
+                    if let Some(bytes) =
+                        read_tail_redacted_bytes(&game_log_path, MAX_DIAGNOSTIC_LOG_BYTES).await
+                    {
+                        payloads.push((format!("game/{}/latest.log", inst_id), bytes));
                     }
                 }
             }
@@ -540,5 +615,84 @@ mod tests {
             .await
             .expect("read tail");
         assert_eq!(lines, vec!["line2", "Bearer ***"]);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_old_logs_preserves_newest_active_file_across_utc_rollover() {
+        let dir = tempdir().expect("tempdir");
+        let today_utc = NaiveDate::from_ymd_opt(2026, 11, 17).expect("valid date");
+
+        let active_prev_utc = dir.path().join("dawnland.log.2026-11-16");
+        let older_file = dir.path().join("dawnland.log.2026-11-15");
+
+        tokio::fs::write(&active_prev_utc, vec![b'x'; 80])
+            .await
+            .expect("write active");
+        tokio::fs::write(&older_file, vec![b'y'; 80])
+            .await
+            .expect("write older");
+
+        // Size cap smaller than even active_prev_utc alone: older file is evicted, newest active file must never be unlinked
+        cleanup_old_logs_in_dir(dir.path(), 7, 50, today_utc).await;
+
+        assert!(
+            active_prev_utc.exists(),
+            "newest active rolling log must never be deleted across midnight/timezone boundaries"
+        );
+        assert!(!older_file.exists(), "older file should be evicted first");
+    }
+
+    #[test]
+    fn test_build_sanitized_summary_redacts_secrets_urls_and_paths() {
+        let mut settings = LauncherSettings::default();
+        settings.ai_config.remote_api_key = Some("sk-proj-secret123456".to_string());
+        settings.ai_config.remote_base_url =
+            Some("https://alice:topsecret@api.example.com/v1?api_key=query_secret".to_string());
+        settings.resource_naming.custom_template = r"C:\Users\Alice\Desktop\{stem}".to_string();
+
+        let summary_json = build_sanitized_summary_json(settings);
+        assert!(!summary_json.contains("sk-proj-secret123456"));
+        assert!(!summary_json.contains("topsecret"));
+        assert!(!summary_json.contains("query_secret"));
+        assert!(!summary_json.contains("Alice"));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&summary_json).expect("sanitized summary must remain valid JSON");
+        assert_eq!(parsed["settings"]["aiConfig"]["remoteApiKey"], "***");
+        assert_eq!(
+            parsed["settings"]["aiConfig"]["remoteBaseUrl"],
+            "https://***@api.example.com/v1?api_key=***"
+        );
+        assert!(parsed["settings"]["resourceNaming"]["customTemplate"]
+            .as_str()
+            .expect("customTemplate string")
+            .contains("<USER>"));
+    }
+
+    #[tokio::test]
+    async fn test_read_tail_redacted_bytes_caps_huge_log_files() {
+        let dir = tempdir().expect("tempdir");
+        let log_path = dir.path().join("latest.log");
+
+        let mut content = String::from("EARLY_LINE Bearer early_tok_999999\n");
+        for i in 0..4000 {
+            content.push_str(&format!("[{i}] Normal modded output line padding text\n"));
+        }
+        content.push_str("FINAL_LINE Bearer tail_tok_123456 C:\\Users\\Bob\\instance\n");
+        tokio::fs::write(&log_path, &content)
+            .await
+            .expect("write huge log");
+
+        let bytes = read_tail_redacted_bytes(&log_path, 1024)
+            .await
+            .expect("read tail bytes");
+        assert!(bytes.len() <= 1024);
+
+        let tail = String::from_utf8(bytes).expect("valid utf8");
+        assert!(!tail.contains("EARLY_LINE"));
+        assert!(tail.contains("FINAL_LINE"));
+        assert!(!tail.contains("tail_tok_123456"));
+        assert!(!tail.contains("Bob"));
+        assert!(tail.contains("Bearer ***"));
+        assert!(tail.contains("<USER>"));
     }
 }

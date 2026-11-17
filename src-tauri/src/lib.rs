@@ -183,13 +183,16 @@ pub fn run() {
                                 break;
                             }
                         }
+                        let hit_cap = batch.len() >= 50;
                         if batch.len() == 1 {
                             let _ = app_handle_clone.emit("app-log", &batch[0]);
                         } else {
                             let _ = app_handle_clone.emit("app-logs-batch", &batch);
                         }
                         batch.clear();
-                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                        if !hit_cap {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                        }
                     }
                 });
             }
