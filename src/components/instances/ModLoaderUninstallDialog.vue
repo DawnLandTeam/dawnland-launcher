@@ -20,6 +20,9 @@ import {
 } from '@lucide/vue';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('ModLoaderUninstallDialog');
 
 const props = defineProps<{
   open?: boolean;
@@ -73,7 +76,7 @@ async function fetchLoaderInfo() {
     });
     modsCount.value = info.modsCount || 0;
   } catch (e) {
-    console.error('Failed to load loader info:', e);
+    logger.error('Failed to load loader info:', e);
   } finally {
     loadingInfo.value = false;
   }
@@ -98,7 +101,7 @@ async function handleConfirm() {
     emit('success');
     emit('update:open', false);
   } catch (e) {
-    console.error('Failed to uninstall loader:', e);
+    logger.error('Failed to uninstall loader:', e);
     error.value = getErrorMessage(e);
     toast.error(t('common.operationFailed', 'Operation failed'), getErrorMessage(e));
   } finally {

@@ -8,6 +8,9 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { trackEvent, getErrorType } from "../../utils/analytics";
 import { getErrorMessage } from "../../utils/error";
+import { createLogger } from "../../utils/logger";
+
+const logger = createLogger("ModpackInstallTab");
 import { toast } from "../../composables/useToast";
 import { useI18n } from "vue-i18n";
 import { Package, UploadCloud, Loader2, Search, Download, User, Calendar, AlertTriangle } from "@lucide/vue";
@@ -355,7 +358,7 @@ const initializeView = async () => {
         installedInstances.value = (await fetchInstances()) as unknown as InstalledInstance[];
         scanError.value = null;
       } catch (e) {
-        console.error("Failed to fetch installed instances:", e);
+        logger.error("Failed to fetch installed instances:", e);
         const errMsg = getErrorMessage(e);
         scanError.value = errMsg;
         localNameError.value = errMsg;
@@ -512,7 +515,7 @@ const initializeView = async () => {
                 })
                 .catch((e) => {
                   if (activeToken !== currentInitToken) return;
-                  console.error(e);
+                  logger.error('Failed to auto-load modpack versions:', e);
                   openVersionsModal(dummyModpack);
                 })
                 .finally(() => {
@@ -679,7 +682,7 @@ const searchModpacks = async () => {
       modpacks.value = await invoke('search_curseforge_modpacks', { query: searchQuery.value });
     }
   } catch (error) {
-    console.error("Failed to search modpacks:", error);
+    logger.error("Failed to search modpacks:", error);
   } finally {
     isSearching.value = false;
   }
@@ -691,7 +694,7 @@ const openVersionsModal = async (modpack: any) => {
   try {
     installedInstances.value = (await fetchInstances()) as unknown as InstalledInstance[];
   } catch (e) {
-    console.error("Failed to refresh installed instances:", e);
+    logger.error("Failed to refresh installed instances:", e);
   }
   if (isUpdate.value) {
     instanceNameInput.value = instanceName.value;
@@ -709,7 +712,7 @@ const openVersionsModal = async (modpack: any) => {
       modpackVersions.value = await invoke('get_curseforge_modpack_versions', { projectId: modpack.project_id });
     }
   } catch (error) {
-    console.error("Failed to fetch modpack versions:", error);
+    logger.error("Failed to fetch modpack versions:", error);
     throw error;
   } finally {
     isFetchingVersions.value = false;
@@ -831,7 +834,7 @@ const loadLocalArchiveInfo = async (path: string) => {
     }
   } catch (e) {
     if (zipPath.value !== path) return;
-    console.warn("Failed to read modpack info from manifest:", e);
+    logger.warn("Failed to read modpack info from manifest:", e);
     try {
       const manifestName = await invoke<string>('get_modpack_name', { zipPath: path });
       if (manifestName && !isInstanceNameDirty.value && !isUpdate.value) {
@@ -974,7 +977,7 @@ const selectZip = async () => {
       await loadLocalArchiveInfo(selected);
     }
   } catch (err) {
-    console.error("Failed to open dialog", err);
+    logger.error("Failed to open dialog", err);
   }
 };
 
@@ -1083,7 +1086,7 @@ const installModpack = async () => {
   try {
     downgradeOk = await checkDowngrade();
   } catch (err) {
-    console.error("Failed to check downgrade status:", err);
+    logger.error("Failed to check downgrade status:", err);
     isInstalling.value = false;
     toast.error(t('common.error', 'Error'), getErrorMessage(err));
     return;
@@ -1119,7 +1122,7 @@ const installModpack = async () => {
       scanError.value = null;
       localNameError.value = null;
     } catch (e) {
-      console.error("Failed to retry fetching installed instances:", e);
+      logger.error("Failed to retry fetching installed instances:", e);
       const errMsg = getErrorMessage(e);
       scanError.value = errMsg;
       localNameError.value = errMsg;
@@ -1148,7 +1151,7 @@ const installModpack = async () => {
         return;
       }
     } catch (e) {
-      console.error("Failed to check instance existence:", e);
+      logger.error("Failed to check instance existence:", e);
       const errMsg = getErrorMessage(e);
       scanError.value = errMsg;
       isInstalling.value = false;
@@ -1181,7 +1184,7 @@ const installModpack = async () => {
       : (targetMode === 'local' && targetZipPath ? targetZipPath.replace(/\\/g, '/').split('/').pop() || null : null);
 
     if (targetMode === 'online') {
-      console.log("Invoking download_and_install_online_modpack...");
+      logger.debug("Invoking download_and_install_online_modpack...");
       currentTaskId.value = await invoke<string>("download_and_install_online_modpack", {
         url: targetOnlineUrl,
         instanceName: finalInstanceName,
@@ -1192,7 +1195,7 @@ const installModpack = async () => {
         packFileName: effectivePackFileName,
       });
     } else {
-      console.log("Invoking install_modpack...");
+      logger.debug("Invoking install_modpack...");
       currentTaskId.value = await invoke<string>("install_modpack", {
         zipPath: targetZipPath,
         instanceName: finalInstanceName,
@@ -1210,9 +1213,10 @@ const installModpack = async () => {
       } else {
         setDownloadsModpackTaskId(currentTaskId.value);
       }
+      logger.withTask(currentTaskId.value).info("Installation task submitted successfully.");
+    } else {
+      logger.info("Installation task submitted successfully.");
     }
-
-    console.log("Installation task submitted successfully.");
     isDowngradeConfirmed.value = false;
     confirmedDowngradeVersionId.value = null;
     pendingDowngradeVersion.value = null;
@@ -1221,7 +1225,7 @@ const installModpack = async () => {
       try {
         finalName = await invoke<string>("get_modpack_name", { zipPath: targetZipPath });
       } catch (e) {
-        console.warn("Could not read manifest name, falling back to filename", e);
+        logger.warn("Could not read manifest name, falling back to filename", e);
         finalName = targetZipPath.replace(/\\/g, '/').split('/').pop() || "Unknown Modpack";
       }
     }
@@ -1230,7 +1234,7 @@ const installModpack = async () => {
     isDowngradeConfirmed.value = false;
     confirmedDowngradeVersionId.value = null;
     pendingDowngradeVersion.value = null;
-    console.error("Installation failed:", error);
+    logger.error("Installation failed:", error);
     trackEvent("Error Occurred", { context: "modpack_install", error_type: getErrorType(error) });
     const errMsg = getErrorMessage(error);
     statusMessage.value = `Installation failed: ${errMsg}`;
@@ -1272,7 +1276,7 @@ const cancelInstallation = async () => {
       isInstalling.value = false;
     }
   } catch (e) {
-    console.error("Failed to cancel installation:", e);
+    logger.error("Failed to cancel installation:", e);
     const errorMsg = getErrorMessage(e);
     cancelError.value = errorMsg;
     toast.error(t('common.error', 'Error'), errorMsg);

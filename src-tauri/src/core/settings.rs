@@ -156,6 +156,40 @@ impl CacheRetentionPolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LogLevelSetting {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevelSetting {
+    /// Converts the setting into a `tracing` directive level string.
+    pub fn as_directive_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        }
+    }
+
+    /// Converts the setting into a `tracing::Level`.
+    pub fn into_tracing_level(self) -> tracing::Level {
+        match self {
+            Self::Error => tracing::Level::ERROR,
+            Self::Warn => tracing::Level::WARN,
+            Self::Info => tracing::Level::INFO,
+            Self::Debug => tracing::Level::DEBUG,
+            Self::Trace => tracing::Level::TRACE,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LauncherSettings {
@@ -187,6 +221,10 @@ pub struct LauncherSettings {
     pub ui_language: Option<String>,
     #[serde(default)]
     pub resource_naming: ResourceNamingSettings,
+    #[serde(default)]
+    pub log_level: Option<LogLevelSetting>,
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u32,
 }
 
 fn default_max_concurrent_downloads() -> u32 {
@@ -203,6 +241,10 @@ fn default_auto_clean_cache() -> bool {
 
 fn default_enable_jvm_tuner() -> bool {
     true
+}
+
+fn default_log_retention_days() -> u32 {
+    7
 }
 
 impl Default for LauncherSettings {
@@ -222,6 +264,8 @@ impl Default for LauncherSettings {
             enable_jvm_tuner: true,
             ui_language: None,
             resource_naming: ResourceNamingSettings::default(),
+            log_level: None,
+            log_retention_days: default_log_retention_days(),
         }
     }
 }
@@ -444,9 +488,30 @@ async fn persist_launcher_settings_locked(settings: LauncherSettings) -> Result<
     Ok(())
 }
 
-pub async fn save_launcher_settings_internal(settings: LauncherSettings) -> Result<(), String> {
+pub async fn save_launcher_settings_internal(mut settings: LauncherSettings) -> Result<(), String> {
+    settings.log_retention_days = settings.log_retention_days.clamp(1, 90);
+    let applied = settings.clone();
     let _guard = SETTINGS_SAVE_LOCK.lock().await;
-    persist_launcher_settings_locked(settings).await
+    persist_launcher_settings_locked(settings).await?;
+    crate::logger::apply_log_level_from_settings(&applied);
+    Ok(())
+}
+
+/// Atomically updates only the log settings fields and reloads the runtime tracing filter.
+pub async fn update_log_settings(
+    log_level: Option<LogLevelSetting>,
+    retention_days: Option<u32>,
+) -> Result<LauncherSettings, String> {
+    let _guard = SETTINGS_SAVE_LOCK.lock().await;
+    let mut settings = get_launcher_settings_sync();
+    settings.log_level = log_level;
+    if let Some(days) = retention_days {
+        settings.log_retention_days = days.clamp(1, 90);
+    }
+    let updated = settings.clone();
+    persist_launcher_settings_locked(settings).await?;
+    crate::logger::apply_log_level_from_settings(&updated);
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -551,6 +616,19 @@ mod tests {
         assert_eq!(default_settings.download_source, DownloadSource::Bmclapi);
         assert!(!default_settings.enable_instance_inheritance);
         assert_eq!(default_settings.resource_naming.filename_mode, FilenameFormatMode::Auto);
+        assert_eq!(default_settings.log_level, None);
+        assert_eq!(default_settings.log_retention_days, 7);
+    }
+
+    #[test]
+    fn test_log_settings_deserialize_and_roundtrip() {
+        let raw = r#"{"logLevel":"debug","logRetentionDays":14}"#;
+        let parsed: LauncherSettings = serde_json::from_str(raw).expect("deserialize log settings");
+        assert_eq!(parsed.log_level, Some(LogLevelSetting::Debug));
+        assert_eq!(parsed.log_retention_days, 14);
+        let encoded = serde_json::to_string(&parsed).expect("serialize log settings");
+        assert!(encoded.contains(r#""logLevel":"debug""#));
+        assert!(encoded.contains(r#""logRetentionDays":14"#));
     }
 
     #[test]

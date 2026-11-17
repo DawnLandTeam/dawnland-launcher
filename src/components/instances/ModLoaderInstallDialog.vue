@@ -12,6 +12,9 @@ import DSelect from '../ui/DSelect.vue';
 import { Download, ArrowUpDown, Loader2, Check, AlertCircle } from '@lucide/vue';
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('ModLoaderInstallDialog');
 
 const props = defineProps<{
   open?: boolean;
@@ -150,7 +153,7 @@ async function loadLoaders() {
     if (currentReqId !== loadRequestId || selectedLoader.value !== targetLoader) {
       return;
     }
-    console.error('Failed to load loader versions:', e);
+    logger.error('Failed to load loader versions:', e);
     error.value = getErrorMessage(e);
   } finally {
     if (currentReqId === loadRequestId) {
@@ -225,7 +228,7 @@ async function handleConfirm() {
     emit('success');
     emit('update:open', false);
   } catch (e) {
-    console.error('Failed to install or switch loader:', e);
+    logger.error('Failed to install or switch loader:', e);
     error.value = getErrorMessage(e);
     toast.error(t('common.operationFailed', 'Operation failed'), getErrorMessage(e));
   } finally {

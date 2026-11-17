@@ -18,6 +18,9 @@ import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
 import InstanceIcon from "../components/InstanceIcon.vue";
 import { useFileDrop } from "../composables/useFileDrop";
 import { type InstanceItem, isInstanceBusy, getInstanceStatusLabel } from "../types";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("InstancesView");
 
 // Router — deep-link support
 const route = useRoute();
@@ -50,7 +53,7 @@ const openDropdownId = ref<string | null>(null);
 const openSettingsForInstance = async (instanceId: string) => {
   const instance = installedInstances.value.find((i) => i.id === instanceId);
   if (!instance) {
-    console.warn(`Instance "${instanceId}" not found — cannot open settings`);
+    logger.warn(`Instance "${instanceId}" not found — cannot open settings`);
     return;
   }
   router.push('/instances/' + instance.id);
@@ -176,7 +179,7 @@ async function shareModpack(instance: InstanceItem) {
       copiedShareInstanceId.value = null;
     }, 2000);
   } catch (err) {
-    console.error("Failed to write to clipboard:", err);
+    logger.error("Failed to write to clipboard:", err);
     toast.error(t('instances.share.copyFailed', 'Failed to copy link to clipboard, please check browser permissions.'));
   }
 }
@@ -208,7 +211,7 @@ async function deleteInstance() {
     showDeleteDialog.value = false;
     await refreshInstancesList();
   } catch (e) {
-    console.error("Failed to delete instance:", e);
+    logger.error("Failed to delete instance:", e);
     alert(`Failed to delete: ${getErrorMessage(e)}`);
   } finally {
     isDeletingInstance.value = false;

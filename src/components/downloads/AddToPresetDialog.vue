@@ -11,6 +11,9 @@ import {
 import DInput from '../ui/DInput.vue';
 import DSelect from '../ui/DSelect.vue';
 import { Loader2 } from '@lucide/vue';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('AddToPresetDialog');
 
 const props = defineProps<{
   open?: boolean;
@@ -44,7 +47,7 @@ const loadPresets = async () => {
       isNewPreset.value = true;
     }
   } catch (err) {
-    console.error(err);
+    logger.error('Failed to load asset presets:', err);
   }
 };
 

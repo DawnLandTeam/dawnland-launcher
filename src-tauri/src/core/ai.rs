@@ -624,10 +624,15 @@ pub async fn analyze_crash(crash_log: String, language: Option<String>, context_
         lang_str, final_log
     );
     
-    tracing::info!("--- AI ANALYZE CRASH CALLED ---");
-    tracing::info!("Original Log Length: {}", crash_log.len());
-    tracing::info!("Denoised Log Length: {}", final_log.len());
-    tracing::info!("Final Log Sent to AI:\n{}", final_log);
+    tracing::debug!(
+        "AI crash analysis started: original_len={}, denoised_len={}",
+        crash_log.len(),
+        final_log.len()
+    );
+    tracing::trace!(
+        "AI crash prompt preview: {}",
+        crate::logger::redact::truncate_for_log(&final_log, 512)
+    );
     
     let request = ChatRequest {
         model,

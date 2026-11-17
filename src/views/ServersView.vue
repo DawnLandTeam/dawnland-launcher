@@ -12,6 +12,9 @@ import { EXTERNAL_URLS } from "../utils/constants";
 import { trackEvent } from "../utils/analytics";
 import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../composables/useLaunchState";
 import { useInstances } from "../composables/useInstances";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("ServersView");
 
 // Types matching the Rust Server model
 interface ServerInfo {
@@ -179,7 +182,7 @@ async function fetchFilterOptions() {
     const options = await invoke<FilterOptions>("get_filter_options");
     filterOptions.value = options;
   } catch (e) {
-    console.error("Failed to fetch filter options:", e);
+    logger.error("Failed to fetch filter options:", e);
   } finally {
     filterOptionsLoading.value = false;
   }
@@ -228,7 +231,7 @@ async function fetchServers() {
     }
   } catch (e) {
     error.value = getErrorMessage(e);
-    console.error("Failed to fetch servers:", e);
+    logger.error("Failed to fetch servers:", e);
   } finally {
     isLoading.value = false;
   }
@@ -250,7 +253,7 @@ async function fetchLocalData() {
     installedInstances.value = await fetchInstances();
     accounts.value = await invoke("get_accounts");
   } catch (error) {
-    console.error("Failed to load local data:", error);
+    logger.error("Failed to load local data:", error);
   }
 }
 
@@ -417,7 +420,7 @@ async function fetchServerStatus(server: ServerInfo) {
     const status = await invoke<ServerStatus>("ping_server", { ip: server.ip, port: server.port });
     serverStatuses.value[server.id] = status;
   } catch (e) {
-    console.error(`Failed to ping server ${server.id}:`, e);
+    logger.debug(`Failed to ping server ${server.id}:`, e);
     // Optionally clear status on failure so it shows offline
     delete serverStatuses.value[server.id];
   } finally {
@@ -602,7 +605,7 @@ async function openPublishUrl() {
   try {
     await openUrl(EXTERNAL_URLS.PUBLISH_SERVER);
   } catch (err) {
-    console.error("Failed to open publish URL:", err);
+    logger.error("Failed to open publish URL:", err);
     showAlert(t('servers.publishError', 'Failed to open the browser. Please manually visit: ' + EXTERNAL_URLS.PUBLISH_SERVER));
   }
 }

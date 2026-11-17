@@ -222,7 +222,7 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
     let settings = crate::core::settings::get_launcher_settings_sync();
 
     if settings.download_source == crate::core::settings::DownloadSource::Official {
-        tracing::info!(
+        tracing::debug!(
             "Fetching Forge loaders for Minecraft {} via Official Maven",
             mc_version
         );
@@ -249,7 +249,7 @@ pub async fn get_forge_loaders(mc_version: String) -> Result<LoaderVersionList, 
         });
     }
 
-    tracing::info!(
+    tracing::debug!(
         "Fetching Forge loaders for Minecraft {} via BMCLAPI",
         mc_version
     );
@@ -312,7 +312,7 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
     let settings = crate::core::settings::get_launcher_settings_sync();
 
     if settings.download_source == crate::core::settings::DownloadSource::Official {
-        tracing::info!(
+        tracing::debug!(
             "Fetching NeoForge loaders for Minecraft {} via Official Maven",
             mc_version
         );
@@ -351,7 +351,7 @@ pub async fn get_neoforge_loaders(mc_version: String) -> Result<LoaderVersionLis
         });
     }
 
-    tracing::info!(
+    tracing::debug!(
         "Fetching NeoForge loaders for Minecraft {} via BMCLAPI",
         mc_version
     );
@@ -900,7 +900,7 @@ impl InstallForgeTask {
 
             tracing::info!("Base vanilla {} installed successfully", mc_version);
         } else {
-            tracing::info!("Base Minecraft {} already installed, skipping", mc_version);
+            tracing::debug!("Base Minecraft {} already installed, skipping", mc_version);
             ctx.with_sub_task("download_vanilla_json")
                 .update_progress(100, 100, "Skipped (Already exists)")
                 .await;
@@ -1026,7 +1026,7 @@ impl InstallForgeTask {
             .await
             .map_err(|e| TaskError::ExecutionError(format!("Failed to save installer: {}", e)))?;
 
-        tracing::info!("Installer saved to: {:?}", installer_path);
+        tracing::debug!("Installer saved to: {:?}", installer_path);
 
         // Extract install_profile.json and version.json from installer
         let extract_dir = temp_dir.join("extracted");
@@ -1097,7 +1097,7 @@ impl InstallForgeTask {
         let original_dir_existed_before = !original_id.is_empty()
             && crate::core::fs_utils::is_safe_single_name(&original_id)
             && base_dir.join("versions").join(&original_id).exists();
-        tracing::info!("Parsed Forge version JSON, original id: {:?}", original_id);
+        tracing::debug!("Parsed Forge version JSON, original id: {:?}", original_id);
 
         if ctx.is_cancelled() {
             return Err(TaskError::ExecutionError(
@@ -1130,7 +1130,7 @@ impl InstallForgeTask {
             }
         }
 
-        tracing::info!(
+        tracing::debug!(
             "Processing {} libraries from Forge version and install profile",
             all_libraries.len()
         );
@@ -1139,7 +1139,7 @@ impl InstallForgeTask {
             // Debug: log library name
             if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
                 if name.contains("patched") || name.contains("client") {
-                    tracing::debug!("Processing client/patched library: {}", name);
+                    tracing::trace!("Processing client/patched library: {}", name);
                 }
             }
 
@@ -1154,7 +1154,7 @@ impl InstallForgeTask {
 
                 // Exclude empty URLs, we only download if there's a valid URL
                 if !url.is_empty() {
-                    tracing::debug!("Added Forge library: {} -> {}", path, url);
+                    tracing::trace!("Added Forge library: {} -> {}", path, url);
                     let hash = lib
                         .get("downloads")
                         .and_then(|d| d.get("artifact"))
@@ -1249,34 +1249,53 @@ impl InstallForgeTask {
             let stderr = child.stderr.take().expect("Failed to get stderr");
 
             use tokio::io::AsyncBufReadExt;
+            use tracing::Instrument;
             let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
             let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
+            let stderr_tail = std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::VecDeque::<String>::with_capacity(30),
+            ));
+            let current_span = tracing::Span::current();
 
             let ctx_clone1 = ctx_install.clone();
-            let stdout_task = tokio::spawn(async move {
-                while let Ok(Some(line)) = stdout_reader.next_line().await {
-                    tracing::debug!("Forge stdout: {}", line);
-                    let display_line = if line.len() > 120 {
-                        format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
-                    } else {
-                        line
-                    };
-                    ctx_clone1.update_progress(0, 100, &display_line).await;
+            let stdout_task = tokio::spawn(
+                async move {
+                    while let Ok(Some(line)) = stdout_reader.next_line().await {
+                        tracing::trace!("Forge stdout: {}", line);
+                        let display_line = if line.len() > 120 {
+                            format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
+                        } else {
+                            line
+                        };
+                        ctx_clone1.update_progress(0, 100, &display_line).await;
+                    }
                 }
-            });
+                .instrument(current_span.clone()),
+            );
 
             let ctx_clone2 = ctx_install.clone();
-            let stderr_task = tokio::spawn(async move {
-                while let Ok(Some(line)) = stderr_reader.next_line().await {
-                    tracing::warn!("Forge stderr: {}", line);
-                    let display_line = if line.len() > 120 {
-                        format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
-                    } else {
-                        line
-                    };
-                    ctx_clone2.update_progress(0, 100, &display_line).await;
+            let stderr_tail_clone = stderr_tail.clone();
+            let stderr_task = tokio::spawn(
+                async move {
+                    while let Ok(Some(line)) = stderr_reader.next_line().await {
+                        tracing::debug!("Forge stderr: {}", line);
+                        {
+                            let mut buf = stderr_tail_clone.lock().await;
+                            if buf.len() >= 30 {
+                                buf.pop_front();
+                            }
+                            buf.push_back(line.clone());
+                        }
+                        let display_line = if line.len() > 120 {
+                            format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
+                        } else {
+                            line
+                        };
+                        ctx_clone2.update_progress(0, 100, &display_line).await;
+                    }
                 }
-            });
+                .instrument(current_span),
+            );
             let status = tokio::select! {
                 res = child.wait() => {
                     res.map_err(|e| TaskError::ExecutionError(format!("Failed to wait on Forge installer: {}", e)))?
@@ -1292,7 +1311,7 @@ impl InstallForgeTask {
 
             if created_temp_vanilla {
                 let _ = fs::remove_dir_all(&temp_vanilla_dir).await;
-                tracing::info!("Cleaned up temporary vanilla base directory");
+                tracing::debug!("Cleaned up temporary vanilla base directory");
             }
 
             if !status.success() {
@@ -1300,7 +1319,12 @@ impl InstallForgeTask {
                     "Forge installer failed to run processors with exit code: {:?}",
                     status.code()
                 );
-                tracing::error!("{}", err_msg);
+                let tail_lines: Vec<String> = stderr_tail.lock().await.iter().cloned().collect();
+                if tail_lines.is_empty() {
+                    tracing::error!("{}", err_msg);
+                } else {
+                    tracing::error!("{} (stderr tail: {})", err_msg, tail_lines.join(" | "));
+                }
                 return Err(TaskError::ExecutionError(err_msg));
             } else {
                 tracing::info!("Forge installer processors completed successfully");
@@ -1400,7 +1424,7 @@ impl InstallForgeTask {
                 TaskError::ExecutionError(format!("Failed to write version JSON: {}", e))
             })?;
 
-        tracing::info!(
+        tracing::debug!(
             "Saved Forge version profile to: {:?}",
             final_version_json_path
         );
@@ -1425,7 +1449,7 @@ impl InstallForgeTask {
             let installer_generated_dir = base_dir.join("versions").join(&original_id);
             if installer_generated_dir.exists() {
                 let _ = fs::remove_dir_all(&installer_generated_dir).await;
-                tracing::info!(
+                tracing::debug!(
                     "Cleaned up installer-generated directory: {:?}",
                     installer_generated_dir
                 );
@@ -1457,7 +1481,7 @@ impl InstallForgeTask {
         .await
         .map_err(TaskError::ExecutionError)?;
 
-        tracing::info!("Updated instance config in: {:?}", version_dir);
+        tracing::debug!("Updated instance config in: {:?}", version_dir);
 
         if self.options.is_existing_instance.unwrap_or(false) {
             crate::core::cache::trigger_auto_gc(ctx.app_handle.clone());

@@ -16,6 +16,9 @@ import DSelect from "../components/ui/DSelect.vue";
 import MinecraftAvatar from "../components/MinecraftAvatar.vue";
 import { getErrorMessage } from "../utils/error";
 import AccountDetailModal from "../components/AccountDetailModal.vue";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("AccountsView");
 
 import { Account, LoginInitResponse } from "../types";
 
@@ -120,7 +123,7 @@ async function loadAccounts(): Promise<void> {
     const res = await invoke<Account[]>("get_accounts");
     accounts.value = res || [];
   } catch (err) {
-    console.error("Failed to load accounts:", err);
+    logger.error("Failed to load accounts:", err);
     accounts.value = [];
   }
 }
@@ -183,7 +186,7 @@ function isSafeHttpUrl(url?: string): boolean {
 
 function openExternalSafe(url?: string): void {
   if (isSafeHttpUrl(url) && url) {
-    openUrl(url.trim()).catch((err) => console.error("Failed to open external link:", err));
+    openUrl(url.trim()).catch((err) => logger.error("Failed to open external link:", err));
   }
 }
 
@@ -290,7 +293,7 @@ async function fetchAuthlibMeta(): Promise<void> {
     const meta = await invoke<YggdrasilRootResponse>("get_authlib_meta", { url: authlibUrl.value.trim() });
     authlibMeta.value = meta;
   } catch (err) {
-    console.error("Failed to fetch authlib meta:", err);
+    logger.error("Failed to fetch authlib meta:", err);
     authlibMeta.value = null;
   } finally {
     isFetchingMeta.value = false;
@@ -311,7 +314,7 @@ async function loadAuthlibServers(): Promise<void> {
       authlibMeta.value = null;
     }
   } catch (err) {
-    console.error("Failed to load authlib servers:", err);
+    logger.error("Failed to load authlib servers:", err);
     authlibServers.value = [];
   }
 }
@@ -333,7 +336,7 @@ async function removeAccount(): Promise<void> {
     // Notify other views to refresh accounts
     await emit("accounts-updated");
   } catch (err) {
-    console.error("Failed to remove account:", err);
+    logger.error("Failed to remove account:", err);
   } finally {
     showDeleteDialog.value = false;
     deletingAccountId.value = "";
@@ -417,7 +420,7 @@ async function pollMicrosoftToken(code: string): Promise<void> {
       microsoftLoginData.value = null;
       isLoggingInMicrosoft.value = false;
     } else {
-      console.error("Poll error:", errorMsg);
+      logger.warn("Poll error:", errorMsg);
       msaPollTimer = setTimeout(() => pollMicrosoftToken(code), 5000);
     }
   }
@@ -468,7 +471,7 @@ watch(
           trackEvent("Authlib Added", { type: "manual_authlib", api: sanitizeTrackingUrl(url) });
           await loadAuthlibServers();
         } catch (err) {
-          console.error("Failed to auto-add authlib server:", err);
+          logger.error("Failed to auto-add authlib server:", err);
           trackEvent("Error Occurred", { 
             context: "manual_authlib", 
             error_type: getErrorType(err), 

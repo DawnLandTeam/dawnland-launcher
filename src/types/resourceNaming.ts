@@ -1,3 +1,5 @@
+import type { LogLevelSetting } from './log';
+
 export type AssetCategory =
   | 'Mod'
   | 'ResourcePack'
@@ -66,6 +68,8 @@ export interface LauncherSettings {
   enableJvmTuner: boolean;
   uiLanguage?: string | null;
   resourceNaming?: ResourceNamingSettings;
+  logLevel?: LogLevelSetting | null;
+  logRetentionDays?: number;
 }
 
 export interface TemplatePreviewResult {

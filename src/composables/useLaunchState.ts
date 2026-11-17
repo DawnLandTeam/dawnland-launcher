@@ -1,6 +1,9 @@
 import { ref } from 'vue';
 import { listen } from '@tauri-apps/api/event';
 import { useInstances } from './useInstances';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('useLaunchState');
 
 // Global singleton states for instances
 export const launchingInstances = ref<Set<string>>(new Set());
@@ -50,7 +53,7 @@ export async function initGlobalLaunchState() {
       }
     }
   } catch (e) {
-    console.warn('Failed to sync initial running instances:', e);
+    logger.warn('Failed to sync initial running instances:', e);
   }
 
   // Listen for instance state changes globally across all views
@@ -80,9 +83,7 @@ export async function initGlobalLaunchState() {
     }
   });
 
-  // Listen for game-log in case LWJGL / Backend library comes up early
-  await listen<{ line?: string }>('game-log', (event) => {
-    const line = event.payload.line || '';
+  const markLaunchedIfEarlyOutput = (line: string) => {
     if (
       line.includes('Backend library:') ||
       line.includes('LWJGL') ||
@@ -95,6 +96,17 @@ export async function initGlobalLaunchState() {
           launchingInstances.value.delete(id);
         }
       }
+    }
+  };
+
+  // Listen for game-log and game-logs-batch in case LWJGL / Backend library comes up early
+  await listen<{ line?: string }>('game-log', (event) => {
+    markLaunchedIfEarlyOutput(event.payload.line || '');
+  });
+
+  await listen<Array<{ line?: string }>>('game-logs-batch', (event) => {
+    for (const item of event.payload) {
+      markLaunchedIfEarlyOutput(item.line || '');
     }
   });
 

@@ -14,6 +14,7 @@ import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
 
 
 import { getErrorMessage } from "../utils/error";
+import { createLogger } from "../utils/logger";
 
 import { useInstances } from "../composables/useInstances";
 import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
@@ -38,6 +39,8 @@ import { useTaskStore } from "../composables/useTaskStore";
 import { useModpackInstallState } from "../composables/useModpackInstallState";
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { runningInstances, launchingInstances, jvmSpawnedInstances } from "../composables/useLaunchState";
+
+const logger = createLogger("InstanceManagementView");
 
 const route = useRoute();
 const router = useRouter();
@@ -184,7 +187,7 @@ watch(instanceId, async (newId) => {
   try {
     await fetchInstances();
   } catch (e) {
-    console.error("Failed to load instance name:", getErrorMessage(e));
+    logger.error("Failed to load instance name:", getErrorMessage(e));
   }
 }, { immediate: true });
 </script>

@@ -165,6 +165,9 @@ import { getErrorMessage } from '../../utils/error';
 import { emitInstanceAssetsUpdated } from '../../composables/useFileDrop';
 import PresetResolveDialog from './PresetResolveDialog.vue';
 import PresetEditorDialog from './PresetEditorDialog.vue';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('InstanceModGroupTab');
 
 const props = defineProps<{
   instanceId: string;
@@ -221,7 +224,7 @@ async function loadAssets() {
     const result = await invoke<LocalAssetItem[]>('get_custom_assets', { assetType: ASSET_TYPE });
     assets.value = result;
   } catch (error) {
-    console.error('Failed to load global assets:', error);
+    logger.error('Failed to load global assets:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -254,7 +257,7 @@ async function executeDelete() {
     assets.value = assets.value.filter(a => a.filename !== assetToDelete.value!.filename);
     showDeleteConfirm.value = false;
   } catch (error) {
-    console.error('Failed to delete global asset:', error);
+    logger.error('Failed to delete global asset:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -292,7 +295,7 @@ async function applyAsset(asset: LocalAssetItem) {
       );
     }
   } catch (error) {
-    console.error('Failed to apply asset:', error);
+    logger.error('Failed to apply asset:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -312,7 +315,7 @@ async function handleOpenFolder() {
   try {
     await invoke('open_custom_asset_folder', { assetType: ASSET_TYPE });
   } catch (error) {
-    console.error('Failed to open folder:', error);
+    logger.error('Failed to open folder:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)

@@ -1,6 +1,9 @@
 import { Directive } from 'vue';
 import DOMPurify from 'dompurify';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('safeHtml');
 
 const safeConfig = {
   ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'p', 'a', 'ul', 'ol',
@@ -17,7 +20,7 @@ function handleSafeLinkClick(e: MouseEvent) {
     e.preventDefault();
     const href = anchor.getAttribute('href')?.trim();
     if (href && (href.startsWith('https://') || href.startsWith('http://'))) {
-      openUrl(href).catch((err) => console.error('Failed to open external URL:', err));
+      openUrl(href).catch((err) => logger.error('Failed to open external URL:', err));
     }
   }
 }

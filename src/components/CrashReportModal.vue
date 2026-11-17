@@ -2,6 +2,9 @@
 import { ref, computed } from "vue";
 import { AlertTriangle, Copy, X } from "@lucide/vue";
 import AiAnalysisPanel from "./ai/AiAnalysisPanel.vue";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("CrashReportModal");
 
 const props = defineProps<{
   open: boolean;
@@ -40,7 +43,7 @@ async function copyLogs() {
       copied.value = false;
     }, 2000);
   } catch (e) {
-    console.error("Failed to copy logs:", e);
+    logger.error("Failed to copy logs:", e);
   }
 }
 </script>

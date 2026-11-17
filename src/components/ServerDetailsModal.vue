@@ -11,6 +11,8 @@ const props = defineProps<{
 const emit = defineEmits(['update:open']);
 import { useI18n } from 'vue-i18n';
 import { toast } from '../composables/useToast';
+import { createLogger } from '../utils/logger';
+const logger = createLogger('ServerDetailsModal');
 const { t } = useI18n();
 
 const copiedIp = ref(false);
@@ -30,7 +32,7 @@ const copyIp = async () => {
       copiedIp.value = false;
     }, 2000);
   } catch (err) {
-    console.error("Failed to write to clipboard:", err);
+    logger.error("Failed to write to clipboard:", err);
     toast.error('无法复制 IP 到剪贴板，请检查浏览器权限。');
   }
 };
@@ -49,7 +51,7 @@ const shareServer = async () => {
       copiedShareLink.value = false;
     }, 2000);
   } catch (err) {
-    console.error("Failed to write to clipboard:", err);
+    logger.error("Failed to write to clipboard:", err);
     toast.error('无法复制链接到剪贴板，请检查浏览器权限。');
   }
 };

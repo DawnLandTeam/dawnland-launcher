@@ -1,7 +1,10 @@
 import { ref } from 'vue';
 import { toast } from './useToast';
 import { getErrorMessage } from '../utils/error';
+import { createLogger } from '../utils/logger';
 import i18n from '../i18n';
+
+const logger = createLogger('useFileDrop');
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -99,7 +102,7 @@ async function setWindowTopmostForDrag(active: boolean, focusAfter = false): Pro
       }
     }
   } catch (err) {
-    console.warn('Failed to update window topmost state during drag:', err);
+    logger.warn('Failed to update window topmost state during drag:', err);
   }
 }
 
@@ -122,7 +125,7 @@ export function useFileDrop() {
       }
       return inspected;
     } catch (err) {
-      console.error('Failed to inspect dropped files:', err);
+      logger.error('Failed to inspect dropped files:', err);
       if (currentSeq === inspectSeq) {
         draggedFiles.value = [];
         toast.error(i18n.global.t('dropInstall.inspectFailedTitle'), getErrorMessage(err));
@@ -200,7 +203,7 @@ export function useFileDrop() {
         unlistenDragDrop = unlisten;
       }
     } catch (err) {
-      console.warn('Failed to register webview drag-drop listener:', err);
+      logger.warn('Failed to register webview drag-drop listener:', err);
     }
   }
 

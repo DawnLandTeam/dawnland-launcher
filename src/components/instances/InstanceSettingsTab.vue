@@ -12,6 +12,9 @@ import { useInstances } from '../../composables/useInstances';
 import { getErrorMessage } from '../../utils/error';
 import { repairingInstances, isInstanceActive } from '../../composables/useLaunchState';
 import { toast } from '../../composables/useToast';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('InstanceSettingsTab');
 
 const props = defineProps<{
   instanceId: string;
@@ -284,7 +287,7 @@ async function loadTuningPreview() {
     if (requestId !== previewRequestSeq || props.instanceId !== requestedInstanceId) {
       return;
     }
-    console.error('Failed to load JVM tuning preview:', e);
+    logger.error('Failed to load JVM tuning preview:', e);
     jvmTuningPreview.value = null;
   }
 }
@@ -324,7 +327,7 @@ async function loadData() {
       }
     } catch (e) {
       if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
-      console.error('Failed to load system memory:', e);
+      logger.error('Failed to load system memory:', e);
     }
 
     try {
@@ -333,7 +336,7 @@ async function loadData() {
       installedJavas.value = javas;
     } catch (e) {
       if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
-      console.error('Failed to load installed Javas:', e);
+      logger.error('Failed to load installed Javas:', e);
     }
 
     try {
@@ -360,7 +363,7 @@ async function loadData() {
       await loadTuningPreview();
     } catch (e) {
       if (requestId !== loadDataRequestSeq || props.instanceId !== requestedInstanceId) return;
-      console.error('Failed to load instance config:', e);
+      logger.error('Failed to load instance config:', e);
       useGlobalMemory.value = true;
       jvmArgsExtraText.value = '';
       selectedResolutionPreset.value = '1280x720';
@@ -414,7 +417,7 @@ async function saveSettings() {
     });
     toast.success(t('common.saveSuccess', 'Save successful'));
   } catch (e) {
-    console.error('Failed to save instance config:', e);
+    logger.error('Failed to save instance config:', e);
     toast.error(t('common.saveFailed', 'Failed to save'), getErrorMessage(e));
   } finally {
     isSavingConfig.value = false;
@@ -430,7 +433,7 @@ async function setAsGlobalPreset() {
     await invoke('set_instance_options_as_global', { version_id: props.instanceId });
     toast.success(t('instances.settingsDialog.setAsGlobalPresetSuccess', 'Successfully set as global preset'));
   } catch (e) {
-    console.error('Failed to set global preset:', e);
+    logger.error('Failed to set global preset:', e);
     toast.error(t('instances.settingsDialog.setAsGlobalPresetFailed', 'Failed to set global preset'), getErrorMessage(e));
   } finally {
     isSettingGlobalPreset.value = false;
@@ -484,7 +487,7 @@ async function openInstanceSubfolder(subfolder: string) {
       await invoke('open_instance_subfolder', { versionId: props.instanceId, subfolder });
     }
   } catch (e) {
-    console.error('Failed to open folder:', e);
+    logger.error('Failed to open folder:', e);
     toast.error(t('common.operationFailed', 'Operation failed'), getErrorMessage(e));
   }
 }

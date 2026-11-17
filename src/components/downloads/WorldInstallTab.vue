@@ -13,6 +13,9 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { toast } from "../../composables/useToast";
 import { useTaskStatusReload } from "../../composables/useTaskStatusReload";
 import { useInstances } from "../../composables/useInstances";
+import { createLogger } from "../../utils/logger";
+
+const logger = createLogger("WorldInstallTab");
 
 // UI Components
 import { DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
@@ -140,7 +143,7 @@ const loadOptions = async () => {
       availableVersions.value = await invoke("get_curseforge_game_versions");
       availableLoaders.value = await invoke("get_curseforge_loaders");
   } catch (e) {
-    console.error("Failed to fetch options:", e);
+    logger.error("Failed to fetch options:", e);
   }
 };
 
@@ -175,7 +178,7 @@ async function loadCategories() {
   try {
     categories.value = await invoke<UnifiedCategory[]>("get_curseforge_world_categories");
   } catch (err) {
-    console.error("Failed to load categories:", err);
+    logger.error("Failed to load categories:", err);
     categories.value = [];
   }
 }
@@ -205,7 +208,7 @@ async function loadInstances() {
       }
     }
   } catch (err) {
-    console.error("Failed to load instances:", err);
+    logger.error("Failed to load instances:", err);
   }
 }
 

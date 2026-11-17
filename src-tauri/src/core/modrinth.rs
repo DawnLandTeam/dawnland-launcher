@@ -253,7 +253,7 @@ async fn search_modrinth_internal(
     limit: Option<i32>,
     project_type: &str,
 ) -> Result<Vec<UnifiedModProject>, String> {
-    tracing::info!(
+    tracing::debug!(
         "Searching Modrinth ({}): query={}, mc_versions={:?}, loaders={:?}",
         project_type,
         query,
@@ -325,12 +325,16 @@ async fn search_modrinth_internal(
     let body = response.text().await.unwrap_or_default();
 
     if !status.is_success() {
-        tracing::error!("Modrinth API error: {} - {}", status, body);
+        tracing::error!(
+            "Modrinth API error: {} - {}",
+            status,
+            crate::logger::redact::truncate_for_log(&body, 512)
+        );
         return Err(format!("Modrinth API error: {} - {}", status, body));
     }
 
     // Debug: print the response body
-    tracing::debug!(
+    tracing::trace!(
         "Modrinth response: {}",
         crate::core::utils::truncate_utf8(&body, 500)
     );
@@ -365,7 +369,7 @@ async fn search_modrinth_internal(
     // Limit results
     projects.truncate(20);
 
-    tracing::info!(
+    tracing::debug!(
         "Found {} mods on Modrinth (filtered from {})",
         projects.len(),
         search_result.total_hits
@@ -380,7 +384,7 @@ pub async fn get_modrinth_mod_files(
     mc_version: String,
     loaders: Vec<String>,
 ) -> Result<Vec<UnifiedModFile>, String> {
-    tracing::info!(
+    tracing::debug!(
         "Getting Modrinth mod files: project_id={}, mc_version={}, loaders={:?}",
         project_id,
         mc_version,
@@ -389,7 +393,7 @@ pub async fn get_modrinth_mod_files(
 
     // Get all versions for this project
     let versions_url = format!("{}/project/{}/version", MODRINTH_BASE_URL, project_id);
-    tracing::info!("Fetching Modrinth files from URL: {}", versions_url);
+    tracing::debug!("Fetching Modrinth files from URL: {}", versions_url);
 
     let client = crate::core::utils::get_http_client().clone();
     let response = client
@@ -460,7 +464,7 @@ pub async fn get_modrinth_mod_files(
     }
 
     if compatible_files.is_empty() {
-        tracing::error!(
+        tracing::warn!(
             "No compatible version found for project_id={}, target_version={}, target_loaders={:?}",
             project_id,
             mc_version,
@@ -475,7 +479,7 @@ pub async fn get_modrinth_mod_files(
 /// Get detailed information about a specific mod from Modrinth
 #[tauri::command]
 pub async fn get_modrinth_mod_details(project_id: String) -> Result<UnifiedModProject, String> {
-    tracing::info!("Getting Modrinth mod details: project_id={}", project_id);
+    tracing::debug!("Getting Modrinth mod details: project_id={}", project_id);
 
     let project_url = format!("{}/project/{}", MODRINTH_BASE_URL, project_id);
 
@@ -513,7 +517,7 @@ pub async fn get_modrinth_mod_details(project_id: String) -> Result<UnifiedModPr
 /// Get all available versions for a Modrinth project
 #[tauri::command]
 pub async fn get_modrinth_mod_versions(project_id: String) -> Result<Vec<String>, String> {
-    tracing::info!("Getting Modrinth mod versions: project_id={}", project_id);
+    tracing::debug!("Getting Modrinth mod versions: project_id={}", project_id);
 
     let versions_url = format!("{}/project/{}/version", MODRINTH_BASE_URL, project_id);
 
@@ -558,7 +562,7 @@ pub async fn get_modrinth_mod_versions(project_id: String) -> Result<Vec<String>
 
 #[tauri::command]
 pub async fn search_modrinth_modpacks(query: String) -> Result<Vec<UnifiedModProject>, String> {
-    tracing::info!("Searching Modrinth modpacks: query={}", query);
+    tracing::debug!("Searching Modrinth modpacks: query={}", query);
 
     // Build search query parameters with project_type:modpack
     let facets = "[[\"project_type:modpack\"]]";
@@ -605,7 +609,7 @@ pub async fn search_modrinth_modpacks(query: String) -> Result<Vec<UnifiedModPro
         })
         .collect();
 
-    tracing::info!(
+    tracing::debug!(
         "Found {} Modrinth modpacks (total: {})",
         projects.len(),
         search_result.total_hits
@@ -639,7 +643,7 @@ pub async fn get_modrinth_modpack_versions(
             },
         ]);
     }
-    tracing::info!(
+    tracing::debug!(
         "Getting Modrinth modpack versions: project_id={}",
         project_id
     );

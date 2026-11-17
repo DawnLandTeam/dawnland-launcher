@@ -169,8 +169,8 @@ pub fn run() {
             use tauri::{Manager, Emitter};
             let app_handle = app.handle().clone();
 
-            // Set up frontend logger broadcast with batching to prevent IPC flooding
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            // Set up frontend logger broadcast with bounded channel and batching to prevent IPC flooding
+            let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
             if logger::frontend::LOG_TX.set(tx).is_ok() {
                 let app_handle_clone = app_handle.clone();
                 tokio::spawn(async move {
@@ -193,6 +193,13 @@ pub fn run() {
                     }
                 });
             }
+
+            let retention_days = core::settings::get_launcher_settings_sync()
+                .log_retention_days
+                .clamp(1, 90);
+            tokio::spawn(async move {
+                logger::cleanup_old_logs(retention_days, logger::MAX_LOG_DIR_BYTES).await;
+            });
 
             #[cfg(target_os = "windows")]
             register_deep_link();
@@ -504,9 +511,23 @@ pub fn run() {
             core::crash_history::clear_crash_history,
             // Custom Analytics Command
             commands::app_track_event,
+            // Unified Log Commands
+            commands::log::get_recent_logs,
+            commands::log::get_log_config,
+            commands::log::set_log_level,
+            commands::log::log_frontend_batch,
+            commands::log::list_log_files,
+            commands::log::read_log_file,
+            commands::log::open_log_directory,
+            commands::log::export_diagnostic_logs,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                logger::shutdown();
+            }
+        });
 }
 
 async fn cleanup_orphan_temp_files(app_dir: &std::path::Path, db: &core::task::db::TaskDatabase) {

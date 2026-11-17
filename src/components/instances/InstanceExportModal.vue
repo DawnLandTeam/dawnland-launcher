@@ -8,6 +8,9 @@ import { save } from '@tauri-apps/plugin-dialog';
 import DButton from '../ui/DButton.vue';
 import DInput from '../ui/DInput.vue';
 import { DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('InstanceExportModal');
 
 const props = defineProps<{
   open: boolean;
@@ -52,7 +55,7 @@ watch(() => props.open, async (newVal) => {
       form.value.author = defaultAuthor;
       
     } catch (e) {
-      console.warn("Failed to load instance details for export defaults:", e);
+      logger.warn("Failed to load instance details for export defaults:", e);
     }
   }
 });

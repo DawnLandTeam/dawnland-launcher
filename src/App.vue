@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { createLogger } from "./utils/logger";
+
+const logger = createLogger("App");
 import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -38,7 +41,7 @@ let unlistenDeepLink: (() => void) | null = null;
 
 onMounted(async () => {
   // Show window immediately to prevent blank startup if subsequent awaits fail
-  getCurrentWindow().show().catch(err => console.error("Failed to show window:", err));
+  getCurrentWindow().show().catch(err => logger.error("Failed to show window:", err));
 
   // Check Privacy Policy & initial UI language sync
   try {
@@ -56,7 +59,7 @@ onMounted(async () => {
       invoke("sync_translations_from_backend", { forceFull: false }).catch(() => {});
     }
   } catch (err) {
-    console.error("Failed to check privacy settings:", err);
+    logger.error("Failed to check privacy settings:", err);
   }
 
   // Initialize task center
@@ -75,12 +78,12 @@ onMounted(async () => {
           incomingLinkData.value = parsedData;
           showDeepLinkModal.value = true;
         } else {
-          console.warn("Received invalid or unrecognized deep link:", urlStr);
+          logger.warn("Received invalid or unrecognized deep link:", urlStr);
         }
       }
     });
   } catch (err) {
-    console.error("Failed to initialize deep link listener:", err);
+    logger.error("Failed to initialize deep link listener:", err);
   }
 
   // Async precise locale detection from Rust
@@ -96,7 +99,7 @@ onMounted(async () => {
         await invoke("sync_ui_language", { language: detected }).catch(() => {});
       }
     } catch (e) {
-      console.warn("Failed to get system locale from Rust:", e);
+      logger.warn("Failed to get system locale from Rust:", e);
     }
   }
 
@@ -105,10 +108,10 @@ onMounted(async () => {
     const configData = await invoke<{ curseforgeApiKey?: string | null }>("fetch_client_config");
     if (configData?.curseforgeApiKey) {
       await invoke('set_curseforge_api_key', { key: configData.curseforgeApiKey });
-      console.log("Successfully loaded dynamic CurseForge API Key from backend.");
+      logger.debug("Successfully loaded dynamic CurseForge API Key from backend.");
     }
   } catch (error) {
-    console.error("Failed to fetch client config:", error);
+    logger.error("Failed to fetch client config:", error);
   }
 
   // Delay the update check slightly to ensure network and plugins are fully initialized
@@ -117,7 +120,7 @@ onMounted(async () => {
       const channel = normalizeUpdateChannel(localStorage.getItem('updateChannel'));
       const update = await invoke<CustomUpdate | null>("check_launcher_update", { channel });
       if (update) {
-        console.log(`Update available: ${update.version}`);
+        logger.info(`Update available: ${update.version}`);
         setUpdateAvailable(update);
         if (showPrivacyModal.value) {
           hasPendingUpdate.value = true;
@@ -126,7 +129,7 @@ onMounted(async () => {
         }
       }
     } catch (error) {
-      console.error("Failed to check for updates on startup:", error);
+      logger.error("Failed to check for updates on startup:", error);
     }
   }, 2000);
 

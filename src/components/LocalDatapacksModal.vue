@@ -123,6 +123,9 @@ import DButton from './ui/DButton.vue';
 import DSelect from './ui/DSelect.vue';
 import { toast } from '../composables/useToast';
 import { getErrorMessage } from '../utils/error';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('LocalDatapacksModal');
 
 const props = defineProps<{
   modelValue: boolean;
@@ -176,7 +179,7 @@ async function loadWorlds() {
       datapacks.value = [];
     }
   } catch (e) {
-    console.error('Failed to load worlds:', e);
+    logger.error('Failed to load worlds:', e);
     worldOptions.value = [];
     selectedWorld.value = '';
     toast.error(t('common.error', 'Error'), getErrorMessage(e));
@@ -199,7 +202,7 @@ async function loadDatapacks() {
     });
     datapacks.value = result;
   } catch (error) {
-    console.error('Failed to load datapacks:', error);
+    logger.error('Failed to load datapacks:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -242,7 +245,7 @@ async function executeDelete() {
     datapacks.value = datapacks.value.filter(p => p.filename !== packToDelete.value!.filename);
     showDeleteConfirm.value = false;
   } catch (error) {
-    console.error('Failed to delete datapack:', error);
+    logger.error('Failed to delete datapack:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)

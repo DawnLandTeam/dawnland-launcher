@@ -14,6 +14,9 @@ import TaskDetailView from "../TaskDetailView.vue";
 import { useTaskStore } from "../../composables/useTaskStore";
 import { useInstances } from "../../composables/useInstances";
 import { getErrorMessage } from "../../utils/error";
+import { createLogger } from "../../utils/logger";
+
+const logger = createLogger("InstanceInstallTab");
 
 // Types
 interface VanillaVersion {
@@ -490,7 +493,7 @@ async function loadVersions(): Promise<void> {
     }
   } catch (err) {
     error.value = getErrorMessage(err);
-    console.error("Failed to load versions:", err);
+    logger.error("Failed to load versions:", err);
   } finally {
     isLoadingVersions.value = false;
   }
@@ -534,7 +537,7 @@ async function loadFabricLoaders(): Promise<void> {
   } catch (err) {
     if (selectedVersion.value !== requestedMcVersion) return;
     error.value = getErrorMessage(err);
-    console.error("Failed to load Fabric loaders:", err);
+    logger.error("Failed to load Fabric loaders:", err);
   } finally {
     if (selectedVersion.value === requestedMcVersion) {
       isLoadingFabric.value = false;
@@ -576,7 +579,7 @@ async function loadForgeLoaders(): Promise<void> {
   } catch (err) {
     if (selectedVersion.value !== requestedMcVersion) return;
     error.value = getErrorMessage(err);
-    console.error("Failed to load Forge loaders:", err);
+    logger.error("Failed to load Forge loaders:", err);
   } finally {
     if (selectedVersion.value === requestedMcVersion) {
       isLoadingForge.value = false;
@@ -618,7 +621,7 @@ async function loadNeoForgeLoaders(): Promise<void> {
   } catch (err) {
     if (selectedVersion.value !== requestedMcVersion) return;
     error.value = getErrorMessage(err);
-    console.error("Failed to load NeoForge loaders:", err);
+    logger.error("Failed to load NeoForge loaders:", err);
   } finally {
     if (selectedVersion.value === requestedMcVersion) {
       isLoadingNeoForge.value = false;
@@ -723,7 +726,7 @@ async function installVersion(): Promise<void> {
       return;
     }
   } catch (e) {
-    console.error("Failed to check instance existence:", e);
+    logger.error("Failed to check instance existence:", e);
   }
 
   isInstalling.value = true;

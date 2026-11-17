@@ -1,4 +1,7 @@
 import { ref, shallowRef } from 'vue';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('useUpdate');
 
 export interface CustomUpdate {
   version: string;
@@ -38,7 +41,7 @@ export function parseUpdateData(data: any, targetOS: string): CustomUpdate | nul
 
   const platformData = data.platforms?.[targetOS];
   if (!platformData) {
-    console.warn(`No update asset found for target OS: ${targetOS}`);
+    logger.warn(`No update asset found for target OS: ${targetOS}`);
     return null;
   }
 

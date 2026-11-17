@@ -126,6 +126,9 @@ import DButton from './ui/DButton.vue';
 import { toast } from '../composables/useToast';
 import { getErrorMessage } from '../utils/error';
 import type { LocalModItem } from '../types/resourceNaming';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('LocalModsModal');
 
 const props = defineProps<{
   modelValue: boolean;
@@ -173,7 +176,7 @@ async function loadMods() {
       iconError: false
     }));
   } catch (error) {
-    console.error('Failed to load mods:', error);
+    logger.error('Failed to load mods:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -204,7 +207,7 @@ async function toggleMod(mod: LocalMod) {
     });
     mod.enabled = targetState;
   } catch (error) {
-    console.error('Failed to toggle mod:', error);
+    logger.error('Failed to toggle mod:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)
@@ -234,7 +237,7 @@ async function executeDelete() {
     mods.value = mods.value.filter(m => m.filename !== modToDelete.value!.filename);
     showDeleteConfirm.value = false;
   } catch (error) {
-    console.error('Failed to delete mod:', error);
+    logger.error('Failed to delete mod:', error);
     toast.error(
       t('common.error', 'Error'),
       getErrorMessage(error)

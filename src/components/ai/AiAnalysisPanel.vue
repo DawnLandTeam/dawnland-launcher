@@ -11,6 +11,9 @@ import DOMPurify from "dompurify";
 import { useTaskStore } from "../../composables/useTaskStore";
 import { toast } from "../../composables/useToast";
 import { sanitizeOptions } from "../../utils/sanitize";
+import { createLogger } from "../../utils/logger";
+
+const logger = createLogger("AiAnalysisPanel");
 
 const { locale, t } = useI18n();
 const router = useRouter();
@@ -74,7 +77,7 @@ const parsedAiResult = computed<AiResponse | null>(() => {
       return normalized as AiResponse;
     }
   } catch (e) {
-    console.warn("Failed to parse AI JSON response:", e);
+    logger.warn("Failed to parse AI JSON response:", e);
     return null;
   }
   return null;
@@ -101,7 +104,7 @@ function handleAiResultClick(e: MouseEvent) {
       
       executeAction({ type: action, payload });
     } else if (href && (href.startsWith('https://') || href.startsWith('http://'))) {
-      openUrl(href).catch((err) => console.error('Failed to open external URL:', err));
+      openUrl(href).catch((err) => logger.error('Failed to open external URL:', err));
     }
   }
 }
@@ -191,12 +194,12 @@ async function analyzeWithAi() {
       // Persist to crash history (crash context only, requires instance id)
       if (props.versionId && props.contextType === 'crash') {
         saveCrashHistory(result).catch((e) => {
-          console.warn('Failed to save crash history:', e);
+          logger.warn('Failed to save crash history:', e);
         });
       }
     }
   } catch (err: any) {
-    console.error("AI Analysis failed:", err);
+    logger.error("AI Analysis failed:", err);
     // Only set error if the stream-error listener hasn't already handled it.
     if (!streamErrorOccurred.value) {
       aiError.value = typeof err === 'object' && err !== null && 'message' in err

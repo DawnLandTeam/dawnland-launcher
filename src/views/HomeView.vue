@@ -33,12 +33,10 @@ import { useInstanceIconUpdates } from "../composables/useInstanceIconUpdates";
 import { useFileDrop } from "../composables/useFileDrop";
 import { type InstanceItem, isInstanceBusy, getInstanceStatusLabel } from "../types";
 import { formatSpeed } from "../utils/format";
+import { createLogger } from "../utils/logger";
+import { useGameLogStore } from "../composables/useGameLogStore";
 
-interface GameLog {
-  versionId?: string;
-  type: string;
-  line: string;
-}
+const logger = createLogger("HomeView");
 
 interface InstanceState {
   versionId: string;
@@ -73,14 +71,25 @@ const { t } = useI18n();
 const accounts = ref<Account[]>([]);
 const selectedInstanceId = useStorage<string>('selectedInstanceId', '');
 const { setHomeSelectedInstanceId } = useFileDrop();
-watch(selectedInstanceId, (id) => setHomeSelectedInstanceId(id || ""), { immediate: true });
+const {
+  gameLogs,
+  instanceLogs,
+  init: initGameLogStore,
+  setActiveInstanceId: setActiveGameLogInstanceId,
+  clearActiveLogs: clearActiveGameLogs,
+  renameInstanceLogs,
+  getInstanceLogs,
+} = useGameLogStore();
+watch(selectedInstanceId, (id) => {
+  const normalized = id || "";
+  setHomeSelectedInstanceId(normalized);
+  setActiveGameLogInstanceId(normalized);
+}, { immediate: true });
 const selectedAccountId = useStorage<string>('selectedAccountId', '');
 
 import { launchingInstances, jvmSpawnedInstances, runningInstances, repairingInstances } from '../composables/useLaunchState';
 
 // Running state
-const gameLogs = ref<string[]>([]);
-const instanceLogs = ref<Map<string, string[]>>(new Map());
 const showGameLog = ref(false);
 const prelaunchWarnings = ref<PrelaunchWarning[]>([]);
 const showPrelaunchWarning = ref(false);
@@ -194,13 +203,7 @@ const handleInstanceRenamed = (event: Event) => {
   if (selectedInstanceId.value === oldId) {
     selectedInstanceId.value = newId;
   }
-  if (instanceLogs.value.has(oldId)) {
-    const logs = instanceLogs.value.get(oldId);
-    if (logs) {
-      instanceLogs.value.set(newId, logs);
-    }
-    instanceLogs.value.delete(oldId);
-  }
+  renameInstanceLogs(oldId, newId);
   if (crashVersionId.value === oldId) {
     crashVersionId.value = newId;
   }
@@ -229,7 +232,7 @@ onMounted(async () => {
       announcements.value = data.announcements;
     }
   } catch (err) {
-    console.error("Failed to fetch announcement:", err);
+    logger.error("Failed to fetch announcement:", err);
   }
 
   // Listen for accounts changes from other pages (e.g., AccountsView)
@@ -237,28 +240,10 @@ onMounted(async () => {
     await loadAccounts();
   });
 
-  // Listen for game logs
-  listen<GameLog>("game-log", (event) => {
-    const vId = event.payload.versionId || selectedInstance.value?.id || "default";
-    let list = instanceLogs.value.get(vId);
-    if (!list) {
-      list = [];
-      instanceLogs.value.set(vId, list);
-    }
-    list.push(event.payload.line);
-    if (list.length > 2000) {
-      list.splice(0, list.length - 2000);
-    }
-
-    if (!event.payload.versionId || event.payload.versionId === selectedInstance.value?.id) {
-      gameLogs.value.push(event.payload.line);
-      if (gameLogs.value.length > 2000) {
-        gameLogs.value = gameLogs.value.slice(-2000);
-      }
-    }
-    
+  // Listen for game logs via unified store (supports single and batched events)
+  initGameLogStore((payload) => {
     // Heuristic: detect when Minecraft window is likely appearing
-    const line = event.payload.line || "";
+    const line = payload.line || "";
     if (line.includes("Backend library:") || line.includes("LWJGL") || line.includes("Setting user") || line.includes("OpenAL initialized")) {
       // Transition all spawned JVMs to fully running state
       for (const id of launchingInstances.value) {
@@ -342,7 +327,7 @@ onMounted(async () => {
           .then((id) => {
             crashHistoryId.value = id;
           })
-          .catch((err) => console.error("Failed to auto-save crash history:", err));
+          .catch((err) => logger.error("Failed to auto-save crash history:", err));
       }
     } else if (status === "repairing") {
       repairingInstances.value.add(versionId);
@@ -515,7 +500,7 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
     
     // Launch
     launchingInstances.value.add(selectedInstanceId.value);
-    gameLogs.value = [];
+    clearActiveGameLogs();
     
     try {
       // Event tracking removed: trackEvent("game_launch_started", { instanceId: selectedInstanceId.value, auto: true });
@@ -527,7 +512,7 @@ watch(() => route.query.auto_launch, async (isAutoLaunch) => {
       });
       trackEvent("Game Launched", { accountType: selectedAccount.value?.accountType || "unknown", auto: true, instanceName: selectedInstanceId.value });
     } catch (e) {
-      console.error("Failed to launch auto instance:", e);
+      logger.error("Failed to launch auto instance:", e);
       trackEvent("Error Occurred", { context: "auto_launch", error_type: getErrorType(e) });
       launchingInstances.value.delete(selectedInstanceId.value);
       repairingInstances.value.delete(selectedInstanceId.value);
@@ -558,7 +543,7 @@ async function loadInstances(force = false) {
       selectedInstanceId.value = "";
     }
   } catch (e) {
-    console.error("Failed to load instances:", e);
+    logger.error("Failed to load instances:", e);
   }
 }
 
@@ -575,7 +560,7 @@ async function loadAccounts() {
       selectedAccountId.value = "";
     }
   } catch (e) {
-    console.error("Failed to load accounts:", e);
+    logger.error("Failed to load accounts:", e);
   }
 }
 
@@ -593,7 +578,7 @@ async function handlePrimaryAction() {
         await invoke("kill_instance", { versionId: selectedInstanceId.value });
         intentionallyKilledInstances.value.add(selectedInstanceId.value);
       } catch (e) {
-        console.error("Failed to kill instance:", e);
+        logger.error("Failed to kill instance:", e);
         alert(t('home.stopGameFailed', { error: getErrorMessage(e) }));
       }
     }
@@ -620,7 +605,7 @@ async function handlePrimaryAction() {
       return;
     }
   } catch (e) {
-    console.warn("Prelaunch check failed, continuing launch:", e);
+    logger.warn("Prelaunch check failed, continuing launch:", e);
   }
 
   await doLaunch();
@@ -629,7 +614,7 @@ async function handlePrimaryAction() {
 async function doLaunch() {
   // Add to launching set immediately for UI feedback
   launchingInstances.value.add(selectedInstanceId.value);
-  gameLogs.value = [];
+  clearActiveGameLogs();
 
   try {
     const config = await invoke<any>("get_instance_config", { versionId: selectedInstanceId.value });
@@ -637,7 +622,7 @@ async function doLaunch() {
       showGameLog.value = true;
     }
   } catch (e) {
-    console.warn("Failed to get instance config for log display preference:", e);
+    logger.warn("Failed to get instance config for log display preference:", e);
   }
 
   try {
@@ -648,7 +633,7 @@ async function doLaunch() {
     });
     trackEvent("Game Launched", { accountType: selectedAccount.value?.accountType || "unknown", auto: false, instanceName: selectedInstanceId.value });
   } catch (e) {
-    console.error("Failed to launch instance:", e);
+    logger.error("Failed to launch instance:", e);
     trackEvent("Error Occurred", { context: "manual_launch", error_type: getErrorType(e) });
     launchingInstances.value.delete(selectedInstanceId.value);
     repairingInstances.value.delete(selectedInstanceId.value);
@@ -693,7 +678,7 @@ async function handleLaunchError(e: any) {
           selectedAccountId.value = newAccount.id;
           handlePrimaryAction();
         } catch (loginErr) {
-          console.error("Re-login failed:", loginErr);
+          logger.error("Re-login failed:", loginErr);
         }
       }
     } else {
@@ -1005,7 +990,7 @@ function loaderBadgeClass(loaderType: string): string {
       :open="showCrashAlert" 
       :exit-code="crashExitCode" 
       :version-id="crashVersionId" 
-      :logs="instanceLogs.get(crashVersionId) || gameLogs" 
+      :logs="getInstanceLogs(crashVersionId)" 
       :is-open-j9="crashIsOpenJ9" 
       :crash-report="crashReportContent" 
       :crash-history-id="crashHistoryId"

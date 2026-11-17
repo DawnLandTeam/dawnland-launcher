@@ -2,6 +2,9 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, X, Bell } from "@lucide/vue";
 import { notificationStore } from "../composables/useNotificationStore";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("CustomTitleBar");
 
 const appWindow = getCurrentWindow();
 
@@ -39,7 +42,7 @@ async function onMouseMove(): Promise<void> {
     try {
       await appWindow.startDragging();
     } catch (error) {
-      console.error("Drag error:", error);
+      logger.error("Drag error:", error);
     }
   }
 }

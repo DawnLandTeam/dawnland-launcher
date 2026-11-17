@@ -36,12 +36,29 @@ if (import.meta.env.PROD) {
 }
 
 import { trackEvent } from "./utils/analytics";
+import { createLogger } from "./utils/logger";
+
+const logger = createLogger("Global");
 
 const app = createApp(App);
+
+app.config.errorHandler = (err, _instance, info) => {
+  logger.error(`Vue error (${info}):`, err);
+};
+
+window.addEventListener("error", (event) => {
+  logger.error("Uncaught window error:", event.error ?? event.message);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  logger.error("Unhandled promise rejection:", event.reason);
+});
 
 app.use(router);
 app.use(i18n);
 app.directive('safe-html', safeHtml);
 app.mount("#app");
 
-trackEvent("App Started").catch(console.error);
+trackEvent("App Started").catch((err) => {
+  logger.warn("Failed to track App Started event:", err);
+});

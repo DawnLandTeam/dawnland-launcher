@@ -18,6 +18,9 @@ import { renameCachedInstanceIcon } from '../../composables/useInstanceIconUpdat
 import { toast } from '../../composables/useToast';
 import { getErrorMessage } from '../../utils/error';
 import { isSafeInstanceName } from '../../utils/instanceName';
+import { createLogger } from '../../utils/logger';
+
+const logger = createLogger('InstanceRenameModal');
 
 const props = defineProps<{
   open: boolean;
@@ -129,7 +132,7 @@ async function handleSubmit() {
     emit('renamed', { oldId, newId: trimmed });
     emit('update:open', false);
   } catch (e) {
-    console.error('Failed to rename instance:', e);
+    logger.error('Failed to rename instance:', e);
     errorMsg.value = getErrorMessage(e);
     toast.error(
       t('instances.renameDialog.failed', 'Failed to rename instance'),

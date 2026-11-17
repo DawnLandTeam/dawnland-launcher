@@ -23,6 +23,9 @@ import { useInstances } from '../composables/useInstances';
 import { isInstanceActive } from '../composables/useLaunchState';
 import { useTaskStore } from '../composables/useTaskStore';
 import { toast } from '../composables/useToast';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('DropInstallOverlay');
 import { getErrorMessage } from '../utils/error';
 import { findIncompatibleMods, type ModIncompatIssue, type ModIncompatReason } from '../utils/modCompat';
 import { type DetectedFileKind, type InspectedDropFile, isInstanceBusy } from '../types';
@@ -216,7 +219,7 @@ async function loadWorldsForInstance(instanceId: string): Promise<string[]> {
     return saves;
   } catch (err) {
     if (seq === worldLoadSeq) {
-      console.error('Failed to load instance saves for datapack drop:', err);
+      logger.error('Failed to load instance saves for datapack drop:', err);
       worldOptions.value = [];
       selectedTargetWorld.value = '';
     }

@@ -12,6 +12,9 @@ import DToggleGroup from './ui/DToggleGroup.vue';
 import { useI18n } from 'vue-i18n';
 import { getErrorMessage } from '../utils/error';
 import { STEVE_SKIN_BASE64, getProxiedImageBase64 } from '../utils/steve';
+import { createLogger } from '../utils/logger';
+
+const logger = createLogger('AccountDetailModal');
 
 const props = defineProps<{
   account: Account | null;
@@ -51,12 +54,12 @@ async function initViewer() {
     try {
       skinUrl = await getProxiedImageBase64(invoke, skinUrl);
     } catch(e) {
-      console.warn("Proxy failed, using direct url");
+      logger.warn("Proxy failed, using direct url", e);
     }
   }
 
   viewer.loadSkin(skinUrl).catch(e => {
-    console.warn("Failed to load skin:", e);
+    logger.warn("Failed to load skin:", e);
     if (skinUrl !== STEVE_SKIN_BASE64) {
       viewer?.loadSkin(STEVE_SKIN_BASE64).catch(() => {});
     }
@@ -67,7 +70,7 @@ async function initViewer() {
     try {
       capeUrl = await getProxiedImageBase64(invoke, capeUrl);
     } catch(e) {}
-    viewer.loadCape(capeUrl).catch(e => console.warn("Failed to load cape:", e));
+    viewer.loadCape(capeUrl).catch(e => logger.warn("Failed to load cape:", e));
   }
   
   viewer.animation = new WalkingAnimation();
@@ -95,7 +98,7 @@ async function fetchTextures() {
       }
 
       viewer.loadSkin(skinUrl).catch(e => {
-        console.warn("Failed to load updated skin:", e);
+        logger.warn("Failed to load updated skin:", e);
         if (skinUrl !== STEVE_SKIN_BASE64) {
           viewer?.loadSkin(STEVE_SKIN_BASE64).catch(() => {});
         }
@@ -106,7 +109,7 @@ async function fetchTextures() {
         try {
           capeUrl = await getProxiedImageBase64(invoke, capeUrl, true);
         } catch(e) {}
-        viewer.loadCape(capeUrl).catch(e => console.warn("Failed to load updated cape:", e));
+        viewer.loadCape(capeUrl).catch(e => logger.warn("Failed to load updated cape:", e));
       } else {
         viewer.resetCape();
       }

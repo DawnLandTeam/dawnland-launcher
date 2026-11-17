@@ -228,7 +228,7 @@ where
 {
     let _op_permit = crate::core::cache::acquire_operation_permit(Some(&app_handle)).await;
     let _active_download_guard = ActiveDownloadGuard::new();
-    tracing::debug!("Starting download: {} -> {}", task.url, task.dest_path);
+    tracing::trace!("Starting download: {} -> {}", task.url, task.dest_path);
 
     let dest_path = task.dest_path_buf();
     if let Some(parent) = dest_path.parent() {
@@ -331,7 +331,7 @@ where
                             size_ok = false; // Fallthrough to download
                         }
                     } else {
-                        tracing::debug!("Global cache hit (hard link): {} -> {}", c_path.display(), dest_path.display());
+                        tracing::trace!("Global cache hit (hard link): {} -> {}", c_path.display(), dest_path.display());
                     }
                     
                     if size_ok {
@@ -369,7 +369,7 @@ where
             if is_cancelled() {
                 return Err("Cancelled".to_string());
             }
-            tracing::error!(target: "frontend", "Failed to connect to {}: {}", task.url, e);
+            tracing::debug!("Failed to connect to {}: {}", task.url, e);
             return Err(format!("Request failed: {}", e));
         }
     };
@@ -395,12 +395,12 @@ where
                 }
             }
             if !fallback_success {
-                tracing::error!(target: "frontend", "HTTP Error for {}: {} (Fallbacks failed)", task.url, fallback_resp.status());
+                tracing::debug!("HTTP Error for {}: {} (Fallbacks failed)", task.url, fallback_resp.status());
                 return Err(format!("HTTP error: {} (Fallbacks failed)", fallback_resp.status()));
             }
             fallback_resp
         } else {
-            tracing::error!(target: "frontend", "HTTP Error for {}: {}", task.url, response.status());
+            tracing::debug!("HTTP Error for {}: {}", task.url, response.status());
             return Err(format!("HTTP error: {}", response.status()));
         }
     } else {
@@ -738,7 +738,7 @@ where
             }
         }
 
-        tracing::debug!("Chunked download completed: {}", task.dest_path);
+        tracing::trace!("Chunked download completed: {}", task.dest_path);
         return Ok(());
     }
 
@@ -847,7 +847,7 @@ where
         }
     }
 
-    tracing::debug!("Download completed: {}", task.dest_path);
+    tracing::trace!("Download completed: {}", task.dest_path);
     
     Ok(())
 }
@@ -916,32 +916,38 @@ pub async fn run_batch_download_task(
     let total_files = total_tasks as u32;
     let completed_files_clone = completed_files.clone();
 
-    let monitor_handle = tokio::spawn(async move {
-        let mut tracker = SpeedTracker::new(0);
-        loop {
-            tokio::select! {
-                biased;
-                _ = ctx_monitor.cancel_token.cancelled() => return,
-                _ = tokio::time::sleep(tokio::time::Duration::from_millis(500)) => {}
-            }
-            if ctx_monitor.is_cancelled() {
-                return;
-            }
-            let current_bytes = global_dl_clone.load(Ordering::Relaxed);
-            let speed = tracker.update(current_bytes);
-            let remaining =
-                total_files.saturating_sub(completed_files_clone.load(Ordering::SeqCst) as u32);
-            ctx_monitor.update_download_metrics(speed, remaining).await;
+    use tracing::Instrument;
+    let current_span = tracing::Span::current();
 
-            if completed_files_clone.load(Ordering::SeqCst) >= total_tasks {
-                break;
+    let monitor_handle = tokio::spawn(
+        async move {
+            let mut tracker = SpeedTracker::new(0);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = ctx_monitor.cancel_token.cancelled() => return,
+                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(500)) => {}
+                }
+                if ctx_monitor.is_cancelled() {
+                    return;
+                }
+                let current_bytes = global_dl_clone.load(Ordering::Relaxed);
+                let speed = tracker.update(current_bytes);
+                let remaining =
+                    total_files.saturating_sub(completed_files_clone.load(Ordering::SeqCst) as u32);
+                ctx_monitor.update_download_metrics(speed, remaining).await;
+
+                if completed_files_clone.load(Ordering::SeqCst) >= total_tasks {
+                    break;
+                }
+            }
+            if !ctx_monitor.is_cancelled() {
+                // Reset speed to 0 when done
+                ctx_monitor.update_download_metrics(0, 0).await;
             }
         }
-        if !ctx_monitor.is_cancelled() {
-            // Reset speed to 0 when done
-            ctx_monitor.update_download_metrics(0, 0).await;
-        }
-    });
+        .instrument(current_span.clone()),
+    );
     let mut monitor_guard = AbortMonitorGuard(Some(monitor_handle));
 
     // Spawn download tasks in a JoinSet so cancellation aborts/drains all tasks cleanly.
@@ -955,7 +961,8 @@ pub async fn run_batch_download_task(
         let completed_files = completed_files.clone();
         let global_downloaded_clone = global_downloaded.clone();
 
-        join_set.spawn(async move {
+        join_set.spawn(
+            async move {
             if ctx.is_cancelled() {
                 return Err("Cancelled".to_string());
             }
@@ -971,7 +978,7 @@ pub async fn run_batch_download_task(
                 return Err("Cancelled".to_string());
             }
 
-            tracing::debug!("Downloading: {}", dest_path);
+            tracing::trace!("Downloading: {}", dest_path);
 
             let mut attempts = 0;
             let max_attempts = 3;
@@ -991,7 +998,7 @@ pub async fn run_batch_download_task(
                             return Err("Cancelled".to_string());
                         }
                         // Emit completion.
-                        tracing::debug!("Emitting completed for task: {}", task_id);
+                        tracing::trace!("Emitting completed for task: {}", task_id);
                         let mut progress = DownloadProgress::completed(task_id);
                         progress.file_name = std::path::Path::new(&dest_path)
                             .file_name()
@@ -1055,7 +1062,9 @@ pub async fn run_batch_download_task(
             let _ = ctx.app_handle.emit("download-progress", &progress);
 
             Err(last_err)
-        });
+            }
+            .instrument(current_span.clone()),
+        );
     }
 
     // Wait for all downloads to complete or abort immediately on cancellation.
@@ -1078,7 +1087,7 @@ pub async fn run_batch_download_task(
                             return Err("Cancelled".to_string());
                         }
                         error_count += 1;
-                        tracing::error!("Download task failed: {}", e);
+                        tracing::debug!("Download subtask returned error: {}", e);
                     }
                     Some(Err(e)) => {
                         if !e.is_cancelled() {
@@ -1203,7 +1212,7 @@ pub async fn run_batch_download(
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 error_count += 1;
-                tracing::error!("Download task failed: {}", e);
+                tracing::debug!("Legacy download subtask returned error: {}", e);
             }
             Err(e) => {
                 error_count += 1;

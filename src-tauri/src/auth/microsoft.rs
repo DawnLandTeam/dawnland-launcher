@@ -213,7 +213,7 @@ async fn poll_for_token(device_code: &str) -> Result<(String, String), AppError>
 
         if let Some(access_token) = token_resp.access_token {
             let refresh_token = token_resp.refresh_token.unwrap_or_default();
-            tracing::info!("Received Microsoft access token");
+            tracing::debug!("Received Microsoft access token");
             return Ok((access_token, refresh_token));
         }
 
@@ -298,7 +298,11 @@ async fn get_xbox_live_token(ms_token: &str) -> Result<String, AppError> {
     let raw_text = response.text().await.unwrap_or_default();
 
     if !status.is_success() {
-        tracing::error!("Xbox Live auth failed: {} - {}", status, raw_text);
+        tracing::error!(
+            "Xbox Live auth failed: {} - {}",
+            status,
+            crate::logger::redact::truncate_for_log(&raw_text, 512)
+        );
         return Err(DawnlandError::Unknown(format!(
             "Xbox Live auth failed: {} - {}",
             status, raw_text
@@ -319,7 +323,7 @@ async fn get_xbox_live_token(ms_token: &str) -> Result<String, AppError> {
         .token
         .ok_or_else(|| "No Xbox Live token in response".to_string())?;
 
-    tracing::info!("Received Xbox Live token");
+    tracing::debug!("Received Xbox Live token");
     Ok(xbl_token)
 }
 
@@ -365,10 +369,14 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), AppError> {
     let status = response.status();
     let raw_text = response.text().await.unwrap_or_default();
 
-    tracing::info!("XSTS response status: {}", status);
+    tracing::debug!("XSTS response status: {}", status);
 
     if !status.is_success() {
-        tracing::error!("XSTS auth failed ({}): body='{}'", status, raw_text);
+        tracing::error!(
+            "XSTS auth failed ({}): body='{}'",
+            status,
+            crate::logger::redact::truncate_for_log(&raw_text, 512)
+        );
         // Try to parse the error as XErr for more details
         #[derive(Deserialize)]
         struct XErrResponse {
@@ -434,7 +442,7 @@ async fn get_xsts_token(xbl_token: &str) -> Result<(String, String), AppError> {
         .and_then(|u| u.uhs)
         .unwrap_or_default();
 
-    tracing::info!("Received XSTS token");
+    tracing::debug!("Received XSTS token");
     Ok((token, uhs))
 }
 
@@ -465,7 +473,11 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, AppE
     let raw_text = response.text().await.unwrap_or_default();
 
     if !status.is_success() {
-        tracing::error!("Minecraft auth failed: {} - {}", status, raw_text);
+        tracing::error!(
+            "Minecraft auth failed: {} - {}",
+            status,
+            crate::logger::redact::truncate_for_log(&raw_text, 512)
+        );
         return Err(DawnlandError::Unknown(format!(
             "Minecraft auth failed: {} - {}",
             status, raw_text
@@ -503,7 +515,7 @@ async fn get_minecraft_token(xsts_token: &str, uhs: &str) -> Result<String, AppE
         .access_token
         .ok_or_else(|| "No Minecraft access token in response".to_string())?;
 
-    tracing::info!("Received Minecraft access token");
+    tracing::debug!("Received Minecraft access token");
     Ok(token)
 }
 
@@ -533,7 +545,7 @@ pub async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String, Op
         tracing::error!(
             "Minecraft profile request failed: {} - {}",
             status,
-            raw_text
+            crate::logger::redact::truncate_for_log(&raw_text, 512)
         );
         return Err(DawnlandError::Unknown(format!(
             "Minecraft profile request failed: {} - {}",
@@ -596,33 +608,33 @@ pub async fn get_minecraft_profile(mc_token: &str) -> Result<(String, String, Op
         }
     }
 
-    tracing::info!("Received Minecraft profile: {} ({})", username, uuid);
+    tracing::debug!("Received Minecraft profile: {} ({})", username, uuid);
     Ok((uuid, username, Some(textures)))
 }
 
 /// Poll for Microsoft login and complete the full authentication chain.
 pub async fn poll_microsoft_token(device_code: &str) -> Result<Account, AppError> {
-    tracing::info!("Polling for Microsoft token...");
+    tracing::debug!("Polling for Microsoft token...");
 
     // Step 1: Poll for Microsoft access token.
     let (ms_token, refresh_token) = poll_for_token(device_code).await?;
-    tracing::info!("Received Microsoft access token");
+    tracing::debug!("Received Microsoft access token");
 
     // Step 2: Get Xbox Live token.
     let xbl_token = get_xbox_live_token(&ms_token).await?;
-    tracing::info!("Received Xbox Live token");
+    tracing::debug!("Received Xbox Live token");
 
     // Step 3: Get XSTS token.
     let (xsts_token, uhs) = get_xsts_token(&xbl_token).await?;
-    tracing::info!("Received XSTS token");
+    tracing::debug!("Received XSTS token");
 
     // Step 4: Get Minecraft access token.
     let mc_token = get_minecraft_token(&xsts_token, &uhs).await?;
-    tracing::info!("Received Minecraft access token");
+    tracing::debug!("Received Minecraft access token");
 
     // Step 5: Get Minecraft profile.
     let (uuid, username, textures) = get_minecraft_profile(&mc_token).await?;
-    tracing::info!("Received Minecraft profile: {} ({})", username, uuid);
+    tracing::info!("Microsoft device-code login completed: {} ({})", username, uuid);
 
     // Create account.
     let account = Account {
@@ -758,19 +770,19 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppErr
         .refresh_token
         .unwrap_or_else(|| refresh_token.to_string()); // Use old one if not returned
 
-    tracing::info!("Microsoft token refreshed successfully");
+    tracing::debug!("Microsoft token refreshed successfully");
 
     // Step 2: Get new Xbox Live token
     let xbl_token = get_xbox_live_token(&new_ms_token).await?;
-    tracing::info!("Xbox Live token refreshed");
+    tracing::debug!("Xbox Live token refreshed");
 
     // Step 3: Get new XSTS token
     let (xsts_token, uhs) = get_xsts_token(&xbl_token).await?;
-    tracing::info!("XSTS token refreshed");
+    tracing::debug!("XSTS token refreshed");
 
     // Step 4: Get new Minecraft access token
     let mc_token = get_minecraft_token(&xsts_token, &uhs).await?;
-    tracing::info!("Minecraft access token refreshed");
+    tracing::debug!("Minecraft access token refreshed");
 
     // Step 5: Fetch profile to get updated textures and username
     let (_, new_username, textures) = get_minecraft_profile(&mc_token).await?;
@@ -788,7 +800,7 @@ pub async fn refresh_microsoft_token(account_id: &str) -> Result<Account, AppErr
     // Save updated accounts
     save_accounts(&accounts).await?;
 
-    tracing::info!(target: "auth", "Account token refreshed for: {}", account_id);
+    tracing::info!(target: "dawnland_launcher_lib::auth", "Account token refreshed for: {}", account_id);
     Ok(updated_account)
 }
 
@@ -891,7 +903,7 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
         }
     };
 
-    tracing::info!("Received authorization code from browser callback.");
+    tracing::debug!("Received authorization code from browser callback.");
 
     // 7. Exchange code for token
     let client = http_client();
@@ -947,13 +959,14 @@ pub async fn login_microsoft_oauth() -> Result<Account, AppError> {
         .ok_or_else(|| DawnlandError::Unknown("No access token in response".to_string()))?;
     let refresh_token = token_resp.refresh_token.unwrap_or_default();
 
-    tracing::info!("Received Microsoft access token from OAuth flow");
+    tracing::debug!("Received Microsoft access token from OAuth flow");
 
     // 8. Continue with standard flow
     let xbl_token = get_xbox_live_token(&ms_token).await?;
     let (xsts_token, uhs) = get_xsts_token(&xbl_token).await?;
     let mc_token = get_minecraft_token(&xsts_token, &uhs).await?;
     let (uuid, username, textures) = get_minecraft_profile(&mc_token).await?;
+    tracing::info!("Microsoft OAuth login completed: {} ({})", username, uuid);
 
     // Create account
     let account = Account {

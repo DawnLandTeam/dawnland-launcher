@@ -7,6 +7,9 @@ import { trackEvent, getErrorType } from "../../utils/analytics";
 import DInput from "../ui/DInput.vue";
 import { Search, Check, AlertCircle, Loader2, Info, Puzzle } from "@lucide/vue";
 import { getErrorMessage } from "../../utils/error";
+import { createLogger } from "../../utils/logger";
+
+const logger = createLogger("ModsInstallTab");
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { open } from '@tauri-apps/plugin-dialog';
@@ -144,7 +147,7 @@ const loadOptions = async () => {
       availableLoaders.value = await invoke("get_curseforge_loaders");
     }
   } catch (e) {
-    console.error("Failed to fetch options:", e);
+    logger.error("Failed to fetch options:", e);
   }
 };
 
@@ -201,7 +204,7 @@ async function loadCategories() {
       categories.value = await invoke<UnifiedCategory[]>("get_curseforge_categories");
     }
   } catch (err) {
-    console.error("Failed to load categories:", err);
+    logger.error("Failed to load categories:", err);
     categories.value = [];
   }
 }
@@ -240,7 +243,7 @@ async function loadInstances() {
       // performSearch will be triggered after options are loaded
     }
   } catch (err) {
-    console.error("Failed to load instances:", err);
+    logger.error("Failed to load instances:", err);
   }
 }
 
@@ -560,13 +563,13 @@ async function checkDependenciesForSelectedFile() {
         pendingDependencyTitles.value[dep.project_id] = title;
         (dep as any).name = title;
       } catch (err) {
-        console.error("Failed to resolve dependency title", dep.project_id, err);
+        logger.error("Failed to resolve dependency title", dep.project_id, err);
       }
     }));
 
     pendingDependencies.value = missingDeps.filter(dep => !(dep as any)._installed);
   } catch(err) {
-    console.error("Failed to check deps", err);
+    logger.error("Failed to check deps", err);
     pendingDependencies.value = [];
   } finally {
     isCheckingDependencies.value = false;
@@ -674,7 +677,7 @@ async function startInstallToInstance() {
       return;
     }
   } catch (err) {
-    console.error("Failed to check duplicate mods", err);
+    logger.error("Failed to check duplicate mods", err);
   }
   
   startActualDownload(pendingMod.value, selectedFileId.value, null, deps);
@@ -692,7 +695,7 @@ async function handleReplaceOldMods() {
       });
     }
   } catch(err) {
-    console.error("Failed to delete old duplicate mod", err);
+    logger.error("Failed to delete old duplicate mod", err);
   }
   showDuplicateWarning.value = false;
   const deps = includeDependencies.value ? pendingDependencies.value : [];

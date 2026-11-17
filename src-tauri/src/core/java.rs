@@ -107,7 +107,7 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
         }
     }
 
-    tracing::info!("Scanning local Java installations...");
+    tracing::debug!("Scanning local Java installations...");
 
     let mut javas = Vec::new();
 
@@ -124,7 +124,7 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
         for java_path in candidates {
             if java_path.exists() {
                 if let Some(java_info) = probe_java(&java_path).await {
-                    tracing::info!("Found Java at JAVA_HOME: {}", java_home);
+                    tracing::debug!("Found Java at JAVA_HOME: {}", java_home);
                     javas.push(java_info);
                     break;
                 }
@@ -140,7 +140,7 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
             let path_str = java_path.to_string_lossy().to_string();
             if !javas.iter().any(|j: &JavaInfo| j.path == path_str) {
                 if let Some(java_info) = probe_java(&java_path).await {
-                    tracing::info!("Found manual Java at: {}", path);
+                    tracing::debug!("Found manual Java at: {}", path);
                     javas.push(java_info);
                 }
             }
@@ -183,7 +183,7 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
                                 let path_str = java_path.to_string_lossy().to_string();
                                 if !javas.iter().any(|j: &JavaInfo| j.path == path_str) {
                                     if let Some(java_info) = probe_java(&java_path).await {
-                                        tracing::info!("Found Java at: {}", path.display());
+                                        tracing::debug!("Found Java at: {}", path.display());
                                         javas.push(java_info);
                                     }
                                 }
@@ -219,7 +219,7 @@ pub async fn scan_local_javas() -> Result<Vec<JavaInfo>, String> {
     // Update cache
     *CACHED_JAVAS.lock().await = Some(javas.clone());
 
-    tracing::info!("Found {} Java installations", javas.len());
+    tracing::debug!("Found {} Java installations", javas.len());
     Ok(javas)
 }
 
