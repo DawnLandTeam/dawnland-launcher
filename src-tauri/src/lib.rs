@@ -368,6 +368,7 @@ pub fn run() {
             core::launcher::is_instance_running,
             core::launcher::get_instance_config,
             core::launcher::save_instance_config,
+            core::launcher::set_instance_prelaunch_check,
             core::launcher::get_jvm_tuning_preview,
             core::launcher::get_global_game_settings,
             core::launcher::save_global_game_settings,

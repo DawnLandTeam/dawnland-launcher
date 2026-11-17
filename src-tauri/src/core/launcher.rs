@@ -682,6 +682,8 @@ pub struct InstanceConfig {
     pub window_behavior: String,
     #[serde(default)]
     pub show_game_log: bool,
+    #[serde(default = "default_enable_prelaunch_check")]
+    pub enable_prelaunch_check: bool,
     #[serde(default)]
     pub hidden: bool,
 
@@ -751,6 +753,8 @@ struct RawInstanceConfig {
     pub window_behavior: String,
     #[serde(default)]
     pub show_game_log: bool,
+    #[serde(default = "default_enable_prelaunch_check")]
+    pub enable_prelaunch_check: bool,
     #[serde(default)]
     pub hidden: bool,
 
@@ -798,6 +802,7 @@ impl<'de> serde::Deserialize<'de> for InstanceConfig {
             window_height: raw.window_height,
             window_behavior: raw.window_behavior,
             show_game_log: raw.show_game_log,
+            enable_prelaunch_check: raw.enable_prelaunch_check,
             hidden: raw.hidden,
             server_id: raw.server_id,
             pack_version_id: raw.pack_version_id,
@@ -930,6 +935,7 @@ impl Default for InstanceConfig {
             window_height: DEFAULT_WINDOW_HEIGHT,
             window_behavior: default_window_behavior(),
             show_game_log: default_show_game_log(),
+            enable_prelaunch_check: default_enable_prelaunch_check(),
             hidden: false,
             server_id: None,
             pack_version_id: None,
@@ -1141,25 +1147,25 @@ fn default_show_game_log() -> bool {
     false
 }
 
+fn default_enable_prelaunch_check() -> bool {
+    true
+}
+
 // ============ Instance Config Commands ============
 
 const CONFIG_FILENAME: &str = "dlml.json";
 
-/// Get instance configuration
-#[tauri::command]
-pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, AppError> {
-    if !validate_instance_id_for_launcher(&version_id).await {
-        return Err(DawnlandError::Unknown("Invalid version ID".to_string()).into());
-    }
+/// Read instance configuration from a specific instance directory.
+pub async fn get_instance_config_at(instance_dir: &Path) -> Result<InstanceConfig, AppError> {
     let _guard = INSTANCE_CONFIG_LOCK.lock().await;
-    let base_dir = get_minecraft_base();
-    let config_path = base_dir
-        .join("versions")
-        .join(&version_id)
-        .join(CONFIG_FILENAME);
+    let config_path = instance_dir.join(CONFIG_FILENAME);
+    let instance_label = instance_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("<unknown>");
 
     if !config_path.exists() {
-        tracing::debug!("No config found for {}, using defaults", version_id);
+        tracing::debug!("No config found for {}, using defaults", instance_label);
         return Ok(InstanceConfig {
             window_width: DEFAULT_WINDOW_WIDTH,
             window_height: DEFAULT_WINDOW_HEIGHT,
@@ -1186,23 +1192,27 @@ pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, A
         let _ = write_instance_config_atomic(&config_path, &config).await;
     }
 
-    tracing::debug!("Loaded config for {}: {:?}", version_id, config);
+    tracing::debug!("Loaded config for {}: {:?}", instance_label, config);
     Ok(config)
 }
 
-/// Save instance configuration
+/// Get instance configuration
 #[tauri::command]
-pub async fn save_instance_config(
-    version_id: String,
-    config: InstanceConfig,
-) -> Result<(), AppError> {
+pub async fn get_instance_config(version_id: String) -> Result<InstanceConfig, AppError> {
     if !validate_instance_id_for_launcher(&version_id).await {
         return Err(DawnlandError::Unknown("Invalid version ID".to_string()).into());
     }
     let base_dir = get_minecraft_base();
-    let version_dir = base_dir.join("versions").join(&version_id);
+    let instance_dir = base_dir.join("versions").join(&version_id);
+    get_instance_config_at(&instance_dir).await
+}
 
-    let final_config = update_instance_config(&version_dir, |final_config| {
+/// Save instance configuration fields into a specific instance directory.
+pub async fn save_instance_config_at(
+    instance_dir: &Path,
+    config: InstanceConfig,
+) -> Result<(), AppError> {
+    let final_config = update_instance_config(instance_dir, |final_config| {
         // Update only the fields that are configurable via the settings UI
         final_config.java_path = config.java_path;
         final_config.max_memory = config.max_memory;
@@ -1220,11 +1230,65 @@ pub async fn save_instance_config(
         };
         final_config.window_behavior = config.window_behavior;
         final_config.show_game_log = config.show_game_log;
+        final_config.enable_prelaunch_check = config.enable_prelaunch_check;
         // We intentionally do NOT copy hidden, server_id, pack_version_id, pack_file_name, or status here!
     })
     .await?;
 
-    tracing::debug!("Saved config for {}: {:?}", version_id, final_config);
+    let instance_label = instance_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("<unknown>");
+    tracing::debug!("Saved config for {}: {:?}", instance_label, final_config);
+    Ok(())
+}
+
+/// Save instance configuration
+#[tauri::command]
+pub async fn save_instance_config(
+    version_id: String,
+    config: InstanceConfig,
+) -> Result<(), AppError> {
+    if !validate_instance_id_for_launcher(&version_id).await {
+        return Err(DawnlandError::Unknown("Invalid version ID".to_string()).into());
+    }
+    let base_dir = get_minecraft_base();
+    let version_dir = base_dir.join("versions").join(&version_id);
+    save_instance_config_at(&version_dir, config).await
+}
+
+/// Atomically toggle prelaunch mod dependency check inside a specific instance directory.
+pub async fn set_instance_prelaunch_check_at(
+    instance_dir: &Path,
+    enabled: bool,
+) -> Result<(), AppError> {
+    if !instance_dir.exists() {
+        return Err(DawnlandError::Unknown("Instance directory does not exist".to_string()).into());
+    }
+    update_instance_config(instance_dir, |final_config| {
+        final_config.enable_prelaunch_check = enabled;
+    })
+    .await?;
+    Ok(())
+}
+
+/// Atomically enable or disable prelaunch mod dependency check for an instance.
+#[tauri::command]
+pub async fn set_instance_prelaunch_check(
+    version_id: String,
+    enabled: bool,
+) -> Result<(), AppError> {
+    if !validate_instance_id_for_launcher(&version_id).await {
+        return Err(DawnlandError::Unknown("Invalid version ID".to_string()).into());
+    }
+    let base_dir = get_minecraft_base();
+    let instance_dir = base_dir.join("versions").join(&version_id);
+    set_instance_prelaunch_check_at(&instance_dir, enabled).await?;
+    tracing::info!(
+        "Updated prelaunch check for instance {} to {}",
+        version_id,
+        enabled
+    );
     Ok(())
 }
 
@@ -4479,6 +4543,72 @@ mod tests {
         // Verify the corrupt file was NOT overwritten with default values
         let content_on_disk = tokio::fs::read_to_string(inst_dir.join("dlml.json")).await.unwrap();
         assert_eq!(content_on_disk, corrupt_json);
+    }
+
+    #[test]
+    fn test_instance_config_enable_prelaunch_check_default_and_roundtrip() {
+        assert!(InstanceConfig::default().enable_prelaunch_check);
+
+        let omitted: InstanceConfig = serde_json::from_str("{}").unwrap();
+        assert!(omitted.enable_prelaunch_check);
+
+        let disabled: InstanceConfig =
+            serde_json::from_str(r#"{"enablePrelaunchCheck": false}"#).unwrap();
+        assert!(!disabled.enable_prelaunch_check);
+
+        let serialized = serde_json::to_string(&disabled).unwrap();
+        assert!(serialized.contains("\"enablePrelaunchCheck\":false"));
+    }
+
+    #[tokio::test]
+    async fn test_set_and_save_instance_prelaunch_check_at_preserves_other_fields() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+        let inst_dir = temp.path().join("modded_instance");
+        tokio::fs::create_dir_all(&inst_dir).await.expect("create dir");
+
+        let initial_json = r#"{
+            "javaPath": "C:\\Java\\bin\\java.exe",
+            "maxMemory": 6144,
+            "showGameLog": true,
+            "status": "ready"
+        }"#;
+        tokio::fs::write(inst_dir.join("dlml.json"), initial_json)
+            .await
+            .unwrap();
+
+        let initial_cfg = get_instance_config_at(&inst_dir).await.unwrap();
+        assert!(initial_cfg.enable_prelaunch_check);
+
+        // Toggle off atomically via set_instance_prelaunch_check_at
+        set_instance_prelaunch_check_at(&inst_dir, false)
+            .await
+            .unwrap();
+        let after_disable = get_instance_config_at(&inst_dir).await.unwrap();
+        assert!(!after_disable.enable_prelaunch_check);
+        assert_eq!(
+            after_disable.java_path.as_deref(),
+            Some("C:\\Java\\bin\\java.exe")
+        );
+        assert_eq!(after_disable.max_memory, Some(6144));
+        assert!(after_disable.show_game_log);
+
+        // Re-enable via save_instance_config_at
+        let mut updated_payload = after_disable.clone();
+        updated_payload.enable_prelaunch_check = true;
+        save_instance_config_at(&inst_dir, updated_payload)
+            .await
+            .unwrap();
+        let after_enable = get_instance_config_at(&inst_dir).await.unwrap();
+        assert!(after_enable.enable_prelaunch_check);
+
+        // Missing instance directory should return an error without creating stray folders
+        let missing_dir = temp.path().join("nonexistent");
+        assert!(set_instance_prelaunch_check_at(&missing_dir, false)
+            .await
+            .is_err());
+        assert!(!missing_dir.exists());
     }
 
     #[test]
