@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
 import { ref } from 'vue';
 import HomeView from './HomeView.vue';
+import i18n from '../i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from '../composables/useToast';
 import {
@@ -31,24 +32,6 @@ vi.mock('vue-router', () => ({
   useRoute: () => ({
     query: {},
   }),
-}));
-
-vi.mock('vue-i18n', async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return {
-    ...actual,
-    useI18n: () => ({
-      t: (key: string) => key,
-    }),
-  };
-});
-
-vi.mock('../i18n', () => ({
-  default: {
-    global: {
-      t: (key: string) => key,
-    },
-  },
 }));
 
 vi.mock('../utils/analytics', () => ({
@@ -113,12 +96,13 @@ vi.mock('../composables/useToast', () => ({
   },
 }));
 
-describe('HomeView - Prelaunch Warning Don\'t Warn & Launch', () => {
+describe("HomeView - Prelaunch Warning Don't Warn & Launch", () => {
   const wrappers: VueWrapper[] = [];
 
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    i18n.global.locale.value = 'zh-CN';
     launchingInstances.value.clear();
     jvmSpawnedInstances.value.clear();
     runningInstances.value.clear();
@@ -136,15 +120,13 @@ describe('HomeView - Prelaunch Warning Don\'t Warn & Launch', () => {
     const wrapper = mount(HomeView, {
       attachTo: document.body,
       global: {
+        plugins: [i18n],
         stubs: {
           'router-link': { template: '<a><slot /></a>' },
           DropdownMenu: { template: '<div><slot name="trigger" /><slot /></div>' },
           DropdownMenuItem: { template: '<div><slot /></div>' },
           CrashReportModal: true,
           InstanceIcon: true,
-        },
-        mocks: {
-          $t: (key: string) => key,
         },
       },
     });
@@ -186,16 +168,22 @@ describe('HomeView - Prelaunch Warning Don\'t Warn & Launch', () => {
     const wrapper = mountHome();
     await flushPromises();
 
-    const playBtn = wrapper.findAll('button').find((b) => b.text().includes('home.play'));
+    const playBtn = wrapper.findAll('button').find((b) => b.text().includes('启动'));
     expect(playBtn).toBeDefined();
     await playBtn!.trigger('click');
     await flushPromises();
 
-    expect(document.body.textContent).toContain('home.prelaunchWarningTitle');
+    expect(document.body.textContent).toContain('启动前检测到问题');
     expect(document.body.textContent).toContain('fabric-api');
+    expect(document.body.textContent).toContain('不再提示并启动');
+    expect(document.body.textContent).not.toContain('home.dontWarnAndLaunch');
+
+    i18n.global.locale.value = 'en';
+    await flushPromises();
+    expect(document.body.textContent).toContain("Don't Warn & Launch");
 
     const dontWarnBtn = Array.from(document.body.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('home.dontWarnAndLaunch'),
+      b.textContent?.includes("Don't Warn & Launch"),
     );
     expect(dontWarnBtn).toBeDefined();
     dontWarnBtn!.click();
@@ -209,10 +197,10 @@ describe('HomeView - Prelaunch Warning Don\'t Warn & Launch', () => {
       versionId: 'ModPack1',
       accountUuid: 'acc-1',
     });
-    expect(document.body.textContent).not.toContain('home.prelaunchWarningTitle');
+    expect(document.body.textContent).not.toContain('Pre-launch Warning');
   });
 
-  it('shows toast error and keeps modal open without launching when set_instance_prelaunch_check fails', async () => {
+  it('shows translated toast error and keeps modal open without launching when set_instance_prelaunch_check fails', async () => {
     mockBaseInvoke({
       prelaunch_check: () => ({
         modCount: 1,
@@ -228,19 +216,20 @@ describe('HomeView - Prelaunch Warning Don\'t Warn & Launch', () => {
     const wrapper = mountHome();
     await flushPromises();
 
-    const playBtn = wrapper.findAll('button').find((b) => b.text().includes('home.play'));
+    const playBtn = wrapper.findAll('button').find((b) => b.text().includes('启动'));
     await playBtn!.trigger('click');
     await flushPromises();
 
     const dontWarnBtn = Array.from(document.body.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('home.dontWarnAndLaunch'),
+      b.textContent?.includes('不再提示并启动'),
     );
+    expect(dontWarnBtn).toBeDefined();
     dontWarnBtn!.click();
     await flushPromises();
 
-    expect(toast.error).toHaveBeenCalledWith('home.disablePrelaunchFailed', 'Disk read-only');
+    expect(toast.error).toHaveBeenCalledWith('关闭前置检测失败', 'Disk read-only');
     expect(invoke).not.toHaveBeenCalledWith('launch_instance', expect.anything());
-    expect(document.body.textContent).toContain('home.prelaunchWarningTitle');
+    expect(document.body.textContent).toContain('启动前检测到问题');
   });
 
   it('launches directly without showing warning modal when prelaunch_check returns empty warnings', async () => {
@@ -254,11 +243,11 @@ describe('HomeView - Prelaunch Warning Don\'t Warn & Launch', () => {
     const wrapper = mountHome();
     await flushPromises();
 
-    const playBtn = wrapper.findAll('button').find((b) => b.text().includes('home.play'));
+    const playBtn = wrapper.findAll('button').find((b) => b.text().includes('启动'));
     await playBtn!.trigger('click');
     await flushPromises();
 
-    expect(document.body.textContent).not.toContain('home.prelaunchWarningTitle');
+    expect(document.body.textContent).not.toContain('启动前检测到问题');
     expect(invoke).toHaveBeenCalledWith('launch_instance', {
       versionId: 'ModPack1',
       accountUuid: 'acc-1',

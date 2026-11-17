@@ -2,30 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { ref } from 'vue';
 import InstanceSettingsTab from './InstanceSettingsTab.vue';
+import i18n from '../../i18n';
 import { invoke } from '@tauri-apps/api/core';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
-}));
-
-vi.mock('vue-i18n', async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return {
-    ...actual,
-    useI18n: () => ({
-      t: (key: string, defaultOrParams?: string | Record<string, unknown>) =>
-        typeof defaultOrParams === 'string' ? defaultOrParams : key,
-    }),
-  };
-});
-
-vi.mock('../../i18n', () => ({
-  default: {
-    global: {
-      t: (key: string, defaultOrParams?: string | Record<string, unknown>) =>
-        typeof defaultOrParams === 'string' ? defaultOrParams : key,
-    },
-  },
 }));
 
 vi.mock('../../composables/useInstances', () => ({
@@ -49,6 +30,7 @@ vi.mock('../../composables/useLaunchState', () => ({
 describe('InstanceSettingsTab - Prelaunch Mod Dependency Check Switch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    i18n.global.locale.value = 'zh-CN';
   });
 
   function mockBackendConfig(configOverride: Record<string, unknown> = {}) {
@@ -78,7 +60,7 @@ describe('InstanceSettingsTab - Prelaunch Mod Dependency Check Switch', () => {
     });
   }
 
-  it('shows the prelaunch check toggle for modded instances and saves changes', async () => {
+  it('shows the prelaunch check toggle with translated copy for modded instances and saves changes', async () => {
     mockBackendConfig();
 
     const wrapper = mount(InstanceSettingsTab, {
@@ -94,24 +76,30 @@ describe('InstanceSettingsTab - Prelaunch Mod Dependency Check Switch', () => {
         },
       },
       global: {
+        plugins: [i18n],
         stubs: {
           ModLoaderInstallDialog: true,
           ModLoaderUninstallDialog: true,
-        },
-        mocks: {
-          $t: (key: string) => key,
         },
       },
     });
 
     await flushPromises();
 
+    expect(wrapper.text()).toContain('启动前 Mod 前置检测');
+    expect(wrapper.text()).not.toContain('instances.settingsDialog.enablePrelaunchCheck');
+
+    i18n.global.locale.value = 'en';
+    await flushPromises();
+    expect(wrapper.text()).toContain('Pre-launch Mod Dependency Check');
+    expect(wrapper.text()).toContain('Scan enabled mods for missing dependencies before launching.');
+
     const toggle = wrapper.find('#enablePrelaunchCheck');
     expect(toggle.exists()).toBe(true);
     expect((toggle.element as HTMLInputElement).checked).toBe(true);
 
     await toggle.setValue(false);
-    const saveButton = wrapper.findAll('button').find((b) => b.text().includes('common.save') || b.text().includes('Save'));
+    const saveButton = wrapper.findAll('button').find((b) => b.text().includes('Save'));
     expect(saveButton).toBeDefined();
     await saveButton!.trigger('click');
     await flushPromises();
@@ -142,12 +130,10 @@ describe('InstanceSettingsTab - Prelaunch Mod Dependency Check Switch', () => {
         },
       },
       global: {
+        plugins: [i18n],
         stubs: {
           ModLoaderInstallDialog: true,
           ModLoaderUninstallDialog: true,
-        },
-        mocks: {
-          $t: (key: string) => key,
         },
       },
     });
@@ -174,12 +160,10 @@ describe('InstanceSettingsTab - Prelaunch Mod Dependency Check Switch', () => {
         },
       },
       global: {
+        plugins: [i18n],
         stubs: {
           ModLoaderInstallDialog: true,
           ModLoaderUninstallDialog: true,
-        },
-        mocks: {
-          $t: (key: string) => key,
         },
       },
     });
