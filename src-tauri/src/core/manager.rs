@@ -847,10 +847,15 @@ fn extract_mc_version_from_id(id: &str) -> Option<String> {
 #[tauri::command]
 pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, String> {
     let base_dir = get_minecraft_base();
-    let json_path = base_dir
-        .join("versions")
-        .join(&version_id)
-        .join(format!("{}.json", version_id));
+    get_instance_details_in_base(base_dir, &version_id).await
+}
+
+pub(crate) async fn get_instance_details_in_base(
+    base_dir: &std::path::Path,
+    version_id: &str,
+) -> Result<InstanceItem, String> {
+    let instance_dir = base_dir.join("versions").join(version_id);
+    let json_path = instance_dir.join(format!("{}.json", version_id));
 
     if !json_path.exists() {
         return Err(format!("Instance {} not found", version_id));
@@ -861,13 +866,10 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         .map_err(|e| format!("Failed to read version JSON: {}", e))?;
 
     let (mut mc_version, mut loader_type, mut modpack_version, mut modpack_type, mut modpack_project_id) =
-        parse_version_json(&content, &version_id);
+        parse_version_json(&content, version_id);
 
     // Read dlml.json for core metadata and bindings
-    let config_path = base_dir
-        .join("versions")
-        .join(&version_id)
-        .join("dlml.json");
+    let config_path = instance_dir.join("dlml.json");
     let mut server_id = None;
     let mut pack_version_id = None;
     let mut pack_file_name = None;
@@ -882,8 +884,7 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
                 serde_json::from_str::<crate::core::launcher::InstanceConfig>(&content)
             {
                 if has_legacy_fields {
-                    let inst_dir = get_instance_dir(&version_id);
-                    if let Ok(cleaned) = crate::core::launcher::update_instance_config(&inst_dir, |_| {}).await {
+                    if let Ok(cleaned) = crate::core::launcher::update_instance_config(&instance_dir, |_| {}).await {
                         config = cleaned;
                     }
                 }
@@ -948,7 +949,6 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
         }
     }
 
-    let instance_dir = base_dir.join("versions").join(&version_id);
     let icon_path = crate::core::instance_icon::resolve_icon_path(&instance_dir, icon_name.as_deref())
         .await
         .map(|p| p.to_string_lossy().to_string());
@@ -956,14 +956,14 @@ pub async fn get_instance_details(version_id: String) -> Result<InstanceItem, St
     if loader_version.is_none() && loader_type != "Vanilla" {
         if let Ok(c) = tokio::fs::read_to_string(&json_path).await {
             if let Ok(pj) = serde_json::from_str::<serde_json::Value>(&c) {
-                loader_version = crate::core::mod_loader::extract_loader_version_from_json(&pj, &version_id);
+                loader_version = crate::core::mod_loader::extract_loader_version_from_json(&pj, version_id);
             }
         }
     }
 
     Ok(InstanceItem {
-        id: version_id.clone(),
-        name: version_id,
+        id: version_id.to_string(),
+        name: version_id.to_string(),
         mc_version,
         loader_type,
         loader_version,
@@ -3294,7 +3294,7 @@ pub async fn disable_mod_by_name(
 }
 
 /// A single warning from a prelaunch mod dependency check.
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrelaunchWarning {
     pub kind: String,
@@ -3303,7 +3303,7 @@ pub struct PrelaunchWarning {
 }
 
 /// Result of a prelaunch check: list of warnings and total mod count.
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrelaunchCheckResult {
     pub warnings: Vec<PrelaunchWarning>,
@@ -3320,27 +3320,71 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
     }
     let _op_permit = crate::core::cache::acquire_operation_permit(None).await;
     let base_dir = get_minecraft_base();
-    let mods_dir = base_dir.join("versions").join(&version_id).join("mods");
+    prelaunch_check_in_base(base_dir, &version_id).await
+}
 
+pub(crate) async fn prelaunch_check_in_base(
+    base_dir: &std::path::Path,
+    version_id: &str,
+) -> Result<PrelaunchCheckResult, String> {
+    if !crate::core::fs_utils::is_safe_single_name(version_id) {
+        return Err("Invalid instance ID".to_string());
+    }
+
+    let instance_dir = base_dir.join("versions").join(version_id);
+    match crate::core::launcher::get_instance_config_at(&instance_dir).await {
+        Ok(config) if !config.enable_prelaunch_check => {
+            tracing::info!(
+                "Prelaunch check disabled for instance {}, skipping",
+                version_id
+            );
+            return Ok(PrelaunchCheckResult {
+                warnings: vec![],
+                mod_count: 0,
+            });
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(
+                "Failed to read instance config for {} during prelaunch check, defaulting to enabled: {}",
+                version_id,
+                err.message
+            );
+        }
+    }
+
+    let mods_dir = instance_dir.join("mods");
     if !mods_dir.exists() {
         return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: 0 });
     }
 
-    // Collect enabled .jar file paths based on installed mod metadata
-    let installed_mods = get_installed_mods(version_id.clone(), Some(true))
-        .await
-        .map_err(|e| format!("Failed to get installed mods: {}", e))?;
-
+    // Collect enabled .jar file paths in mods directory
     let mut jar_entries = Vec::new();
-    for mod_entry in installed_mods.into_iter().filter(|m| m.enabled) {
-        jar_entries.push((mod_entry.filename.clone(), mods_dir.join(&mod_entry.filename)));
+    let mut entries = tokio::fs::read_dir(&mods_dir)
+        .await
+        .map_err(|e| format!("Failed to read mods directory: {}", e))?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| format!("Failed to read directory entry: {}", e))?
+    {
+        let path = entry.path();
+        let filename = entry.file_name().to_string_lossy().to_string();
+        if !filename.ends_with(".jar") {
+            continue;
+        }
+        if let Ok(metadata) = tokio::fs::metadata(&path).await {
+            if metadata.is_file() {
+                jar_entries.push((filename, path));
+            }
+        }
     }
 
     if jar_entries.is_empty() {
         return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: 0 });
     }
 
-    let instance = match get_instance_details(version_id.clone()).await {
+    let instance = match get_instance_details_in_base(base_dir, version_id).await {
         Ok(i) => i,
         Err(_) => return Ok(PrelaunchCheckResult { warnings: vec![], mod_count: 0 }),
     };
@@ -3350,7 +3394,7 @@ pub async fn prelaunch_check(version_id: String) -> Result<PrelaunchCheckResult,
     }
 
     // Parse all mod metadata in a blocking thread (parse_mod uses sync IO)
-    let base_dir_for_parser = base_dir.clone();
+    let base_dir_for_parser = base_dir.to_path_buf();
     let loader_type_for_parser = loader_type.clone();
     let metas = tokio::task::spawn_blocking(move || {
         let parser = crate::core::mod_parser::ModParser::new(&base_dir_for_parser);
@@ -5731,6 +5775,82 @@ mod tests {
             zh_name_embedded: None,
         };
         assert!(evaluate_prelaunch_warnings(&[forge_mod], "Vanilla").is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_prelaunch_check_in_base_respects_enable_prelaunch_check() {
+        use std::io::Write;
+        use tempfile::tempdir;
+        use zip::write::SimpleFileOptions;
+
+        let dir = tempdir().expect("tempdir");
+        let base_dir = dir.path();
+        let instance_id = "fabric_pack";
+        let inst_dir = base_dir.join("versions").join(instance_id);
+        let mods_dir = inst_dir.join("mods");
+        tokio::fs::create_dir_all(&mods_dir).await.unwrap();
+
+        tokio::fs::write(
+            inst_dir.join(format!("{}.json", instance_id)),
+            r#"{"id":"fabric_pack","inheritsFrom":"1.20.1"}"#,
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(
+            inst_dir.join("dlml.json"),
+            r#"{"mcVersion":"1.20.1","loaderType":"Fabric","status":"ready"}"#,
+        )
+        .await
+        .unwrap();
+
+        let broken_mod_jar = mods_dir.join("broken-mod.jar");
+        {
+            let file = std::fs::File::create(&broken_mod_jar).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = SimpleFileOptions::default();
+            zip.start_file("fabric.mod.json", opts).unwrap();
+            zip.write_all(
+                br#"{
+                    "schemaVersion": 1,
+                    "id": "broken_mod",
+                    "version": "1.0.0",
+                    "name": "Broken Mod",
+                    "depends": {
+                        "missing_dep_lib": "*"
+                    }
+                }"#,
+            )
+            .unwrap();
+            zip.finish().unwrap();
+        }
+
+        // Default (missing enablePrelaunchCheck) runs check and detects warning
+        let res_default = prelaunch_check_in_base(base_dir, instance_id)
+            .await
+            .unwrap();
+        assert_eq!(res_default.mod_count, 1);
+        assert_eq!(res_default.warnings.len(), 1);
+        assert_eq!(res_default.warnings[0].dependency_id, "missing_dep_lib");
+
+        // Disable prelaunch check -> skips scanning and returns no warnings
+        crate::core::launcher::set_instance_prelaunch_check_at(&inst_dir, false)
+            .await
+            .unwrap();
+        let res_disabled = prelaunch_check_in_base(base_dir, instance_id)
+            .await
+            .unwrap();
+        assert_eq!(res_disabled.mod_count, 0);
+        assert!(res_disabled.warnings.is_empty());
+
+        // Re-enable -> detects warning again
+        crate::core::launcher::set_instance_prelaunch_check_at(&inst_dir, true)
+            .await
+            .unwrap();
+        let res_reenabled = prelaunch_check_in_base(base_dir, instance_id)
+            .await
+            .unwrap();
+        assert_eq!(res_reenabled.mod_count, 1);
+        assert_eq!(res_reenabled.warnings.len(), 1);
     }
 
     #[tokio::test]

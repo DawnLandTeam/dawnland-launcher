@@ -22,9 +22,11 @@ import {
   AlertTriangle
 } from "@lucide/vue";
 import { DropdownMenu, DropdownMenuItem } from "../components/ui/dropdown-menu";
+import DButton from "../components/ui/DButton.vue";
 import CrashReportModal from "../components/CrashReportModal.vue";
 import InstanceIcon from "../components/InstanceIcon.vue";
 import { useI18n } from "vue-i18n";
+import { toast } from "../composables/useToast";
 
 import { useTaskStatusReload } from "../composables/useTaskStatusReload";
 import { useStatistics } from "../composables/useStatistics";
@@ -93,6 +95,8 @@ import { launchingInstances, jvmSpawnedInstances, runningInstances, repairingIns
 const showGameLog = ref(false);
 const prelaunchWarnings = ref<PrelaunchWarning[]>([]);
 const showPrelaunchWarning = ref(false);
+const prelaunchWarningInstanceId = ref("");
+const isUpdatingPrelaunchCheck = ref(false);
 
 // Kill tracking state
 const intentionallyKilledInstances = ref<Set<string>>(new Set());
@@ -589,19 +593,21 @@ async function handlePrimaryAction() {
     return;
   }
 
+  const targetVersionId = selectedInstanceId.value;
   // Add to launching set immediately for UI feedback during prelaunch check
-  launchingInstances.value.add(selectedInstanceId.value);
+  launchingInstances.value.add(targetVersionId);
 
   // Prelaunch mod dependency check
   try {
     const result = await invoke<PrelaunchCheckResult>("prelaunch_check", {
-      versionId: selectedInstanceId.value,
+      versionId: targetVersionId,
     });
     if (result.warnings.length > 0) {
       prelaunchWarnings.value = result.warnings;
+      prelaunchWarningInstanceId.value = targetVersionId;
       showPrelaunchWarning.value = true;
       // Remove launching state because we are pausing to ask the user
-      launchingInstances.value.delete(selectedInstanceId.value);
+      launchingInstances.value.delete(targetVersionId);
       return;
     }
   } catch (e) {
@@ -643,13 +649,40 @@ async function doLaunch() {
 }
 
 function confirmLaunchWithWarnings() {
+  if (isUpdatingPrelaunchCheck.value) return;
   showPrelaunchWarning.value = false;
+  prelaunchWarnings.value = [];
+  prelaunchWarningInstanceId.value = "";
   doLaunch();
 }
 
 function cancelLaunchWithWarnings() {
+  if (isUpdatingPrelaunchCheck.value) return;
   showPrelaunchWarning.value = false;
   prelaunchWarnings.value = [];
+  prelaunchWarningInstanceId.value = "";
+}
+
+async function disablePrelaunchAndLaunch() {
+  const targetId = prelaunchWarningInstanceId.value || selectedInstanceId.value;
+  if (!targetId || isUpdatingPrelaunchCheck.value) return;
+
+  isUpdatingPrelaunchCheck.value = true;
+  try {
+    await invoke("set_instance_prelaunch_check", {
+      versionId: targetId,
+      enabled: false,
+    });
+    showPrelaunchWarning.value = false;
+    prelaunchWarnings.value = [];
+    prelaunchWarningInstanceId.value = "";
+    await doLaunch();
+  } catch (e) {
+    logger.error("Failed to disable prelaunch check for instance:", e);
+    toast.error(t("home.disablePrelaunchFailed"), getErrorMessage(e));
+  } finally {
+    isUpdatingPrelaunchCheck.value = false;
+  }
 }
 
 async function handleLaunchError(e: any) {
@@ -1020,15 +1053,37 @@ function loaderBadgeClass(loaderType: string): string {
                 </span>
               </div>
             </div>
-            <div class="flex justify-end gap-2">
-              <button @click="cancelLaunchWithWarnings"
-                class="px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors">
-                {{ $t('common.cancel') }}
-              </button>
-              <button @click="confirmLaunchWithWarnings"
-                class="px-4 py-2 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-lg transition-colors">
-                {{ $t('home.launchAnyway') }}
-              </button>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <DButton
+                type="button"
+                variant="outline"
+                size="sm"
+                :disabled="isUpdatingPrelaunchCheck"
+                @click="disablePrelaunchAndLaunch"
+              >
+                <Loader2 v-if="isUpdatingPrelaunchCheck" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                {{ $t('home.dontWarnAndLaunch') }}
+              </DButton>
+              <div class="flex items-center gap-2 ml-auto">
+                <DButton
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  :disabled="isUpdatingPrelaunchCheck"
+                  @click="cancelLaunchWithWarnings"
+                >
+                  {{ $t('common.cancel') }}
+                </DButton>
+                <DButton
+                  type="button"
+                  size="sm"
+                  :disabled="isUpdatingPrelaunchCheck"
+                  @click="confirmLaunchWithWarnings"
+                  class="bg-amber-500 hover:bg-amber-600 text-white"
+                >
+                  {{ $t('home.launchAnyway') }}
+                </DButton>
+              </div>
             </div>
           </div>
         </div>

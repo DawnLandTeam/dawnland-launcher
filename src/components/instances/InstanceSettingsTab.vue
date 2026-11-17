@@ -32,6 +32,7 @@ interface InstanceConfig {
   windowHeight?: number;
   windowBehavior?: string;
   showGameLog?: boolean;
+  enablePrelaunchCheck?: boolean;
 }
 
 interface JvmTuningPreview {
@@ -75,6 +76,7 @@ const settingsConfig = ref<InstanceConfig>({
   windowHeight: 720,
   windowBehavior: 'keep',
   showGameLog: false,
+  enablePrelaunchCheck: true,
 });
 
 const useGlobalMemory = ref(true);
@@ -359,6 +361,7 @@ async function loadData() {
         windowHeight: loadedHeight,
         windowBehavior: config.windowBehavior || 'keep',
         showGameLog: config.showGameLog === true,
+        enablePrelaunchCheck: config.enablePrelaunchCheck !== false,
       };
       await loadTuningPreview();
     } catch (e) {
@@ -376,6 +379,7 @@ async function loadData() {
         windowHeight: 720,
         windowBehavior: 'keep',
         showGameLog: false,
+        enablePrelaunchCheck: true,
       };
     }
   } finally {
@@ -409,6 +413,7 @@ async function saveSettings() {
       windowHeight,
       windowBehavior: settingsConfig.value.windowBehavior || 'keep',
       showGameLog: settingsConfig.value.showGameLog,
+      enablePrelaunchCheck: settingsConfig.value.enablePrelaunchCheck !== false,
     };
 
     await invoke('save_instance_config', {
@@ -773,6 +778,29 @@ async function openInstanceSubfolder(subfolder: string) {
             <p class="text-xs text-muted-foreground mt-0.5">
               {{ t('instances.settingsDialog.showGameLogDesc') }}
             </p>
+          </label>
+        </div>
+
+        <!-- Pre-launch Mod Dependency Check (Modded instances only) -->
+        <div
+          v-if="!isVanilla"
+          class="flex items-center justify-between gap-4 p-4 border border-neutral-200 dark:border-zinc-800 rounded-lg bg-white/50 dark:bg-zinc-900/50"
+        >
+          <label for="enablePrelaunchCheck" class="flex-1 cursor-pointer">
+            <span class="font-medium text-sm">{{ t('instances.settingsDialog.enablePrelaunchCheck') }}</span>
+            <p class="text-xs text-muted-foreground mt-0.5">
+              {{ t('instances.settingsDialog.enablePrelaunchCheckDesc') }}
+            </p>
+          </label>
+          <label class="relative inline-flex items-center cursor-pointer shrink-0">
+            <input
+              type="checkbox"
+              id="enablePrelaunchCheck"
+              v-model="settingsConfig.enablePrelaunchCheck"
+              :disabled="isSettingsInstanceRunning || isLoadingConfig"
+              class="sr-only peer"
+            />
+            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/30 dark:peer-focus:ring-primary/80 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white dark:peer-checked:after:border-zinc-900 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white dark:peer-checked:after:bg-zinc-900 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
           </label>
         </div>
         <!-- Game Settings -->
