@@ -367,7 +367,9 @@ impl TaskManager {
     pub async fn recover_stale_instances(&self) {
         let base_dir = crate::core::mojang::get_minecraft_base();
         let versions_dir = base_dir.join("versions");
+        let cache_dir = crate::core::mojang::get_dawnland_cache();
         recover_stale_instances_internal(&versions_dir, &self.db, &self.active_tasks).await;
+        recover_stale_cache_instances_internal(&cache_dir, &self.active_tasks).await;
     }
 
     pub fn start_instance_install(&self, instance_id: &str) -> InstanceStartupGuard {
@@ -1120,19 +1122,42 @@ pub async fn recover_stale_instances_internal(
     db: &TaskDatabase,
     active_tasks: &RwLock<HashMap<String, Arc<TaskWorkerHandle>>>,
 ) {
-    if !tokio::fs::try_exists(versions_dir).await.unwrap_or(false) {
+    recover_stale_configs_in_root(versions_dir, Some(db), active_tasks, false).await;
+}
+
+pub async fn recover_stale_cache_instances_internal(
+    cache_dir: &std::path::Path,
+    active_tasks: &RwLock<HashMap<String, Arc<TaskWorkerHandle>>>,
+) {
+    recover_stale_configs_in_root(cache_dir, None, active_tasks, true).await;
+}
+
+async fn recover_stale_configs_in_root(
+    root_dir: &std::path::Path,
+    db: Option<&TaskDatabase>,
+    active_tasks: &RwLock<HashMap<String, Arc<TaskWorkerHandle>>>,
+    is_cache_root: bool,
+) {
+    if !tokio::fs::try_exists(root_dir).await.unwrap_or(false) {
         return;
     }
 
-    let mut entries = match tokio::fs::read_dir(versions_dir).await {
+    let mut entries = match tokio::fs::read_dir(root_dir).await {
         Ok(entries) => entries,
         Err(e) => {
-            tracing::warn!("Failed to read versions directory during instance recovery: {}", e);
+            tracing::warn!(
+                "Failed to read {} directory during instance recovery: {}",
+                if is_cache_root { "version cache" } else { "versions" },
+                e
+            );
             return;
         }
     };
 
-    let all_tasks = db.load_all_tasks().await.unwrap_or_default();
+    let all_tasks = match db {
+        Some(db) => db.load_all_tasks().await.unwrap_or_default(),
+        None => Vec::new(),
+    };
     let active_tasks_guard = active_tasks.read().await;
 
     while let Ok(Some(entry)) = entries.next_entry().await {
@@ -1161,7 +1186,8 @@ pub async fn recover_stale_instances_internal(
             Err(_) => continue,
         };
 
-        if !config.effective_status().is_busy() {
+        let status = config.effective_status();
+        if !status.is_busy() && !status.is_running() {
             continue;
         }
 
@@ -1175,38 +1201,57 @@ pub async fn recover_stale_instances_internal(
             continue;
         }
 
-        // Find all tasks related to this instance in DB
-        let mut related_tasks: Vec<&TaskState> = all_tasks
-            .iter()
-            .filter(|t| t.task_type.instance_id().as_deref() == Some(&instance_id))
-            .collect();
+        let should_remove_dir = if is_cache_root {
+            matches!(
+                status,
+                crate::core::launcher::InstanceStatus::Installing
+                    | crate::core::launcher::InstanceStatus::CancellingInstall
+            )
+        } else if status.is_running() {
+            false
+        } else {
+            // Find all tasks related to this instance in DB
+            let mut related_tasks: Vec<&TaskState> = all_tasks
+                .iter()
+                .filter(|t| t.task_type.instance_id().as_deref() == Some(&instance_id))
+                .collect();
 
-        // Sort by updated_at descending to inspect the most recent task
-        related_tasks.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
+            // Sort by updated_at descending to inspect the most recent task
+            related_tasks.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
 
-        let latest_task = related_tasks.first().copied();
+            let latest_task = related_tasks.first().copied();
 
-        let is_cancelled_fresh_install = latest_task.is_some_and(|t| {
-            (t.status == TaskStatus::Cancelled || t.status == TaskStatus::Cancelling)
-                && t.task_type.is_core_installation()
-                && !t.task_type.is_update()
-        });
+            latest_task.is_some_and(|t| {
+                (t.status == TaskStatus::Cancelled || t.status == TaskStatus::Cancelling)
+                    && t.task_type.is_core_installation()
+                    && !t.task_type.is_update()
+            })
+        };
 
-        if is_cancelled_fresh_install {
+        if should_remove_dir {
             tracing::info!(
-                "Startup recovery: removing leftover directory of cancelled fresh installation: {}",
+                "Startup recovery: removing leftover directory of interrupted {} installation: {}",
+                if is_cache_root { "dependency cache" } else { "fresh" },
                 instance_id
             );
             if let Err(err) = tokio::fs::remove_dir_all(&path).await {
                 tracing::warn!(
-                    "Startup recovery: failed to remove cancelled instance dir {}: {}",
-                    path.display(),
+                    "Startup recovery: failed to remove leftover dir {}: {}",
+                    crate::logger::redact::redact_user_paths(&path.display().to_string()),
                     err
                 );
+                if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+                    let _ = crate::core::launcher::update_instance_config(&path, |cfg| {
+                        cfg.set_status(crate::core::launcher::InstanceStatus::Ready);
+                    })
+                    .await;
+                }
             }
         } else {
             tracing::info!(
-                "Startup recovery: resetting stale status for instance: {}",
+                "Startup recovery: resetting stale status ({:?}) for {}: {}",
+                status,
+                if is_cache_root { "dependency cache" } else { "instance" },
                 instance_id
             );
             let _ = crate::core::launcher::update_instance_config(&path, |cfg| {
@@ -1348,6 +1393,64 @@ mod tests {
         assert!(tokio::fs::try_exists(&inst_dir).await.unwrap_or(false));
 
         let content = tokio::fs::read_to_string(inst_dir.join("dlml.json")).await.unwrap();
+        let loaded: crate::core::launcher::InstanceConfig = serde_json::from_str(&content).unwrap();
+        assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_recover_stale_cache_and_running_instances() {
+        let temp = tempdir().expect("tempdir");
+        let versions_dir = temp.path().join("versions");
+        let cache_dir = temp.path().join("cache");
+
+        // 1. Stale Installing dependency cache in .dawnland/cache/ -> removed
+        let stale_cache_installing = cache_dir.join("1.20.4");
+        tokio::fs::create_dir_all(&stale_cache_installing)
+            .await
+            .expect("create cache dir");
+        let cache_cfg = crate::core::launcher::InstanceConfig {
+            hidden: true,
+            status: crate::core::launcher::InstanceStatus::Installing,
+            ..Default::default()
+        };
+        tokio::fs::write(
+            stale_cache_installing.join("dlml.json"),
+            serde_json::to_string_pretty(&cache_cfg).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // 2. Stale Running instance in versions/ -> reset to Ready (directory preserved)
+        let stale_running_inst = versions_dir.join("running_on_disk");
+        tokio::fs::create_dir_all(&stale_running_inst)
+            .await
+            .expect("create inst dir");
+        let inst_cfg = crate::core::launcher::InstanceConfig {
+            status: crate::core::launcher::InstanceStatus::Running,
+            ..Default::default()
+        };
+        tokio::fs::write(
+            stale_running_inst.join("dlml.json"),
+            serde_json::to_string_pretty(&inst_cfg).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let db = TaskDatabase::new(temp.path().join("tasks.db")).await.expect("db");
+        let active_tasks = RwLock::new(HashMap::new());
+        recover_stale_instances_internal(&versions_dir, &db, &active_tasks).await;
+        recover_stale_cache_instances_internal(&cache_dir, &active_tasks).await;
+
+        assert!(
+            !tokio::fs::try_exists(&stale_cache_installing)
+                .await
+                .unwrap_or(false),
+            "interrupted dependency cache install should be removed"
+        );
+        assert!(tokio::fs::try_exists(&stale_running_inst).await.unwrap_or(false));
+        let content = tokio::fs::read_to_string(stale_running_inst.join("dlml.json"))
+            .await
+            .unwrap();
         let loaded: crate::core::launcher::InstanceConfig = serde_json::from_str(&content).unwrap();
         assert_eq!(loaded.status, crate::core::launcher::InstanceStatus::Ready);
     }

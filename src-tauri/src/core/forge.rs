@@ -1225,94 +1225,101 @@ impl InstallForgeTask {
                 created_temp_vanilla = true;
             }
 
-            let mut child = match crate::core::utils::create_hidden_command(&java_exec)
-                .arg("-jar")
-                .arg(&installer_path)
-                .arg("--installClient")
-                .arg(base_dir.to_string_lossy().to_string())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    let err_msg = format!(
-                        "Failed to execute Forge installer: {}. Make sure Java is installed.",
-                        e
-                    );
-                    tracing::warn!("{}", err_msg);
-                    return Err(TaskError::ExecutionError(err_msg));
-                }
-            };
-
-            let stdout = child.stdout.take().expect("Failed to get stdout");
-            let stderr = child.stderr.take().expect("Failed to get stderr");
-
-            use tokio::io::AsyncBufReadExt;
-            use tracing::Instrument;
-            let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
-            let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
             let stderr_tail = std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::VecDeque::<String>::with_capacity(30),
             ));
-            let current_span = tracing::Span::current();
 
-            let ctx_clone1 = ctx_install.clone();
-            let stdout_task = tokio::spawn(
-                async move {
-                    while let Ok(Some(line)) = stdout_reader.next_line().await {
-                        tracing::trace!("Forge stdout: {}", line);
-                        let display_line = if line.len() > 120 {
-                            format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
-                        } else {
-                            line
-                        };
-                        ctx_clone1.update_progress(0, 100, &display_line).await;
+            let run_result: Result<std::process::ExitStatus, TaskError> = async {
+                let mut child = match crate::core::utils::create_hidden_command(&java_exec)
+                    .arg("-jar")
+                    .arg(&installer_path)
+                    .arg("--installClient")
+                    .arg(base_dir.to_string_lossy().to_string())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let err_msg = format!(
+                            "Failed to execute Forge installer: {}. Make sure Java is installed.",
+                            e
+                        );
+                        tracing::warn!("{}", err_msg);
+                        return Err(TaskError::ExecutionError(err_msg));
                     }
-                }
-                .instrument(current_span.clone()),
-            );
+                };
 
-            let ctx_clone2 = ctx_install.clone();
-            let stderr_tail_clone = stderr_tail.clone();
-            let stderr_task = tokio::spawn(
-                async move {
-                    while let Ok(Some(line)) = stderr_reader.next_line().await {
-                        tracing::debug!("Forge stderr: {}", line);
-                        {
-                            let mut buf = stderr_tail_clone.lock().await;
-                            if buf.len() >= 30 {
-                                buf.pop_front();
-                            }
-                            buf.push_back(line.clone());
+                let stdout = child.stdout.take().expect("Failed to get stdout");
+                let stderr = child.stderr.take().expect("Failed to get stderr");
+
+                use tokio::io::AsyncBufReadExt;
+                use tracing::Instrument;
+                let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
+                let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
+                let current_span = tracing::Span::current();
+
+                let ctx_clone1 = ctx_install.clone();
+                let stdout_task = tokio::spawn(
+                    async move {
+                        while let Ok(Some(line)) = stdout_reader.next_line().await {
+                            tracing::trace!("Forge stdout: {}", line);
+                            let display_line = if line.len() > 120 {
+                                format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
+                            } else {
+                                line
+                            };
+                            ctx_clone1.update_progress(0, 100, &display_line).await;
                         }
-                        let display_line = if line.len() > 120 {
-                            format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
-                        } else {
-                            line
-                        };
-                        ctx_clone2.update_progress(0, 100, &display_line).await;
                     }
-                }
-                .instrument(current_span),
-            );
-            let status = tokio::select! {
-                res = child.wait() => {
-                    res.map_err(|e| TaskError::ExecutionError(format!("Failed to wait on Forge installer: {}", e)))?
-                }
-                _ = ctx_install.wait_cancelled() => {
-                    crate::core::utils::kill_process_tree(&mut child).await;
-                    return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
-                }
-            };
+                    .instrument(current_span.clone()),
+                );
 
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
+                let ctx_clone2 = ctx_install.clone();
+                let stderr_tail_clone = stderr_tail.clone();
+                let stderr_task = tokio::spawn(
+                    async move {
+                        while let Ok(Some(line)) = stderr_reader.next_line().await {
+                            tracing::debug!("Forge stderr: {}", line);
+                            {
+                                let mut buf = stderr_tail_clone.lock().await;
+                                if buf.len() >= 30 {
+                                    buf.pop_front();
+                                }
+                                buf.push_back(line.clone());
+                            }
+                            let display_line = if line.len() > 120 {
+                                format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
+                            } else {
+                                line
+                            };
+                            ctx_clone2.update_progress(0, 100, &display_line).await;
+                        }
+                    }
+                    .instrument(current_span),
+                );
+                let status = tokio::select! {
+                    res = child.wait() => {
+                        res.map_err(|e| TaskError::ExecutionError(format!("Failed to wait on Forge installer: {}", e)))?
+                    }
+                    _ = ctx_install.wait_cancelled() => {
+                        crate::core::utils::kill_process_tree(&mut child).await;
+                        return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+                    }
+                };
+
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                Ok(status)
+            }
+            .await;
 
             if created_temp_vanilla {
                 let _ = fs::remove_dir_all(&temp_vanilla_dir).await;
                 tracing::debug!("Cleaned up temporary vanilla base directory");
             }
+
+            let status = run_result?;
 
             if !status.success() {
                 let err_msg = format!(
@@ -1536,8 +1543,10 @@ pub async fn install_forge_instance(
         dir
     };
     let _startup_guard = task_manager.start_instance_install(&custom_instance_name);
-    let _ = tokio::fs::create_dir_all(&instance_dir).await;
+    let dir_existed = instance_dir.exists();
     let config_path = instance_dir.join("dlml.json");
+    let config_existed = config_path.exists();
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let mut pre_config = crate::core::launcher::InstanceConfig {
         hidden: is_dependency.unwrap_or(false),
         ..Default::default()
@@ -1558,7 +1567,7 @@ pub async fn install_forge_instance(
         },
     };
 
-    let task_id = task_manager
+    let task_id = match task_manager
         .spawn_task(
             TaskType::InstallForge {
                 mc_version: mc_version.clone(),
@@ -1570,7 +1579,19 @@ pub async fn install_forge_instance(
             task,
         )
         .await
-        .map_err(|e| format!("Failed to spawn task: {}", e))?;
+    {
+        Ok(id) => id,
+        Err(e) => {
+            crate::core::launcher::rollback_precreated_instance_status(
+                &instance_dir,
+                dir_existed,
+                config_existed,
+                false,
+            )
+            .await;
+            return Err(format!("Failed to spawn task: {}", e).into());
+        }
+    };
 
     Ok(task_id)
 }

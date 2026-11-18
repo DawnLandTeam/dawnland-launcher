@@ -1071,6 +1071,41 @@ impl InstanceConfig {
     }
 }
 
+/// Roll back pre-created or status-flagged instance metadata if spawning the backing task fails.
+pub async fn rollback_precreated_instance_status(
+    instance_dir: &Path,
+    dir_existed: bool,
+    config_existed: bool,
+    is_update: bool,
+) {
+    if !is_update && !dir_existed {
+        match tokio::fs::remove_dir_all(instance_dir).await {
+            Ok(()) => return,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to remove pre-created instance directory {} after spawn error: {}",
+                    crate::logger::redact::redact_user_paths(&instance_dir.display().to_string()),
+                    err
+                );
+            }
+        }
+    }
+
+    let config_path = instance_dir.join(CONFIG_FILENAME);
+    if !is_update && !config_existed {
+        let _ = tokio::fs::remove_file(&config_path).await;
+        return;
+    }
+
+    if tokio::fs::try_exists(&config_path).await.unwrap_or(false) {
+        let _ = update_instance_config(instance_dir, |config| {
+            config.set_status(InstanceStatus::Ready);
+        })
+        .await;
+    }
+}
+
 fn default_window_width() -> u32 {
     DEFAULT_WINDOW_WIDTH
 }
@@ -4939,5 +4974,40 @@ mod tests {
 
         let status = child.wait().expect("wait after TerminateJobObject should succeed");
         assert_eq!(status.code(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn test_rollback_precreated_instance_status() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("tempdir");
+
+        // Case 1: Fresh install created a brand new directory -> removed completely.
+        let fresh_dir = temp.path().join("fresh_inst");
+        tokio::fs::create_dir_all(&fresh_dir).await.unwrap();
+        let fresh_cfg = InstanceConfig {
+            status: InstanceStatus::Installing,
+            ..Default::default()
+        };
+        write_instance_config_atomic(&fresh_dir.join("dlml.json"), &fresh_cfg)
+            .await
+            .unwrap();
+        rollback_precreated_instance_status(&fresh_dir, false, false, false).await;
+        assert!(!fresh_dir.exists());
+
+        // Case 2: Update on an existing instance -> preserves directory and resets status to Ready.
+        let existing_dir = temp.path().join("existing_inst");
+        tokio::fs::create_dir_all(&existing_dir).await.unwrap();
+        let updating_cfg = InstanceConfig {
+            status: InstanceStatus::Updating,
+            ..Default::default()
+        };
+        write_instance_config_atomic(&existing_dir.join("dlml.json"), &updating_cfg)
+            .await
+            .unwrap();
+        rollback_precreated_instance_status(&existing_dir, true, true, true).await;
+        assert!(existing_dir.exists());
+        let loaded = get_instance_config_at(&existing_dir).await.unwrap();
+        assert_eq!(loaded.status, InstanceStatus::Ready);
     }
 }

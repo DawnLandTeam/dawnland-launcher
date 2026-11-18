@@ -491,6 +491,54 @@ impl InstallVanillaTask {
 #[async_trait::async_trait]
 impl ExecutableTask for InstallVanillaTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
+        let is_dep = self.options.is_dependency.unwrap_or(false);
+        let instance_id = self
+            .options
+            .custom_instance_name
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| self.options.version_id.clone());
+        let base_dir = get_minecraft_base();
+        let version_dir = if is_dep {
+            get_dawnland_cache().join(&self.options.version_id)
+        } else {
+            base_dir.join("versions").join(&instance_id)
+        };
+
+        let res = self.execute_inner(&ctx, &version_dir, &instance_id).await;
+        if res.is_err() && is_dep {
+            match tokio::fs::remove_dir_all(&version_dir).await {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to remove incomplete dependency cache {}: {}",
+                        crate::logger::redact::redact_user_paths(&version_dir.display().to_string()),
+                        err
+                    );
+                    if tokio::fs::try_exists(version_dir.join("dlml.json"))
+                        .await
+                        .unwrap_or(false)
+                    {
+                        let _ = crate::core::launcher::update_instance_config(&version_dir, |c| {
+                            c.set_status(crate::core::launcher::InstanceStatus::Ready);
+                        })
+                        .await;
+                    }
+                }
+            }
+        }
+        res
+    }
+}
+
+impl InstallVanillaTask {
+    async fn execute_inner(
+        &self,
+        ctx: &TaskContext,
+        version_dir: &std::path::Path,
+        instance_id: &str,
+    ) -> Result<(), TaskError> {
         let version_id = &self.options.version_id;
         let is_dependency = self.options.is_dependency;
         let settings = crate::core::settings::get_launcher_settings_sync();
@@ -515,19 +563,12 @@ impl ExecutableTask for InstallVanillaTask {
                 .await;
         }
 
-        let instance_id = self.options.custom_instance_name.clone().unwrap_or(version_id.clone());
-
         let base_dir = get_minecraft_base();
-        let version_dir = if is_dependency.unwrap_or(false) {
-            get_dawnland_cache().join(version_id)
-        } else {
-            base_dir.join("versions").join(&instance_id)
-        };
 
-        let _ = tokio::fs::create_dir_all(&version_dir).await;
+        let _ = tokio::fs::create_dir_all(version_dir).await;
         crate::core::launcher::InstanceConfig::ensure_installing(
-            &version_dir,
-            self.options.is_dependency.unwrap_or(false),
+            version_dir,
+            is_dep,
         )
         .await
         .map_err(|e| TaskError::ExecutionError(e.to_string()))?;
@@ -823,12 +864,7 @@ impl ExecutableTask for InstallVanillaTask {
         .map_err(TaskError::ExecutionError)?;
 
         if ctx.is_cancelled() {
-            let version_dir = if is_dependency.unwrap_or(false) {
-                get_dawnland_cache().join(version_id)
-            } else {
-                base_dir.join("versions").join(&instance_id)
-            };
-            let _ = tokio::fs::remove_dir_all(&version_dir).await;
+            let _ = tokio::fs::remove_dir_all(version_dir).await;
             return Err(TaskError::ExecutionError(
                 "Installation cancelled by user".to_string(),
             ));
@@ -836,20 +872,15 @@ impl ExecutableTask for InstallVanillaTask {
 
         ctx.update_progress(100, 100, "Complete").await;
 
-        let version_dir = if is_dependency.unwrap_or(false) {
-            get_dawnland_cache().join(version_id)
-        } else {
-            base_dir.join("versions").join(&instance_id)
-        };
-        let _ = crate::core::launcher::update_instance_config(&version_dir, |config| {
-            config.hidden = is_dependency.unwrap_or(false);
+        let _ = crate::core::launcher::update_instance_config(version_dir, |config| {
+            config.hidden = is_dep;
             config.mc_version = Some(version_id.clone());
             config.set_status(crate::core::launcher::InstanceStatus::Ready);
         })
         .await;
 
-        if !is_dependency.unwrap_or(false) {
-            crate::core::launcher::apply_global_game_settings(&version_dir).await;
+        if !is_dep {
+            crate::core::launcher::apply_global_game_settings(version_dir).await;
         }
 
         Ok(())
@@ -889,8 +920,10 @@ pub async fn install_vanilla_version(
         dir
     };
     let _startup_guard = task_manager.start_instance_install(&instance_id);
-    let _ = tokio::fs::create_dir_all(&version_dir).await;
+    let dir_existed = version_dir.exists();
     let config_path = version_dir.join("dlml.json");
+    let config_existed = config_path.exists();
+    let _ = tokio::fs::create_dir_all(&version_dir).await;
     let mut pre_config = crate::core::launcher::InstanceConfig {
         hidden: is_dependency.unwrap_or(false),
         ..Default::default()
@@ -907,7 +940,7 @@ pub async fn install_vanilla_version(
         },
     };
 
-    let task_id = task_manager
+    let task_id = match task_manager
         .spawn_task(
             TaskType::InstallVanilla {
                 version_id: version_id.clone(),
@@ -918,7 +951,19 @@ pub async fn install_vanilla_version(
             task,
         )
         .await
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(id) => id,
+        Err(e) => {
+            crate::core::launcher::rollback_precreated_instance_status(
+                &version_dir,
+                dir_existed,
+                config_existed,
+                false,
+            )
+            .await;
+            return Err(e.to_string());
+        }
+    };
 
     Ok(task_id)
 }

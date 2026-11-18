@@ -903,8 +903,10 @@ pub async fn install_fabric_instance(
         dir
     };
     let _startup_guard = task_manager.start_instance_install(&custom_instance_name);
-    let _ = tokio::fs::create_dir_all(&instance_dir).await;
+    let dir_existed = instance_dir.exists();
     let config_path = instance_dir.join("dlml.json");
+    let config_existed = config_path.exists();
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let mut pre_config = crate::core::launcher::InstanceConfig {
         hidden: is_dependency.unwrap_or(false),
         ..Default::default()
@@ -924,7 +926,7 @@ pub async fn install_fabric_instance(
         },
     };
 
-    let task_id = task_manager
+    let task_id = match task_manager
         .spawn_task(
             TaskType::InstallFabric {
                 mc_version: mc_version.clone(),
@@ -935,7 +937,19 @@ pub async fn install_fabric_instance(
             task,
         )
         .await
-        .map_err(|e| format!("Failed to spawn task: {}", e))?;
+    {
+        Ok(id) => id,
+        Err(e) => {
+            crate::core::launcher::rollback_precreated_instance_status(
+                &instance_dir,
+                dir_existed,
+                config_existed,
+                false,
+            )
+            .await;
+            return Err(format!("Failed to spawn task: {}", e).into());
+        }
+    };
 
     Ok(task_id)
 }

@@ -1425,8 +1425,10 @@ pub async fn install_modpack(
     if !is_update && instance_dir.exists() {
         return Err(crate::error::DawnlandError::Unknown(format!("Instance with name '{}' already exists", instance_name)).into());
     }
-    let _ = tokio::fs::create_dir_all(&instance_dir).await;
+    let dir_existed = instance_dir.exists();
     let config_path = instance_dir.join("dlml.json");
+    let config_existed = config_path.exists();
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
     crate::core::instance_icon::advance_instance_icon_generation(
         &instance_name,
         None,
@@ -1456,7 +1458,7 @@ pub async fn install_modpack(
         },
     };
 
-    let task_id = task_manager
+    let task_id = match task_manager
         .spawn_task(
             TaskType::InstallModpack {
                 zip_path: zip_path.clone(),
@@ -1470,7 +1472,19 @@ pub async fn install_modpack(
             task,
         )
         .await
-        .map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    {
+        Ok(id) => id,
+        Err(e) => {
+            crate::core::launcher::rollback_precreated_instance_status(
+                &instance_dir,
+                dir_existed,
+                config_existed,
+                is_update,
+            )
+            .await;
+            return Err(DawnlandError::Unknown(e.to_string()).into());
+        }
+    };
 
     Ok(task_id)
 }
@@ -1528,8 +1542,10 @@ pub async fn download_and_install_online_modpack(
     if !is_update && instance_dir.exists() {
         return Err(crate::error::DawnlandError::Unknown(format!("Instance with name '{}' already exists", instance_name)).into());
     }
-    let _ = tokio::fs::create_dir_all(&instance_dir).await;
+    let dir_existed = instance_dir.exists();
     let config_path = instance_dir.join("dlml.json");
+    let config_existed = config_path.exists();
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
     crate::core::instance_icon::advance_instance_icon_generation(
         &instance_name,
         None,
@@ -1559,7 +1575,7 @@ pub async fn download_and_install_online_modpack(
         },
     };
 
-    let task_id = task_manager
+    let task_id = match task_manager
         .spawn_task(
             TaskType::InstallOnlineModpack {
                 url: url.clone(),
@@ -1573,7 +1589,19 @@ pub async fn download_and_install_online_modpack(
             task,
         )
         .await
-        .map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+    {
+        Ok(id) => id,
+        Err(e) => {
+            crate::core::launcher::rollback_precreated_instance_status(
+                &instance_dir,
+                dir_existed,
+                config_existed,
+                is_update,
+            )
+            .await;
+            return Err(DawnlandError::Unknown(e.to_string()).into());
+        }
+    };
 
     Ok(task_id)
 }

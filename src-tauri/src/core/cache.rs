@@ -314,10 +314,18 @@ pub async fn clean_dawnland_cache(app: AppHandle) -> Result<(), String> {
         .map_err(|reason| format!("Cannot clear cache while active operation is running ({})", reason))?;
 
     let paths_clone = paths.clone();
+    let ignore_stale_status = has_verified_runtime_state(Some(&app));
     tokio::task::spawn_blocking(move || {
         let now_secs = now_epoch_secs();
         let mut retention = RetentionState::load(&paths_clone);
-        let res = clean_dawnland_cache_smart(&paths_clone, 0, true, now_secs, &mut retention);
+        let res = clean_dawnland_cache_smart(
+            &paths_clone,
+            0,
+            true,
+            now_secs,
+            &mut retention,
+            ignore_stale_status,
+        );
         if res.is_ok() {
             retention.save(&paths_clone);
         }
@@ -354,32 +362,61 @@ pub async fn clean_unreferenced_cache(app: AppHandle) -> Result<CacheGcReport, S
     Ok(report)
 }
 
-async fn check_non_gate_barriers(app: Option<&AppHandle>, paths: &CachePaths) -> Option<String> {
+fn has_verified_runtime_state(app: Option<&AppHandle>) -> bool {
+    app.is_some_and(|handle| {
+        handle.try_state::<crate::core::task::TaskManager>().is_some()
+            && handle
+                .try_state::<crate::core::launcher::RunningInstances>()
+                .is_some()
+    })
+}
+
+async fn check_runtime_barriers(app: Option<&AppHandle>) -> Option<String> {
     if let Some(handle) = app {
         if let Some(tm) = handle.try_state::<crate::core::task::TaskManager>() {
             if tm.has_active_tasks().await {
+                tracing::debug!("Cache GC blocked: TaskManager has active or starting tasks");
                 return Some("active_task".to_string());
             }
         }
         if let Some(running) = handle.try_state::<crate::core::launcher::RunningInstances>() {
             if running.has_running_instances().await {
+                tracing::debug!("Cache GC blocked: RunningInstances reports active game process");
                 return Some("active_task".to_string());
             }
         }
     }
 
-    if crate::downloader::download::has_active_downloads()
-        || crate::core::drop_install::has_busy_instance_locks()
-    {
+    if crate::downloader::download::has_active_downloads() {
+        tracing::debug!("Cache GC blocked: active downloads or pool download locks in flight");
         return Some("active_task".to_string());
     }
 
-    let paths_clone = paths.clone();
-    let has_busy_instance = tokio::task::spawn_blocking(move || has_busy_instance_configs(&paths_clone))
-        .await
-        .unwrap_or(true);
+    if crate::core::drop_install::has_busy_instance_locks() {
+        tracing::debug!("Cache GC blocked: per-instance operation lock is held");
+        return Some("active_task".to_string());
+    }
 
-    if has_busy_instance {
+    None
+}
+
+async fn check_non_gate_barriers(app: Option<&AppHandle>, paths: &CachePaths) -> Option<String> {
+    if let Some(reason) = check_runtime_barriers(app).await {
+        return Some(reason);
+    }
+
+    if has_verified_runtime_state(app) {
+        return None;
+    }
+
+    let paths_clone = paths.clone();
+    let busy_detail =
+        tokio::task::spawn_blocking(move || find_busy_instance_config(&paths_clone))
+            .await
+            .unwrap_or_else(|_| Some("spawn_blocking join error".to_string()));
+
+    if let Some(detail) = busy_detail {
+        tracing::debug!("Cache GC blocked by on-disk instance config: {}", detail);
         Some("active_task".to_string())
     } else {
         None
@@ -390,6 +427,11 @@ async fn is_any_barrier_active(app: Option<&AppHandle>, paths: &CachePaths) -> O
     {
         let state = GATE_STATE.lock().unwrap_or_else(|p| p.into_inner());
         if state.active_ops > 0 || state.gc_running {
+            tracing::debug!(
+                "Cache GC barrier active in GATE_STATE (active_ops={}, gc_running={})",
+                state.active_ops,
+                state.gc_running
+            );
             return Some("active_task".to_string());
         }
     }
@@ -410,11 +452,20 @@ async fn try_enter_gc_sweep(
 
     let guard = {
         let mut state = GATE_STATE.lock().unwrap_or_else(|p| p.into_inner());
-        if state.active_ops > 0
-            || state.gc_running
-            || crate::downloader::download::has_active_downloads()
-            || crate::core::drop_install::has_busy_instance_locks()
-        {
+        if state.active_ops > 0 || state.gc_running {
+            tracing::debug!(
+                "Cache GC sweep entry blocked by GATE_STATE (active_ops={}, gc_running={})",
+                state.active_ops,
+                state.gc_running
+            );
+            return Err("active_task".to_string());
+        }
+        if crate::downloader::download::has_active_downloads() {
+            tracing::debug!("Cache GC sweep entry blocked by active downloads");
+            return Err("active_task".to_string());
+        }
+        if crate::core::drop_install::has_busy_instance_locks() {
+            tracing::debug!("Cache GC sweep entry blocked by busy instance lock");
             return Err("active_task".to_string());
         }
         state.gc_running = true;
@@ -422,51 +473,72 @@ async fn try_enter_gc_sweep(
         GcSweepGuard
     };
 
-    // Re-check tasks, running games, and on-disk instance statuses while `gc_running` blocks new work.
+    // Re-check tasks, running games, and (when runtime managers are unavailable) on-disk
+    // instance statuses while `gc_running` blocks new work.
     if let Some(reason) = check_non_gate_barriers(app, paths).await {
         drop(guard);
         return Err(reason);
     }
 
+    if has_verified_runtime_state(app) {
+        let paths_clone = paths.clone();
+        if let Ok(Some(stale_detail)) =
+            tokio::task::spawn_blocking(move || find_busy_instance_config(&paths_clone)).await
+        {
+            tracing::warn!(
+                "Proceeding with cache GC while runtime barriers are idle; ignoring stale/unreadable instance config ({})",
+                stale_detail
+            );
+        }
+    }
+
     Ok(guard)
 }
 
-fn has_busy_instance_configs(paths: &CachePaths) -> bool {
-    for root in [paths.versions_dir(), paths.version_cache_dir()] {
+fn find_busy_instance_config(paths: &CachePaths) -> Option<String> {
+    for (root_label, root) in [
+        ("versions", paths.versions_dir()),
+        ("cache", paths.version_cache_dir()),
+    ] {
         if !is_real_dir_path(&root) {
             continue;
         }
         let Ok(entries) = std::fs::read_dir(&root) else {
-            return true;
+            return Some(format!("{}: unreadable directory", root_label));
         };
         for entry in entries {
             let Ok(entry) = entry else {
-                return true;
+                return Some(format!("{}: unreadable directory entry", root_label));
             };
             let Ok(ft) = entry.file_type() else {
-                return true;
+                return Some(format!("{}: unreadable entry file type", root_label));
             };
             if ft.is_symlink() || !ft.is_dir() {
                 continue;
             }
             let dir = entry.path();
+            let dir_name = entry.file_name().to_string_lossy().to_string();
             let config_path = dir.join("dlml.json");
             if !is_real_file_path(&config_path) {
                 continue;
             }
             let Ok(content) = std::fs::read_to_string(&config_path) else {
-                return true;
+                return Some(format!("{}/{}: unreadable dlml.json", root_label, dir_name));
             };
             let Ok(config) = serde_json::from_str::<InstanceConfig>(&content) else {
-                return true;
+                return Some(format!("{}/{}: unparseable dlml.json", root_label, dir_name));
             };
             let status = config.effective_status();
             if status.is_busy() || status.is_running() {
-                return true;
+                return Some(format!("{}/{}: status={:?}", root_label, dir_name, status));
             }
         }
     }
-    false
+    None
+}
+
+fn has_busy_instance_configs(paths: &CachePaths) -> bool {
+    find_busy_instance_config(paths).is_some()
 }
 
 async fn run_gc_with_barriers(
@@ -485,10 +557,17 @@ async fn run_gc_with_barriers(
         }
     };
 
+    let trust_runtime_barriers = has_verified_runtime_state(app);
     let paths_clone = paths.clone();
     let settings_clone = settings.clone();
     let report = match tokio::task::spawn_blocking(move || {
-        execute_gc_blocking(&paths_clone, mode, &settings_clone)
+        execute_gc_blocking_at_with_options(
+            &paths_clone,
+            mode,
+            &settings_clone,
+            now_epoch_secs(),
+            trust_runtime_barriers,
+        )
     })
     .await
     {
@@ -520,16 +599,27 @@ fn execute_gc_blocking_at(
     settings: &LauncherSettings,
     now_secs: u64,
 ) -> CacheGcReport {
+    execute_gc_blocking_at_with_options(paths, mode, settings, now_secs, false)
+}
+
+fn execute_gc_blocking_at_with_options(
+    paths: &CachePaths,
+    mode: GcMode,
+    settings: &LauncherSettings,
+    now_secs: u64,
+    trust_runtime_barriers: bool,
+) -> CacheGcReport {
     let mut report = CacheGcReport::default();
 
     let gate_blocked = {
         let state = GATE_STATE.lock().unwrap_or_else(|p| p.into_inner());
         !state.gc_running && state.active_ops > 0
     };
+    let config_blocked = !trust_runtime_barriers && has_busy_instance_configs(paths);
     if gate_blocked
         || crate::downloader::download::has_active_downloads()
         || crate::core::drop_install::has_busy_instance_locks()
-        || has_busy_instance_configs(paths)
+        || config_blocked
     {
         report.skipped_reason = Some("active_task".to_string());
         return report;
@@ -577,6 +667,7 @@ fn execute_gc_blocking_at(
         mode == GcMode::Manual,
         now_secs,
         &mut retention,
+        trust_runtime_barriers,
     ) {
         Ok((freed, removed)) => {
             report.freed_bytes = report.freed_bytes.saturating_add(freed);
@@ -1203,6 +1294,7 @@ fn clean_dawnland_cache_smart(
     force_manual_ttl: bool,
     now_secs: u64,
     retention: &mut RetentionState,
+    ignore_stale_status: bool,
 ) -> Result<(u64, u64), String> {
     let cache_dir = paths.version_cache_dir();
     if !is_real_dir_path(&cache_dir) {
@@ -1234,7 +1326,7 @@ fn clean_dawnland_cache_smart(
             continue;
         }
 
-        if ft.is_dir() {
+        if !ignore_stale_status && ft.is_dir() {
             let dlml_path = entry_path.join("dlml.json");
             if is_real_file_path(&dlml_path) {
                 if let Ok(content) = std::fs::read_to_string(&dlml_path) {
@@ -2709,5 +2801,56 @@ mod tests {
         assert_eq!(report.removed_assets, 0);
         assert_eq!(report.removed_libraries, 0);
         assert!(outside_file.exists());
+    }
+
+    #[tokio::test]
+    async fn test_verified_runtime_barriers_ignore_stale_disk_configs_and_clean_stale_cache() {
+        let _test_guard = CACHE_TEST_MUTEX.lock().await;
+        let dir = tempdir().unwrap();
+        let paths = build_test_paths(dir.path());
+
+        // 1. Stale Installing config in .dawnland/cache + stale Running/corrupt configs in versions/
+        let stale_cache_dir = paths.version_cache_dir().join("1.20.4");
+        std::fs::create_dir_all(&stale_cache_dir).unwrap();
+        write_dlml_config(&stale_cache_dir, InstanceStatus::Installing, Some("1.20.4"));
+        std::fs::write(stale_cache_dir.join("1.20.4.json"), r#"{"id":"1.20.4"}"#).unwrap();
+
+        let referenced_cache_dir = paths.version_cache_dir().join("1.20.1");
+        std::fs::create_dir_all(&referenced_cache_dir).unwrap();
+        write_dlml_config(&referenced_cache_dir, InstanceStatus::Installing, Some("1.20.1"));
+        std::fs::write(referenced_cache_dir.join("1.20.1.json"), r#"{"id":"1.20.1"}"#).unwrap();
+
+        let running_inst_dir = paths.versions_dir().join("stale-running-inst");
+        std::fs::create_dir_all(&running_inst_dir).unwrap();
+        write_dlml_config(&running_inst_dir, InstanceStatus::Running, Some("1.20.1"));
+        std::fs::write(
+            running_inst_dir.join("stale-running-inst.json"),
+            r#"{"id":"stale-running-inst","inheritsFrom":"1.20.1"}"#,
+        )
+        .unwrap();
+
+        let corrupt_inst_dir = paths.versions_dir().join("corrupt-dlml-inst");
+        std::fs::create_dir_all(&corrupt_inst_dir).unwrap();
+        std::fs::write(corrupt_inst_dir.join("dlml.json"), "{ invalid json").unwrap();
+
+        // Standalone execution without verified runtime managers remains fail-closed.
+        let standalone = execute_gc_blocking(&paths, GcMode::Manual, &LauncherSettings::default());
+        assert_eq!(standalone.skipped_reason.as_deref(), Some("active_task"));
+        assert!(stale_cache_dir.exists());
+
+        // When runtime barriers (TaskManager, RunningInstances, GATE_STATE, locks) are verified idle,
+        // stale/corrupt dlml.json on disk must NOT trigger a false active_task skip.
+        let verified = execute_gc_blocking_at_with_options(
+            &paths,
+            GcMode::Manual,
+            &LauncherSettings::default(),
+            now_epoch_secs(),
+            true,
+        );
+        assert_eq!(verified.skipped_reason, None);
+        assert_eq!(verified.removed_version_caches, 1);
+        assert!(!stale_cache_dir.exists());
+        // Inherited parent cache remains protected even if its dlml.json was stale.
+        assert!(referenced_cache_dir.exists());
     }
 }
