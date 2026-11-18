@@ -94,6 +94,14 @@ export interface TaskTargetRoute {
   query?: Record<string, string>;
 }
 
+export interface TaskDetailRouteContext {
+  isModpackTaskDismissed?: (taskId: string) => boolean;
+  isTrackedDownloadsModpackTask?: (taskId: string) => boolean;
+  isTrackedInstanceUpdateTask?: (instanceName: string, taskId: string) => boolean;
+  isInstanceTaskDismissed?: (taskId: string) => boolean;
+  isTrackedInstanceInstallTask?: (taskId: string) => boolean;
+}
+
 export function isModpackTask(taskType: TaskType): boolean {
   return 'InstallModpack' in taskType || 'InstallOnlineModpack' in taskType;
 }
@@ -118,30 +126,90 @@ export function getModpackTaskInstanceName(taskType: TaskType): string | null {
   return null;
 }
 
-export function getTaskTargetRoute(taskType: TaskType): TaskTargetRoute | null {
-  if ('InstallModpack' in taskType) {
-    if (taskType.InstallModpack.is_update) {
-      return {
-        path: `/instances/${encodeURIComponent(taskType.InstallModpack.instance_name)}`,
-        query: { tab: 'update_modpack' }
-      };
-    }
+export function isInstanceInstallTask(taskType: TaskType): boolean {
+  return 'InstallVanilla' in taskType || 'InstallForge' in taskType || 'InstallFabric' in taskType;
+}
+
+export function isDependencyInstanceInstallTask(taskType: TaskType): boolean {
+  if ('InstallVanilla' in taskType) {
+    return Boolean(taskType.InstallVanilla.is_dependency);
+  }
+  if ('InstallForge' in taskType) {
+    return Boolean(taskType.InstallForge.is_dependency);
+  }
+  if ('InstallFabric' in taskType) {
+    return Boolean(taskType.InstallFabric.is_dependency);
+  }
+  return false;
+}
+
+function getModpackTargetRoute(taskType: TaskType): TaskTargetRoute | null {
+  const instanceName = getModpackTaskInstanceName(taskType);
+  if (!instanceName) return null;
+
+  if (isModpackUpdateTask(taskType)) {
     return {
-      path: '/downloads',
-      query: { tab: 'modpack' }
+      path: `/instances/${encodeURIComponent(instanceName)}`,
+      query: { tab: 'update_modpack' }
     };
   }
-  if ('InstallOnlineModpack' in taskType) {
-    if (taskType.InstallOnlineModpack.is_update) {
-      return {
-        path: `/instances/${encodeURIComponent(taskType.InstallOnlineModpack.instance_name)}`,
-        query: { tab: 'update_modpack' }
-      };
+  return {
+    path: '/downloads',
+    query: { tab: 'modpack' }
+  };
+}
+
+/**
+ * Resolves the target route only for tasks that have an in-app task detail view
+ * and are currently active or still restorable (not dismissed).
+ */
+export function getTaskDetailRoute(
+  task: Pick<TaskState, 'id' | 'status' | 'task_type'>,
+  context: TaskDetailRouteContext = {}
+): TaskTargetRoute | null {
+  const { task_type: taskType, status, id } = task;
+
+  if (isModpackTask(taskType)) {
+    if (context.isModpackTaskDismissed?.(id)) {
+      return null;
+    }
+    const instanceName = getModpackTaskInstanceName(taskType);
+    if (!instanceName) return null;
+
+    const isUpdate = isModpackUpdateTask(taskType);
+    const isTracked = isUpdate
+      ? Boolean(context.isTrackedInstanceUpdateTask?.(instanceName, id))
+      : Boolean(context.isTrackedDownloadsModpackTask?.(id));
+
+    if (!isTaskActive(status) && !(isTaskTerminal(status) && isTracked)) {
+      return null;
+    }
+    return getModpackTargetRoute(taskType);
+  }
+
+  if (isInstanceInstallTask(taskType)) {
+    if (isDependencyInstanceInstallTask(taskType)) {
+      return null;
+    }
+    if (context.isInstanceTaskDismissed?.(id)) {
+      return null;
+    }
+    const isTracked = Boolean(context.isTrackedInstanceInstallTask?.(id));
+    if (!isTaskActive(status) && !(isTaskTerminal(status) && isTracked)) {
+      return null;
     }
     return {
       path: '/downloads',
-      query: { tab: 'modpack' }
+      query: { tab: 'instance', task_id: id }
     };
+  }
+
+  return null;
+}
+
+export function getTaskTargetRoute(taskType: TaskType): TaskTargetRoute | null {
+  if (isModpackTask(taskType)) {
+    return getModpackTargetRoute(taskType);
   }
   if ('InstallVanilla' in taskType) {
     return {

@@ -4,7 +4,8 @@ import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { Clock, Loader2, Pause, CheckCircle, XCircle, Ban, X, RotateCcw, ExternalLink } from '@lucide/vue';
 import type { TaskState } from '../types/task';
-import { getTaskName, getTaskTargetRoute, formatTaskErrorMessage } from '../types/task';
+import { getTaskName, formatTaskErrorMessage } from '../types/task';
+import { resolveTaskDetailRoute } from '../composables/useTaskDetailRoute';
 import { useTaskStore } from '../composables/useTaskStore';
 import { formatSpeed } from '../utils/format';
 
@@ -15,7 +16,7 @@ const props = defineProps<{
 const { t } = useI18n();
 const router = useRouter();
 const taskStore = useTaskStore();
-const targetRoute = computed(() => getTaskTargetRoute(props.task.task_type));
+const targetRoute = computed(() => resolveTaskDetailRoute(props.task));
 
 const percentage = computed(() => {
   if (props.task.status === 'Completed') return 100;
