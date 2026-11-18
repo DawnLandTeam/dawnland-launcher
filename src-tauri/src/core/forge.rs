@@ -648,12 +648,27 @@ impl InstallForgeTask {
 impl ExecutableTask for InstallForgeTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
         let is_existing = self.options.is_existing_instance.unwrap_or(false);
+        let is_dep = self.options.is_dependency.unwrap_or(false);
         let custom_instance_name = &self.options.custom_instance_name;
         let base_dir = get_minecraft_base();
-        let instance_dir = if self.options.is_dependency.unwrap_or(false) {
-            crate::core::mojang::get_dawnland_cache().join(custom_instance_name)
+        let cache_root = crate::core::mojang::get_dawnland_cache();
+        let instance_dir = if is_dep {
+            cache_root.join(custom_instance_name)
         } else {
             base_dir.join("versions").join(custom_instance_name)
+        };
+        let dep_pre_state = if !is_existing && is_dep {
+            Some(
+                crate::core::cache::capture_dependency_cache_pre_state(
+                    base_dir.join("versions"),
+                    cache_root,
+                    &instance_dir,
+                    custom_instance_name,
+                )
+                .await,
+            )
+        } else {
+            None
         };
         let json_bak = instance_dir.join(format!("{}.json.bak", custom_instance_name));
         let config_bak = instance_dir.join("dlml.json.bak");
@@ -685,7 +700,14 @@ impl ExecutableTask for InstallForgeTask {
                     c.set_status(crate::core::launcher::InstanceStatus::Ready);
                 })
                 .await;
-            } else if instance_dir.exists() {
+            } else if let Some(pre_state) = dep_pre_state.as_ref() {
+                crate::core::cache::cleanup_failed_dependency_cache(
+                    pre_state,
+                    &instance_dir,
+                    custom_instance_name,
+                )
+                .await;
+            } else if tokio::fs::try_exists(&instance_dir).await.unwrap_or(false) {
                 let _ = tokio::fs::remove_dir_all(&instance_dir).await;
             }
         } else if is_existing {

@@ -499,33 +499,35 @@ impl ExecutableTask for InstallVanillaTask {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| self.options.version_id.clone());
         let base_dir = get_minecraft_base();
+        let cache_root = get_dawnland_cache();
         let version_dir = if is_dep {
-            get_dawnland_cache().join(&self.options.version_id)
+            cache_root.join(&self.options.version_id)
         } else {
             base_dir.join("versions").join(&instance_id)
         };
+        let dep_pre_state = if is_dep {
+            Some(
+                crate::core::cache::capture_dependency_cache_pre_state(
+                    base_dir.join("versions"),
+                    cache_root,
+                    &version_dir,
+                    &self.options.version_id,
+                )
+                .await,
+            )
+        } else {
+            None
+        };
 
         let res = self.execute_inner(&ctx, &version_dir, &instance_id).await;
-        if res.is_err() && is_dep {
-            match tokio::fs::remove_dir_all(&version_dir).await {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to remove incomplete dependency cache {}: {}",
-                        crate::logger::redact::redact_user_paths(&version_dir.display().to_string()),
-                        err
-                    );
-                    if tokio::fs::try_exists(version_dir.join("dlml.json"))
-                        .await
-                        .unwrap_or(false)
-                    {
-                        let _ = crate::core::launcher::update_instance_config(&version_dir, |c| {
-                            c.set_status(crate::core::launcher::InstanceStatus::Ready);
-                        })
-                        .await;
-                    }
-                }
+        if res.is_err() {
+            if let Some(pre_state) = dep_pre_state.as_ref() {
+                crate::core::cache::cleanup_failed_dependency_cache(
+                    pre_state,
+                    &version_dir,
+                    &self.options.version_id,
+                )
+                .await;
             }
         }
         res
