@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, reactive } from "vue";
+import { ref, computed, onMounted, onUnmounted, onActivated, watch, reactive, nextTick } from "vue";
 import { onClickOutside } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import type { SelectOption } from "../ui/DSelect.vue";
@@ -12,7 +12,9 @@ import DSelect from "../ui/DSelect.vue";
 import InstallCard from "../InstallCard.vue";
 import TaskDetailView from "../TaskDetailView.vue";
 import { useTaskStore } from "../../composables/useTaskStore";
+import { useInstanceInstallState } from "../../composables/useInstanceInstallState";
 import { useInstances } from "../../composables/useInstances";
+import type { TaskState } from "../../types/task";
 import { getErrorMessage } from "../../utils/error";
 import { createLogger } from "../../utils/logger";
 
@@ -62,14 +64,24 @@ interface LoaderVersionList {
 const props = defineProps<{
   initialVersion?: string;
   initialLoader?: string;
+  initialTaskId?: string;
+}>();
+
+const emit = defineEmits<{
+  'clear-task-query': [];
 }>();
 
 
 const taskStore = useTaskStore();
+const {
+  setInstanceInstallTaskId,
+  dismissTask: dismissInstanceTask,
+  findRestorableInstanceInstallTask,
+} = useInstanceInstallState();
 const currentTaskId = ref<string | null>(null);
 const currentTask = computed(() => {
   if (!currentTaskId.value) return null;
-  return taskStore.tasks.value.find((t: any) => t.id === currentTaskId.value) || null;
+  return taskStore.tasks.value.find((t) => t.id === currentTaskId.value) || null;
 });
 
 const { t } = useI18n();
@@ -396,6 +408,71 @@ function generateInstanceName(): string {
   return selectedVersion.value;
 }
 
+let isHydratingTaskState = false;
+
+function hydrateFromTask(task: TaskState) {
+  const tt = task.task_type;
+  isHydratingTaskState = true;
+  isNameManuallyEdited.value = true;
+  selectedComponents.Fabric = null;
+  selectedComponents.Forge = null;
+  selectedComponents.NeoForge = null;
+  selectedFabricLoader.value = "";
+  selectedForgeLoader.value = "";
+  selectedNeoForgeLoader.value = "";
+  error.value = null;
+  nameError.value = null;
+
+  if ('InstallVanilla' in tt) {
+    selectedVersion.value = tt.InstallVanilla.version_id;
+    installModLoader.value = false;
+    selectedLoaderType.value = "fabric";
+    customInstanceName.value = tt.InstallVanilla.custom_instance_name || tt.InstallVanilla.version_id;
+  } else if ('InstallFabric' in tt) {
+    selectedVersion.value = tt.InstallFabric.mc_version;
+    installModLoader.value = true;
+    selectedLoaderType.value = "fabric";
+    selectedFabricLoader.value = tt.InstallFabric.fabric_version;
+    selectedComponents.Fabric = tt.InstallFabric.fabric_version;
+    customInstanceName.value = tt.InstallFabric.custom_instance_name;
+  } else if ('InstallForge' in tt) {
+    selectedVersion.value = tt.InstallForge.mc_version;
+    installModLoader.value = true;
+    const isNeoForge = tt.InstallForge.loader_type.toLowerCase() === 'neoforge';
+    selectedLoaderType.value = isNeoForge ? "neoforge" : "forge";
+    if (isNeoForge) {
+      selectedNeoForgeLoader.value = tt.InstallForge.loader_version;
+      selectedComponents.NeoForge = tt.InstallForge.loader_version;
+    } else {
+      selectedForgeLoader.value = tt.InstallForge.loader_version;
+      selectedComponents.Forge = tt.InstallForge.loader_version;
+    }
+    customInstanceName.value = tt.InstallForge.custom_instance_name;
+  }
+
+  currentStep.value = 3;
+  currentTaskId.value = task.id;
+  isInstalling.value = true;
+  nextTick(() => {
+    isHydratingTaskState = false;
+  });
+}
+
+function restoreInstallTask(): boolean {
+  const matchedTask = findRestorableInstanceInstallTask(
+    taskStore.tasks.value,
+    props.initialTaskId
+  );
+  if (!matchedTask) {
+    return false;
+  }
+  if (isInstalling.value && currentTaskId.value === matchedTask.id) {
+    return true;
+  }
+  hydrateFromTask(matchedTask);
+  return true;
+}
+
 // Auto-refresh instance name when base version or selected loaders change
 watch(
   [
@@ -408,7 +485,7 @@ watch(
     selectedNeoForgeLoader,
   ],
   () => {
-    if (!isNameManuallyEdited.value) {
+    if (!isNameManuallyEdited.value && !isHydratingTaskState) {
       customInstanceName.value = generateInstanceName();
     }
   },
@@ -442,18 +519,20 @@ onMounted(async () => {
     installProgress.value = null;
     downloadProgress.value.clear();
     isInstalling.value = false;  // Reset installation state too
+
+    const restored = restoreInstallTask();
     
     // Load versions
     if (versions.value.length === 0) {
       await loadVersions();
       // Ensure the pre-filled version gets selected if available
-      if (props.initialVersion) {
+      if (!restored && !isInstalling.value && props.initialVersion) {
         selectedVersion.value = props.initialVersion;
       }
     }
 
     // Auto-jump to step 3 if this is an auto-install flow
-    if (props.initialVersion) {
+    if (!restored && !isInstalling.value && props.initialVersion) {
       if (installModLoader.value) {
         if (selectedLoaderType.value === "fabric") await loadFabricLoaders();
         else if (selectedLoaderType.value === "forge") await loadForgeLoaders();
@@ -466,10 +545,29 @@ onMounted(async () => {
   }
 });
 
+onActivated(() => {
+  restoreInstallTask();
+});
+
+watch(() => props.initialTaskId, (newTaskId) => {
+  if (newTaskId) {
+    restoreInstallTask();
+  }
+});
+
+watch(
+  () => taskStore.tasks.value.length,
+  () => {
+    if (!isInstalling.value && props.initialTaskId) {
+      restoreInstallTask();
+    }
+  }
+);
+
 // removed handleOpenChange
 // Watch version changes to reset mod loader if version changes
 watch(selectedVersion, (_, oldVal) => {
-  if (!oldVal) return; // Do not reset on initial initialization from props
+  if (!oldVal || isHydratingTaskState) return; // Do not reset on initial initialization or task hydration
   activeConfiguringComponent.value = null;
   selectedComponents.Forge = null;
   selectedComponents.Fabric = null;
@@ -686,6 +784,9 @@ watch(currentTask, (newTask) => {
 });
 
 function resetToInitialState() {
+  if (currentTaskId.value) {
+    dismissInstanceTask(currentTaskId.value);
+  }
   currentStep.value = 1;
   isInstalling.value = false;
   currentTaskId.value = null;
@@ -699,6 +800,7 @@ function resetToInitialState() {
   isNameManuallyEdited.value = false;
   activeConfiguringComponent.value = null;
   mapComponentsToLegacyState();
+  emit('clear-task-query');
 }
 
 // Install selected version
@@ -769,6 +871,9 @@ async function installVersion(): Promise<void> {
     }
 
     currentTaskId.value = taskId;
+    if (taskId) {
+      setInstanceInstallTaskId(taskId);
+    }
     
     trackEvent("Instance Install Completed", { 
       version: selectedVersion.value, 

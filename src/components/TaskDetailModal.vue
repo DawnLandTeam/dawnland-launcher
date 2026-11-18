@@ -4,7 +4,9 @@ import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useTaskStore } from '../composables/useTaskStore';
 import { X, Clock, Loader2, CheckCircle, Pause, XCircle, Ban, ArrowRight, ExternalLink } from '@lucide/vue';
-import { getTaskName, getTaskTargetRoute, formatTaskErrorMessage } from '../types/task';
+import { getTaskName, formatTaskErrorMessage } from '../types/task';
+import { resolveTaskDetailRoute } from '../composables/useTaskDetailRoute';
+import DButton from './ui/DButton.vue';
 import AiAnalysisPanel from './ai/AiAnalysisPanel.vue';
 import { useLogStore } from '../composables/useLogStore';
 import { formatSpeed } from '../utils/format';
@@ -41,7 +43,7 @@ const isCancelable = computed(() => {
   return ['Pending', 'Running', 'Paused'].includes(task.value.status);
 });
 
-const targetRoute = computed(() => task.value ? getTaskTargetRoute(task.value.task_type) : null);
+const targetRoute = computed(() => task.value ? resolveTaskDetailRoute(task.value) : null);
 
 function handleNavigate() {
   if (!targetRoute.value) return;
@@ -95,23 +97,50 @@ function getInstanceId(taskType: any): string | undefined {
       class="task-detail-modal fixed bottom-4 left-[400px] w-96 max-h-[80vh] flex flex-col rounded-2xl bg-white/80 dark:bg-black/80 backdrop-blur-xl border border-black/10 dark:border-white/10 shadow-2xl z-[100]"
     >
       <!-- Header -->
-      <div class="flex flex-col gap-1 p-4 border-b border-black/10 dark:border-white/10 shrink-0 relative">
-        <div class="flex items-start justify-between pr-6">
-          <h3 class="font-semibold text-neutral-800 dark:text-neutral-200 leading-tight">
+      <div class="flex flex-col gap-1 p-4 border-b border-black/10 dark:border-white/10 shrink-0">
+        <div class="flex items-start justify-between gap-2">
+          <h3 class="flex-1 min-w-0 font-semibold text-neutral-800 dark:text-neutral-200 leading-tight break-words pt-1">
             {{ getTaskName(task.task_type) }}
           </h3>
-          <!-- Status Icon -->
-          <div class="shrink-0 flex items-center justify-center gap-3">
-            <span v-if="task.progress.speed > 0" class="shrink-0 text-xs font-mono tabular-nums min-w-[4.5rem] text-center text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded transition-all">
-              {{ formatSpeed(task.progress.speed) }}
-            </span>
-            <Clock v-if="task.status === 'Pending'" class="w-5 h-5 text-neutral-400" />
-            <Loader2 v-else-if="task.status === 'Running'" class="w-5 h-5 text-emerald-400 animate-spin" />
-            <Loader2 v-else-if="task.status === 'Cancelling'" class="w-5 h-5 text-amber-500 animate-spin" />
-            <Pause v-else-if="task.status === 'Paused'" class="w-5 h-5 text-yellow-400" />
-            <CheckCircle v-else-if="task.status === 'Completed'" class="w-5 h-5 text-emerald-500" />
-            <XCircle v-else-if="task.status === 'Failed'" class="w-5 h-5 text-red-500" />
-            <Ban v-else-if="task.status === 'Cancelled'" class="w-5 h-5 text-orange-400" />
+          <!-- Status & Actions -->
+          <div class="shrink-0 flex items-center gap-2">
+            <div class="flex items-center gap-2">
+              <span v-if="task.progress.speed > 0" class="shrink-0 text-xs font-mono tabular-nums min-w-[4.5rem] text-center text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded transition-all">
+                {{ formatSpeed(task.progress.speed) }}
+              </span>
+              <Clock v-if="task.status === 'Pending'" class="w-5 h-5 text-neutral-400" />
+              <Loader2 v-else-if="task.status === 'Running'" class="w-5 h-5 text-emerald-400 animate-spin" />
+              <Loader2 v-else-if="task.status === 'Cancelling'" class="w-5 h-5 text-amber-500 animate-spin" />
+              <Pause v-else-if="task.status === 'Paused'" class="w-5 h-5 text-yellow-400" />
+              <CheckCircle v-else-if="task.status === 'Completed'" class="w-5 h-5 text-emerald-500" />
+              <XCircle v-else-if="task.status === 'Failed'" class="w-5 h-5 text-red-500" />
+              <Ban v-else-if="task.status === 'Cancelled'" class="w-5 h-5 text-orange-400" />
+            </div>
+            <div class="flex items-center gap-1">
+              <DButton
+                v-if="targetRoute"
+                type="button"
+                variant="ghost"
+                size="icon"
+                @click="handleNavigate"
+                class="h-7 w-7 rounded-lg text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-black/10 dark:hover:bg-white/10"
+                :title="$t('task.goToPage', 'Go to Task Page')"
+                :aria-label="$t('task.goToPage', 'Go to Task Page')"
+              >
+                <ExternalLink class="w-4 h-4" />
+              </DButton>
+              <DButton
+                type="button"
+                variant="ghost"
+                size="icon"
+                @click="handleClose"
+                class="h-7 w-7 rounded-lg text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-black/10 dark:hover:bg-white/10"
+                :title="$t('titlebar.close', 'Close')"
+                :aria-label="$t('titlebar.close', 'Close')"
+              >
+                <X class="w-4 h-4" />
+              </DButton>
+            </div>
           </div>
         </div>
         <p v-if="task.status === 'Cancelling'" class="text-xs text-amber-500 dark:text-amber-400 line-clamp-2 mt-1">
@@ -124,25 +153,6 @@ function getInstanceId(taskType: any): string | undefined {
           <span class="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2">
             {{ task.progress.detail }}
           </span>
-          
-        </div>
-        
-        
-        <div class="absolute top-4 right-4 flex items-center gap-1">
-          <button 
-            v-if="targetRoute"
-            @click="handleNavigate"
-            class="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-            :title="$t('task.goToPage', 'Go to Task Page')"
-          >
-            <ExternalLink class="w-4 h-4" />
-          </button>
-          <button 
-            @click="handleClose"
-            class="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-          >
-            <X class="w-4 h-4" />
-          </button>
         </div>
       </div>
 

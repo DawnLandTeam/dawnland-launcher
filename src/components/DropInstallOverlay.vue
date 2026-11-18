@@ -22,6 +22,7 @@ import { useFileDrop } from '../composables/useFileDrop';
 import { useInstances } from '../composables/useInstances';
 import { isInstanceActive } from '../composables/useLaunchState';
 import { useTaskStore } from '../composables/useTaskStore';
+import { useModpackInstallState } from '../composables/useModpackInstallState';
 import { toast } from '../composables/useToast';
 import { createLogger } from '../utils/logger';
 
@@ -35,6 +36,7 @@ const router = useRouter();
 const { t } = useI18n();
 const { instances, fetchInstances } = useInstances();
 const taskStore = useTaskStore();
+const { setDownloadsModpackTaskId } = useModpackInstallState();
 
 const {
   isDragging,
@@ -673,12 +675,15 @@ async function confirmQuickModpackInstall(): Promise<void> {
   isStartingModpackInstall.value = true;
   modpackNameError.value = null;
   try {
-    await invoke<string>('install_modpack', {
+    const taskId = await invoke<string>('install_modpack', {
       zipPath: pendingModpackFile.value.path,
       instanceName: trimmedName,
       isUpdate: false,
       projectId: null,
     });
+    if (taskId) {
+      setDownloadsModpackTaskId(taskId);
+    }
     await fetchInstances(true);
     toast.success(
       t('dropInstall.modpackTaskStartedTitle', 'Modpack installation started'),

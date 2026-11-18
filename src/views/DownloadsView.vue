@@ -14,12 +14,14 @@ import DSidebarTabs from "../components/ui/DSidebarTabs.vue";
 import { trackEvent } from "../utils/analytics";
 import { useTaskStore } from "../composables/useTaskStore";
 import { useModpackInstallState } from "../composables/useModpackInstallState";
+import { useInstanceInstallState } from "../composables/useInstanceInstallState";
 
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
 const taskStore = useTaskStore();
 const { hasActiveDownloadsModpackTask: checkActiveDownloadsModpackTask } = useModpackInstallState();
+const { hasActiveInstanceInstallTask: checkActiveInstanceInstallTask } = useInstanceInstallState();
 
 const lastTabKey = 'downloads_active_tab';
 
@@ -37,11 +39,17 @@ const hasActiveDownloadsModpackTask = computed(() => {
   return checkActiveDownloadsModpackTask(taskStore.tasks.value);
 });
 
+const hasActiveInstanceInstallTask = computed(() => {
+  return checkActiveInstanceInstallTask(taskStore.tasks.value);
+});
+
 const translatedTabs = computed(() => tabs.map(tab => ({
   ...tab,
   name: t(tab.name),
   group: t(tab.group),
-  hasDot: tab.id === 'modpack' && hasActiveDownloadsModpackTask.value
+  hasDot:
+    (tab.id === 'modpack' && hasActiveDownloadsModpackTask.value) ||
+    (tab.id === 'instance' && hasActiveInstanceInstallTask.value)
 })));
 
 function getInitialTab(): string {
@@ -50,6 +58,9 @@ function getInitialTab(): string {
   }
   if (hasActiveDownloadsModpackTask.value) {
     return 'modpack';
+  }
+  if (hasActiveInstanceInstallTask.value) {
+    return 'instance';
   }
   const saved = sessionStorage.getItem(lastTabKey);
   if (saved && tabs.some(t => t.id === saved)) {
@@ -70,6 +81,8 @@ watch(
     } else if (!newTab) {
       if (hasActiveDownloadsModpackTask.value) {
         switchTab('modpack');
+      } else if (hasActiveInstanceInstallTask.value) {
+        switchTab('instance');
       } else {
         const saved = sessionStorage.getItem(lastTabKey);
         if (saved && saved !== activeTab.value && tabs.some(t => t.id === saved)) {
@@ -85,6 +98,17 @@ function switchTab(tabId: string) {
   activeTab.value = tabId;
   sessionStorage.setItem(lastTabKey, tabId);
   router.replace({ query: { ...route.query, tab: tabId } });
+}
+
+function clearInstanceTaskQuery() {
+  if (!('task_id' in route.query) && !('install_version' in route.query) && !('install_loader' in route.query)) {
+    return;
+  }
+  const nextQuery = { ...route.query };
+  delete nextQuery.task_id;
+  delete nextQuery.install_version;
+  delete nextQuery.install_loader;
+  router.replace({ query: nextQuery });
 }
 
 onMounted(() => {
@@ -105,7 +129,13 @@ onMounted(() => {
     <!-- Right Content Area -->
     <div class="flex-1 relative bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md rounded-xl border border-neutral-200/50 dark:border-zinc-800/50 shadow-sm overflow-hidden flex flex-col min-w-0">
       <keep-alive>
-        <InstanceInstallTab v-if="activeTab === 'instance'" :initial-version="(route.query.install_version as string | undefined)" :initial-loader="(route.query.install_loader as string | undefined)" />
+        <InstanceInstallTab
+          v-if="activeTab === 'instance'"
+          :initial-version="(route.query.install_version as string | undefined)"
+          :initial-loader="(route.query.install_loader as string | undefined)"
+          :initial-task-id="(route.query.task_id as string | undefined)"
+          @clear-task-query="clearInstanceTaskQuery"
+        />
         <ModpackInstallTab v-else-if="activeTab === 'modpack'" />
         <ModsInstallTab v-else-if="activeTab === 'mod'" />
         <ResourcepackInstallTab v-else-if="activeTab === 'resourcepack'" />

@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { mount, flushPromises } from '@vue/test-utils';
 import { ref } from 'vue';
 import InstanceInstallTab from './InstanceInstallTab.vue';
 import { invoke } from '@tauri-apps/api/core';
+import type { TaskState } from '../../types/task';
+import { useInstanceInstallState } from '../../composables/useInstanceInstallState';
+
+const mockTasksRef = ref<TaskState[]>([]);
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn()
@@ -37,7 +41,7 @@ vi.mock('../../utils/analytics', () => ({
 
 vi.mock('../../composables/useTaskStore', () => ({
   useTaskStore: () => ({
-    tasks: ref([])
+    tasks: mockTasksRef,
   })
 }));
 
@@ -48,8 +52,12 @@ vi.mock('../../composables/useInstances', () => ({
 }));
 
 describe('InstanceInstallTab - Instance Name Autofill & Refresh', () => {
+  const instanceInstallState = useInstanceInstallState();
+
   beforeEach(() => {
     vi.clearAllMocks();
+    instanceInstallState.clearState();
+    mockTasksRef.value = [];
   });
 
   it('autofills instance name with base version when no loader is selected', async () => {
@@ -317,5 +325,74 @@ describe('InstanceInstallTab - Instance Name Autofill & Refresh', () => {
     await wrapper.vm.$nextTick();
     expect(vm.selectedComponents.Forge).toBe('47.2.0');
     expect(vm.customInstanceName).toBe('Forge-1.20.1-47.2.0');
+  });
+
+  it('restores TaskDetailView when mounted with initialTaskId and dismisses on reset', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_vanilla_versions') {
+        return [{ id: '26.3', versionType: 'release', url: 'https://example.com/26.3.json' }];
+      }
+      return [];
+    });
+
+    const restoredTask: TaskState = {
+      id: 'fabric-task-1',
+      status: 'Completed',
+      task_type: {
+        InstallFabric: {
+          mc_version: '26.3',
+          fabric_version: '0.20.1',
+          custom_instance_name: 'Fabric-26.3-0.20.1',
+          is_dependency: false,
+        },
+      },
+      progress: {
+        current: 100,
+        total: 100,
+        step: 1,
+        total_steps: 1,
+        detail: '',
+        speed: 0,
+        remaining_files: 0,
+        sub_tasks: [],
+      },
+      error: null,
+      created_at: 0,
+      updated_at: 0,
+      auto_clear: false,
+    };
+    mockTasksRef.value = [restoredTask];
+
+    const wrapper = mount(InstanceInstallTab, {
+      props: {
+        initialTaskId: 'fabric-task-1',
+      },
+      global: {
+        mocks: {
+          $t: (key: string, defaultOrParams?: any) => typeof defaultOrParams === 'string' ? defaultOrParams : key
+        },
+        stubs: {
+          InstallCard: true,
+          TaskDetailView: true
+        }
+      }
+    });
+
+    await flushPromises();
+    const vm = wrapper.vm as any;
+    expect(vm.isInstalling).toBe(true);
+    expect(vm.currentStep).toBe(3);
+    expect(vm.selectedVersion).toBe('26.3');
+    expect(vm.selectedFabricLoader).toBe('0.20.1');
+    expect(vm.customInstanceName).toBe('Fabric-26.3-0.20.1');
+    expect(wrapper.findComponent({ name: 'TaskDetailView' }).exists()).toBe(true);
+    expect(instanceInstallState.activeInstanceTaskId.value).toBe('fabric-task-1');
+
+    vm.resetToInitialState();
+    await wrapper.vm.$nextTick();
+
+    expect(vm.isInstalling).toBe(false);
+    expect(instanceInstallState.isTaskDismissed('fabric-task-1')).toBe(true);
+    expect(wrapper.emitted('clear-task-query')).toBeTruthy();
   });
 });
