@@ -339,6 +339,23 @@ pub async fn scan_installed_instances_internal(
 
                 if status == crate::models::instance::InstanceStatus::Ready && task_ctx.is_running(&id) {
                     status = crate::models::instance::InstanceStatus::Running;
+                } else if status == crate::models::instance::InstanceStatus::Running
+                    && task_ctx.running_instances.is_some()
+                    && !task_ctx.is_running(&id)
+                {
+                    tracing::warn!(
+                        "Instance {} is marked as Running on disk without an active process; resetting status to Ready.",
+                        id
+                    );
+                    if config_path.exists()
+                        && crate::core::launcher::update_instance_config(&path, |config| {
+                            config.set_status(crate::models::instance::InstanceStatus::Ready);
+                        })
+                        .await
+                        .is_ok()
+                    {
+                        status = crate::models::instance::InstanceStatus::Ready;
+                    }
                 }
 
                 // If it is installing, updating, or cancelling, check if its corresponding task exists and is not cancelled

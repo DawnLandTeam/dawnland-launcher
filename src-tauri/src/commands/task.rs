@@ -42,6 +42,75 @@ pub async fn clear_task_history(task_manager: State<'_, TaskManager>) -> Result<
         .map_err(|e| DawnlandError::Unknown(e.to_string()).into())
 }
 
+struct RetryInstancePrecreate {
+    dir: std::path::PathBuf,
+    dir_existed: bool,
+    config_existed: bool,
+    is_update: bool,
+    _startup_guard: crate::core::task::manager::InstanceStartupGuard,
+}
+
+async fn prepare_retry_instance_dir(
+    task_manager: &TaskManager,
+    target_name: &str,
+    is_dependency: bool,
+    is_update: bool,
+) -> Result<RetryInstancePrecreate, AppError> {
+    if !crate::core::fs_utils::is_safe_single_name(target_name) {
+        return Err(DawnlandError::Unknown("Invalid instance name".to_string()).into());
+    }
+    let startup_guard = task_manager.start_instance_install(target_name);
+    let dir = if is_dependency {
+        crate::core::mojang::get_dawnland_cache().join(target_name)
+    } else {
+        crate::core::mojang::get_minecraft_base()
+            .join("versions")
+            .join(target_name)
+    };
+    let dir_existed = dir.exists();
+    let config_existed = dir.join("dlml.json").exists();
+    let _ = tokio::fs::create_dir_all(&dir).await;
+    if is_update {
+        let _ = crate::core::launcher::InstanceConfig::ensure_updating(&dir).await;
+    } else {
+        crate::core::launcher::InstanceConfig::ensure_installing(&dir, is_dependency)
+            .await
+            .map_err(DawnlandError::Unknown)?;
+    }
+    Ok(RetryInstancePrecreate {
+        dir,
+        dir_existed,
+        config_existed,
+        is_update,
+        _startup_guard: startup_guard,
+    })
+}
+
+async fn spawn_retry_with_rollback<T: crate::core::task::ExecutableTask + 'static>(
+    task_manager: &TaskManager,
+    task_id: String,
+    task_type: crate::core::task::TaskType,
+    executable: T,
+    prep: RetryInstancePrecreate,
+) -> Result<String, AppError> {
+    match task_manager
+        .spawn_task_with_id(task_id, task_type, executable)
+        .await
+    {
+        Ok(id) => Ok(id),
+        Err(e) => {
+            crate::core::launcher::rollback_precreated_instance_status(
+                &prep.dir,
+                prep.dir_existed,
+                prep.config_existed,
+                prep.is_update,
+            )
+            .await;
+            Err(DawnlandError::Unknown(e.to_string()).into())
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn retry_task(
     task_id: String,
@@ -71,15 +140,16 @@ pub async fn retry_task(
             custom_instance_name,
             is_dependency,
         } => {
-            let base_dir = crate::core::mojang::get_minecraft_base();
-            let target_name = custom_instance_name.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or(&version_id);
-            let version_dir = base_dir.join("versions").join(target_name);
-            let _ = tokio::fs::create_dir_all(&version_dir).await;
-            crate::core::launcher::InstanceConfig::ensure_installing(
-                &version_dir,
-                is_dependency.unwrap_or(false),
-            )
-            .await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
+            let is_dep = is_dependency.unwrap_or(false);
+            let target_name = if is_dep {
+                version_id.as_str()
+            } else {
+                custom_instance_name
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or(&version_id)
+            };
+            let prep = prepare_retry_instance_dir(&task_manager, target_name, is_dep, false).await?;
 
             let executable = crate::core::mojang::InstallVanillaTask {
                 options: crate::core::mojang::VanillaInstallOptions {
@@ -89,10 +159,14 @@ pub async fn retry_task(
                     is_dependency,
                 },
             };
-            task_manager
-                .spawn_task_with_id(task_id.clone(), task.task_type, executable)
-                .await
-                .map_err(|e| e.to_string())?
+            spawn_retry_with_rollback(
+                &task_manager,
+                task_id.clone(),
+                task.task_type,
+                executable,
+                prep,
+            )
+            .await?
         }
         TaskType::InstallForge {
             mc_version,
@@ -101,14 +175,10 @@ pub async fn retry_task(
             custom_instance_name,
             is_dependency,
         } => {
-            let base_dir = crate::core::mojang::get_minecraft_base();
-            let instance_dir = base_dir.join("versions").join(&custom_instance_name);
-            let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            crate::core::launcher::InstanceConfig::ensure_installing(
-                &instance_dir,
-                is_dependency.unwrap_or(false),
-            )
-            .await;
+            let is_dep = is_dependency.unwrap_or(false);
+            let prep =
+                prepare_retry_instance_dir(&task_manager, &custom_instance_name, is_dep, false)
+                    .await?;
 
             let executable = crate::core::forge::InstallForgeTask {
                 options: crate::core::forge::InstallForgeOptions {
@@ -120,10 +190,14 @@ pub async fn retry_task(
                     is_existing_instance: None,
                 },
             };
-            task_manager
-                .spawn_task_with_id(task_id.clone(), task.task_type, executable)
-                .await
-                .map_err(|e| e.to_string())?
+            spawn_retry_with_rollback(
+                &task_manager,
+                task_id.clone(),
+                task.task_type,
+                executable,
+                prep,
+            )
+            .await?
         }
         TaskType::InstallFabric {
             mc_version,
@@ -131,14 +205,10 @@ pub async fn retry_task(
             custom_instance_name,
             is_dependency,
         } => {
-            let base_dir = crate::core::mojang::get_minecraft_base();
-            let instance_dir = base_dir.join("versions").join(&custom_instance_name);
-            let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            crate::core::launcher::InstanceConfig::ensure_installing(
-                &instance_dir,
-                is_dependency.unwrap_or(false),
-            )
-            .await;
+            let is_dep = is_dependency.unwrap_or(false);
+            let prep =
+                prepare_retry_instance_dir(&task_manager, &custom_instance_name, is_dep, false)
+                    .await?;
 
             let executable = crate::core::fabric::InstallFabricTask {
                 options: crate::core::fabric::InstallFabricOptions {
@@ -149,10 +219,14 @@ pub async fn retry_task(
                     is_existing_instance: None,
                 },
             };
-            task_manager
-                .spawn_task_with_id(task_id.clone(), task.task_type, executable)
-                .await
-                .map_err(|e| e.to_string())?
+            spawn_retry_with_rollback(
+                &task_manager,
+                task_id.clone(),
+                task.task_type,
+                executable,
+                prep,
+            )
+            .await?
         }
         TaskType::InstallModpack {
             zip_path,
@@ -163,16 +237,9 @@ pub async fn retry_task(
             pack_version_id,
             pack_file_name,
         } => {
-            let base_dir = crate::core::mojang::get_minecraft_base();
-            let instance_dir = base_dir.join("versions").join(&instance_name);
-            let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            if is_update {
-                crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                    config.set_status(crate::core::launcher::InstanceStatus::Updating);
-                }).await.ok();
-            } else {
-                crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
-            }
+            let prep =
+                prepare_retry_instance_dir(&task_manager, &instance_name, false, is_update)
+                    .await?;
 
             let executable = crate::commands::modpack::InstallModpackTask {
                 options: crate::commands::modpack::InstallModpackOptions {
@@ -185,10 +252,14 @@ pub async fn retry_task(
                     pack_file_name,
                 },
             };
-            task_manager
-                .spawn_task_with_id(task_id.clone(), task.task_type, executable)
-                .await
-                .map_err(|e| e.to_string())?
+            spawn_retry_with_rollback(
+                &task_manager,
+                task_id.clone(),
+                task.task_type,
+                executable,
+                prep,
+            )
+            .await?
         }
         TaskType::InstallMod {
             source,
@@ -265,16 +336,9 @@ pub async fn retry_task(
             pack_version_id,
             pack_file_name,
         } => {
-            let base_dir = crate::core::mojang::get_minecraft_base();
-            let instance_dir = base_dir.join("versions").join(&instance_name);
-            let _ = tokio::fs::create_dir_all(&instance_dir).await;
-            if is_update {
-                crate::core::launcher::update_instance_config(&instance_dir, |config| {
-                    config.set_status(crate::core::launcher::InstanceStatus::Updating);
-                }).await.ok();
-            } else {
-                crate::core::launcher::InstanceConfig::ensure_installing(&instance_dir, false).await.map_err(|e| DawnlandError::Unknown(e.to_string()))?;
-            }
+            let prep =
+                prepare_retry_instance_dir(&task_manager, &instance_name, false, is_update)
+                    .await?;
 
             let executable = crate::commands::modpack::InstallOnlineModpackTask {
                 options: crate::commands::modpack::InstallOnlineModpackOptions {
@@ -287,10 +351,14 @@ pub async fn retry_task(
                     pack_file_name,
                 },
             };
-            task_manager
-                .spawn_task_with_id(task_id.clone(), task.task_type, executable)
-                .await
-                .map_err(|e| e.to_string())?
+            spawn_retry_with_rollback(
+                &task_manager,
+                task_id.clone(),
+                task.task_type,
+                executable,
+                prep,
+            )
+            .await?
         }
         TaskType::InstallShaderpack {
             source,

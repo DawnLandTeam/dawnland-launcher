@@ -648,52 +648,34 @@ impl InstallForgeTask {
 impl ExecutableTask for InstallForgeTask {
     async fn execute(&self, ctx: TaskContext) -> Result<(), TaskError> {
         let is_existing = self.options.is_existing_instance.unwrap_or(false);
+        let is_dep = self.options.is_dependency.unwrap_or(false);
         let custom_instance_name = &self.options.custom_instance_name;
         let base_dir = get_minecraft_base();
-        let instance_dir = if self.options.is_dependency.unwrap_or(false) {
-            crate::core::mojang::get_dawnland_cache().join(custom_instance_name)
+        let cache_root = crate::core::mojang::get_dawnland_cache();
+        let instance_dir = if is_dep {
+            cache_root.join(custom_instance_name)
         } else {
             base_dir.join("versions").join(custom_instance_name)
         };
         let json_bak = instance_dir.join(format!("{}.json.bak", custom_instance_name));
         let config_bak = instance_dir.join("dlml.json.bak");
 
-        let res = self
-            .execute_inner(&ctx, &instance_dir, &json_bak, &config_bak)
-            .await;
-
-        if let Err(ref e) = res {
-            tracing::warn!(
-                "Forge/NeoForge installation failed for '{}': {:?}. Rolling back...",
-                custom_instance_name,
-                e
-            );
-            if is_existing {
-                if json_bak.exists() {
-                    let _ = crate::core::fs_utils::copy_file_atomic(
-                        &json_bak,
-                        instance_dir.join(format!("{}.json", custom_instance_name)),
-                    )
-                    .await;
-                    let _ = tokio::fs::remove_file(&json_bak).await;
-                }
-                if config_bak.exists() {
-                    let _ = crate::core::fs_utils::copy_file_atomic(&config_bak, instance_dir.join("dlml.json")).await;
-                    let _ = tokio::fs::remove_file(&config_bak).await;
-                }
-                let _ = crate::core::launcher::update_instance_config(&instance_dir, |c| {
-                    c.set_status(crate::core::launcher::InstanceStatus::Ready);
-                })
-                .await;
-            } else if instance_dir.exists() {
-                let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-            }
-        } else if is_existing {
-            let _ = tokio::fs::remove_file(&json_bak).await;
-            let _ = tokio::fs::remove_file(&config_bak).await;
-        }
-
-        res
+        crate::core::mod_loader::execute_loader_install_with_rollback(
+            crate::core::mod_loader::LoaderRollbackContext {
+                loader_label: "Forge/NeoForge",
+                versions_dir: base_dir.join("versions"),
+                cache_root,
+                instance_dir: &instance_dir,
+                instance_id: custom_instance_name,
+                is_existing,
+                is_dep,
+                json_bak: &json_bak,
+                config_bak: &config_bak,
+            },
+            || ctx.is_cancelled(),
+            || self.execute_inner(&ctx, &instance_dir, &json_bak, &config_bak),
+        )
+        .await
     }
 }
 
@@ -1225,94 +1207,101 @@ impl InstallForgeTask {
                 created_temp_vanilla = true;
             }
 
-            let mut child = match crate::core::utils::create_hidden_command(&java_exec)
-                .arg("-jar")
-                .arg(&installer_path)
-                .arg("--installClient")
-                .arg(base_dir.to_string_lossy().to_string())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    let err_msg = format!(
-                        "Failed to execute Forge installer: {}. Make sure Java is installed.",
-                        e
-                    );
-                    tracing::warn!("{}", err_msg);
-                    return Err(TaskError::ExecutionError(err_msg));
-                }
-            };
-
-            let stdout = child.stdout.take().expect("Failed to get stdout");
-            let stderr = child.stderr.take().expect("Failed to get stderr");
-
-            use tokio::io::AsyncBufReadExt;
-            use tracing::Instrument;
-            let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
-            let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
             let stderr_tail = std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::VecDeque::<String>::with_capacity(30),
             ));
-            let current_span = tracing::Span::current();
 
-            let ctx_clone1 = ctx_install.clone();
-            let stdout_task = tokio::spawn(
-                async move {
-                    while let Ok(Some(line)) = stdout_reader.next_line().await {
-                        tracing::trace!("Forge stdout: {}", line);
-                        let display_line = if line.len() > 120 {
-                            format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
-                        } else {
-                            line
-                        };
-                        ctx_clone1.update_progress(0, 100, &display_line).await;
+            let run_result: Result<std::process::ExitStatus, TaskError> = async {
+                let mut child = match crate::core::utils::create_hidden_command(&java_exec)
+                    .arg("-jar")
+                    .arg(&installer_path)
+                    .arg("--installClient")
+                    .arg(base_dir.to_string_lossy().to_string())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let err_msg = format!(
+                            "Failed to execute Forge installer: {}. Make sure Java is installed.",
+                            e
+                        );
+                        tracing::warn!("{}", err_msg);
+                        return Err(TaskError::ExecutionError(err_msg));
                     }
-                }
-                .instrument(current_span.clone()),
-            );
+                };
 
-            let ctx_clone2 = ctx_install.clone();
-            let stderr_tail_clone = stderr_tail.clone();
-            let stderr_task = tokio::spawn(
-                async move {
-                    while let Ok(Some(line)) = stderr_reader.next_line().await {
-                        tracing::debug!("Forge stderr: {}", line);
-                        {
-                            let mut buf = stderr_tail_clone.lock().await;
-                            if buf.len() >= 30 {
-                                buf.pop_front();
-                            }
-                            buf.push_back(line.clone());
+                let stdout = child.stdout.take().expect("Failed to get stdout");
+                let stderr = child.stderr.take().expect("Failed to get stderr");
+
+                use tokio::io::AsyncBufReadExt;
+                use tracing::Instrument;
+                let mut stdout_reader = tokio::io::BufReader::new(stdout).lines();
+                let mut stderr_reader = tokio::io::BufReader::new(stderr).lines();
+                let current_span = tracing::Span::current();
+
+                let ctx_clone1 = ctx_install.clone();
+                let stdout_task = tokio::spawn(
+                    async move {
+                        while let Ok(Some(line)) = stdout_reader.next_line().await {
+                            tracing::trace!("Forge stdout: {}", line);
+                            let display_line = if line.len() > 120 {
+                                format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
+                            } else {
+                                line
+                            };
+                            ctx_clone1.update_progress(0, 100, &display_line).await;
                         }
-                        let display_line = if line.len() > 120 {
-                            format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
-                        } else {
-                            line
-                        };
-                        ctx_clone2.update_progress(0, 100, &display_line).await;
                     }
-                }
-                .instrument(current_span),
-            );
-            let status = tokio::select! {
-                res = child.wait() => {
-                    res.map_err(|e| TaskError::ExecutionError(format!("Failed to wait on Forge installer: {}", e)))?
-                }
-                _ = ctx_install.wait_cancelled() => {
-                    crate::core::utils::kill_process_tree(&mut child).await;
-                    return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
-                }
-            };
+                    .instrument(current_span.clone()),
+                );
 
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
+                let ctx_clone2 = ctx_install.clone();
+                let stderr_tail_clone = stderr_tail.clone();
+                let stderr_task = tokio::spawn(
+                    async move {
+                        while let Ok(Some(line)) = stderr_reader.next_line().await {
+                            tracing::debug!("Forge stderr: {}", line);
+                            {
+                                let mut buf = stderr_tail_clone.lock().await;
+                                if buf.len() >= 30 {
+                                    buf.pop_front();
+                                }
+                                buf.push_back(line.clone());
+                            }
+                            let display_line = if line.len() > 120 {
+                                format!("{}...", crate::core::utils::truncate_utf8(&line, 120))
+                            } else {
+                                line
+                            };
+                            ctx_clone2.update_progress(0, 100, &display_line).await;
+                        }
+                    }
+                    .instrument(current_span),
+                );
+                let status = tokio::select! {
+                    res = child.wait() => {
+                        res.map_err(|e| TaskError::ExecutionError(format!("Failed to wait on Forge installer: {}", e)))?
+                    }
+                    _ = ctx_install.wait_cancelled() => {
+                        crate::core::utils::kill_process_tree(&mut child).await;
+                        return Err(TaskError::ExecutionError("Installation cancelled by user".to_string()));
+                    }
+                };
+
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                Ok(status)
+            }
+            .await;
 
             if created_temp_vanilla {
                 let _ = fs::remove_dir_all(&temp_vanilla_dir).await;
                 tracing::debug!("Cleaned up temporary vanilla base directory");
             }
+
+            let status = run_result?;
 
             if !status.success() {
                 let err_msg = format!(
@@ -1536,8 +1525,10 @@ pub async fn install_forge_instance(
         dir
     };
     let _startup_guard = task_manager.start_instance_install(&custom_instance_name);
-    let _ = tokio::fs::create_dir_all(&instance_dir).await;
+    let dir_existed = instance_dir.exists();
     let config_path = instance_dir.join("dlml.json");
+    let config_existed = config_path.exists();
+    let _ = tokio::fs::create_dir_all(&instance_dir).await;
     let mut pre_config = crate::core::launcher::InstanceConfig {
         hidden: is_dependency.unwrap_or(false),
         ..Default::default()
@@ -1558,7 +1549,7 @@ pub async fn install_forge_instance(
         },
     };
 
-    let task_id = task_manager
+    let task_id = match task_manager
         .spawn_task(
             TaskType::InstallForge {
                 mc_version: mc_version.clone(),
@@ -1570,7 +1561,19 @@ pub async fn install_forge_instance(
             task,
         )
         .await
-        .map_err(|e| format!("Failed to spawn task: {}", e))?;
+    {
+        Ok(id) => id,
+        Err(e) => {
+            crate::core::launcher::rollback_precreated_instance_status(
+                &instance_dir,
+                dir_existed,
+                config_existed,
+                false,
+            )
+            .await;
+            return Err(format!("Failed to spawn task: {}", e).into());
+        }
+    };
 
     Ok(task_id)
 }
@@ -1685,6 +1688,176 @@ mod tests {
         assert_eq!(
             info2.1,
             "libraries/net/minecraftforge/forge/1.20.1/forge-1.20.1-universal.jar"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_forge_dependency_failure_triggers_cleanup_or_preservation() {
+        let dir = tempfile::tempdir().unwrap();
+        let versions_dir = dir.path().join("versions");
+        let cache_root = dir.path().join("cache");
+        let mut installing_cfg = crate::core::launcher::InstanceConfig {
+            hidden: true,
+            ..Default::default()
+        };
+        installing_cfg.set_status(crate::core::launcher::InstanceStatus::Installing);
+
+        // 1. Processor error on incomplete Forge dependency cache -> removed cleanly
+        let incomplete_id = "1.20.1-forge-47.2.0";
+        let incomplete_dir = cache_root.join(incomplete_id);
+        tokio::fs::create_dir_all(&incomplete_dir).await.unwrap();
+        crate::core::launcher::write_instance_config_atomic(
+            &incomplete_dir.join("dlml.json"),
+            &installing_cfg,
+        )
+        .await
+        .unwrap();
+
+        let json_bak_1 = incomplete_dir.join(format!("{}.json.bak", incomplete_id));
+        let config_bak_1 = incomplete_dir.join("dlml.json.bak");
+        let err_res = crate::core::mod_loader::execute_loader_install_with_rollback(
+            crate::core::mod_loader::LoaderRollbackContext {
+                loader_label: "Forge/NeoForge",
+                versions_dir: versions_dir.clone(),
+                cache_root: cache_root.clone(),
+                instance_dir: &incomplete_dir,
+                instance_id: incomplete_id,
+                is_existing: false,
+                is_dep: true,
+                json_bak: &json_bak_1,
+                config_bak: &config_bak_1,
+            },
+            || false,
+            || async {
+                Err(TaskError::ExecutionError(
+                    "Forge installer failed to run processors with exit code: Some(1)".to_string(),
+                ))
+            },
+        )
+        .await;
+        assert!(err_res.is_err());
+        assert!(!incomplete_dir.exists());
+
+        // 2. Mid-processor cancellation on complete referenced Forge dependency cache -> preserved & reset to Ready
+        let complete_id = "1.20.1-forge-47.3.0";
+        let complete_dir = cache_root.join(complete_id);
+        tokio::fs::create_dir_all(&complete_dir).await.unwrap();
+        crate::core::launcher::write_instance_config_atomic(
+            &complete_dir.join("dlml.json"),
+            &installing_cfg,
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(
+            complete_dir.join(format!("{}.json", complete_id)),
+            format!(r#"{{"id":"{}","inheritsFrom":"1.20.1"}}"#, complete_id),
+        )
+        .await
+        .unwrap();
+
+        let modpack_dir = versions_dir.join("modpack-forge");
+        tokio::fs::create_dir_all(&modpack_dir).await.unwrap();
+        tokio::fs::write(
+            modpack_dir.join("modpack-forge.json"),
+            format!(r#"{{"id":"modpack-forge","inheritsFrom":"{}"}}"#, complete_id),
+        )
+        .await
+        .unwrap();
+
+        let json_bak_2 = complete_dir.join(format!("{}.json.bak", complete_id));
+        let config_bak_2 = complete_dir.join("dlml.json.bak");
+        let cancel_res = crate::core::mod_loader::execute_loader_install_with_rollback(
+            crate::core::mod_loader::LoaderRollbackContext {
+                loader_label: "Forge/NeoForge",
+                versions_dir: versions_dir.clone(),
+                cache_root: cache_root.clone(),
+                instance_dir: &complete_dir,
+                instance_id: complete_id,
+                is_existing: false,
+                is_dep: true,
+                json_bak: &json_bak_2,
+                config_bak: &config_bak_2,
+            },
+            || true,
+            || async {
+                Err(TaskError::ExecutionError(
+                    "Installation cancelled by user".to_string(),
+                ))
+            },
+        )
+        .await;
+        assert!(cancel_res.is_err());
+        assert!(complete_dir.exists());
+        let recovered_2: crate::core::launcher::InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(complete_dir.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            recovered_2.status,
+            crate::core::launcher::InstanceStatus::Ready
+        );
+
+        // 3. Retry over pre-created incomplete referenced Forge cache where JSON is written before Err -> preserved & reset to Ready
+        let retry_id = "1.20.1-forge-47.4.0";
+        let retry_dir = cache_root.join(retry_id);
+        tokio::fs::create_dir_all(&retry_dir).await.unwrap();
+        crate::core::launcher::write_instance_config_atomic(
+            &retry_dir.join("dlml.json"),
+            &installing_cfg,
+        )
+        .await
+        .unwrap();
+        let modpack_retry_dir = versions_dir.join("modpack-forge-retry");
+        tokio::fs::create_dir_all(&modpack_retry_dir).await.unwrap();
+        tokio::fs::write(
+            modpack_retry_dir.join("modpack-forge-retry.json"),
+            format!(
+                r#"{{"id":"modpack-forge-retry","inheritsFrom":"{}"}}"#,
+                retry_id
+            ),
+        )
+        .await
+        .unwrap();
+
+        let json_bak_3 = retry_dir.join(format!("{}.json.bak", retry_id));
+        let config_bak_3 = retry_dir.join("dlml.json.bak");
+        let retry_res = crate::core::mod_loader::execute_loader_install_with_rollback(
+            crate::core::mod_loader::LoaderRollbackContext {
+                loader_label: "Forge/NeoForge",
+                versions_dir,
+                cache_root,
+                instance_dir: &retry_dir,
+                instance_id: retry_id,
+                is_existing: false,
+                is_dep: true,
+                json_bak: &json_bak_3,
+                config_bak: &config_bak_3,
+            },
+            || false,
+            || async {
+                tokio::fs::write(
+                    retry_dir.join(format!("{}.json", retry_id)),
+                    format!(r#"{{"id":"{}","inheritsFrom":"1.20.1"}}"#, retry_id),
+                )
+                .await
+                .unwrap();
+                Err(TaskError::ExecutionError("Simulated post-write failure".to_string()))
+            },
+        )
+        .await;
+        assert!(retry_res.is_err());
+        assert!(retry_dir.exists());
+        let recovered_3: crate::core::launcher::InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(retry_dir.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            recovered_3.status,
+            crate::core::launcher::InstanceStatus::Ready
         );
     }
 }

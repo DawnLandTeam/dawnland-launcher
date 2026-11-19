@@ -314,10 +314,18 @@ pub async fn clean_dawnland_cache(app: AppHandle) -> Result<(), String> {
         .map_err(|reason| format!("Cannot clear cache while active operation is running ({})", reason))?;
 
     let paths_clone = paths.clone();
+    let ignore_stale_status = has_verified_runtime_state(Some(&app));
     tokio::task::spawn_blocking(move || {
         let now_secs = now_epoch_secs();
         let mut retention = RetentionState::load(&paths_clone);
-        let res = clean_dawnland_cache_smart(&paths_clone, 0, true, now_secs, &mut retention);
+        let res = clean_dawnland_cache_smart(
+            &paths_clone,
+            0,
+            true,
+            now_secs,
+            &mut retention,
+            ignore_stale_status,
+        );
         if res.is_ok() {
             retention.save(&paths_clone);
         }
@@ -354,32 +362,61 @@ pub async fn clean_unreferenced_cache(app: AppHandle) -> Result<CacheGcReport, S
     Ok(report)
 }
 
-async fn check_non_gate_barriers(app: Option<&AppHandle>, paths: &CachePaths) -> Option<String> {
+fn has_verified_runtime_state(app: Option<&AppHandle>) -> bool {
+    app.is_some_and(|handle| {
+        handle.try_state::<crate::core::task::TaskManager>().is_some()
+            && handle
+                .try_state::<crate::core::launcher::RunningInstances>()
+                .is_some()
+    })
+}
+
+async fn check_runtime_barriers(app: Option<&AppHandle>) -> Option<String> {
     if let Some(handle) = app {
         if let Some(tm) = handle.try_state::<crate::core::task::TaskManager>() {
             if tm.has_active_tasks().await {
+                tracing::debug!("Cache GC blocked: TaskManager has active or starting tasks");
                 return Some("active_task".to_string());
             }
         }
         if let Some(running) = handle.try_state::<crate::core::launcher::RunningInstances>() {
             if running.has_running_instances().await {
+                tracing::debug!("Cache GC blocked: RunningInstances reports active game process");
                 return Some("active_task".to_string());
             }
         }
     }
 
-    if crate::downloader::download::has_active_downloads()
-        || crate::core::drop_install::has_busy_instance_locks()
-    {
+    if crate::downloader::download::has_active_downloads() {
+        tracing::debug!("Cache GC blocked: active downloads or pool download locks in flight");
         return Some("active_task".to_string());
     }
 
-    let paths_clone = paths.clone();
-    let has_busy_instance = tokio::task::spawn_blocking(move || has_busy_instance_configs(&paths_clone))
-        .await
-        .unwrap_or(true);
+    if crate::core::drop_install::has_busy_instance_locks() {
+        tracing::debug!("Cache GC blocked: per-instance operation lock is held");
+        return Some("active_task".to_string());
+    }
 
-    if has_busy_instance {
+    None
+}
+
+async fn check_non_gate_barriers(app: Option<&AppHandle>, paths: &CachePaths) -> Option<String> {
+    if let Some(reason) = check_runtime_barriers(app).await {
+        return Some(reason);
+    }
+
+    if has_verified_runtime_state(app) {
+        return None;
+    }
+
+    let paths_clone = paths.clone();
+    let busy_detail =
+        tokio::task::spawn_blocking(move || find_busy_instance_config(&paths_clone))
+            .await
+            .unwrap_or_else(|_| Some("spawn_blocking join error".to_string()));
+
+    if let Some(detail) = busy_detail {
+        tracing::debug!("Cache GC blocked by on-disk instance config: {}", detail);
         Some("active_task".to_string())
     } else {
         None
@@ -390,6 +427,11 @@ async fn is_any_barrier_active(app: Option<&AppHandle>, paths: &CachePaths) -> O
     {
         let state = GATE_STATE.lock().unwrap_or_else(|p| p.into_inner());
         if state.active_ops > 0 || state.gc_running {
+            tracing::debug!(
+                "Cache GC barrier active in GATE_STATE (active_ops={}, gc_running={})",
+                state.active_ops,
+                state.gc_running
+            );
             return Some("active_task".to_string());
         }
     }
@@ -410,11 +452,20 @@ async fn try_enter_gc_sweep(
 
     let guard = {
         let mut state = GATE_STATE.lock().unwrap_or_else(|p| p.into_inner());
-        if state.active_ops > 0
-            || state.gc_running
-            || crate::downloader::download::has_active_downloads()
-            || crate::core::drop_install::has_busy_instance_locks()
-        {
+        if state.active_ops > 0 || state.gc_running {
+            tracing::debug!(
+                "Cache GC sweep entry blocked by GATE_STATE (active_ops={}, gc_running={})",
+                state.active_ops,
+                state.gc_running
+            );
+            return Err("active_task".to_string());
+        }
+        if crate::downloader::download::has_active_downloads() {
+            tracing::debug!("Cache GC sweep entry blocked by active downloads");
+            return Err("active_task".to_string());
+        }
+        if crate::core::drop_install::has_busy_instance_locks() {
+            tracing::debug!("Cache GC sweep entry blocked by busy instance lock");
             return Err("active_task".to_string());
         }
         state.gc_running = true;
@@ -422,51 +473,72 @@ async fn try_enter_gc_sweep(
         GcSweepGuard
     };
 
-    // Re-check tasks, running games, and on-disk instance statuses while `gc_running` blocks new work.
+    // Re-check tasks, running games, and (when runtime managers are unavailable) on-disk
+    // instance statuses while `gc_running` blocks new work.
     if let Some(reason) = check_non_gate_barriers(app, paths).await {
         drop(guard);
         return Err(reason);
     }
 
+    if has_verified_runtime_state(app) {
+        let paths_clone = paths.clone();
+        if let Ok(Some(stale_detail)) =
+            tokio::task::spawn_blocking(move || find_busy_instance_config(&paths_clone)).await
+        {
+            tracing::warn!(
+                "Proceeding with cache GC while runtime barriers are idle; ignoring stale/unreadable instance config ({})",
+                stale_detail
+            );
+        }
+    }
+
     Ok(guard)
 }
 
-fn has_busy_instance_configs(paths: &CachePaths) -> bool {
-    for root in [paths.versions_dir(), paths.version_cache_dir()] {
+fn find_busy_instance_config(paths: &CachePaths) -> Option<String> {
+    for (root_label, root) in [
+        ("versions", paths.versions_dir()),
+        ("cache", paths.version_cache_dir()),
+    ] {
         if !is_real_dir_path(&root) {
             continue;
         }
         let Ok(entries) = std::fs::read_dir(&root) else {
-            return true;
+            return Some(format!("{}: unreadable directory", root_label));
         };
         for entry in entries {
             let Ok(entry) = entry else {
-                return true;
+                return Some(format!("{}: unreadable directory entry", root_label));
             };
             let Ok(ft) = entry.file_type() else {
-                return true;
+                return Some(format!("{}: unreadable entry file type", root_label));
             };
             if ft.is_symlink() || !ft.is_dir() {
                 continue;
             }
             let dir = entry.path();
+            let dir_name = entry.file_name().to_string_lossy().to_string();
             let config_path = dir.join("dlml.json");
             if !is_real_file_path(&config_path) {
                 continue;
             }
             let Ok(content) = std::fs::read_to_string(&config_path) else {
-                return true;
+                return Some(format!("{}/{}: unreadable dlml.json", root_label, dir_name));
             };
             let Ok(config) = serde_json::from_str::<InstanceConfig>(&content) else {
-                return true;
+                return Some(format!("{}/{}: unparseable dlml.json", root_label, dir_name));
             };
             let status = config.effective_status();
             if status.is_busy() || status.is_running() {
-                return true;
+                return Some(format!("{}/{}: status={:?}", root_label, dir_name, status));
             }
         }
     }
-    false
+    None
+}
+
+fn has_busy_instance_configs(paths: &CachePaths) -> bool {
+    find_busy_instance_config(paths).is_some()
 }
 
 async fn run_gc_with_barriers(
@@ -485,10 +557,17 @@ async fn run_gc_with_barriers(
         }
     };
 
+    let trust_runtime_barriers = has_verified_runtime_state(app);
     let paths_clone = paths.clone();
     let settings_clone = settings.clone();
     let report = match tokio::task::spawn_blocking(move || {
-        execute_gc_blocking(&paths_clone, mode, &settings_clone)
+        execute_gc_blocking_at_with_options(
+            &paths_clone,
+            mode,
+            &settings_clone,
+            now_epoch_secs(),
+            trust_runtime_barriers,
+        )
     })
     .await
     {
@@ -520,16 +599,27 @@ fn execute_gc_blocking_at(
     settings: &LauncherSettings,
     now_secs: u64,
 ) -> CacheGcReport {
+    execute_gc_blocking_at_with_options(paths, mode, settings, now_secs, false)
+}
+
+fn execute_gc_blocking_at_with_options(
+    paths: &CachePaths,
+    mode: GcMode,
+    settings: &LauncherSettings,
+    now_secs: u64,
+    trust_runtime_barriers: bool,
+) -> CacheGcReport {
     let mut report = CacheGcReport::default();
 
     let gate_blocked = {
         let state = GATE_STATE.lock().unwrap_or_else(|p| p.into_inner());
         !state.gc_running && state.active_ops > 0
     };
+    let config_blocked = !trust_runtime_barriers && has_busy_instance_configs(paths);
     if gate_blocked
         || crate::downloader::download::has_active_downloads()
         || crate::core::drop_install::has_busy_instance_locks()
-        || has_busy_instance_configs(paths)
+        || config_blocked
     {
         report.skipped_reason = Some("active_task".to_string());
         return report;
@@ -577,6 +667,7 @@ fn execute_gc_blocking_at(
         mode == GcMode::Manual,
         now_secs,
         &mut retention,
+        trust_runtime_barriers,
     ) {
         Ok((freed, removed)) => {
             report.freed_bytes = report.freed_bytes.saturating_add(freed);
@@ -1028,14 +1119,193 @@ struct VersionCacheReferences {
     mc_versions: HashSet<String>,
 }
 
+fn is_valid_single_component(id: &str) -> bool {
+    let mut components = Path::new(id).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
+        && !id.contains('/')
+        && !id.contains('\\')
+}
+
+async fn is_real_non_empty_file_async(path: &Path) -> bool {
+    let Ok(meta) = tokio::fs::symlink_metadata(path).await else {
+        return false;
+    };
+    !meta.file_type().is_symlink() && meta.file_type().is_file() && meta.len() > 0
+}
+
+/// Checks whether a shared dependency cache directory holds valid core version artifacts.
+pub(crate) async fn is_dependency_cache_complete(dir: &Path, version_id: &str) -> bool {
+    if !is_valid_single_component(version_id) {
+        return false;
+    }
+    let Ok(dir_meta) = tokio::fs::symlink_metadata(dir).await else {
+        return false;
+    };
+    if dir_meta.file_type().is_symlink() || !dir_meta.file_type().is_dir() {
+        return false;
+    }
+
+    let json_path = dir.join(format!("{}.json", version_id));
+    if !is_real_non_empty_file_async(&json_path).await {
+        return false;
+    }
+    let Ok(content) = tokio::fs::read_to_string(&json_path).await else {
+        return false;
+    };
+    let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    // Inherited loader dependency caches rely on a base version jar and do not ship their own jar.
+    if json_val
+        .get("inheritsFrom")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        return true;
+    }
+
+    let jar_path = dir.join(format!("{}.jar", version_id));
+    is_real_non_empty_file_async(&jar_path).await
+}
+
+/// Collects all inherited cache target IDs referenced by installed instances; returns None on scan error to fail closed.
+pub(crate) fn collect_inherited_cache_targets_in_dirs(
+    versions_dir: &Path,
+    cache_dir: &Path,
+) -> Option<HashSet<String>> {
+    match collect_version_cache_references_in_dirs(versions_dir, cache_dir) {
+        Ok(refs) => Some(refs.inherits_targets),
+        Err(err) => {
+            tracing::warn!(
+                target: "dawnland_launcher_lib::cache",
+                "Failed to scan version cache references (failing closed): {}",
+                crate::logger::redact::redact_user_paths(&err)
+            );
+            None
+        }
+    }
+}
+
+/// Returns whether `target_id` is referenced via `inheritsFrom` by any installed instance (fails closed on scan error).
+pub(crate) fn is_version_cache_referenced_in_dirs(
+    versions_dir: &Path,
+    cache_dir: &Path,
+    target_id: &str,
+) -> bool {
+    collect_inherited_cache_targets_in_dirs(versions_dir, cache_dir)
+        .is_none_or(|targets| targets.contains(target_id))
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DependencyCachePreState {
+    versions_dir: PathBuf,
+    cache_dir: PathBuf,
+    was_referenced: bool,
+}
+
+async fn is_version_cache_referenced_async(
+    versions_dir: PathBuf,
+    cache_dir: PathBuf,
+    target_id: String,
+) -> bool {
+    tokio::task::spawn_blocking(move || {
+        is_version_cache_referenced_in_dirs(&versions_dir, &cache_dir, &target_id)
+    })
+    .await
+    .unwrap_or(true)
+}
+
+async fn reset_dependency_dlml_ready(target_dir: &Path) {
+    let dlml_path = target_dir.join("dlml.json");
+    if tokio::fs::symlink_metadata(&dlml_path)
+        .await
+        .is_ok_and(|m| !m.file_type().is_symlink() && m.file_type().is_file())
+    {
+        let _ = crate::core::launcher::update_instance_config(target_dir, |c| {
+            c.set_status(crate::core::launcher::InstanceStatus::Ready);
+        })
+        .await;
+    }
+}
+
+/// Captures inheritance references for a dependency cache before installation.
+pub(crate) async fn capture_dependency_cache_pre_state(
+    versions_dir: PathBuf,
+    cache_dir: PathBuf,
+    target_id: &str,
+) -> DependencyCachePreState {
+    let was_referenced = is_version_cache_referenced_async(
+        versions_dir.clone(),
+        cache_dir.clone(),
+        target_id.to_string(),
+    )
+    .await;
+
+    DependencyCachePreState {
+        versions_dir,
+        cache_dir,
+        was_referenced,
+    }
+}
+
+/// Cleans up a failed dependency install only when unreferenced or incomplete; preserves complete referenced caches.
+pub(crate) async fn cleanup_failed_dependency_cache(
+    pre_state: &DependencyCachePreState,
+    target_dir: &Path,
+    target_id: &str,
+) {
+    let currently_complete = is_dependency_cache_complete(target_dir, target_id).await;
+    let currently_referenced = is_version_cache_referenced_async(
+        pre_state.versions_dir.clone(),
+        pre_state.cache_dir.clone(),
+        target_id.to_string(),
+    )
+    .await;
+
+    let is_referenced = pre_state.was_referenced || currently_referenced;
+    let should_remove = !is_referenced || !currently_complete;
+
+    if !should_remove {
+        tracing::info!(
+            target: "dawnland_launcher_lib::cache",
+            "Preserving complete referenced dependency cache {} and resetting status to Ready",
+            crate::logger::redact::redact_user_paths(&target_dir.display().to_string())
+        );
+        reset_dependency_dlml_ready(target_dir).await;
+        return;
+    }
+
+    match tokio::fs::remove_dir_all(target_dir).await {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            tracing::warn!(
+                target: "dawnland_launcher_lib::cache",
+                "Failed to remove incomplete dependency cache {}: {}",
+                crate::logger::redact::redact_user_paths(&target_dir.display().to_string()),
+                err
+            );
+            reset_dependency_dlml_ready(target_dir).await;
+        }
+    }
+}
+
 fn collect_version_cache_references(paths: &CachePaths) -> Result<VersionCacheReferences, String> {
+    collect_version_cache_references_in_dirs(&paths.versions_dir(), &paths.version_cache_dir())
+}
+
+fn collect_version_cache_references_in_dirs(
+    versions_dir: &Path,
+    cache_dir: &Path,
+) -> Result<VersionCacheReferences, String> {
     let mut refs = VersionCacheReferences::default();
-    let versions_dir = paths.versions_dir();
     if !versions_dir.exists() {
         return Ok(refs);
     }
 
-    let entries = std::fs::read_dir(&versions_dir)
+    let entries = std::fs::read_dir(versions_dir)
         .map_err(|e| format!("Failed to read versions directory: {}", e))?;
 
     for entry in entries {
@@ -1072,7 +1342,9 @@ fn collect_version_cache_references(paths: &CachePaths) -> Result<VersionCacheRe
             if !visited.insert(current_id.clone()) {
                 break;
             }
-            let Some(json_val) = read_version_json_for_chain(paths, &current_id)? else {
+            let Some(json_val) =
+                read_version_json_for_chain_in_dirs(versions_dir, cache_dir, &current_id)?
+            else {
                 continue;
             };
             if let Some(cv) = json_val.get("clientVersion").and_then(|v| v.as_str()) {
@@ -1097,10 +1369,23 @@ fn read_version_json_for_chain(
     paths: &CachePaths,
     version_id: &str,
 ) -> Result<Option<serde_json::Value>, String> {
+    read_version_json_for_chain_in_dirs(&paths.versions_dir(), &paths.version_cache_dir(), version_id)
+}
+
+fn read_version_json_for_chain_in_dirs(
+    versions_dir: &Path,
+    cache_dir: &Path,
+    version_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    if !is_valid_single_component(version_id) {
+        return Ok(None);
+    }
     let candidates = [
-        paths.versions_dir().join(version_id).join(format!("{}.json", version_id)),
-        paths.version_cache_dir().join(version_id).join(format!("{}.json", version_id)),
-        paths.versions_dir().join(version_id).join(format!("{}.json.bak", version_id)),
+        versions_dir.join(version_id).join(format!("{}.json", version_id)),
+        cache_dir.join(version_id).join(format!("{}.json", version_id)),
+        versions_dir
+            .join(version_id)
+            .join(format!("{}.json.bak", version_id)),
     ];
     for candidate in candidates {
         if is_real_file_path(&candidate) {
@@ -1203,6 +1488,7 @@ fn clean_dawnland_cache_smart(
     force_manual_ttl: bool,
     now_secs: u64,
     retention: &mut RetentionState,
+    ignore_stale_status: bool,
 ) -> Result<(u64, u64), String> {
     let cache_dir = paths.version_cache_dir();
     if !is_real_dir_path(&cache_dir) {
@@ -1234,7 +1520,7 @@ fn clean_dawnland_cache_smart(
             continue;
         }
 
-        if ft.is_dir() {
+        if !ignore_stale_status && ft.is_dir() {
             let dlml_path = entry_path.join("dlml.json");
             if is_real_file_path(&dlml_path) {
                 if let Ok(content) = std::fs::read_to_string(&dlml_path) {
@@ -2709,5 +2995,294 @@ mod tests {
         assert_eq!(report.removed_assets, 0);
         assert_eq!(report.removed_libraries, 0);
         assert!(outside_file.exists());
+    }
+
+    #[tokio::test]
+    async fn test_verified_runtime_barriers_ignore_stale_disk_configs_and_clean_stale_cache() {
+        let _test_guard = CACHE_TEST_MUTEX.lock().await;
+        let dir = tempdir().unwrap();
+        let paths = build_test_paths(dir.path());
+
+        // 1. Stale Installing config in .dawnland/cache + stale Running/corrupt configs in versions/
+        let stale_cache_dir = paths.version_cache_dir().join("1.20.4");
+        std::fs::create_dir_all(&stale_cache_dir).unwrap();
+        write_dlml_config(&stale_cache_dir, InstanceStatus::Installing, Some("1.20.4"));
+        std::fs::write(stale_cache_dir.join("1.20.4.json"), r#"{"id":"1.20.4"}"#).unwrap();
+
+        let referenced_cache_dir = paths.version_cache_dir().join("1.20.1");
+        std::fs::create_dir_all(&referenced_cache_dir).unwrap();
+        write_dlml_config(&referenced_cache_dir, InstanceStatus::Installing, Some("1.20.1"));
+        std::fs::write(referenced_cache_dir.join("1.20.1.json"), r#"{"id":"1.20.1"}"#).unwrap();
+
+        let running_inst_dir = paths.versions_dir().join("stale-running-inst");
+        std::fs::create_dir_all(&running_inst_dir).unwrap();
+        write_dlml_config(&running_inst_dir, InstanceStatus::Running, Some("1.20.1"));
+        std::fs::write(
+            running_inst_dir.join("stale-running-inst.json"),
+            r#"{"id":"stale-running-inst","inheritsFrom":"1.20.1"}"#,
+        )
+        .unwrap();
+
+        let corrupt_inst_dir = paths.versions_dir().join("corrupt-dlml-inst");
+        std::fs::create_dir_all(&corrupt_inst_dir).unwrap();
+        std::fs::write(corrupt_inst_dir.join("dlml.json"), "{ invalid json").unwrap();
+
+        // Standalone execution without verified runtime managers remains fail-closed.
+        let standalone = execute_gc_blocking(&paths, GcMode::Manual, &LauncherSettings::default());
+        assert_eq!(standalone.skipped_reason.as_deref(), Some("active_task"));
+        assert!(stale_cache_dir.exists());
+
+        // When runtime barriers (TaskManager, RunningInstances, GATE_STATE, locks) are verified idle,
+        // stale/corrupt dlml.json on disk must NOT trigger a false active_task skip.
+        let verified = execute_gc_blocking_at_with_options(
+            &paths,
+            GcMode::Manual,
+            &LauncherSettings::default(),
+            now_epoch_secs(),
+            true,
+        );
+        assert_eq!(verified.skipped_reason, None);
+        assert_eq!(verified.removed_version_caches, 1);
+        assert!(!stale_cache_dir.exists());
+        // Inherited parent cache remains protected even if its dlml.json was stale.
+        assert!(referenced_cache_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_failed_dependency_cache_protects_preexisting_complete_referenced_caches() {
+        let dir = tempdir().unwrap();
+        let paths = build_test_paths(dir.path());
+        let versions_dir = paths.versions_dir();
+        let cache_dir = paths.version_cache_dir();
+
+        // Transitive inheritance chain: versions/my-modpack -> cache/fabric-dep -> cache/1.20.1
+        let inst_dir = versions_dir.join("my-modpack");
+        tokio::fs::create_dir_all(&inst_dir).await.unwrap();
+        tokio::fs::write(
+            inst_dir.join("my-modpack.json"),
+            r#"{"id":"my-modpack","inheritsFrom":"fabric-dep"}"#,
+        )
+        .await
+        .unwrap();
+
+        let fabric_dep_dir = cache_dir.join("fabric-dep");
+        tokio::fs::create_dir_all(&fabric_dep_dir).await.unwrap();
+        write_dlml_config(&fabric_dep_dir, InstanceStatus::Installing, Some("1.20.1"));
+        tokio::fs::write(
+            fabric_dep_dir.join("fabric-dep.json"),
+            r#"{"id":"fabric-dep","inheritsFrom":"1.20.1"}"#,
+        )
+        .await
+        .unwrap();
+
+        // (a) Pre-existing complete referenced vanilla cache -> preserved and reset to Ready.
+        let vanilla_dep_dir = cache_dir.join("1.20.1");
+        tokio::fs::create_dir_all(&vanilla_dep_dir).await.unwrap();
+        write_dlml_config(&vanilla_dep_dir, InstanceStatus::Installing, Some("1.20.1"));
+        tokio::fs::write(vanilla_dep_dir.join("1.20.1.json"), r#"{"id":"1.20.1"}"#)
+            .await
+            .unwrap();
+        tokio::fs::write(vanilla_dep_dir.join("1.20.1.jar"), b"dummy jar bytes")
+            .await
+            .unwrap();
+
+        let vanilla_pre = capture_dependency_cache_pre_state(
+            versions_dir.clone(),
+            cache_dir.clone(),
+            "1.20.1",
+        )
+        .await;
+        cleanup_failed_dependency_cache(&vanilla_pre, &vanilla_dep_dir, "1.20.1").await;
+        assert!(vanilla_dep_dir.exists());
+        assert!(vanilla_dep_dir.join("1.20.1.jar").exists());
+        let vanilla_cfg: InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(vanilla_dep_dir.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(vanilla_cfg.status, InstanceStatus::Ready);
+
+        // (e) Transitive inherited loader dependency cache without local jar -> also preserved & reset to Ready.
+        let fabric_pre = capture_dependency_cache_pre_state(
+            versions_dir.clone(),
+            cache_dir.clone(),
+            "fabric-dep",
+        )
+        .await;
+        cleanup_failed_dependency_cache(&fabric_pre, &fabric_dep_dir, "fabric-dep").await;
+        assert!(fabric_dep_dir.exists());
+        let fabric_cfg: InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(fabric_dep_dir.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(fabric_cfg.status, InstanceStatus::Ready);
+
+        // (b) Absent before install -> partial directory written during failed install is removed.
+        let fresh_dep_dir = cache_dir.join("1.21.1");
+        let fresh_pre = capture_dependency_cache_pre_state(
+            versions_dir.clone(),
+            cache_dir.clone(),
+            "1.21.1",
+        )
+        .await;
+        tokio::fs::create_dir_all(&fresh_dep_dir).await.unwrap();
+        tokio::fs::write(fresh_dep_dir.join("1.21.1.json"), r#"{"id":"1.21.1"}"#)
+            .await
+            .unwrap();
+        cleanup_failed_dependency_cache(&fresh_pre, &fresh_dep_dir, "1.21.1").await;
+        assert!(!fresh_dep_dir.exists());
+
+        // (c) Pre-existing genuinely incomplete referenced cache (missing jar) -> removed.
+        let broken_inst_dir = versions_dir.join("broken-modpack");
+        tokio::fs::create_dir_all(&broken_inst_dir).await.unwrap();
+        tokio::fs::write(
+            broken_inst_dir.join("broken-modpack.json"),
+            r#"{"id":"broken-modpack","inheritsFrom":"1.19.4"}"#,
+        )
+        .await
+        .unwrap();
+        let incomplete_dep_dir = cache_dir.join("1.19.4");
+        tokio::fs::create_dir_all(&incomplete_dep_dir).await.unwrap();
+        write_dlml_config(&incomplete_dep_dir, InstanceStatus::Installing, Some("1.19.4"));
+        tokio::fs::write(incomplete_dep_dir.join("1.19.4.json"), r#"{"id":"1.19.4"}"#)
+            .await
+            .unwrap();
+        let incomplete_pre = capture_dependency_cache_pre_state(
+            versions_dir.clone(),
+            cache_dir.clone(),
+            "1.19.4",
+        )
+        .await;
+        cleanup_failed_dependency_cache(&incomplete_pre, &incomplete_dep_dir, "1.19.4").await;
+        assert!(!incomplete_dep_dir.exists());
+
+        // (d) Pre-existing complete unreferenced cache -> removed on failed retry.
+        let unreferenced_dep_dir = cache_dir.join("1.18.2");
+        tokio::fs::create_dir_all(&unreferenced_dep_dir)
+            .await
+            .unwrap();
+        write_dlml_config(
+            &unreferenced_dep_dir,
+            InstanceStatus::Installing,
+            Some("1.18.2"),
+        );
+        tokio::fs::write(unreferenced_dep_dir.join("1.18.2.json"), r#"{"id":"1.18.2"}"#)
+            .await
+            .unwrap();
+        tokio::fs::write(unreferenced_dep_dir.join("1.18.2.jar"), b"dummy jar bytes")
+            .await
+            .unwrap();
+        let unreferenced_pre = capture_dependency_cache_pre_state(
+            versions_dir,
+            cache_dir,
+            "1.18.2",
+        )
+        .await;
+        cleanup_failed_dependency_cache(&unreferenced_pre, &unreferenced_dep_dir, "1.18.2").await;
+        assert!(!unreferenced_dep_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_failed_dependency_cache_preserves_newly_completed_referenced_cache() {
+        let dir = tempdir().unwrap();
+        let paths = build_test_paths(dir.path());
+        let versions_dir = paths.versions_dir();
+        let cache_dir = paths.version_cache_dir();
+
+        // 1. Pre-created incomplete dir (only dlml.json Installing) that completes json+jar before failure/cancel
+        let inst_1204 = versions_dir.join("modded-1.20.4");
+        tokio::fs::create_dir_all(&inst_1204).await.unwrap();
+        tokio::fs::write(
+            inst_1204.join("modded-1.20.4.json"),
+            r#"{"id":"modded-1.20.4","inheritsFrom":"1.20.4"}"#,
+        )
+        .await
+        .unwrap();
+
+        let dep_1204 = cache_dir.join("1.20.4");
+        tokio::fs::create_dir_all(&dep_1204).await.unwrap();
+        write_dlml_config(&dep_1204, InstanceStatus::Installing, Some("1.20.4"));
+
+        let pre_1204 =
+            capture_dependency_cache_pre_state(versions_dir.clone(), cache_dir.clone(), "1.20.4")
+                .await;
+        tokio::fs::write(dep_1204.join("1.20.4.json"), r#"{"id":"1.20.4"}"#)
+            .await
+            .unwrap();
+        tokio::fs::write(dep_1204.join("1.20.4.jar"), b"jar bytes")
+            .await
+            .unwrap();
+        cleanup_failed_dependency_cache(&pre_1204, &dep_1204, "1.20.4").await;
+        assert!(dep_1204.exists());
+        assert!(dep_1204.join("1.20.4.json").exists());
+        assert!(dep_1204.join("1.20.4.jar").exists());
+        let cfg_1204: InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(dep_1204.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cfg_1204.status, InstanceStatus::Ready);
+
+        // 2. Absent dir before capture (!pre_existed) that finishes downloading core artifacts before failure/cancel
+        let inst_1206 = versions_dir.join("modded-1.20.6");
+        tokio::fs::create_dir_all(&inst_1206).await.unwrap();
+        tokio::fs::write(
+            inst_1206.join("modded-1.20.6.json"),
+            r#"{"id":"modded-1.20.6","inheritsFrom":"1.20.6"}"#,
+        )
+        .await
+        .unwrap();
+
+        let dep_1206 = cache_dir.join("1.20.6");
+        let pre_1206 =
+            capture_dependency_cache_pre_state(versions_dir.clone(), cache_dir.clone(), "1.20.6")
+                .await;
+        tokio::fs::create_dir_all(&dep_1206).await.unwrap();
+        write_dlml_config(&dep_1206, InstanceStatus::Installing, Some("1.20.6"));
+        tokio::fs::write(dep_1206.join("1.20.6.json"), r#"{"id":"1.20.6"}"#)
+            .await
+            .unwrap();
+        tokio::fs::write(dep_1206.join("1.20.6.jar"), b"jar bytes")
+            .await
+            .unwrap();
+        cleanup_failed_dependency_cache(&pre_1206, &dep_1206, "1.20.6").await;
+        assert!(dep_1206.exists());
+        let cfg_1206: InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(dep_1206.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cfg_1206.status, InstanceStatus::Ready);
+
+        // 3. Previously complete referenced cache whose jar is missing at cleanup (!currently_complete) -> removed
+        let inst_1192 = versions_dir.join("modded-1.19.2");
+        tokio::fs::create_dir_all(&inst_1192).await.unwrap();
+        tokio::fs::write(
+            inst_1192.join("modded-1.19.2.json"),
+            r#"{"id":"modded-1.19.2","inheritsFrom":"1.19.2"}"#,
+        )
+        .await
+        .unwrap();
+
+        let dep_1192 = cache_dir.join("1.19.2");
+        tokio::fs::create_dir_all(&dep_1192).await.unwrap();
+        write_dlml_config(&dep_1192, InstanceStatus::Installing, Some("1.19.2"));
+        tokio::fs::write(dep_1192.join("1.19.2.json"), r#"{"id":"1.19.2"}"#)
+            .await
+            .unwrap();
+        tokio::fs::write(dep_1192.join("1.19.2.jar"), b"jar bytes")
+            .await
+            .unwrap();
+        let pre_1192 = capture_dependency_cache_pre_state(versions_dir, cache_dir, "1.19.2").await;
+        tokio::fs::remove_file(dep_1192.join("1.19.2.jar"))
+            .await
+            .unwrap();
+        cleanup_failed_dependency_cache(&pre_1192, &dep_1192, "1.19.2").await;
+        assert!(!dep_1192.exists());
     }
 }
