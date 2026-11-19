@@ -34,6 +34,7 @@ test.describe('Settings & Updater (E2E)', () => {
 
     // Verify About view contents
     await expect(page.locator('h2:has-text("Dawnland Launcher")').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('[data-testid="about-update-channel"]').first()).toBeVisible({ timeout: 5000 });
 
     // Check for "Check for Updates" button
     const checkUpdateBtn = page.locator('button:has-text("检查更新"), button:has-text("Check for Updates")').first();
