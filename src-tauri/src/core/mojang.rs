@@ -536,7 +536,6 @@ impl InstallVanillaTask {
                 crate::core::cache::capture_dependency_cache_pre_state(
                     versions_dir,
                     cache_root,
-                    target_dir,
                     version_id,
                 )
                 .await,
@@ -1284,8 +1283,8 @@ mod tests {
         .await
         .unwrap();
         let standalone_res = InstallVanillaTask::execute_with_dependency_cleanup(
-            versions_dir,
-            cache_root,
+            versions_dir.clone(),
+            cache_root.clone(),
             &standalone_dir,
             "standalone-1.20.1",
             false,
@@ -1294,5 +1293,56 @@ mod tests {
         .await;
         assert!(standalone_res.is_err());
         assert!(!standalone_dir.exists());
+
+        // 4. Pre-created incomplete referenced cache (only dlml.json Installing) that completes json+jar before cancellation -> preserved & reset to Ready
+        let modded_1204_dir = versions_dir.join("modded-1.20.4");
+        tokio::fs::create_dir_all(&modded_1204_dir).await.unwrap();
+        tokio::fs::write(
+            modded_1204_dir.join("modded-1.20.4.json"),
+            r#"{"id":"modded-1.20.4","inheritsFrom":"1.20.4"}"#,
+        )
+        .await
+        .unwrap();
+
+        let precreated_dep_dir = cache_root.join("1.20.4");
+        tokio::fs::create_dir_all(&precreated_dep_dir).await.unwrap();
+        crate::core::launcher::write_instance_config_atomic(
+            &precreated_dep_dir.join("dlml.json"),
+            &installing_cfg,
+        )
+        .await
+        .unwrap();
+
+        let retry_res = InstallVanillaTask::execute_with_dependency_cleanup(
+            versions_dir,
+            cache_root,
+            &precreated_dep_dir,
+            "1.20.4",
+            true,
+            || async {
+                tokio::fs::write(precreated_dep_dir.join("1.20.4.json"), r#"{"id":"1.20.4"}"#)
+                    .await
+                    .unwrap();
+                tokio::fs::write(precreated_dep_dir.join("1.20.4.jar"), b"jar bytes")
+                    .await
+                    .unwrap();
+                InstallVanillaTask::handle_post_download_cancellation(&precreated_dep_dir, true).await
+            },
+        )
+        .await;
+        assert!(retry_res.is_err());
+        assert!(precreated_dep_dir.exists());
+        assert!(precreated_dep_dir.join("1.20.4.json").exists());
+        assert!(precreated_dep_dir.join("1.20.4.jar").exists());
+        let recovered_1204_cfg: crate::core::launcher::InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(precreated_dep_dir.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            recovered_1204_cfg.status,
+            crate::core::launcher::InstanceStatus::Ready
+        );
     }
 }

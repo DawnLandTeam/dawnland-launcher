@@ -239,6 +239,107 @@ pub async fn get_instance_loader_info(
     })
 }
 
+/// Context describing rollback targets for a Forge/NeoForge or Fabric installation task.
+pub(crate) struct LoaderRollbackContext<'a> {
+    pub loader_label: &'a str,
+    pub versions_dir: PathBuf,
+    pub cache_root: PathBuf,
+    pub instance_dir: &'a Path,
+    pub instance_id: &'a str,
+    pub is_existing: bool,
+    pub is_dep: bool,
+    pub json_bak: &'a Path,
+    pub config_bak: &'a Path,
+}
+
+/// Runs a loader installation body and performs backup restoration or dependency cache cleanup on any error.
+pub(crate) async fn execute_loader_install_with_rollback<F, Fut, C>(
+    rollback: LoaderRollbackContext<'_>,
+    is_cancelled: C,
+    run_inner: F,
+) -> Result<(), TaskError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<(), TaskError>>,
+    C: FnOnce() -> bool,
+{
+    let dep_pre_state = if !rollback.is_existing && rollback.is_dep {
+        Some(
+            crate::core::cache::capture_dependency_cache_pre_state(
+                rollback.versions_dir,
+                rollback.cache_root,
+                rollback.instance_id,
+            )
+            .await,
+        )
+    } else {
+        None
+    };
+
+    let res = run_inner().await;
+
+    if let Err(ref e) = res {
+        if is_cancelled() {
+            tracing::info!(
+                "{} installation cancelled for '{}'. Rolling back...",
+                rollback.loader_label,
+                rollback.instance_id
+            );
+        } else {
+            tracing::warn!(
+                "{} installation failed for '{}': {:?}. Rolling back...",
+                rollback.loader_label,
+                rollback.instance_id,
+                e
+            );
+        }
+        if rollback.is_existing {
+            if tokio::fs::try_exists(rollback.json_bak).await.unwrap_or(false) {
+                let _ = crate::core::fs_utils::copy_file_atomic(
+                    rollback.json_bak,
+                    rollback
+                        .instance_dir
+                        .join(format!("{}.json", rollback.instance_id)),
+                )
+                .await;
+                let _ = tokio::fs::remove_file(rollback.json_bak).await;
+            }
+            if tokio::fs::try_exists(rollback.config_bak)
+                .await
+                .unwrap_or(false)
+            {
+                let _ = crate::core::fs_utils::copy_file_atomic(
+                    rollback.config_bak,
+                    rollback.instance_dir.join("dlml.json"),
+                )
+                .await;
+                let _ = tokio::fs::remove_file(rollback.config_bak).await;
+            }
+            let _ = crate::core::launcher::update_instance_config(rollback.instance_dir, |c| {
+                c.set_status(crate::core::launcher::InstanceStatus::Ready);
+            })
+            .await;
+        } else if let Some(pre_state) = dep_pre_state.as_ref() {
+            crate::core::cache::cleanup_failed_dependency_cache(
+                pre_state,
+                rollback.instance_dir,
+                rollback.instance_id,
+            )
+            .await;
+        } else if tokio::fs::try_exists(rollback.instance_dir)
+            .await
+            .unwrap_or(false)
+        {
+            let _ = tokio::fs::remove_dir_all(rollback.instance_dir).await;
+        }
+    } else if rollback.is_existing {
+        let _ = tokio::fs::remove_file(rollback.json_bak).await;
+        let _ = tokio::fs::remove_file(rollback.config_bak).await;
+    }
+
+    res
+}
+
 /// Helper function to spawn loader installation or version change tasks
 pub async fn spawn_loader_install_task(
     task_manager: &TaskManager,

@@ -160,72 +160,25 @@ impl ExecutableTask for InstallFabricTask {
         } else {
             base_dir.join("versions").join(custom_instance_name)
         };
-        let dep_pre_state = if !is_existing && is_dep {
-            Some(
-                crate::core::cache::capture_dependency_cache_pre_state(
-                    base_dir.join("versions"),
-                    cache_root,
-                    &instance_dir,
-                    custom_instance_name,
-                )
-                .await,
-            )
-        } else {
-            None
-        };
         let json_bak = instance_dir.join(format!("{}.json.bak", custom_instance_name));
         let config_bak = instance_dir.join("dlml.json.bak");
 
-        let res = self
-            .execute_inner(&ctx, &instance_dir, &json_bak, &config_bak)
-            .await;
-
-        if let Err(ref e) = res {
-            if ctx.is_cancelled() {
-                tracing::info!(
-                    "Fabric installation cancelled for '{}'. Rolling back...",
-                    custom_instance_name
-                );
-            } else {
-                tracing::warn!(
-                    "Fabric installation failed for '{}': {:?}. Rolling back...",
-                    custom_instance_name,
-                    e
-                );
-            }
-            if is_existing {
-                if json_bak.exists() {
-                    let _ = crate::core::fs_utils::copy_file_atomic(
-                        &json_bak,
-                        instance_dir.join(format!("{}.json", custom_instance_name)),
-                    )
-                    .await;
-                    let _ = tokio::fs::remove_file(&json_bak).await;
-                }
-                if config_bak.exists() {
-                    let _ = crate::core::fs_utils::copy_file_atomic(&config_bak, instance_dir.join("dlml.json")).await;
-                    let _ = tokio::fs::remove_file(&config_bak).await;
-                }
-                let _ = crate::core::launcher::update_instance_config(&instance_dir, |c| {
-                    c.set_status(crate::core::launcher::InstanceStatus::Ready);
-                })
-                .await;
-            } else if let Some(pre_state) = dep_pre_state.as_ref() {
-                crate::core::cache::cleanup_failed_dependency_cache(
-                    pre_state,
-                    &instance_dir,
-                    custom_instance_name,
-                )
-                .await;
-            } else if tokio::fs::try_exists(&instance_dir).await.unwrap_or(false) {
-                let _ = tokio::fs::remove_dir_all(&instance_dir).await;
-            }
-        } else if is_existing {
-            let _ = tokio::fs::remove_file(&json_bak).await;
-            let _ = tokio::fs::remove_file(&config_bak).await;
-        }
-
-        res
+        crate::core::mod_loader::execute_loader_install_with_rollback(
+            crate::core::mod_loader::LoaderRollbackContext {
+                loader_label: "Fabric",
+                versions_dir: base_dir.join("versions"),
+                cache_root,
+                instance_dir: &instance_dir,
+                instance_id: custom_instance_name,
+                is_existing,
+                is_dep,
+                json_bak: &json_bak,
+                config_bak: &config_bak,
+            },
+            || ctx.is_cancelled(),
+            || self.execute_inner(&ctx, &instance_dir, &json_bak, &config_bak),
+        )
+        .await
     }
 }
 
@@ -1093,5 +1046,114 @@ mod tests {
         let manifest_content = serde_json::to_string(&manifest).unwrap();
         tokio::fs::write(instance_dir.join("assets.json"), manifest_content).await.unwrap();
         assert!(is_fabric_api_installed(instance_dir).await);
+    }
+
+    #[tokio::test]
+    async fn test_fabric_dependency_failure_triggers_cleanup_or_preservation() {
+        let dir = tempfile::tempdir().unwrap();
+        let versions_dir = dir.path().join("versions");
+        let cache_root = dir.path().join("cache");
+        let mut installing_cfg = crate::core::launcher::InstanceConfig {
+            hidden: true,
+            ..Default::default()
+        };
+        installing_cfg.set_status(crate::core::launcher::InstanceStatus::Installing);
+
+        // 1. Download error on incomplete Fabric dependency cache -> removed cleanly
+        let incomplete_id = "fabric-loader-0.15.7-1.20.1";
+        let incomplete_dir = cache_root.join(incomplete_id);
+        tokio::fs::create_dir_all(&incomplete_dir).await.unwrap();
+        crate::core::launcher::write_instance_config_atomic(
+            &incomplete_dir.join("dlml.json"),
+            &installing_cfg,
+        )
+        .await
+        .unwrap();
+
+        let json_bak_1 = incomplete_dir.join(format!("{}.json.bak", incomplete_id));
+        let config_bak_1 = incomplete_dir.join("dlml.json.bak");
+        let err_res = crate::core::mod_loader::execute_loader_install_with_rollback(
+            crate::core::mod_loader::LoaderRollbackContext {
+                loader_label: "Fabric",
+                versions_dir: versions_dir.clone(),
+                cache_root: cache_root.clone(),
+                instance_dir: &incomplete_dir,
+                instance_id: incomplete_id,
+                is_existing: false,
+                is_dep: true,
+                json_bak: &json_bak_1,
+                config_bak: &config_bak_1,
+            },
+            || false,
+            || async {
+                Err(TaskError::ExecutionError(
+                    "Failed to download Fabric libraries".to_string(),
+                ))
+            },
+        )
+        .await;
+        assert!(err_res.is_err());
+        assert!(!incomplete_dir.exists());
+
+        // 2. Cancellation/error on complete referenced Fabric dependency cache -> preserved & reset to Ready
+        let complete_id = "fabric-loader-0.15.8-1.20.1";
+        let complete_dir = cache_root.join(complete_id);
+        tokio::fs::create_dir_all(&complete_dir).await.unwrap();
+        crate::core::launcher::write_instance_config_atomic(
+            &complete_dir.join("dlml.json"),
+            &installing_cfg,
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(
+            complete_dir.join(format!("{}.json", complete_id)),
+            format!(r#"{{"id":"{}","inheritsFrom":"1.20.1"}}"#, complete_id),
+        )
+        .await
+        .unwrap();
+
+        let modpack_dir = versions_dir.join("modpack-fabric");
+        tokio::fs::create_dir_all(&modpack_dir).await.unwrap();
+        tokio::fs::write(
+            modpack_dir.join("modpack-fabric.json"),
+            format!(r#"{{"id":"modpack-fabric","inheritsFrom":"{}"}}"#, complete_id),
+        )
+        .await
+        .unwrap();
+
+        let json_bak_2 = complete_dir.join(format!("{}.json.bak", complete_id));
+        let config_bak_2 = complete_dir.join("dlml.json.bak");
+        let cancel_res = crate::core::mod_loader::execute_loader_install_with_rollback(
+            crate::core::mod_loader::LoaderRollbackContext {
+                loader_label: "Fabric",
+                versions_dir,
+                cache_root,
+                instance_dir: &complete_dir,
+                instance_id: complete_id,
+                is_existing: false,
+                is_dep: true,
+                json_bak: &json_bak_2,
+                config_bak: &config_bak_2,
+            },
+            || true,
+            || async {
+                Err(TaskError::ExecutionError(
+                    "Installation cancelled by user".to_string(),
+                ))
+            },
+        )
+        .await;
+        assert!(cancel_res.is_err());
+        assert!(complete_dir.exists());
+        let recovered_cfg: crate::core::launcher::InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(complete_dir.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            recovered_cfg.status,
+            crate::core::launcher::InstanceStatus::Ready
+        );
     }
 }

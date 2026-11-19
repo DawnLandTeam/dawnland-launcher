@@ -1202,9 +1202,7 @@ pub(crate) fn is_version_cache_referenced_in_dirs(
 pub(crate) struct DependencyCachePreState {
     versions_dir: PathBuf,
     cache_dir: PathBuf,
-    pre_existed: bool,
     was_referenced: bool,
-    was_complete: bool,
 }
 
 async fn is_version_cache_referenced_async(
@@ -1232,25 +1230,12 @@ async fn reset_dependency_dlml_ready(target_dir: &Path) {
     }
 }
 
-/// Captures existence, inheritance references, and completeness of a dependency cache before installation.
+/// Captures inheritance references for a dependency cache before installation.
 pub(crate) async fn capture_dependency_cache_pre_state(
     versions_dir: PathBuf,
     cache_dir: PathBuf,
-    target_dir: &Path,
     target_id: &str,
 ) -> DependencyCachePreState {
-    let pre_existed = tokio::fs::symlink_metadata(target_dir).await.is_ok();
-    if !pre_existed {
-        return DependencyCachePreState {
-            versions_dir,
-            cache_dir,
-            pre_existed: false,
-            was_referenced: false,
-            was_complete: false,
-        };
-    }
-
-    let was_complete = is_dependency_cache_complete(target_dir, target_id).await;
     let was_referenced = is_version_cache_referenced_async(
         versions_dir.clone(),
         cache_dir.clone(),
@@ -1261,13 +1246,11 @@ pub(crate) async fn capture_dependency_cache_pre_state(
     DependencyCachePreState {
         versions_dir,
         cache_dir,
-        pre_existed: true,
         was_referenced,
-        was_complete,
     }
 }
 
-/// Cleans up a failed dependency install only when absent, unreferenced, or incomplete; preserves complete referenced caches.
+/// Cleans up a failed dependency install only when unreferenced or incomplete; preserves complete referenced caches.
 pub(crate) async fn cleanup_failed_dependency_cache(
     pre_state: &DependencyCachePreState,
     target_dir: &Path,
@@ -1282,13 +1265,12 @@ pub(crate) async fn cleanup_failed_dependency_cache(
     .await;
 
     let is_referenced = pre_state.was_referenced || currently_referenced;
-    let is_complete = pre_state.was_complete && currently_complete;
-    let should_remove = !pre_state.pre_existed || !is_referenced || !is_complete;
+    let should_remove = !is_referenced || !currently_complete;
 
     if !should_remove {
         tracing::info!(
             target: "dawnland_launcher_lib::cache",
-            "Preserving pre-existing complete referenced dependency cache {} and resetting status to Ready",
+            "Preserving complete referenced dependency cache {} and resetting status to Ready",
             crate::logger::redact::redact_user_paths(&target_dir.display().to_string())
         );
         reset_dependency_dlml_ready(target_dir).await;
@@ -3107,7 +3089,6 @@ mod tests {
         let vanilla_pre = capture_dependency_cache_pre_state(
             versions_dir.clone(),
             cache_dir.clone(),
-            &vanilla_dep_dir,
             "1.20.1",
         )
         .await;
@@ -3126,7 +3107,6 @@ mod tests {
         let fabric_pre = capture_dependency_cache_pre_state(
             versions_dir.clone(),
             cache_dir.clone(),
-            &fabric_dep_dir,
             "fabric-dep",
         )
         .await;
@@ -3145,7 +3125,6 @@ mod tests {
         let fresh_pre = capture_dependency_cache_pre_state(
             versions_dir.clone(),
             cache_dir.clone(),
-            &fresh_dep_dir,
             "1.21.1",
         )
         .await;
@@ -3174,7 +3153,6 @@ mod tests {
         let incomplete_pre = capture_dependency_cache_pre_state(
             versions_dir.clone(),
             cache_dir.clone(),
-            &incomplete_dep_dir,
             "1.19.4",
         )
         .await;
@@ -3200,11 +3178,111 @@ mod tests {
         let unreferenced_pre = capture_dependency_cache_pre_state(
             versions_dir,
             cache_dir,
-            &unreferenced_dep_dir,
             "1.18.2",
         )
         .await;
         cleanup_failed_dependency_cache(&unreferenced_pre, &unreferenced_dep_dir, "1.18.2").await;
         assert!(!unreferenced_dep_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_failed_dependency_cache_preserves_newly_completed_referenced_cache() {
+        let dir = tempdir().unwrap();
+        let paths = build_test_paths(dir.path());
+        let versions_dir = paths.versions_dir();
+        let cache_dir = paths.version_cache_dir();
+
+        // 1. Pre-created incomplete dir (only dlml.json Installing) that completes json+jar before failure/cancel
+        let inst_1204 = versions_dir.join("modded-1.20.4");
+        tokio::fs::create_dir_all(&inst_1204).await.unwrap();
+        tokio::fs::write(
+            inst_1204.join("modded-1.20.4.json"),
+            r#"{"id":"modded-1.20.4","inheritsFrom":"1.20.4"}"#,
+        )
+        .await
+        .unwrap();
+
+        let dep_1204 = cache_dir.join("1.20.4");
+        tokio::fs::create_dir_all(&dep_1204).await.unwrap();
+        write_dlml_config(&dep_1204, InstanceStatus::Installing, Some("1.20.4"));
+
+        let pre_1204 =
+            capture_dependency_cache_pre_state(versions_dir.clone(), cache_dir.clone(), "1.20.4")
+                .await;
+        tokio::fs::write(dep_1204.join("1.20.4.json"), r#"{"id":"1.20.4"}"#)
+            .await
+            .unwrap();
+        tokio::fs::write(dep_1204.join("1.20.4.jar"), b"jar bytes")
+            .await
+            .unwrap();
+        cleanup_failed_dependency_cache(&pre_1204, &dep_1204, "1.20.4").await;
+        assert!(dep_1204.exists());
+        assert!(dep_1204.join("1.20.4.json").exists());
+        assert!(dep_1204.join("1.20.4.jar").exists());
+        let cfg_1204: InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(dep_1204.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cfg_1204.status, InstanceStatus::Ready);
+
+        // 2. Absent dir before capture (!pre_existed) that finishes downloading core artifacts before failure/cancel
+        let inst_1206 = versions_dir.join("modded-1.20.6");
+        tokio::fs::create_dir_all(&inst_1206).await.unwrap();
+        tokio::fs::write(
+            inst_1206.join("modded-1.20.6.json"),
+            r#"{"id":"modded-1.20.6","inheritsFrom":"1.20.6"}"#,
+        )
+        .await
+        .unwrap();
+
+        let dep_1206 = cache_dir.join("1.20.6");
+        let pre_1206 =
+            capture_dependency_cache_pre_state(versions_dir.clone(), cache_dir.clone(), "1.20.6")
+                .await;
+        tokio::fs::create_dir_all(&dep_1206).await.unwrap();
+        write_dlml_config(&dep_1206, InstanceStatus::Installing, Some("1.20.6"));
+        tokio::fs::write(dep_1206.join("1.20.6.json"), r#"{"id":"1.20.6"}"#)
+            .await
+            .unwrap();
+        tokio::fs::write(dep_1206.join("1.20.6.jar"), b"jar bytes")
+            .await
+            .unwrap();
+        cleanup_failed_dependency_cache(&pre_1206, &dep_1206, "1.20.6").await;
+        assert!(dep_1206.exists());
+        let cfg_1206: InstanceConfig = serde_json::from_str(
+            &tokio::fs::read_to_string(dep_1206.join("dlml.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cfg_1206.status, InstanceStatus::Ready);
+
+        // 3. Previously complete referenced cache whose jar is missing at cleanup (!currently_complete) -> removed
+        let inst_1192 = versions_dir.join("modded-1.19.2");
+        tokio::fs::create_dir_all(&inst_1192).await.unwrap();
+        tokio::fs::write(
+            inst_1192.join("modded-1.19.2.json"),
+            r#"{"id":"modded-1.19.2","inheritsFrom":"1.19.2"}"#,
+        )
+        .await
+        .unwrap();
+
+        let dep_1192 = cache_dir.join("1.19.2");
+        tokio::fs::create_dir_all(&dep_1192).await.unwrap();
+        write_dlml_config(&dep_1192, InstanceStatus::Installing, Some("1.19.2"));
+        tokio::fs::write(dep_1192.join("1.19.2.json"), r#"{"id":"1.19.2"}"#)
+            .await
+            .unwrap();
+        tokio::fs::write(dep_1192.join("1.19.2.jar"), b"jar bytes")
+            .await
+            .unwrap();
+        let pre_1192 = capture_dependency_cache_pre_state(versions_dir, cache_dir, "1.19.2").await;
+        tokio::fs::remove_file(dep_1192.join("1.19.2.jar"))
+            .await
+            .unwrap();
+        cleanup_failed_dependency_cache(&pre_1192, &dep_1192, "1.19.2").await;
+        assert!(!dep_1192.exists());
     }
 }
