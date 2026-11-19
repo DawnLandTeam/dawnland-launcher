@@ -125,6 +125,7 @@ onUnmounted(() => {
 });
 
 onActivated(async () => {
+  updateChannel.value = normalizeUpdateChannel(localStorage.getItem('updateChannel'));
   await loadSystemMemory();
   await loadLauncherSettings();
   await loadAuthlibServers();
@@ -203,6 +204,7 @@ const hasCustomMaxMemory = ref(false);
 // Updater state
 const isCheckingUpdate = ref(false);
 const updateChannel = ref(normalizeUpdateChannel(localStorage.getItem('updateChannel')));
+let silentUpdateCheckSeq = 0;
 
 // Launcher Settings state
 const enableInstanceInheritance = ref(false);
@@ -524,17 +526,43 @@ async function saveLauncherSettings() {
   }
 }
 
+async function refreshUpdateAvailabilitySilently(channel: 'stable' | 'prerelease') {
+  const requestSeq = ++silentUpdateCheckSeq;
+  try {
+    const update = await invoke<CustomUpdate | null>("check_launcher_update", { channel });
+    if (isSettingsUnmounted || requestSeq !== silentUpdateCheckSeq || updateChannel.value !== channel) {
+      return;
+    }
+    setUpdateAvailable(update && update.version !== appVersion.value ? update : null);
+  } catch (err) {
+    if (isSettingsUnmounted || requestSeq !== silentUpdateCheckSeq) {
+      return;
+    }
+    logger.warn("Failed to silently refresh update availability:", err);
+    setUpdateAvailable(null);
+  }
+}
+
 function changeUpdateChannel(channel: string) {
   const normalizedChannel = normalizeUpdateChannel(channel);
+  if (normalizedChannel === updateChannel.value) {
+    return;
+  }
   updateChannel.value = normalizedChannel;
   localStorage.setItem('updateChannel', normalizedChannel);
+  setUpdateAvailable(null);
+  void refreshUpdateAvailabilitySilently(normalizedChannel);
 }
 
 async function checkForUpdates() {
   isCheckingUpdate.value = true;
+  const requestSeq = ++silentUpdateCheckSeq;
   try {
     const channel = normalizeUpdateChannel(localStorage.getItem('updateChannel'));
     const update = await invoke<CustomUpdate | null>("check_launcher_update", { channel });
+    if (isSettingsUnmounted || requestSeq !== silentUpdateCheckSeq || updateChannel.value !== channel) {
+      return;
+    }
     if (update && update.version !== appVersion.value) {
       openUpdateModal(update);
       return;
@@ -542,6 +570,9 @@ async function checkForUpdates() {
     setUpdateAvailable(null);
     alert(t('settings.about.upToDate'));
   } catch (err) {
+    if (isSettingsUnmounted || requestSeq !== silentUpdateCheckSeq) {
+      return;
+    }
     logger.error("Failed to check for updates:", err);
     alert(t('settings.about.updateFailed') + err);
   } finally {
@@ -801,8 +832,8 @@ const languageOptions = [
 ];
 
 const updateChannelOptions = computed(() => [
-  { label: t('settings.general.channelStable'), value: 'stable' },
-  { label: t('settings.general.channelPrerelease'), value: 'prerelease' }
+  { label: t('settings.about.channelStable'), value: 'stable' },
+  { label: t('settings.about.channelPrerelease'), value: 'prerelease' }
 ]);
 
 const downloadSourceOptions = computed(() => [
@@ -1155,27 +1186,6 @@ watch(selectedLogFile, (name) => {
           :model-value="locale"
           :options="languageOptions"
           @update:model-value="changeLanguage($event as string)"
-          class="min-w-[140px]"
-        />
-      </div>
-
-      <!-- Update Channel Settings -->
-      <div class="relative z-40 rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex items-center justify-between shadow-sm">
-        <div class="flex items-center gap-2.5">
-          <Download :size="18" class="text-primary shrink-0" />
-          <h2 class="text-base font-semibold flex items-center gap-1.5 text-foreground">
-            {{ $t('settings.general.updateChannelTitle') }}
-            <DTooltip :content="$t('settings.general.updateChannelDesc')">
-              <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
-                <CircleHelp :size="15" />
-              </span>
-            </DTooltip>
-          </h2>
-        </div>
-        <DSelect 
-          :model-value="updateChannel"
-          :options="updateChannelOptions"
-          @update:model-value="changeUpdateChannel($event as string)"
           class="min-w-[140px]"
         />
       </div>
@@ -2110,25 +2120,25 @@ watch(selectedLogFile, (name) => {
     <!-- About Tab -->
     <div v-if="activeTab === 'about'" class="h-full">
       <div class="rounded-lg border border-white/20 bg-white/60 p-4 dark:bg-zinc-900/60 backdrop-blur-md flex flex-col items-center justify-center text-center shadow-sm min-h-full">
-        <div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mb-4 text-primary">
+        <div class="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-3 text-primary">
           <!-- Temporary logo placeholder -->
-          <Package :size="40" />
+          <Package :size="34" />
         </div>
         <h2 class="text-2xl font-bold">Dawnland Launcher</h2>
-        <p class="text-sm text-muted-foreground mt-1 mb-6">{{ $t('settings.about.desc') }}</p>
+        <p class="text-sm text-muted-foreground mt-1 mb-4">{{ $t('settings.about.desc') }}</p>
         
-        <div class="grid grid-cols-2 gap-4 w-full max-w-md text-left">
-          <div class="p-4 rounded-lg bg-neutral-50 dark:bg-zinc-800/50 border border-neutral-100 dark:border-zinc-800">
+        <div class="grid grid-cols-2 gap-3 w-full max-w-md text-left">
+          <div class="p-3.5 rounded-lg bg-neutral-50 dark:bg-zinc-800/50 border border-neutral-100 dark:border-zinc-800">
             <h3 class="text-xs font-semibold text-muted-foreground uppercase mb-1">{{ $t('settings.about.version') }}</h3>
             <p class="font-mono text-sm">v{{ appVersion }}</p>
           </div>
-          <div class="p-4 rounded-lg bg-neutral-50 dark:bg-zinc-800/50 border border-neutral-100 dark:border-zinc-800">
+          <div class="p-3.5 rounded-lg bg-neutral-50 dark:bg-zinc-800/50 border border-neutral-100 dark:border-zinc-800">
             <h3 class="text-xs font-semibold text-muted-foreground uppercase mb-1">{{ $t('settings.about.arch') }}</h3>
             <p class="text-sm">Tauri v2 + Vue 3</p>
           </div>
         </div>
 
-        <div class="mt-8 pt-6 border-t border-neutral-200 dark:border-zinc-800 w-full flex flex-col gap-3 max-w-md">
+        <div class="mt-5 pt-5 border-t border-neutral-200 dark:border-zinc-800 w-full flex flex-col gap-2.5 max-w-md">
           <a href="https://github.com/DawnLandTeam/dawnland-launcher" target="_blank" class="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors group">
             <span class="text-sm font-medium">{{ $t('settings.about.github') }}</span>
             <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">{{ $t('settings.about.visitRepo') }} &rarr;</span>
@@ -2141,6 +2151,30 @@ watch(selectedLogFile, (name) => {
             <span class="text-sm font-medium">{{ $t('settings.about.featureReq') }}</span>
             <span class="text-xs text-muted-foreground group-hover:text-primary transition-colors">{{ $t('settings.about.suggestFeature') }} &rarr;</span>
           </a>
+
+          <!-- Update Channel Settings -->
+          <div
+            data-testid="about-update-channel"
+            class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border bg-neutral-50/70 dark:bg-zinc-800/40 text-left"
+          >
+            <div class="flex items-center gap-2 min-w-0">
+              <Download class="w-4 h-4 text-primary shrink-0" />
+              <span class="text-sm font-medium text-foreground flex items-center gap-1.5">
+                {{ $t('settings.about.updateChannelTitle') }}
+                <DTooltip :content="$t('settings.about.updateChannelDesc')">
+                  <span class="inline-flex p-0.5 rounded-full text-muted-foreground/60 hover:text-foreground hover:bg-neutral-200/50 dark:hover:bg-zinc-800/50 cursor-help transition-colors">
+                    <CircleHelp :size="14" />
+                  </span>
+                </DTooltip>
+              </span>
+            </div>
+            <DSelect
+              :model-value="updateChannel"
+              :options="updateChannelOptions"
+              @update:model-value="changeUpdateChannel($event as string)"
+              class="min-w-[168px] shrink-0"
+            />
+          </div>
           
           <button @click="checkForUpdates" :disabled="isCheckingUpdate" class="relative flex items-center justify-between p-3 rounded-lg border hover:bg-primary/10 hover:border-primary/30 transition-colors group text-left">
             <div class="flex items-center gap-2">
@@ -2159,7 +2193,7 @@ watch(selectedLogFile, (name) => {
           </button>
         </div>
         
-        <p class="text-xs text-muted-foreground mt-8">
+        <p class="text-xs text-muted-foreground mt-5">
           {{ $t('settings.about.footer') }}
         </p>
       </div>
