@@ -12,6 +12,12 @@ export function getErrorMessage(err: unknown): string {
     if (anyErr.code === "MICROSOFT_REAUTH_REQUIRED") {
       return (i18n.global.t as any)('errors.microsoftReauthRequired', '微软账号已过期，请重新登录。');
     }
+    if (anyErr.code === "INVALID_IMAGE_FORMAT") {
+      return i18n.global.t('errors.invalidImageFormat');
+    }
+    if (anyErr.code === "IMAGE_TOO_LARGE") {
+      return i18n.global.t('errors.imageTooLarge');
+    }
     if (typeof anyErr.message === "string" && anyErr.message) {
       msg = anyErr.message;
     } else if (typeof anyErr.data === "string" && anyErr.data) {

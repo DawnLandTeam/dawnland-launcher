@@ -11,3 +11,4 @@ export * from './modpack';
 export * from './instance';
 export * from './log';
 export * from './resourceNaming';
+export * from './background';

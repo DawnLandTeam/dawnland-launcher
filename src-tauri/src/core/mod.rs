@@ -1,3 +1,4 @@
+pub mod background;
 pub mod cache;
 pub mod crash_history;
 pub mod curseforge;

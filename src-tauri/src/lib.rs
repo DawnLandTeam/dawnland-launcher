@@ -214,6 +214,21 @@ pub fn run() {
                 tracing::warn!("Failed to allow asset protocol scope for directory {}: {}", cache_dir.display(), e);
             }
 
+            let backgrounds_dir = core::background::get_backgrounds_dir();
+            std::fs::create_dir_all(&backgrounds_dir).unwrap_or_default();
+            if let Err(e) = app
+                .asset_protocol_scope()
+                .allow_directory(&backgrounds_dir, false)
+            {
+                tracing::warn!(
+                    "Failed to allow asset protocol scope for directory {}: {}",
+                    crate::logger::redact::redact_user_paths(
+                        &backgrounds_dir.display().to_string()
+                    ),
+                    e
+                );
+            }
+
             let app_dir = base_dir
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."))
@@ -492,6 +507,11 @@ pub fn run() {
             core::settings::load_launcher_settings,
             core::settings::save_launcher_settings,
             core::settings::sync_ui_language,
+            // Background customization commands
+            core::background::get_launcher_background,
+            core::background::set_launcher_background,
+            core::background::update_launcher_background_style,
+            core::background::reset_launcher_background,
             // Resource naming & translation commands
             core::resource_naming::preview_resource_template,
             core::translation::search_translation_candidates,

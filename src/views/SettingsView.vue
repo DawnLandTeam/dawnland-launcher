@@ -6,7 +6,8 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import DInput from '../components/ui/DInput.vue';
 import DCombobox from "../components/ui/DCombobox.vue";
 import DSidebarTabs, { type SidebarTab } from '../components/ui/DSidebarTabs.vue';
-import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText, Edit, X, RefreshCw, Gauge, CircleHelp, Sparkles } from "@lucide/vue";
+import { Loader2, Download, Coffee, Trash2, FolderOpen, Plus, Search, Package, Languages, Settings, Shield, Info, Bot, ScrollText, Edit, X, RefreshCw, Gauge, CircleHelp, Sparkles, Palette } from "@lucide/vue";
+import AppearanceSettings from '../components/settings/AppearanceSettings.vue';
 import { useI18n } from 'vue-i18n';
 import DSelect from '../components/ui/DSelect.vue';
 import DMultiSelect from '../components/ui/DMultiSelect.vue';
@@ -137,6 +138,7 @@ onActivated(async () => {
 
 const tabs = [
   { id: 'general', name: 'settings.tabs.general', icon: Settings },
+  { id: 'appearance', name: 'settings.tabs.appearance', icon: Palette },
   { id: 'java', name: 'settings.tabs.java', icon: Coffee },
   { id: 'authlib', name: 'settings.authlib.tab', icon: Shield },
   { id: 'ai', name: 'settings.ai.tab', icon: Bot },
@@ -146,6 +148,10 @@ const tabs = [
 
 type TabId = typeof tabs[number]['id'];
 const activeTab = ref<TabId>('general');
+
+function isValidTabId(value: unknown): value is TabId {
+  return typeof value === 'string' && tabs.some((tab) => tab.id === value);
+}
 
 const translatedTabs = computed<SidebarTab[]>(() => tabs.map(tab => ({
   ...tab,
@@ -157,8 +163,8 @@ watch(
   () => route.query.tab,
   (newTab) => {
     if (newTab) {
-      if (['general', 'java', 'authlib', 'ai', 'logs', 'about'].includes(newTab as string)) {
-        activeTab.value = newTab as any;
+      if (isValidTabId(newTab)) {
+        activeTab.value = newTab;
       }
       // Clean up the query so it doesn't persist
       router.replace({ query: { ...route.query, tab: undefined } });
@@ -1616,6 +1622,11 @@ watch(selectedLogFile, (name) => {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Appearance Settings Tab -->
+    <div v-if="activeTab === 'appearance'" class="space-y-4">
+      <AppearanceSettings />
     </div>
 
     <!-- Java Management Tab -->

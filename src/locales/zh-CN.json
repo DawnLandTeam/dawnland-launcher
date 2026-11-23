@@ -553,7 +553,9 @@
     "conflictingTask": "有冲突的任务正在运行: {taskName}",
     "md5Mismatch": "更新文件已损坏 (MD5 校验失败)。更新已中止。",
     "settingsAccessDenied": "无法保存设置：访问被拒绝（权限不足或文件被占用）",
-    "instanceExists": "名称为 '{instanceName}' 的实例已存在"
+    "instanceExists": "名称为 '{instanceName}' 的实例已存在",
+    "invalidImageFormat": "不支持的图片格式或文件已损坏，请选择 PNG、JPG、WebP 或 GIF 图片。",
+    "imageTooLarge": "所选图片超过 20 MB 大小上限，请压缩后再试。"
   },
   "settings": {
     "title": "设置",
@@ -605,9 +607,41 @@
     },
     "tabs": {
       "general": "常用设置",
+      "appearance": "外观",
       "java": "Java",
       "logs": "日志中心",
       "about": "关于"
+    },
+    "appearance": {
+      "backgroundTitle": "自定义启动器背景图",
+      "backgroundDesc": "支持从本地导入 PNG、JPG、WebP 或 GIF（含动态 GIF）作为全局背景，文件大小上限 20 MB。",
+      "previewLabel": "实时预览",
+      "previewSampleTitle": "Dawnland Launcher",
+      "previewSampleSubtitle": "背景可读性预览",
+      "selectImageBtn": "选择本地图片",
+      "resetDefaultBtn": "恢复默认背景",
+      "currentSourceLabel": "当前背景",
+      "sourceDefault": "默认背景",
+      "sourceCustom": "自定义背景",
+      "formatHint": "支持 PNG / JPG / WebP / GIF · 上限 20 MB",
+      "imageFilterName": "图片文件",
+      "dialogTitle": "选择启动器背景图片",
+      "fitModeLabel": "填充方式",
+      "fitModeDesc": "控制背景图在启动器窗口中的缩放与裁剪策略。",
+      "fitCover": "铺满裁剪",
+      "fitContain": "完整显示",
+      "fitFill": "拉伸填满",
+      "blurLabel": "背景模糊度",
+      "blurDesc": "调节背景毛玻璃模糊强度，增强前景卡片与文字的层次感。",
+      "overlayLabel": "遮罩浓度",
+      "overlayDesc": "调节前景半透明遮罩的透明度，提升浅色/深色模式下的文字可读性。",
+      "overlayAutoBadge": "跟随主题默认",
+      "resetAutoOverlayBtn": "恢复自动",
+      "setSuccess": "背景图已更新",
+      "setFailed": "设置背景图失败",
+      "styleSaveFailed": "保存背景样式失败",
+      "resetSuccess": "已恢复默认背景",
+      "resetFailed": "恢复默认背景失败"
     },
     "logs": {
       "desc": "查看、筛选、调整日志级别以及导出运行时与历史启动器日志。",
