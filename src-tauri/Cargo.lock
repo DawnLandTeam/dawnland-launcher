@@ -25,6 +25,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rusqlite",
  "self-replace",
+ "semver",
  "serde",
  "serde-xml-rs",
  "serde_json",

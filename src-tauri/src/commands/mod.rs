@@ -316,8 +316,28 @@ pub struct ProgressData {
     chunk_length: Option<usize>,
 }
 
+fn validate_launcher_update_target(
+    current_version: &str,
+    target_version: &str,
+) -> Result<(), DawnlandError> {
+    if !crate::core::server::is_launcher_update_allowed(
+        current_version,
+        target_version,
+        Some("prerelease"),
+    ) {
+        return Err(DawnlandError::UpdateVersionNotNewer {
+            current: current_version.to_string(),
+            target: target_version.to_string(),
+        });
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn update_launcher(version: String, md5: Option<String>, url: Option<String>, app: AppHandle) -> Result<(), AppError> {
+    let current_version = app.package_info().version.to_string();
+    validate_launcher_update_target(&current_version, &version)?;
+
     let url = if let Some(u) = url {
         u
     } else {
@@ -605,6 +625,8 @@ pub mod export;
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     #[allow(deprecated)]
     fn test_incremental_md5_matches_compute() {
@@ -615,5 +637,34 @@ mod tests {
         let incremental_hex = format!("{:x}", ctx.compute());
         let direct_hex = format!("{:x}", md5::compute(payload));
         assert_eq!(incremental_hex, direct_hex);
+    }
+
+    #[test]
+    fn test_validate_launcher_update_target() {
+        assert!(validate_launcher_update_target("0.1.6-rc.3", "0.1.6-rc.4").is_ok());
+        assert!(validate_launcher_update_target("0.1.6-rc.4", "0.1.6").is_ok());
+        assert!(validate_launcher_update_target("0.1.5", "0.1.6-rc.4").is_ok());
+
+        assert!(matches!(
+            validate_launcher_update_target("0.1.6-rc.4", "0.1.5"),
+            Err(DawnlandError::UpdateVersionNotNewer { .. })
+        ));
+        assert!(matches!(
+            validate_launcher_update_target("0.1.6", "0.1.6-rc.4"),
+            Err(DawnlandError::UpdateVersionNotNewer { .. })
+        ));
+        assert!(matches!(
+            validate_launcher_update_target("0.1.6-rc.4", "v0.1.6-rc.4"),
+            Err(DawnlandError::UpdateVersionNotNewer { .. })
+        ));
+        assert!(matches!(
+            validate_launcher_update_target("0.1.6-rc.4", "not-a-semver"),
+            Err(DawnlandError::UpdateVersionNotNewer { .. })
+        ));
+
+        let app_err: AppError = validate_launcher_update_target("0.1.6-rc.4", "0.1.5")
+            .unwrap_err()
+            .into();
+        assert_eq!(app_err.code, "UPDATE_VERSION_NOT_NEWER");
     }
 }

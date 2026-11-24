@@ -552,6 +552,7 @@
   "errors": {
     "conflictingTask": "有冲突的任务正在运行: {taskName}",
     "md5Mismatch": "更新文件已损坏 (MD5 校验失败)。更新已中止。",
+    "updateVersionNotNewer": "目标更新版本不高于当前版本，已阻止降级或重复更新。",
     "settingsAccessDenied": "无法保存设置：访问被拒绝（权限不足或文件被占用）",
     "instanceExists": "名称为 '{instanceName}' 的实例已存在",
     "invalidImageFormat": "不支持的图片格式或文件已损坏，请选择 PNG、JPG、WebP 或 GIF 图片。",

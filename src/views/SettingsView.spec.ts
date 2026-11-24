@@ -4,6 +4,7 @@ import { ref } from 'vue';
 import SettingsView from './SettingsView.vue';
 import i18n from '../i18n';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import {
   hasUpdateAvailable,
   globalUpdateInfo,
@@ -74,6 +75,7 @@ describe('SettingsView - Update Channel in About Tab', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getVersion).mockResolvedValue('1.0.0');
     localStorage.clear();
     i18n.global.locale.value = 'zh-CN';
     setUpdateAvailable(null);
@@ -296,5 +298,108 @@ describe('SettingsView - Update Channel in About Tab', () => {
 
     expect(wrapper.find('[data-testid="choose-background-btn"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="background-preview-box"]').exists()).toBe(true);
+  });
+
+  it('blocks prerelease build 0.1.6-rc.4 from downgrading to 0.1.5 on stable channel in both silent refresh and manual check', async () => {
+    vi.mocked(getVersion).mockResolvedValue('0.1.6-rc.4');
+    localStorage.setItem('updateChannel', 'prerelease');
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'preview_resource_template') {
+        return { rendered: 'preview.jar', fallbackRendered: 'preview.jar', warnings: [] };
+      }
+      if (cmd === 'check_launcher_update') {
+        return { version: '0.1.5', body: 'Older stable release' };
+      }
+      return undefined;
+    });
+
+    const wrapper = mountSettings();
+    await flushPromises();
+    await switchToAboutTab(wrapper);
+
+    await selectUpdateChannelOption(wrapper, '正式版 (推荐)');
+    expect(hasUpdateAvailable.value).toBe(false);
+    expect(globalUpdateInfo.value).toBeNull();
+    expect(isUpdateModalOpen.value).toBe(false);
+
+    const checkBtn = wrapper
+      .findAll('button')
+      .find((btn) => btn.text().includes('检查更新') || btn.text().includes('Check for Updates'));
+    expect(checkBtn).toBeDefined();
+    await checkBtn!.trigger('click');
+    await flushPromises();
+
+    expect(isUpdateModalOpen.value).toBe(false);
+    expect(hasUpdateAvailable.value).toBe(false);
+    expect(alertMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows 0.1.6-rc.4 to upgrade to 0.1.6 on stable channel and 0.1.6-rc.3 to 0.1.6-rc.4 only on prerelease channel', async () => {
+    // 1. 0.1.6-rc.4 + stable -> 0.1.6 allowed
+    vi.mocked(getVersion).mockResolvedValue('0.1.6-rc.4');
+    localStorage.setItem('updateChannel', 'stable');
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'preview_resource_template') {
+        return { rendered: 'preview.jar', fallbackRendered: 'preview.jar', warnings: [] };
+      }
+      if (cmd === 'check_launcher_update') {
+        return { version: '0.1.6', body: 'Final 0.1.6 release' };
+      }
+      return undefined;
+    });
+
+    const wrapperStable = mountSettings();
+    await flushPromises();
+    await switchToAboutTab(wrapperStable);
+
+    const stableCheckBtn = wrapperStable
+      .findAll('button')
+      .find((btn) => btn.text().includes('检查更新') || btn.text().includes('Check for Updates'));
+    expect(stableCheckBtn).toBeDefined();
+    await stableCheckBtn!.trigger('click');
+    await flushPromises();
+
+    expect(isUpdateModalOpen.value).toBe(true);
+    expect(globalUpdateInfo.value?.version).toBe('0.1.6');
+    expect(alertMock).not.toHaveBeenCalled();
+
+    // Reset modal & state for next scenario
+    closeUpdateModal();
+    setUpdateAvailable(null);
+
+    // 2. 0.1.6-rc.3 + stable -> 0.1.6-rc.4 blocked
+    vi.mocked(getVersion).mockResolvedValue('0.1.6-rc.3');
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'preview_resource_template') {
+        return { rendered: 'preview.jar', fallbackRendered: 'preview.jar', warnings: [] };
+      }
+      if (cmd === 'check_launcher_update') {
+        return { version: '0.1.6-rc.4', body: 'Preview RC4' };
+      }
+      return undefined;
+    });
+
+    const wrapperRc3Stable = mountSettings();
+    await flushPromises();
+    await switchToAboutTab(wrapperRc3Stable);
+
+    const rc3StableBtn = wrapperRc3Stable
+      .findAll('button')
+      .find((btn) => btn.text().includes('检查更新') || btn.text().includes('Check for Updates'));
+    await rc3StableBtn!.trigger('click');
+    await flushPromises();
+
+    expect(isUpdateModalOpen.value).toBe(false);
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    alertMock.mockClear();
+
+    // 3. 0.1.6-rc.3 + prerelease -> 0.1.6-rc.4 allowed
+    await selectUpdateChannelOption(wrapperRc3Stable, '预览版');
+    await rc3StableBtn!.trigger('click');
+    await flushPromises();
+
+    expect(isUpdateModalOpen.value).toBe(true);
+    expect(globalUpdateInfo.value?.version).toBe('0.1.6-rc.4');
+    expect(alertMock).not.toHaveBeenCalled();
   });
 });
