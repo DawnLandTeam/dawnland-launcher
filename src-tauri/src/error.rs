@@ -23,6 +23,12 @@ pub enum DawnlandError {
     #[error("MICROSOFT_REAUTH_REQUIRED")]
     MicrosoftReauthRequired,
     #[error("{0}")]
+    InvalidImageFormat(String),
+    #[error("Image file exceeds maximum allowed size of {max_mb} MB")]
+    ImageTooLarge { max_mb: u64 },
+    #[error("{0}")]
+    ImageDimensionsTooLarge(String),
+    #[error("{0}")]
     Unknown(String),
 }
 
@@ -55,6 +61,9 @@ impl From<DawnlandError> for AppError {
             DawnlandError::Md5Mismatch => "MD5_MISMATCH",
             DawnlandError::AuthlibReauthRequired => "AUTHLIB_REAUTH_REQUIRED",
             DawnlandError::MicrosoftReauthRequired => "MICROSOFT_REAUTH_REQUIRED",
+            DawnlandError::InvalidImageFormat(_) => "INVALID_IMAGE_FORMAT",
+            DawnlandError::ImageTooLarge { .. } => "IMAGE_TOO_LARGE",
+            DawnlandError::ImageDimensionsTooLarge(_) => "IMAGE_DIMENSIONS_TOO_LARGE",
             DawnlandError::Unknown(_) => "UNKNOWN_ERROR",
         };
 

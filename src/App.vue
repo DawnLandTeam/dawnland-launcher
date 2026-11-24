@@ -25,6 +25,7 @@ import { parseDeepLinkUrl } from "./utils/deepLink";
 import { trackEvent, sanitizeTrackingUrl, getErrorType } from "./utils/analytics";
 import { normalizeUpdateChannel } from "./utils/updateChannel";
 import { initGlobalLaunchState } from "./composables/useLaunchState";
+import { initBackgroundSettings } from "./composables/useBackgroundSettings";
 
 // isUpdateModalOpen managed globally in useUpdate
 // updateInfo managed globally in useUpdate
@@ -42,6 +43,7 @@ let unlistenDeepLink: (() => void) | null = null;
 onMounted(async () => {
   // Show window immediately to prevent blank startup if subsequent awaits fail
   getCurrentWindow().show().catch(err => logger.error("Failed to show window:", err));
+  void initBackgroundSettings();
 
   // Check Privacy Policy & initial UI language sync
   try {

@@ -553,7 +553,10 @@
     "conflictingTask": "Conflicting task is running: {taskName}",
     "md5Mismatch": "Update file is corrupted (MD5 mismatch). Update aborted.",
     "settingsAccessDenied": "Failed to save settings: Access is denied (insufficient permissions or file in use)",
-    "instanceExists": "Instance with name '{instanceName}' already exists"
+    "instanceExists": "Instance with name '{instanceName}' already exists",
+    "invalidImageFormat": "Unsupported or corrupted image file. Please choose a PNG, JPG, WebP, or GIF image.",
+    "imageTooLarge": "The selected image exceeds the 20 MB size limit.",
+    "imageDimensionsTooLarge": "The selected image resolution or animation frame count is too large. Please use a smaller image."
   },
   "settings": {
     "title": "Settings",
@@ -605,9 +608,41 @@
     },
     "tabs": {
       "general": "General",
+      "appearance": "Appearance",
       "java": "Java",
       "logs": "Log Center",
       "about": "About"
+    },
+    "appearance": {
+      "backgroundTitle": "Custom Launcher Background",
+      "backgroundDesc": "Import a local PNG, JPG, WebP, or GIF (including animated GIF) image up to 20 MB as your launcher wallpaper.",
+      "previewLabel": "Live Preview",
+      "previewSampleTitle": "Dawnland Launcher",
+      "previewSampleSubtitle": "Foreground legibility preview",
+      "selectImageBtn": "Choose Image",
+      "resetDefaultBtn": "Reset to Default",
+      "currentSourceLabel": "Active Source",
+      "sourceDefault": "Default Wallpaper",
+      "sourceCustom": "Custom Wallpaper",
+      "formatHint": "PNG / JPG / WebP / GIF · Max 20 MB",
+      "imageFilterName": "Images",
+      "dialogTitle": "Select Launcher Background Image",
+      "fitModeLabel": "Fill Mode",
+      "fitModeDesc": "Controls how the background image scales to fit the launcher window.",
+      "fitCover": "Cover",
+      "fitContain": "Contain",
+      "fitFill": "Stretch",
+      "blurLabel": "Background Blur",
+      "blurDesc": "Adjust frosted glass blur intensity for better contrast behind UI cards.",
+      "overlayLabel": "Overlay Opacity",
+      "overlayDesc": "Adjust the tint overlay strength to improve text readability in light and dark themes.",
+      "overlayAutoBadge": "Theme Auto",
+      "resetAutoOverlayBtn": "Auto",
+      "setSuccess": "Launcher background updated",
+      "setFailed": "Failed to set custom background",
+      "styleSaveFailed": "Failed to save background style",
+      "resetSuccess": "Restored default background",
+      "resetFailed": "Failed to reset background"
     },
     "logs": {
       "desc": "View, filter, configure, and export runtime and historical launcher logs.",

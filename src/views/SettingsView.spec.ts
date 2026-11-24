@@ -14,6 +14,7 @@ import {
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
+  convertFileSrc: vi.fn((path: string) => `asset://localhost/${path}`),
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -280,5 +281,20 @@ describe('SettingsView - Update Channel in About Tab', () => {
     expect(invoke).toHaveBeenCalledWith('check_launcher_update', { channel: 'prerelease' });
     expect(isUpdateModalOpen.value).toBe(true);
     expect(globalUpdateInfo.value?.version).toBe('1.2.0-rc.1');
+  });
+
+  it('renders Appearance tab and mounts AppearanceSettings panel', async () => {
+    const wrapper = mountSettings();
+    await flushPromises();
+
+    const appearanceTab = wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text().includes('外观') || tab.text().includes('Appearance'));
+    expect(appearanceTab).toBeDefined();
+    await appearanceTab!.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="choose-background-btn"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="background-preview-box"]').exists()).toBe(true);
   });
 });
