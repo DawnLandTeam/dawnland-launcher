@@ -9,6 +9,9 @@ export function getErrorMessage(err: unknown): string {
     if (anyErr.code === "MD5_MISMATCH") {
       return (i18n.global.t as any)('errors.md5Mismatch');
     }
+    if (anyErr.code === "UPDATE_VERSION_NOT_NEWER") {
+      return i18n.global.t('errors.updateVersionNotNewer');
+    }
     if (anyErr.code === "MICROSOFT_REAUTH_REQUIRED") {
       return (i18n.global.t as any)('errors.microsoftReauthRequired', '微软账号已过期，请重新登录。');
     }

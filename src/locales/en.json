@@ -552,6 +552,7 @@
   "errors": {
     "conflictingTask": "Conflicting task is running: {taskName}",
     "md5Mismatch": "Update file is corrupted (MD5 mismatch). Update aborted.",
+    "updateVersionNotNewer": "Target update version is not newer than the current version. Downgrade or duplicate update aborted.",
     "settingsAccessDenied": "Failed to save settings: Access is denied (insufficient permissions or file in use)",
     "instanceExists": "Instance with name '{instanceName}' already exists",
     "invalidImageFormat": "Unsupported or corrupted image file. Please choose a PNG, JPG, WebP, or GIF image.",

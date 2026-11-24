@@ -294,7 +294,7 @@ jobs:
                   tag_name: tag,
                   name: `v${version}`,
                   draft: true,
-                  prerelease: false,
+                  prerelease: version.includes('-'),
                   body: '🚀 **Dawnland Launcher Update**\n\nSee the assets below to download this version and install.'
                 });
                 release = created.data;

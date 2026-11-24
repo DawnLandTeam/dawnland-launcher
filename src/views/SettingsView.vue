@@ -36,7 +36,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { setUpdateAvailable, hasUpdateAvailable, openUpdateModal, type CustomUpdate } from "../composables/useUpdate";
 import { trackEvent, getErrorType, sanitizeTrackingUrl } from "../utils/analytics";
 import { getErrorMessage } from "../utils/error";
-import { normalizeUpdateChannel } from "../utils/updateChannel";
+import { normalizeUpdateChannel, isLauncherUpdateAllowed, type UpdateChannel } from "../utils/updateChannel";
 import { toast } from "../composables/useToast";
 import { formatSpeed, formatBytes } from "../utils/format";
 
@@ -49,17 +49,31 @@ const { t, locale } = useI18n();
 
 // App version state
 const appVersion = ref('0.0.0');
+let hasLoadedAppVersion = false;
 
 let isSettingsUnmounted = false;
 let unlistenCacheGc: UnlistenFn | null = null;
 
-onMounted(async () => {
-  trackEvent("Settings Viewed");
+async function ensureAppVersionLoaded(): Promise<string> {
+  if (hasLoadedAppVersion) {
+    return appVersion.value;
+  }
   try {
-    appVersion.value = await getVersion();
+    const version = await getVersion();
+    if (!isSettingsUnmounted && version) {
+      appVersion.value = version;
+      hasLoadedAppVersion = true;
+    }
+    return version || '';
   } catch (err) {
     logger.error("Failed to get app version:", err);
+    return '';
   }
+}
+
+onMounted(async () => {
+  trackEvent("Settings Viewed");
+  await ensureAppVersionLoaded();
 
   window.addEventListener('authlib-servers-updated', loadAuthlibServers);
 
@@ -532,14 +546,21 @@ async function saveLauncherSettings() {
   }
 }
 
-async function refreshUpdateAvailabilitySilently(channel: 'stable' | 'prerelease') {
+async function refreshUpdateAvailabilitySilently(channel: UpdateChannel) {
   const requestSeq = ++silentUpdateCheckSeq;
   try {
-    const update = await invoke<CustomUpdate | null>("check_launcher_update", { channel });
+    const [currentVersion, update] = await Promise.all([
+      ensureAppVersionLoaded(),
+      invoke<CustomUpdate | null>("check_launcher_update", { channel }),
+    ]);
     if (isSettingsUnmounted || requestSeq !== silentUpdateCheckSeq || updateChannel.value !== channel) {
       return;
     }
-    setUpdateAvailable(update && update.version !== appVersion.value ? update : null);
+    setUpdateAvailable(
+      update && isLauncherUpdateAllowed(currentVersion, update.version, channel)
+        ? update
+        : null,
+    );
   } catch (err) {
     if (isSettingsUnmounted || requestSeq !== silentUpdateCheckSeq) {
       return;
@@ -565,11 +586,14 @@ async function checkForUpdates() {
   const requestSeq = ++silentUpdateCheckSeq;
   try {
     const channel = normalizeUpdateChannel(localStorage.getItem('updateChannel'));
-    const update = await invoke<CustomUpdate | null>("check_launcher_update", { channel });
+    const [currentVersion, update] = await Promise.all([
+      ensureAppVersionLoaded(),
+      invoke<CustomUpdate | null>("check_launcher_update", { channel }),
+    ]);
     if (isSettingsUnmounted || requestSeq !== silentUpdateCheckSeq || updateChannel.value !== channel) {
       return;
     }
-    if (update && update.version !== appVersion.value) {
+    if (update && isLauncherUpdateAllowed(currentVersion, update.version, channel)) {
       openUpdateModal(update);
       return;
     }

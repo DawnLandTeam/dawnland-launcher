@@ -514,6 +514,39 @@ pub async fn fetch_launcher_announcement() -> Result<LauncherAnnouncementRespons
     .await
 }
 
+/// Parse a launcher version string into strict SemVer 2.0.0 after trimming whitespace
+/// and stripping at most one leading `v` or `V`.
+pub fn parse_launcher_semver(raw: &str) -> Option<semver::Version> {
+    let trimmed = raw.trim();
+    let normalized = trimmed
+        .strip_prefix('v')
+        .or_else(|| trimmed.strip_prefix('V'))
+        .unwrap_or(trimmed);
+    if normalized.is_empty() {
+        return None;
+    }
+    semver::Version::parse(normalized).ok()
+}
+
+/// Check whether upgrading from `current_version` to `candidate_version` is permitted
+/// under the selected update `channel` (`"prerelease"` or stable).
+pub fn is_launcher_update_allowed(
+    current_version: &str,
+    candidate_version: &str,
+    channel: Option<&str>,
+) -> bool {
+    let Some(current) = parse_launcher_semver(current_version) else {
+        return false;
+    };
+    let Some(candidate) = parse_launcher_semver(candidate_version) else {
+        return false;
+    };
+    if channel != Some("prerelease") && !candidate.pre.is_empty() {
+        return false;
+    }
+    candidate.cmp_precedence(&current) == std::cmp::Ordering::Greater
+}
+
 async fn check_launcher_update_with_base(
     client: &reqwest::Client,
     base_url: &str,
@@ -556,7 +589,14 @@ async fn check_launcher_update_with_base(
         return Ok(None);
     };
 
-    if version == current_version {
+    if !is_launcher_update_allowed(current_version, &version, channel) {
+        tracing::warn!(
+            target: "dawnland_launcher_lib::updater",
+            current_version = %current_version,
+            candidate_version = %version,
+            channel = ?channel,
+            "Ignoring launcher update candidate rejected by SemVer/channel policy"
+        );
         return Ok(None);
     }
 
@@ -576,13 +616,15 @@ async fn check_launcher_update_with_base(
 /// Check for launcher updates via the Go web backend.
 #[tauri::command]
 pub async fn check_launcher_update(
+    app: tauri::AppHandle,
     channel: Option<String>,
 ) -> Result<Option<LauncherUpdateInfo>, String> {
+    let current_version = app.package_info().version.to_string();
     check_launcher_update_with_base(
         crate::core::utils::get_http_client(),
         &get_web_backend_url(),
         get_update_target_os(),
-        env!("CARGO_PKG_VERSION"),
+        &current_version,
         channel.as_deref(),
     )
     .await
@@ -697,5 +739,243 @@ mod tests {
         .expect("check_launcher_update 204 should succeed");
         assert_eq!(up_to_date, None);
         mock_no_content.assert_async().await;
+    }
+
+    #[test]
+    fn test_is_launcher_update_allowed_matrix() {
+        // Block prerelease -> older stable downgrade
+        assert!(!is_launcher_update_allowed(
+            "0.1.6-rc.4",
+            "0.1.5",
+            Some("stable")
+        ));
+        assert!(!is_launcher_update_allowed(
+            "0.1.6-rc.4",
+            "0.1.5",
+            Some("prerelease")
+        ));
+        assert!(!is_launcher_update_allowed("0.1.6-rc.4", "0.1.5", None));
+
+        // Allow 0.1.6-rc.3 -> 0.1.6-rc.4 -> 0.1.6
+        assert!(is_launcher_update_allowed(
+            "0.1.6-rc.3",
+            "0.1.6-rc.4",
+            Some("prerelease")
+        ));
+        assert!(!is_launcher_update_allowed(
+            "0.1.6-rc.3",
+            "0.1.6-rc.4",
+            Some("stable")
+        ));
+        assert!(is_launcher_update_allowed(
+            "0.1.6-rc.4",
+            "0.1.6",
+            Some("stable")
+        ));
+        assert!(is_launcher_update_allowed(
+            "0.1.6-rc.4",
+            "0.1.6",
+            Some("prerelease")
+        ));
+
+        // Block downgrades and same version
+        assert!(!is_launcher_update_allowed(
+            "0.1.6-rc.4",
+            "0.1.6-rc.3",
+            Some("prerelease")
+        ));
+        assert!(!is_launcher_update_allowed(
+            "0.1.6",
+            "0.1.6-rc.4",
+            Some("prerelease")
+        ));
+        assert!(!is_launcher_update_allowed(
+            "0.1.6",
+            "0.1.6-rc.4",
+            Some("stable")
+        ));
+        assert!(!is_launcher_update_allowed(
+            "0.1.6-rc.4",
+            "0.1.6-rc.4",
+            Some("prerelease")
+        ));
+        assert!(!is_launcher_update_allowed(
+            "0.1.6-rc.4",
+            "v0.1.6-rc.4",
+            Some("prerelease")
+        ));
+
+        // SemVer 2.0.0 prerelease ordering and build metadata
+        assert!(is_launcher_update_allowed(
+            "0.1.6-rc.9",
+            "0.1.6-rc.10",
+            Some("prerelease")
+        ));
+        assert!(is_launcher_update_allowed(
+            "0.1.6-rc",
+            "0.1.6-rc.1",
+            Some("prerelease")
+        ));
+        assert!(is_launcher_update_allowed(
+            " V0.1.6-rc.3 ",
+            " V0.1.6-rc.4 ",
+            Some("prerelease")
+        ));
+        assert!(!is_launcher_update_allowed(
+            "0.1.6+a",
+            "0.1.6+b",
+            Some("stable")
+        ));
+
+        // Reject invalid versions (fail-closed)
+        assert!(!is_launcher_update_allowed(
+            "invalid",
+            "0.1.6",
+            Some("stable")
+        ));
+        assert!(!is_launcher_update_allowed(
+            "0.1.5",
+            "vv0.1.6",
+            Some("stable")
+        ));
+        assert!(!is_launcher_update_allowed("", "0.1.6", Some("stable")));
+    }
+
+    #[tokio::test]
+    async fn test_check_launcher_update_blocks_downgrade_and_channel_mismatch() {
+        let mut server = Server::new_async().await;
+
+        // Server erroneously returns 0.1.5 (200 OK) for 0.1.6-rc.4 on stable channel -> client must reject
+        let mock_downgrade = server
+            .mock("GET", "/api/launcher/update/windows-standalone/0.1.6-rc.4")
+            .with_status(200)
+            .with_body(
+                r#"{
+                    "version": "0.1.5",
+                    "notes": "Old stable",
+                    "platforms": {
+                        "windows-standalone": {
+                            "url": "https://dl.dlml.app/releases/v0.1.5/DLML.exe",
+                            "md5": "oldmd5"
+                        }
+                    }
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let downgraded = check_launcher_update_with_base(
+            get_http_client(),
+            &server.url(),
+            "windows-standalone",
+            "0.1.6-rc.4",
+            Some("stable"),
+        )
+        .await
+        .expect("check should succeed and ignore downgrade");
+        assert_eq!(downgraded, None);
+        mock_downgrade.assert_async().await;
+
+        // Server erroneously returns 0.1.6-rc.5 on stable channel -> client must reject
+        let mock_channel_leak = server
+            .mock("GET", "/api/launcher/update/windows-standalone/0.1.6-rc.4")
+            .with_status(200)
+            .with_body(
+                r#"{
+                    "version": "0.1.6-rc.5",
+                    "notes": "Leaked RC",
+                    "platforms": {
+                        "windows-standalone": {
+                            "url": "https://dl.dlml.app/releases/v0.1.6-rc.5/DLML.exe",
+                            "md5": "rc5md5"
+                        }
+                    }
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let leaked = check_launcher_update_with_base(
+            get_http_client(),
+            &server.url(),
+            "windows-standalone",
+            "0.1.6-rc.4",
+            Some("stable"),
+        )
+        .await
+        .expect("check should succeed and ignore prerelease on stable channel");
+        assert_eq!(leaked, None);
+        mock_channel_leak.assert_async().await;
+
+        // Server returns 0.1.6 for 0.1.6-rc.4 on stable channel -> client accepts
+        let mock_upgrade_stable = server
+            .mock("GET", "/api/launcher/update/windows-standalone/0.1.6-rc.4")
+            .with_status(200)
+            .with_body(
+                r#"{
+                    "version": "0.1.6",
+                    "notes": "Stable 0.1.6",
+                    "platforms": {
+                        "windows-standalone": {
+                            "url": "https://dl.dlml.app/releases/v0.1.6/DLML.exe",
+                            "md5": "stable016"
+                        }
+                    }
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let upgraded_stable = check_launcher_update_with_base(
+            get_http_client(),
+            &server.url(),
+            "windows-standalone",
+            "0.1.6-rc.4",
+            Some("stable"),
+        )
+        .await
+        .expect("check should allow rc.4 -> 0.1.6 on stable channel");
+        assert_eq!(
+            upgraded_stable.as_ref().map(|u| u.version.as_str()),
+            Some("0.1.6")
+        );
+        mock_upgrade_stable.assert_async().await;
+
+        // Server returns 0.1.6-rc.4 for 0.1.6-rc.3 on prerelease channel -> client accepts
+        let mock_upgrade_rc = server
+            .mock(
+                "GET",
+                "/api/launcher/update/windows-standalone/0.1.6-rc.3?channel=prerelease",
+            )
+            .with_status(200)
+            .with_body(
+                r#"{
+                    "version": "0.1.6-rc.4",
+                    "notes": "Preview 0.1.6-rc.4",
+                    "platforms": {
+                        "windows-standalone": {
+                            "url": "https://dl.dlml.app/releases/v0.1.6-rc.4/DLML.exe",
+                            "md5": "rc4md5"
+                        }
+                    }
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let upgraded_rc = check_launcher_update_with_base(
+            get_http_client(),
+            &server.url(),
+            "windows-standalone",
+            "0.1.6-rc.3",
+            Some("prerelease"),
+        )
+        .await
+        .expect("check should allow rc.3 -> rc.4 on prerelease channel");
+        assert_eq!(
+            upgraded_rc.as_ref().map(|u| u.version.as_str()),
+            Some("0.1.6-rc.4")
+        );
+        mock_upgrade_rc.assert_async().await;
     }
 }

@@ -22,8 +22,9 @@ import DropInstallOverlay from "./components/DropInstallOverlay.vue";
 import DeepLinkReceiveModal, { type DeepLinkData } from "./components/DeepLinkReceiveModal.vue";
 import { toast } from "./composables/useToast";
 import { parseDeepLinkUrl } from "./utils/deepLink";
+import { getVersion } from "@tauri-apps/api/app";
 import { trackEvent, sanitizeTrackingUrl, getErrorType } from "./utils/analytics";
-import { normalizeUpdateChannel } from "./utils/updateChannel";
+import { normalizeUpdateChannel, isLauncherUpdateAllowed } from "./utils/updateChannel";
 import { initGlobalLaunchState } from "./composables/useLaunchState";
 import { initBackgroundSettings } from "./composables/useBackgroundSettings";
 
@@ -120,8 +121,11 @@ onMounted(async () => {
   setTimeout(async () => {
     try {
       const channel = normalizeUpdateChannel(localStorage.getItem('updateChannel'));
-      const update = await invoke<CustomUpdate | null>("check_launcher_update", { channel });
-      if (update) {
+      const [currentVersion, update] = await Promise.all([
+        getVersion(),
+        invoke<CustomUpdate | null>("check_launcher_update", { channel }),
+      ]);
+      if (update && isLauncherUpdateAllowed(currentVersion, update.version, channel)) {
         logger.info(`Update available: ${update.version}`);
         setUpdateAvailable(update);
         if (showPrivacyModal.value) {
@@ -129,6 +133,10 @@ onMounted(async () => {
         } else {
           openUpdateModal(update);
         }
+      } else if (update) {
+        logger.warn(
+          `Ignoring update candidate ${update.version} for current version ${currentVersion} on ${channel} channel`,
+        );
       }
     } catch (error) {
       logger.error("Failed to check for updates on startup:", error);

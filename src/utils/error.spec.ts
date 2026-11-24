@@ -22,6 +22,10 @@ describe('getErrorMessage utility', () => {
     expect(getErrorMessage({ code: 'MD5_MISMATCH' })).toBe('errors.md5Mismatch');
   });
 
+  it('handles UPDATE_VERSION_NOT_NEWER code', () => {
+    expect(getErrorMessage({ code: 'UPDATE_VERSION_NOT_NEWER' })).toBe('errors.updateVersionNotNewer');
+  });
+
   it('handles INVALID_IMAGE_FORMAT and IMAGE_TOO_LARGE codes', () => {
     expect(getErrorMessage({ code: 'INVALID_IMAGE_FORMAT' })).toBe('errors.invalidImageFormat');
     expect(getErrorMessage({ code: 'IMAGE_TOO_LARGE' })).toBe('errors.imageTooLarge');

@@ -18,6 +18,8 @@ pub enum DawnlandError {
     NoCompatibleJava { required_version: u32 },
     #[error("Update file is corrupted (MD5 mismatch). Update aborted.")]
     Md5Mismatch,
+    #[error("Target update version ({target}) is not newer than current version ({current}). Update aborted.")]
+    UpdateVersionNotNewer { current: String, target: String },
     #[error("AUTHLIB_REAUTH_REQUIRED")]
     AuthlibReauthRequired,
     #[error("MICROSOFT_REAUTH_REQUIRED")]
@@ -59,6 +61,7 @@ impl From<DawnlandError> for AppError {
             DawnlandError::InstanceNotFound(_) => "INSTANCE_NOT_FOUND",
             DawnlandError::NoCompatibleJava { .. } => "NO_COMPATIBLE_JAVA",
             DawnlandError::Md5Mismatch => "MD5_MISMATCH",
+            DawnlandError::UpdateVersionNotNewer { .. } => "UPDATE_VERSION_NOT_NEWER",
             DawnlandError::AuthlibReauthRequired => "AUTHLIB_REAUTH_REQUIRED",
             DawnlandError::MicrosoftReauthRequired => "MICROSOFT_REAUTH_REQUIRED",
             DawnlandError::InvalidImageFormat(_) => "INVALID_IMAGE_FORMAT",
