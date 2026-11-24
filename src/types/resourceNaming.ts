@@ -1,5 +1,4 @@
 import type { LogLevelSetting } from './log';
-import type { BackgroundSettings } from './background';
 
 export type AssetCategory =
   | 'Mod'
@@ -71,7 +70,6 @@ export interface LauncherSettings {
   resourceNaming?: ResourceNamingSettings;
   logLevel?: LogLevelSetting | null;
   logRetentionDays?: number;
-  background?: BackgroundSettings;
 }
 
 export interface TemplatePreviewResult {

@@ -25,6 +25,7 @@ describe('getErrorMessage utility', () => {
   it('handles INVALID_IMAGE_FORMAT and IMAGE_TOO_LARGE codes', () => {
     expect(getErrorMessage({ code: 'INVALID_IMAGE_FORMAT' })).toBe('errors.invalidImageFormat');
     expect(getErrorMessage({ code: 'IMAGE_TOO_LARGE' })).toBe('errors.imageTooLarge');
+    expect(getErrorMessage({ code: 'IMAGE_DIMENSIONS_TOO_LARGE' })).toBe('errors.imageDimensionsTooLarge');
   });
 
   it('handles object with message string', () => {

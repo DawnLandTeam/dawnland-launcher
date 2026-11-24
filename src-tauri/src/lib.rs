@@ -214,19 +214,23 @@ pub fn run() {
                 tracing::warn!("Failed to allow asset protocol scope for directory {}: {}", cache_dir.display(), e);
             }
 
-            let backgrounds_dir = core::background::get_backgrounds_dir();
-            std::fs::create_dir_all(&backgrounds_dir).unwrap_or_default();
-            if let Err(e) = app
-                .asset_protocol_scope()
-                .allow_directory(&backgrounds_dir, false)
-            {
-                tracing::warn!(
-                    "Failed to allow asset protocol scope for directory {}: {}",
-                    crate::logger::redact::redact_user_paths(
-                        &backgrounds_dir.display().to_string()
-                    ),
-                    e
-                );
+            if let Ok(storage_root) = core::background::get_background_storage_root(app.handle()) {
+                let backgrounds_dir = core::background::backgrounds_dir_from_root(&storage_root);
+                std::fs::create_dir_all(&backgrounds_dir).unwrap_or_default();
+                if let Err(e) = app
+                    .asset_protocol_scope()
+                    .allow_directory(&backgrounds_dir, false)
+                {
+                    tracing::warn!(
+                        "Failed to allow asset protocol scope for directory {}: {}",
+                        crate::logger::redact::redact_user_paths(
+                            &backgrounds_dir.display().to_string()
+                        ),
+                        e
+                    );
+                }
+            } else {
+                tracing::warn!("Failed to resolve writable user data directory for backgrounds");
             }
 
             let app_dir = base_dir
@@ -509,7 +513,7 @@ pub fn run() {
             core::settings::sync_ui_language,
             // Background customization commands
             core::background::get_launcher_background,
-            core::background::set_launcher_background,
+            core::background::pick_and_set_launcher_background,
             core::background::update_launcher_background_style,
             core::background::reset_launcher_background,
             // Resource naming & translation commands

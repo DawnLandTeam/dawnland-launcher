@@ -28,6 +28,8 @@ export function createDefaultBackgroundState(): LauncherBackgroundState {
     overlayOpacity: null,
     fit: 'cover',
     updatedAt: 0,
+    revision: 0,
+    resetEpoch: 0,
   };
 }
 
@@ -48,6 +50,13 @@ function clampOverlay(value: unknown): number | null {
   return Math.max(0, Math.min(MAX_BACKGROUND_OVERLAY_OPACITY, Math.round(value)));
 }
 
+function parseNonNegativeInt(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  return Math.floor(value);
+}
+
 function isValidMode(value: unknown): value is BackgroundMode {
   return value === 'default' || value === 'custom';
 }
@@ -66,16 +75,12 @@ function normalizeBackgroundState(raw: unknown): LauncherBackgroundState | null 
   }
   const mode: BackgroundMode = isValidMode(raw.mode) ? raw.mode : 'default';
   const fit: BackgroundFit = isValidFit(raw.fit) ? raw.fit : 'cover';
-  const imageFile = typeof raw.imageFile === 'string' && raw.imageFile.trim() ? raw.imageFile.trim() : null;
-  const imagePath = typeof raw.imagePath === 'string' && raw.imagePath.trim() ? raw.imagePath.trim() : null;
+  const imageFile = typeof raw.imageFile === 'string' && raw.imageFile.trim() ? raw.imageFile : null;
+  const imagePath = typeof raw.imagePath === 'string' && raw.imagePath.trim() ? raw.imagePath : null;
   const fileSizeBytes =
     typeof raw.fileSizeBytes === 'number' && Number.isFinite(raw.fileSizeBytes) && raw.fileSizeBytes >= 0
       ? raw.fileSizeBytes
       : null;
-  const updatedAt =
-    typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) && raw.updatedAt >= 0
-      ? raw.updatedAt
-      : 0;
 
   return {
     mode,
@@ -85,7 +90,9 @@ function normalizeBackgroundState(raw: unknown): LauncherBackgroundState | null 
     blurPx: clampBlur(raw.blurPx),
     overlayOpacity: clampOverlay(raw.overlayOpacity),
     fit,
-    updatedAt,
+    updatedAt: parseNonNegativeInt(raw.updatedAt),
+    revision: parseNonNegativeInt(raw.revision),
+    resetEpoch: parseNonNegativeInt(raw.resetEpoch),
   };
 }
 
@@ -99,7 +106,16 @@ function readCachedBackgroundState(): LauncherBackgroundState {
       return createDefaultBackgroundState();
     }
     const parsed: unknown = JSON.parse(raw);
-    return normalizeBackgroundState(parsed) ?? createDefaultBackgroundState();
+    const normalized = normalizeBackgroundState(parsed);
+    if (!normalized) {
+      return createDefaultBackgroundState();
+    }
+    // Never trust cached coordination counters over the live backend session.
+    return {
+      ...normalized,
+      revision: 0,
+      resetEpoch: 0,
+    };
   } catch (err) {
     logger.warn('Failed to read cached background state from localStorage:', err);
     return createDefaultBackgroundState();
@@ -133,17 +149,43 @@ const isUpdating = ref(false);
 const imageLoadFailed = ref(false);
 const isInitialized = ref(false);
 
-let mutationSeq = 0;
+let lastAppliedRevision = 0;
+let currentResetEpoch = 0;
 let activeInitPromise: Promise<LauncherBackgroundState> | null = null;
 let activeStyleCommitPromise: Promise<LauncherBackgroundState | null> | null = null;
 let pendingStylePayload: UpdateBackgroundStylePayload | null = null;
 
-function applyConfirmedState(next: LauncherBackgroundState): void {
-  const normalized = normalizeBackgroundState(next) ?? createDefaultBackgroundState();
-  lastConfirmedState = { ...normalized };
-  backgroundState.value = { ...normalized };
-  imageLoadFailed.value = false;
-  writeCachedBackgroundState(normalized);
+function applyAuthoritativeState(
+  next: LauncherBackgroundState,
+  preserveStylePreview = false,
+): void {
+  if (next.revision < lastAppliedRevision) {
+    return;
+  }
+
+  const prevMode = backgroundState.value.mode;
+  const prevPath = backgroundState.value.imagePath;
+
+  lastAppliedRevision = next.revision;
+  currentResetEpoch = next.resetEpoch;
+  lastConfirmedState = { ...next };
+
+  if (next.mode !== prevMode || next.imagePath !== prevPath) {
+    imageLoadFailed.value = false;
+  }
+
+  if (preserveStylePreview) {
+    backgroundState.value = {
+      ...next,
+      blurPx: backgroundState.value.blurPx,
+      overlayOpacity: backgroundState.value.overlayOpacity,
+      fit: backgroundState.value.fit,
+    };
+  } else {
+    backgroundState.value = { ...next };
+  }
+
+  writeCachedBackgroundState(next);
 }
 
 const hasCustomImage = computed(
@@ -177,7 +219,10 @@ export function getEffectiveOverlayOpacity(
   isDark: boolean,
 ): number {
   if (typeof overlayOpacity === 'number' && Number.isFinite(overlayOpacity)) {
-    return clampOverlay(overlayOpacity) ?? (isDark ? DEFAULT_DARK_OVERLAY_OPACITY : DEFAULT_LIGHT_OVERLAY_OPACITY);
+    return (
+      clampOverlay(overlayOpacity) ??
+      (isDark ? DEFAULT_DARK_OVERLAY_OPACITY : DEFAULT_LIGHT_OVERLAY_OPACITY)
+    );
   }
   return isDark ? DEFAULT_DARK_OVERLAY_OPACITY : DEFAULT_LIGHT_OVERLAY_OPACITY;
 }
@@ -190,15 +235,21 @@ export async function initBackgroundSettings(force = false): Promise<LauncherBac
     return activeInitPromise;
   }
 
-  const seqAtStart = mutationSeq;
+  const revAtStart = lastAppliedRevision;
+  const epochAtStart = currentResetEpoch;
   isLoading.value = true;
 
   const task = (async () => {
     try {
       const result = await invoke<LauncherBackgroundState | undefined>('get_launcher_background');
       const normalized = normalizeBackgroundState(result);
-      if (normalized && seqAtStart === mutationSeq) {
-        applyConfirmedState(normalized);
+      if (normalized) {
+        const shouldApply =
+          normalized.revision > lastAppliedRevision ||
+          (lastAppliedRevision === revAtStart && currentResetEpoch === epochAtStart);
+        if (shouldApply) {
+          applyAuthoritativeState(normalized, pendingStylePayload !== null);
+        }
       }
       isInitialized.value = true;
       return backgroundState.value;
@@ -215,22 +266,33 @@ export async function initBackgroundSettings(force = false): Promise<LauncherBac
   return task;
 }
 
-export async function selectCustomBackground(sourcePath: string): Promise<LauncherBackgroundState> {
-  const trimmed = sourcePath.trim();
+export interface PickBackgroundOptions {
+  dialogTitle?: string;
+  filterName?: string;
+}
+
+export async function pickCustomBackground(
+  options?: PickBackgroundOptions,
+): Promise<LauncherBackgroundState | null> {
   isUpdating.value = true;
-  const currentSeq = ++mutationSeq;
   try {
-    const result = await invoke<LauncherBackgroundState>('set_launcher_background', {
-      sourcePath: trimmed,
-    });
+    const result = await invoke<LauncherBackgroundState | null>(
+      'pick_and_set_launcher_background',
+      {
+        dialogTitle: options?.dialogTitle ?? null,
+        filterName: options?.filterName ?? null,
+      },
+    );
+    if (result === null || result === undefined) {
+      return null;
+    }
     const normalized = normalizeBackgroundState(result);
     if (!normalized) {
       throw new Error('Invalid background state returned from backend');
     }
-    if (currentSeq === mutationSeq) {
-      applyConfirmedState(normalized);
-      isInitialized.value = true;
-    }
+    imageLoadFailed.value = false;
+    applyAuthoritativeState(normalized, pendingStylePayload !== null);
+    isInitialized.value = true;
     return backgroundState.value;
   } finally {
     isUpdating.value = false;
@@ -271,29 +333,28 @@ export async function commitBackgroundStyle(
     while (pendingStylePayload) {
       const payload = pendingStylePayload;
       pendingStylePayload = null;
-      const seqAtStart = ++mutationSeq;
+      const expectedEpoch = currentResetEpoch;
 
       try {
         const result = await invoke<LauncherBackgroundState>('update_launcher_background_style', {
           blurPx: payload.blurPx,
           overlayOpacity: payload.overlayOpacity,
           fit: payload.fit,
+          expectedResetEpoch: expectedEpoch,
         });
         const normalized = normalizeBackgroundState(result);
-        if (normalized && seqAtStart === mutationSeq) {
-          if (!pendingStylePayload) {
-            applyConfirmedState(normalized);
-            isInitialized.value = true;
-            latestState = backgroundState.value;
-          } else {
-            lastConfirmedState = { ...normalized };
-            writeCachedBackgroundState(normalized);
-            latestState = normalized;
-          }
+        if (normalized) {
+          applyAuthoritativeState(normalized, pendingStylePayload !== null);
+          isInitialized.value = true;
+          latestState = backgroundState.value;
         }
       } catch (err) {
-        pendingStylePayload = null;
-        if (seqAtStart === mutationSeq) {
+        if (pendingStylePayload) {
+          // A newer adjustment was queued while this request was in flight; continue so it is sent.
+          logger.warn('Background style update failed; retrying with newer queued values:', err);
+          continue;
+        }
+        if (expectedEpoch === currentResetEpoch) {
           backgroundState.value = {
             ...backgroundState.value,
             blurPx: lastConfirmedState.blurPx,
@@ -317,7 +378,6 @@ export async function commitBackgroundStyle(
 export async function resetBackground(resetStyle = true): Promise<LauncherBackgroundState> {
   isUpdating.value = true;
   pendingStylePayload = null;
-  const currentSeq = ++mutationSeq;
   try {
     const result = await invoke<LauncherBackgroundState>('reset_launcher_background', {
       resetStyle,
@@ -326,10 +386,9 @@ export async function resetBackground(resetStyle = true): Promise<LauncherBackgr
     if (!normalized) {
       throw new Error('Invalid background state returned from backend');
     }
-    if (currentSeq === mutationSeq) {
-      applyConfirmedState(normalized);
-      isInitialized.value = true;
-    }
+    imageLoadFailed.value = false;
+    applyAuthoritativeState(normalized, false);
+    isInitialized.value = true;
     return backgroundState.value;
   } finally {
     isUpdating.value = false;
@@ -351,7 +410,8 @@ export function __resetBackgroundStoreForTesting(): void {
   isUpdating.value = false;
   imageLoadFailed.value = false;
   isInitialized.value = false;
-  mutationSeq = 0;
+  lastAppliedRevision = 0;
+  currentResetEpoch = 0;
   activeInitPromise = null;
   activeStyleCommitPromise = null;
   pendingStylePayload = null;
@@ -376,7 +436,7 @@ export function useBackgroundSettings() {
     fitObjectClass,
     getEffectiveOverlayOpacity,
     initBackgroundSettings,
-    selectCustomBackground,
+    pickCustomBackground,
     previewBackgroundStyle,
     commitBackgroundStyle,
     resetBackground,

@@ -27,6 +27,8 @@ export interface LauncherBackgroundState {
   overlayOpacity: number | null;
   fit: BackgroundFit;
   updatedAt: number;
+  revision: number;
+  resetEpoch: number;
 }
 
 export interface UpdateBackgroundStylePayload {

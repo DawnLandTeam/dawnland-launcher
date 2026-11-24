@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
-import { open } from '@tauri-apps/plugin-dialog';
 import { useDark } from '@vueuse/core';
 import { useI18n } from 'vue-i18n';
 import { CircleHelp, Image as ImageIcon, Loader2, RotateCcw, Upload } from '@lucide/vue';
@@ -32,7 +31,7 @@ const {
   fitObjectClass,
   getEffectiveOverlayOpacity,
   initBackgroundSettings,
-  selectCustomBackground,
+  pickCustomBackground,
   previewBackgroundStyle,
   commitBackgroundStyle,
   resetBackground,
@@ -91,21 +90,13 @@ const tintOverlayStyle = computed(() => ({
 async function handleSelectImage(): Promise<void> {
   if (isUpdating.value) return;
   try {
-    const selected = await open({
-      title: t('settings.appearance.dialogTitle'),
-      directory: false,
-      multiple: false,
-      filters: [
-        {
-          name: t('settings.appearance.imageFilterName'),
-          extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'],
-        },
-      ],
+    const result = await pickCustomBackground({
+      dialogTitle: t('settings.appearance.dialogTitle'),
+      filterName: t('settings.appearance.imageFilterName'),
     });
-    if (typeof selected !== 'string' || !selected.trim()) {
+    if (!result) {
       return;
     }
-    await selectCustomBackground(selected);
     toast.success(t('settings.appearance.setSuccess'));
   } catch (err) {
     logger.error('Failed to set custom launcher background:', err);

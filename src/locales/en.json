@@ -555,7 +555,8 @@
     "settingsAccessDenied": "Failed to save settings: Access is denied (insufficient permissions or file in use)",
     "instanceExists": "Instance with name '{instanceName}' already exists",
     "invalidImageFormat": "Unsupported or corrupted image file. Please choose a PNG, JPG, WebP, or GIF image.",
-    "imageTooLarge": "The selected image exceeds the 20 MB size limit."
+    "imageTooLarge": "The selected image exceeds the 20 MB size limit.",
+    "imageDimensionsTooLarge": "The selected image resolution or animation frame count is too large. Please use a smaller image."
   },
   "settings": {
     "title": "Settings",

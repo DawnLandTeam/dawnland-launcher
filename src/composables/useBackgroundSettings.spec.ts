@@ -23,12 +23,14 @@ describe('useBackgroundSettings', () => {
     const backendState: LauncherBackgroundState = {
       mode: 'custom',
       imageFile: 'bg-abc.png',
-      imagePath: 'C:/dawnland/.dawnland/backgrounds/bg-abc.png',
+      imagePath: 'C:/AppData/com.dawnland.launcher/backgrounds/bg-abc.png',
       fileSizeBytes: 102400,
       blurPx: 10,
       overlayOpacity: 45,
       fit: 'contain',
       updatedAt: 1700000000,
+      revision: 3,
+      resetEpoch: 1,
     };
     vi.mocked(invoke).mockResolvedValueOnce(backendState);
 
@@ -38,7 +40,7 @@ describe('useBackgroundSettings', () => {
     expect(invoke).toHaveBeenCalledWith('get_launcher_background');
     expect(res).toEqual(backendState);
     expect(store.resolvedBackgroundSrc.value).toBe(
-      'asset://localhost/C:/dawnland/.dawnland/backgrounds/bg-abc.png',
+      'asset://localhost/C:/AppData/com.dawnland.launcher/backgrounds/bg-abc.png',
     );
     expect(store.fitObjectClass.value).toBe('object-contain');
 
@@ -62,48 +64,64 @@ describe('useBackgroundSettings', () => {
     expect(store.fitObjectClass.value).toBe('object-cover');
   });
 
-  it('falls back to default wallpaper on image load error and recovers on new selection', async () => {
+  it('falls back to default wallpaper on image load error and recovers on native pick', async () => {
     const customState: LauncherBackgroundState = {
       mode: 'custom',
       imageFile: 'bg-broken.png',
-      imagePath: 'C:/dawnland/.dawnland/backgrounds/bg-broken.png',
+      imagePath: 'C:/AppData/com.dawnland.launcher/backgrounds/bg-broken.png',
       fileSizeBytes: 2048,
       blurPx: 4,
       overlayOpacity: null,
       fit: 'cover',
       updatedAt: 100,
+      revision: 1,
+      resetEpoch: 0,
     };
     vi.mocked(invoke).mockResolvedValueOnce(customState);
 
     const store = useBackgroundSettings();
     await store.initBackgroundSettings();
     expect(store.resolvedBackgroundSrc.value).toBe(
-      'asset://localhost/C:/dawnland/.dawnland/backgrounds/bg-broken.png',
+      'asset://localhost/C:/AppData/com.dawnland.launcher/backgrounds/bg-broken.png',
     );
 
     store.handleBackgroundImageError();
     expect(store.imageLoadFailed.value).toBe(true);
     expect(store.resolvedBackgroundSrc.value).toBe('/minecraft_bg.png');
 
+    // Cancelled dialog returns null without replacing state
+    vi.mocked(invoke).mockResolvedValueOnce(null);
+    const cancelled = await store.pickCustomBackground({
+      dialogTitle: 'Select Background',
+      filterName: 'Images',
+    });
+    expect(cancelled).toBeNull();
+    expect(store.imageLoadFailed.value).toBe(true);
+
     const nextState: LauncherBackgroundState = {
       ...customState,
       imageFile: 'bg-good.webp',
-      imagePath: 'C:/dawnland/.dawnland/backgrounds/bg-good.webp',
+      imagePath: 'C:/AppData/com.dawnland.launcher/backgrounds/bg-good.webp',
       updatedAt: 200,
+      revision: 2,
     };
     vi.mocked(invoke).mockResolvedValueOnce(nextState);
-    await store.selectCustomBackground('D:/Pictures/wall.webp');
+    await store.pickCustomBackground({
+      dialogTitle: 'Select Background',
+      filterName: 'Images',
+    });
 
-    expect(invoke).toHaveBeenCalledWith('set_launcher_background', {
-      sourcePath: 'D:/Pictures/wall.webp',
+    expect(invoke).toHaveBeenCalledWith('pick_and_set_launcher_background', {
+      dialogTitle: 'Select Background',
+      filterName: 'Images',
     });
     expect(store.imageLoadFailed.value).toBe(false);
     expect(store.resolvedBackgroundSrc.value).toBe(
-      'asset://localhost/C:/dawnland/.dawnland/backgrounds/bg-good.webp',
+      'asset://localhost/C:/AppData/com.dawnland.launcher/backgrounds/bg-good.webp',
     );
   });
 
-  it('supports live preview, single-flight style commit, and rollback on failure', async () => {
+  it('supports live preview and rolls back on style commit failure when queue is empty', async () => {
     const initialState: LauncherBackgroundState = {
       mode: 'default',
       imageFile: null,
@@ -113,6 +131,8 @@ describe('useBackgroundSettings', () => {
       overlayOpacity: null,
       fit: 'cover',
       updatedAt: 10,
+      revision: 0,
+      resetEpoch: 0,
     };
     vi.mocked(invoke).mockResolvedValueOnce(initialState);
 
@@ -136,30 +156,116 @@ describe('useBackgroundSettings', () => {
     expect(store.backgroundState.value.fit).toBe('cover');
   });
 
-  it('computes theme-aware overlay defaults and resets cleanly', async () => {
-    expect(getEffectiveOverlayOpacity(null, false)).toBe(30);
-    expect(getEffectiveOverlayOpacity(null, true)).toBe(60);
-    expect(getEffectiveOverlayOpacity(45, true)).toBe(45);
-
-    const resetResult: LauncherBackgroundState = {
+  it('preserves and sends newer queued style change when an in-flight style request fails', async () => {
+    let rejectFirst!: (err: Error) => void;
+    const secondResult: LauncherBackgroundState = {
       mode: 'default',
       imageFile: null,
       imagePath: null,
       fileSizeBytes: null,
-      blurPx: 4,
-      overlayOpacity: null,
-      fit: 'cover',
-      updatedAt: 500,
+      blurPx: 20,
+      overlayOpacity: 50,
+      fit: 'contain',
+      updatedAt: 200,
+      revision: 2,
+      resetEpoch: 0,
     };
-    vi.mocked(invoke).mockResolvedValueOnce(resetResult);
+
+    let styleCalls = 0;
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'update_launcher_background_style') {
+        styleCalls += 1;
+        if (styleCalls === 1) {
+          return new Promise<LauncherBackgroundState>((_resolve, reject) => {
+            rejectFirst = reject;
+          });
+        }
+        return secondResult;
+      }
+      return undefined;
+    });
 
     const store = useBackgroundSettings();
-    await store.resetBackground(true);
-    expect(invoke).toHaveBeenCalledWith('reset_launcher_background', { resetStyle: true });
-    expect(store.resolvedBackgroundSrc.value).toBe('/minecraft_bg.png');
+    const p1 = store.commitBackgroundStyle({ blurPx: 8, overlayOpacity: 20, fit: 'cover' });
+    const p2 = store.commitBackgroundStyle({ blurPx: 20, overlayOpacity: 50, fit: 'contain' });
+
+    rejectFirst(new Error('transient io failure'));
+
+    await expect(p1).resolves.toEqual(secondResult);
+    await expect(p2).resolves.toEqual(secondResult);
+
+    expect(styleCalls).toBe(2);
+    expect(invoke).toHaveBeenLastCalledWith('update_launcher_background_style', {
+      blurPx: 20,
+      overlayOpacity: 50,
+      fit: 'contain',
+      expectedResetEpoch: 0,
+    });
+    expect(store.backgroundState.value.blurPx).toBe(20);
+    expect(store.backgroundState.value.overlayOpacity).toBe(50);
+    expect(store.backgroundState.value.fit).toBe('contain');
   });
 
-  it('ignores stale commitBackgroundStyle responses when superseded by resetBackground', async () => {
+  it('applies imported background even when a concurrent style update commits first', async () => {
+    let resolvePick!: (val: LauncherBackgroundState) => void;
+    const styleState: LauncherBackgroundState = {
+      mode: 'default',
+      imageFile: null,
+      imagePath: null,
+      fileSizeBytes: null,
+      blurPx: 14,
+      overlayOpacity: null,
+      fit: 'cover',
+      updatedAt: 100,
+      revision: 1,
+      resetEpoch: 0,
+    };
+    const pickedState: LauncherBackgroundState = {
+      mode: 'custom',
+      imageFile: 'bg-new.png',
+      imagePath: 'C:/AppData/com.dawnland.launcher/backgrounds/bg-new.png',
+      fileSizeBytes: 4096,
+      blurPx: 14,
+      overlayOpacity: null,
+      fit: 'cover',
+      updatedAt: 200,
+      revision: 2,
+      resetEpoch: 0,
+    };
+
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === 'pick_and_set_launcher_background') {
+        return new Promise<LauncherBackgroundState>((resolve) => {
+          resolvePick = resolve;
+        });
+      }
+      if (cmd === 'update_launcher_background_style') {
+        return Promise.resolve(styleState);
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const store = useBackgroundSettings();
+    const pickPromise = store.pickCustomBackground();
+    await store.commitBackgroundStyle({ blurPx: 14 });
+    expect(store.backgroundState.value.blurPx).toBe(14);
+    expect(store.backgroundState.value.mode).toBe('default');
+
+    resolvePick(pickedState);
+    await pickPromise;
+
+    expect(store.backgroundState.value.mode).toBe('custom');
+    expect(store.backgroundState.value.imageFile).toBe('bg-new.png');
+    expect(store.resolvedBackgroundSrc.value).toBe(
+      'asset://localhost/C:/AppData/com.dawnland.launcher/backgrounds/bg-new.png',
+    );
+  });
+
+  it('computes theme-aware overlay defaults, sends expectedResetEpoch, and ignores lower-revision responses', async () => {
+    expect(getEffectiveOverlayOpacity(null, false)).toBe(30);
+    expect(getEffectiveOverlayOpacity(null, true)).toBe(60);
+    expect(getEffectiveOverlayOpacity(45, true)).toBe(45);
+
     let resolveStyle!: (value: LauncherBackgroundState) => void;
     const resetResult: LauncherBackgroundState = {
       mode: 'default',
@@ -170,6 +276,8 @@ describe('useBackgroundSettings', () => {
       overlayOpacity: null,
       fit: 'cover',
       updatedAt: 900,
+      revision: 5,
+      resetEpoch: 2,
     };
 
     vi.mocked(invoke).mockImplementation((cmd: string) => {
@@ -186,21 +294,30 @@ describe('useBackgroundSettings', () => {
 
     const store = useBackgroundSettings();
     const commitPromise = store.commitBackgroundStyle({ blurPx: 18, overlayOpacity: 75, fit: 'fill' });
+    expect(invoke).toHaveBeenCalledWith('update_launcher_background_style', {
+      blurPx: 18,
+      overlayOpacity: 75,
+      fit: 'fill',
+      expectedResetEpoch: 0,
+    });
 
     await store.resetBackground(true);
+    expect(invoke).toHaveBeenCalledWith('reset_launcher_background', { resetStyle: true });
     expect(store.backgroundState.value.blurPx).toBe(4);
     expect(store.backgroundState.value.fit).toBe('cover');
 
-    // Now the stale style response resolves; it must NOT clobber reset state or localStorage
+    // Stale lower-revision style response must not overwrite reset state or localStorage
     resolveStyle({
       mode: 'custom',
       imageFile: 'bg-stale.png',
-      imagePath: 'C:/dawnland/.dawnland/backgrounds/bg-stale.png',
+      imagePath: 'C:/AppData/com.dawnland.launcher/backgrounds/bg-stale.png',
       fileSizeBytes: 512,
       blurPx: 18,
       overlayOpacity: 75,
       fit: 'fill',
       updatedAt: 500,
+      revision: 4,
+      resetEpoch: 1,
     });
     await commitPromise;
 
@@ -209,6 +326,6 @@ describe('useBackgroundSettings', () => {
     expect(store.backgroundState.value.overlayOpacity).toBeNull();
     expect(store.backgroundState.value.fit).toBe('cover');
     const cached = JSON.parse(localStorage.getItem('dawnland_bg_cache_v1')!);
-    expect(cached).toMatchObject({ mode: 'default', blurPx: 4, fit: 'cover' });
+    expect(cached).toMatchObject({ mode: 'default', blurPx: 4, fit: 'cover', resetEpoch: 2 });
   });
 });

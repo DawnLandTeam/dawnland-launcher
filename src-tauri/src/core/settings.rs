@@ -190,73 +190,6 @@ impl LogLevelSetting {
     }
 }
 
-pub const DEFAULT_BACKGROUND_BLUR_PX: u8 = 4;
-pub const MAX_BACKGROUND_BLUR_PX: u8 = 24;
-pub const MAX_BACKGROUND_OVERLAY_OPACITY: u8 = 85;
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum BackgroundMode {
-    #[default]
-    Default,
-    Custom,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum BackgroundFit {
-    #[default]
-    Cover,
-    Contain,
-    Fill,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct BackgroundSettings {
-    #[serde(default)]
-    pub mode: BackgroundMode,
-    #[serde(default)]
-    pub image_file: Option<String>,
-    #[serde(default = "default_background_blur_px")]
-    pub blur_px: u8,
-    #[serde(default)]
-    pub overlay_opacity: Option<u8>,
-    #[serde(default)]
-    pub fit: BackgroundFit,
-    #[serde(default)]
-    pub updated_at: u64,
-}
-
-fn default_background_blur_px() -> u8 {
-    DEFAULT_BACKGROUND_BLUR_PX
-}
-
-impl Default for BackgroundSettings {
-    fn default() -> Self {
-        Self {
-            mode: BackgroundMode::Default,
-            image_file: None,
-            blur_px: default_background_blur_px(),
-            overlay_opacity: None,
-            fit: BackgroundFit::Cover,
-            updated_at: 0,
-        }
-    }
-}
-
-impl BackgroundSettings {
-    /// Returns a copy with blur and overlay values clamped to valid UI ranges.
-    pub fn sanitized(&self) -> Self {
-        let mut copy = self.clone();
-        copy.blur_px = copy.blur_px.min(MAX_BACKGROUND_BLUR_PX);
-        copy.overlay_opacity = copy
-            .overlay_opacity
-            .map(|value| value.min(MAX_BACKGROUND_OVERLAY_OPACITY));
-        copy
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LauncherSettings {
@@ -292,8 +225,6 @@ pub struct LauncherSettings {
     pub log_level: Option<LogLevelSetting>,
     #[serde(default = "default_log_retention_days")]
     pub log_retention_days: u32,
-    #[serde(default)]
-    pub background: BackgroundSettings,
 }
 
 fn default_max_concurrent_downloads() -> u32 {
@@ -335,7 +266,6 @@ impl Default for LauncherSettings {
             resource_naming: ResourceNamingSettings::default(),
             log_level: None,
             log_retention_days: default_log_retention_days(),
-            background: BackgroundSettings::default(),
         }
     }
 }
@@ -539,96 +469,32 @@ pub async fn save_launcher_settings(settings: LauncherSettings) -> Result<(), St
     save_launcher_settings_internal(settings).await
 }
 
-async fn persist_launcher_settings_locked_at(
-    config_path: &std::path::Path,
-    settings: LauncherSettings,
-    cache_lock: &RwLock<Option<LauncherSettings>>,
-    generation: &std::sync::atomic::AtomicU64,
-) -> Result<(), String> {
-    generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+async fn persist_launcher_settings_locked(settings: LauncherSettings) -> Result<(), String> {
+    SETTINGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
+    let config_path = get_launcher_settings_path();
     let content = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize launcher settings: {}", e))?;
 
-    crate::core::fs_utils::write_file_atomic(config_path, content.as_bytes())
+    crate::core::fs_utils::write_file_atomic(&config_path, content.as_bytes())
         .await
         .map_err(|e| format!("Failed to write launcher settings: {}", e))?;
 
-    if let Ok(mut cache) = cache_lock.write() {
-        generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut cache) = SETTINGS_CACHE.write() {
+        SETTINGS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *cache = Some(settings);
     }
 
     Ok(())
 }
 
-async fn persist_launcher_settings_locked(settings: LauncherSettings) -> Result<(), String> {
-    let config_path = get_launcher_settings_path();
-    persist_launcher_settings_locked_at(&config_path, settings, &SETTINGS_CACHE, &SETTINGS_GENERATION).await
-}
-
-fn prepare_settings_preserving_background(
-    mut incoming: LauncherSettings,
-    existing: &LauncherSettings,
-) -> LauncherSettings {
-    incoming.log_retention_days = incoming.log_retention_days.clamp(1, 90);
-    // Background state is owned exclusively by dedicated background commands so full-page
-    // settings saves cannot overwrite or inject arbitrary image filenames.
-    incoming.background = existing.background.clone();
-    incoming
-}
-
-async fn save_launcher_settings_preserving_background_at(
-    config_path: &std::path::Path,
-    incoming: LauncherSettings,
-    cache_lock: &RwLock<Option<LauncherSettings>>,
-    generation: &std::sync::atomic::AtomicU64,
-) -> Result<LauncherSettings, String> {
-    let existing = get_launcher_settings_sync_with(config_path, cache_lock, generation);
-    let prepared = prepare_settings_preserving_background(incoming, &existing);
-    persist_launcher_settings_locked_at(config_path, prepared.clone(), cache_lock, generation).await?;
-    Ok(prepared)
-}
-
-pub async fn save_launcher_settings_internal(settings: LauncherSettings) -> Result<(), String> {
+pub async fn save_launcher_settings_internal(mut settings: LauncherSettings) -> Result<(), String> {
+    settings.log_retention_days = settings.log_retention_days.clamp(1, 90);
+    let applied = settings.clone();
     let _guard = SETTINGS_SAVE_LOCK.lock().await;
-    let config_path = get_launcher_settings_path();
-    let applied = save_launcher_settings_preserving_background_at(
-        &config_path,
-        settings,
-        &SETTINGS_CACHE,
-        &SETTINGS_GENERATION,
-    )
-    .await?;
+    persist_launcher_settings_locked(settings).await?;
     crate::logger::apply_log_level_from_settings(&applied);
     Ok(())
-}
-
-async fn update_background_settings_at<F>(
-    config_path: &std::path::Path,
-    cache_lock: &RwLock<Option<LauncherSettings>>,
-    generation: &std::sync::atomic::AtomicU64,
-    mutate: F,
-) -> Result<LauncherSettings, String>
-where
-    F: FnOnce(&mut BackgroundSettings),
-{
-    let mut settings = get_launcher_settings_sync_with(config_path, cache_lock, generation);
-    mutate(&mut settings.background);
-    settings.background = settings.background.sanitized();
-    let updated = settings.clone();
-    persist_launcher_settings_locked_at(config_path, settings, cache_lock, generation).await?;
-    Ok(updated)
-}
-
-/// Atomically updates only the background settings fields and persists them to disk.
-pub async fn update_background_settings<F>(mutate: F) -> Result<LauncherSettings, String>
-where
-    F: FnOnce(&mut BackgroundSettings),
-{
-    let _guard = SETTINGS_SAVE_LOCK.lock().await;
-    let config_path = get_launcher_settings_path();
-    update_background_settings_at(&config_path, &SETTINGS_CACHE, &SETTINGS_GENERATION, mutate).await
 }
 
 /// Atomically updates only the log settings fields and reloads the runtime tracing filter.
@@ -897,106 +763,5 @@ mod tests {
         assert!(!warm.auto_clean_cache);
         assert_eq!(warm.cache_retention_policy, CacheRetentionPolicy::Days7);
         assert_eq!(warm.global_max_memory, Some(8192));
-    }
-
-    #[test]
-    fn test_background_settings_defaults_and_roundtrip() {
-        let legacy: LauncherSettings =
-            serde_json::from_str(r#"{"enableInstanceInheritance":true}"#).expect("deserialize legacy");
-        assert_eq!(legacy.background.mode, BackgroundMode::Default);
-        assert_eq!(legacy.background.image_file, None);
-        assert_eq!(legacy.background.blur_px, DEFAULT_BACKGROUND_BLUR_PX);
-        assert_eq!(legacy.background.overlay_opacity, None);
-        assert_eq!(legacy.background.fit, BackgroundFit::Cover);
-        assert_eq!(legacy.background.updated_at, 0);
-
-        let raw = r#"{
-            "background": {
-                "mode": "custom",
-                "imageFile": "bg-123.png",
-                "blurPx": 12,
-                "overlayOpacity": 45,
-                "fit": "contain",
-                "updatedAt": 1700000000000
-            }
-        }"#;
-        let parsed: LauncherSettings = serde_json::from_str(raw).expect("deserialize background");
-        assert_eq!(parsed.background.mode, BackgroundMode::Custom);
-        assert_eq!(parsed.background.image_file.as_deref(), Some("bg-123.png"));
-        assert_eq!(parsed.background.blur_px, 12);
-        assert_eq!(parsed.background.overlay_opacity, Some(45));
-        assert_eq!(parsed.background.fit, BackgroundFit::Contain);
-        assert_eq!(parsed.background.updated_at, 1_700_000_000_000);
-
-        let encoded = serde_json::to_string(&parsed).expect("serialize background");
-        assert!(encoded.contains(r#""mode":"custom""#));
-        assert!(encoded.contains(r#""imageFile":"bg-123.png""#));
-        assert!(encoded.contains(r#""fit":"contain""#));
-
-        let unclamped = BackgroundSettings {
-            mode: BackgroundMode::Custom,
-            image_file: Some("bg-1.png".to_string()),
-            blur_px: 99,
-            overlay_opacity: Some(100),
-            fit: BackgroundFit::Fill,
-            updated_at: 42,
-        };
-        let clamped = unclamped.sanitized();
-        assert_eq!(clamped.blur_px, MAX_BACKGROUND_BLUR_PX);
-        assert_eq!(clamped.overlay_opacity, Some(MAX_BACKGROUND_OVERLAY_OPACITY));
-    }
-
-    #[tokio::test]
-    async fn test_save_launcher_settings_preserves_existing_background() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let config_path = dir.path().join("launcher_settings.json");
-        let cache = RwLock::new(None);
-        let generation = std::sync::atomic::AtomicU64::new(0);
-
-        // Atomically set custom background first
-        let updated = update_background_settings_at(&config_path, &cache, &generation, |bg| {
-            bg.mode = BackgroundMode::Custom;
-            bg.image_file = Some("bg-keep-me.png".to_string());
-            bg.blur_px = 50;
-            bg.overlay_opacity = Some(95);
-            bg.fit = BackgroundFit::Contain;
-            bg.updated_at = 12345;
-        })
-        .await
-        .expect("update background settings");
-
-        assert_eq!(updated.background.blur_px, MAX_BACKGROUND_BLUR_PX);
-        assert_eq!(updated.background.overlay_opacity, Some(MAX_BACKGROUND_OVERLAY_OPACITY));
-
-        // Simulate a general-settings save carrying stale or spoofed background fields
-        let general_save = LauncherSettings {
-            max_concurrent_downloads: 64,
-            background: BackgroundSettings {
-                mode: BackgroundMode::Default,
-                image_file: Some("../evil.png".to_string()),
-                blur_px: 0,
-                overlay_opacity: Some(10),
-                fit: BackgroundFit::Fill,
-                updated_at: 999,
-            },
-            ..Default::default()
-        };
-
-        let saved = save_launcher_settings_preserving_background_at(
-            &config_path,
-            general_save,
-            &cache,
-            &generation,
-        )
-        .await
-        .expect("save general settings");
-
-        assert_eq!(saved.max_concurrent_downloads, 64);
-        assert_eq!(saved.background.mode, BackgroundMode::Custom);
-        assert_eq!(saved.background.image_file.as_deref(), Some("bg-keep-me.png"));
-        assert_eq!(saved.background.blur_px, MAX_BACKGROUND_BLUR_PX);
-        assert_eq!(saved.background.overlay_opacity, Some(MAX_BACKGROUND_OVERLAY_OPACITY));
-        assert_eq!(saved.background.fit, BackgroundFit::Contain);
-        assert_eq!(saved.background.updated_at, 12345);
     }
 }

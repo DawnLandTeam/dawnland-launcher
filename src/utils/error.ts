@@ -18,6 +18,9 @@ export function getErrorMessage(err: unknown): string {
     if (anyErr.code === "IMAGE_TOO_LARGE") {
       return i18n.global.t('errors.imageTooLarge');
     }
+    if (anyErr.code === "IMAGE_DIMENSIONS_TOO_LARGE") {
+      return i18n.global.t('errors.imageDimensionsTooLarge');
+    }
     if (typeof anyErr.message === "string" && anyErr.message) {
       msg = anyErr.message;
     } else if (typeof anyErr.data === "string" && anyErr.data) {

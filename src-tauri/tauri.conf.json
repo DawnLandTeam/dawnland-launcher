@@ -31,7 +31,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**/.mod_cache/**/*", "**/versions/*/icon.*", "**/.dawnland/backgrounds/*"],
+          "allow": ["**/.mod_cache/**/*", "**/versions/*/icon.*", "$APPDATA/backgrounds/*"],
           "requireLiteralLeadingDot": false
         }
       },
