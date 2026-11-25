@@ -61,6 +61,16 @@ fn default_source_tag() -> String {
     "consensus".to_string()
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModIdentityHints {
+    pub cf_project_id: Option<String>,
+    pub cf_slug: Option<String>,
+    pub mr_project_id: Option<String>,
+    pub mr_slug: Option<String>,
+    pub mod_ids: Vec<String>,
+    pub raw_name: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslationLookupResult {
@@ -404,6 +414,112 @@ impl TranslationDb {
                 params![cat, rn],
             ) {
                 return Some(res);
+            }
+        }
+
+        None
+    }
+
+    /// Look up verified cross-platform identity hints for a mod (`category = 'mod'`)
+    /// using exact `project_id` or `slug` matching (`trust_level >= TRUST_VERIFIED`).
+    /// Never falls back to `raw_name` to avoid colliding with add-on or similarly named mods.
+    pub fn lookup_mod_identity(
+        &self,
+        source: &str,
+        project_id: &str,
+        slug: &str,
+    ) -> Option<ModIdentityHints> {
+        let conn = self.connect().ok()?;
+        let src_lower = source.trim().to_ascii_lowercase();
+        let pid = project_id.trim();
+        let sl = slug.trim();
+        let min_trust = TRUST_VERIFIED as i64;
+
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<ModIdentityHints> {
+            let cf_project_id: Option<String> = row.get(0)?;
+            let cf_slug: Option<String> = row.get(1)?;
+            let mr_project_id: Option<String> = row.get(2)?;
+            let mr_slug: Option<String> = row.get(3)?;
+            let mod_ids_raw: String = row.get(4).unwrap_or_default();
+            let raw_name_val: String = row.get(5).unwrap_or_default();
+
+            let clean_opt = |opt: Option<String>| -> Option<String> {
+                opt.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+            };
+            let mod_ids = mod_ids_raw
+                .split(';')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
+            let raw_name = {
+                let trimmed = raw_name_val.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            };
+
+            Ok(ModIdentityHints {
+                cf_project_id: clean_opt(cf_project_id),
+                cf_slug: clean_opt(cf_slug),
+                mr_project_id: clean_opt(mr_project_id),
+                mr_slug: clean_opt(mr_slug),
+                mod_ids,
+                raw_name,
+            })
+        };
+
+        // Step A: Exact project_id match on the specified platform
+        if !pid.is_empty() {
+            let sql_opt = match src_lower.as_str() {
+                "curseforge" => Some(
+                    "SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
+                     FROM resource_translations
+                     WHERE category = 'mod' AND trust_level >= ?1 AND cf_project_id = ?2
+                     ORDER BY trust_level DESC LIMIT 1",
+                ),
+                "modrinth" => Some(
+                    "SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
+                     FROM resource_translations
+                     WHERE category = 'mod' AND trust_level >= ?1 AND mr_project_id = ?2
+                     ORDER BY trust_level DESC LIMIT 1",
+                ),
+                _ => None,
+            };
+            if let Some(sql) = sql_opt {
+                if let Ok(hints) = conn.query_row(sql, params![min_trust, pid], map_row) {
+                    return Some(hints);
+                }
+            }
+        }
+
+        // Step B: Fallback to exact cf_slug / mr_slug match, rejecting conflicting same-platform project_id
+        if !sl.is_empty() {
+            if let Ok(hints) = conn.query_row(
+                "SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
+                 FROM resource_translations
+                 WHERE category = 'mod'
+                   AND trust_level >= ?1
+                   AND (LOWER(cf_slug) = LOWER(?2) OR LOWER(mr_slug) = LOWER(?2))
+                 ORDER BY trust_level DESC LIMIT 1",
+                params![min_trust, sl],
+                map_row,
+            ) {
+                if !pid.is_empty() {
+                    let row_same_platform_pid = match src_lower.as_str() {
+                        "curseforge" => hints.cf_project_id.as_deref(),
+                        "modrinth" => hints.mr_project_id.as_deref(),
+                        _ => None,
+                    };
+                    if let Some(existing_pid) = row_same_platform_pid {
+                        if existing_pid != pid {
+                            return None;
+                        }
+                    }
+                }
+                return Some(hints);
             }
         }
 
@@ -1156,5 +1272,83 @@ mod tests {
         assert!(alias_hits
             .iter()
             .any(|c| c.cf_slug.as_deref() == Some("applied-energistics-2")));
+    }
+
+    #[test]
+    fn test_lookup_mod_identity_verified_and_conflict_guards() {
+        let dir = tempdir().unwrap();
+        let db = TranslationDb::open_at(dir.path().join("translations.db")).unwrap();
+
+        let verified_iris = TranslationEntry {
+            category: "mod".to_string(),
+            cf_project_id: Some("455508".to_string()),
+            cf_slug: Some("irisshaders".to_string()),
+            mr_project_id: Some("YL57xq9U".to_string()),
+            mr_slug: Some("iris".to_string()),
+            mod_ids: "iris".to_string(),
+            raw_name: "Iris Shaders".to_string(),
+            zh_name: "Iris光影".to_string(),
+            zh_short_name: "Iris光影".to_string(),
+            zh_aliases: String::new(),
+            zh_summary: String::new(),
+            wiki_id: 3864,
+            trust_level: TRUST_VERIFIED,
+            source_tag: "consensus".to_string(),
+            updated_at: 100,
+        };
+
+        let ai_draft_mod = TranslationEntry {
+            category: "mod".to_string(),
+            cf_project_id: Some("999001".to_string()),
+            cf_slug: Some("ai-only-mod".to_string()),
+            mr_project_id: Some("aiOnlyMr".to_string()),
+            mr_slug: Some("ai-only-mod".to_string()),
+            mod_ids: "ai_only".to_string(),
+            raw_name: "AI Only Mod".to_string(),
+            zh_name: "机翻模组".to_string(),
+            zh_short_name: "机翻模组".to_string(),
+            zh_aliases: String::new(),
+            zh_summary: String::new(),
+            wiki_id: 0,
+            trust_level: TRUST_AI_DRAFT,
+            source_tag: "remote_ai".to_string(),
+            updated_at: 100,
+        };
+
+        db.upsert_entries_batch(&[verified_iris, ai_draft_mod])
+            .unwrap();
+
+        // 1. Exact project_id lookup returns full cross-platform hints
+        let by_pid = db
+            .lookup_mod_identity("modrinth", "YL57xq9U", "iris")
+            .expect("should resolve by exact mr_project_id");
+        assert_eq!(by_pid.cf_project_id.as_deref(), Some("455508"));
+        assert_eq!(by_pid.cf_slug.as_deref(), Some("irisshaders"));
+        assert_eq!(by_pid.mr_project_id.as_deref(), Some("YL57xq9U"));
+        assert_eq!(by_pid.mr_slug.as_deref(), Some("iris"));
+        assert_eq!(by_pid.mod_ids, vec!["iris".to_string()]);
+        assert_eq!(by_pid.raw_name.as_deref(), Some("Iris Shaders"));
+
+        // 2. Fallback to exact slug when project_id is absent or platform row lacked that platform's ID
+        let by_slug = db
+            .lookup_mod_identity("curseforge", "", "irisshaders")
+            .expect("should resolve by exact cf_slug");
+        assert_eq!(by_slug.mr_project_id.as_deref(), Some("YL57xq9U"));
+
+        // 3. Rejects TRUST_AI_DRAFT rows
+        assert!(db
+            .lookup_mod_identity("curseforge", "999001", "ai-only-mod")
+            .is_none());
+        assert!(db
+            .lookup_mod_identity("modrinth", "", "ai-only-mod")
+            .is_none());
+
+        // 4. Rejects slug fallback when same-platform project_id conflicts
+        assert!(db
+            .lookup_mod_identity("modrinth", "DIFFERENT_MR_ID", "iris")
+            .is_none());
+        assert!(db
+            .lookup_mod_identity("curseforge", "123456", "irisshaders")
+            .is_none());
     }
 }

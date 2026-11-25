@@ -10,6 +10,7 @@ pub mod java;
 pub mod launcher;
 pub mod manager;
 pub mod mod_loader;
+pub mod mod_duplicate;
 pub mod mod_parser;
 pub mod modpack;
 pub mod modrinth;

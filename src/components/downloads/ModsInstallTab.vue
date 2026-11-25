@@ -17,7 +17,13 @@ import { toast } from "../../composables/useToast";
 import { useTaskStatusReload } from "../../composables/useTaskStatusReload";
 import { useInstances } from "../../composables/useInstances";
 import { searchProjectsWithChineseSupport } from "../../composables/useResourceNaming";
-import type { EnrichedModProject, LocalModItem as ResourceLocalModItem, UnifiedModProject } from "../../types/resourceNaming";
+import type {
+  CheckDuplicateModsRequest,
+  DuplicateModCheckResult,
+  DuplicateModMatch,
+  EnrichedModProject,
+  UnifiedModProject
+} from "../../types/resourceNaming";
 
 // UI Components
 import { DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
@@ -109,8 +115,9 @@ const isCheckingDependencies = ref(false);
 
 // Duplicate Mod Dialog State
 const showDuplicateWarning = ref(false);
-const duplicateModsFound = ref<ResourceLocalModItem[]>([]);
+const duplicateModsFound = ref<DuplicateModMatch[]>([]);
 const hasExactFilenameConflict = ref(false);
+const isCheckingDuplicates = ref(false);
 
 // Format numbers
 const formatNumber = (num: number) => {
@@ -576,7 +583,7 @@ async function checkDependenciesForSelectedFile() {
   }
 }
 
-async function startActualDownload(mod: UnifiedModProject, fileId: string, targetDir: string | null, dependenciesToInstall: UnifiedDependency[]) {
+async function startActualDownload(mod: UnifiedModProject, fileId: string, targetDir: string | null, dependenciesToInstall: UnifiedDependency[], keepBoth = false) {
   isDownloading.value = true;
   showInstallDialog.value = false;
   showDependencyDialog.value = false;
@@ -612,6 +619,7 @@ async function startActualDownload(mod: UnifiedModProject, fileId: string, targe
           file_id: latestFile.id,
           download_url: latestFile.download_url,
           dependencies: dependenciesToInstall.length > 0 ? dependenciesToInstall : null,
+          keep_both: keepBoth,
           slug: mod.slug,
           original_filename: latestFile.filename,
           version_number: latestFile.version_number,
@@ -644,42 +652,40 @@ async function startDownloadToDir() {
 }
 
 async function startInstallToInstance() {
-  if (!pendingMod.value || !selectedInstanceId.value) return;
+  if (!pendingMod.value || !selectedInstanceId.value || isCheckingDuplicates.value || isDownloading.value) return;
   const deps = includeDependencies.value ? pendingDependencies.value : [];
-  
+  const targetFile = installFiles.value.find(f => f.id === selectedFileId.value);
+  const request: CheckDuplicateModsRequest = {
+    versionId: selectedInstanceId.value,
+    source: pendingMod.value.source,
+    projectId: pendingMod.value.project_id,
+    slug: pendingMod.value.slug,
+    title: pendingMod.value.title,
+    targetFilename: targetFile?.filename ?? null,
+  };
+
+  isCheckingDuplicates.value = true;
+  let shouldShowDuplicateDialog = false;
   try {
-    const installedMods = await invoke<ResourceLocalModItem[]>('get_installed_mods', { versionId: selectedInstanceId.value, skipParsing: true });
-    const searchName = pendingMod.value.title.toLowerCase();
-    const targetFile = installFiles.value.find(f => f.id === selectedFileId.value);
-    const targetFilename = targetFile?.filename?.toLowerCase() || '';
-    
-    const duplicates = installedMods.filter(m => {
-      const matchName = (m.name && searchName.includes(m.name.toLowerCase())) ||
-                        (m.name && m.name.toLowerCase().includes(searchName));
-      const matchId = (m.modId && m.modId === pendingMod.value?.project_id) ||
-                      (m.projectId && m.projectId === pendingMod.value?.project_id);
-      
-      // Compare against canonical originalFilename as well as current filename
-      const matchFilename = (!!targetFilename && (
-        m.filename.toLowerCase() === targetFilename ||
-        (!!m.originalFilename && m.originalFilename.toLowerCase() === targetFilename)
-      ));
-      
-      return matchName || matchId || matchFilename;
-    });
-    
-    if (duplicates.length > 0) {
-      hasExactFilenameConflict.value = duplicates.some(
-        m => m.filename === targetFile?.filename || m.originalFilename === targetFile?.filename
+    const result = await invoke<DuplicateModCheckResult>('check_duplicate_mods', { request });
+    if (result.duplicates.length > 0) {
+      logger.debug(
+        'Duplicate mods detected',
+        result.duplicates.map(d => `${d.filename}:${d.matchReason}`)
       );
-      duplicateModsFound.value = duplicates;
+      hasExactFilenameConflict.value = result.hasExactFilenameConflict;
+      duplicateModsFound.value = result.duplicates;
       showDuplicateWarning.value = true;
-      return;
+      shouldShowDuplicateDialog = true;
     }
   } catch (err) {
     logger.error("Failed to check duplicate mods", err);
+  } finally {
+    isCheckingDuplicates.value = false;
   }
-  
+
+  if (shouldShowDuplicateDialog || !pendingMod.value) return;
+
   startActualDownload(pendingMod.value, selectedFileId.value, null, deps);
 }
 
@@ -699,13 +705,13 @@ async function handleReplaceOldMods() {
   }
   showDuplicateWarning.value = false;
   const deps = includeDependencies.value ? pendingDependencies.value : [];
-  startActualDownload(pendingMod.value!, selectedFileId.value, null, deps);
+  startActualDownload(pendingMod.value!, selectedFileId.value, null, deps, false);
 }
 
 function handleKeepBothMods() {
   showDuplicateWarning.value = false;
   const deps = includeDependencies.value ? pendingDependencies.value : [];
-  startActualDownload(pendingMod.value!, selectedFileId.value, null, deps);
+  startActualDownload(pendingMod.value!, selectedFileId.value, null, deps, true);
 }
 
 
@@ -980,10 +986,10 @@ onUnmounted(() => {
           <button
             v-if="selectedInstanceId"
             @click="startInstallToInstance"
-            :disabled="isDownloading || isFetchingFiles || isCheckingDependencies || installFiles.length === 0"
+            :disabled="isDownloading || isCheckingDuplicates || isFetchingFiles || isCheckingDependencies || installFiles.length === 0"
             class="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md transition-colors text-sm font-medium shadow-sm disabled:opacity-50"
           >
-            <Loader2 v-if="isDownloading" class="w-4 h-4 animate-spin" />
+            <Loader2 v-if="isDownloading || isCheckingDuplicates" class="w-4 h-4 animate-spin" />
             {{ $t('downloads.installToSelectedInstance') }}
           </button>
         </div>
@@ -1000,7 +1006,7 @@ onUnmounted(() => {
       <AlertDialogDescription class="text-neutral-600 dark:text-neutral-400">
         {{ $t('downloads.duplicateModDesc', { name: pendingMod?.title }) }}
         <ul class="mt-2 text-xs opacity-80 list-disc list-inside">
-          <li v-for="mod in duplicateModsFound" :key="mod.filename">{{ mod.filename }}</li>
+          <li v-for="mod in duplicateModsFound" :key="`${mod.filename}-${mod.enabled}`">{{ mod.filename }}</li>
         </ul>
       </AlertDialogDescription>
     </div>

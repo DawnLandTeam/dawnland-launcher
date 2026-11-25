@@ -2029,7 +2029,7 @@ pub struct LocalDatapackItem {
     pub trust_level: Option<u8>,
 }
 
-fn asset_source_to_str(src: &crate::models::instance::AssetSourceType) -> Option<String> {
+pub(crate) fn asset_source_to_str(src: &crate::models::instance::AssetSourceType) -> Option<String> {
     match src {
         crate::models::instance::AssetSourceType::Modrinth => Some("modrinth".to_string()),
         crate::models::instance::AssetSourceType::CurseForge => Some("curseforge".to_string()),
@@ -2136,7 +2136,7 @@ async fn batch_enrich_local_metadata(queries: Vec<EnrichQuery>) -> Vec<EnrichRes
     .unwrap_or_default()
 }
 
-async fn load_sanitized_manifest(instance_dir: &std::path::Path) -> crate::models::instance::AssetManifest {
+pub(crate) async fn load_sanitized_manifest(instance_dir: &std::path::Path) -> crate::models::instance::AssetManifest {
     let _lock = MANIFEST_LOCK.lock().await;
     let assets_path = instance_dir.join("assets.json");
     let mut manifest = if let Ok(content) = tokio::fs::read_to_string(&assets_path).await {
@@ -6498,10 +6498,14 @@ impl InstallModTask {
             .unwrap_or_else(|| extract_filename_from_url(&options.download_url, &options.project_id));
         let mut installed_map = if let Some(vid) = version_id_opt { load_installed_mods_json(vid).await } else { std::collections::HashMap::new() };
         let mod_key = format!("{}_{}", options.source, options.project_id);
-        let ignore_old: Vec<String> = installed_map
-            .get(&mod_key)
-            .map(|(old_f, _)| vec![old_f.clone()])
-            .unwrap_or_default();
+        let ignore_old: Vec<String> = if options.keep_both.unwrap_or(false) {
+            Vec::new()
+        } else {
+            installed_map
+                .get(&mod_key)
+                .map(|(old_f, _)| vec![old_f.clone()])
+                .unwrap_or_default()
+        };
 
         let (mc_ver, loader_type) = if let Some(vid) = version_id_opt {
             if let Ok(item) = get_instance_details(vid.clone()).await {
