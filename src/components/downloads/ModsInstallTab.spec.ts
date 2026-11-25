@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import ModsInstallTab from './ModsInstallTab.vue';
 import i18n from '../../i18n';
 import { invoke } from '@tauri-apps/api/core';
+import { toast } from '../../composables/useToast';
 import type { DuplicateModCheckResult, EnrichedModProject } from '../../types/resourceNaming';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -77,7 +78,7 @@ const modFiles = [
   },
 ];
 
-function setupInvokeMock(duplicateResult: DuplicateModCheckResult) {
+function setupInvokeMock(duplicateResult: DuplicateModCheckResult | Error) {
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     switch (cmd) {
       case 'load_launcher_settings':
@@ -97,6 +98,9 @@ function setupInvokeMock(duplicateResult: DuplicateModCheckResult) {
       case 'get_modrinth_mod_files':
         return modFiles;
       case 'check_duplicate_mods':
+        if (duplicateResult instanceof Error) {
+          throw duplicateResult;
+        }
         return duplicateResult;
       case 'delete_local_mod':
         return undefined;
@@ -144,7 +148,7 @@ describe('ModsInstallTab duplicate mod detection', () => {
     vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
   });
 
-  it('invokes check_duplicate_mods with expected request and installs directly when no duplicates exist', async () => {
+  it('invokes check_duplicate_mods with expected request and installs with fail_on_duplicate: true when no duplicates exist', async () => {
     setupInvokeMock({
       duplicates: [],
       hasExactFilenameConflict: false,
@@ -173,11 +177,36 @@ describe('ModsInstallTab duplicate mod detection', () => {
         instance_id: 'inst-1',
         project_id: 'bEpr0Arc',
         keep_both: false,
+        fail_on_duplicate: true,
         slug: 'litematica',
         original_filename: 'litematica-fabric-1.20.1-0.15.4.jar',
       }),
     });
     expect(wrapper.text()).not.toContain('检测到重复模组');
+  });
+
+  it('aborts installation, surfaces error toast, and resets check lock when check_duplicate_mods fails', async () => {
+    setupInvokeMock(new Error('Failed to open translation database'));
+
+    const wrapper = await mountAndOpenInstallDialog();
+    const installBtn = findButtonByText(wrapper, '安装到选中实例');
+    expect(installBtn).toBeDefined();
+
+    await installBtn!.trigger('click');
+    await flushPromises();
+
+    expect(toast.error).toHaveBeenCalledWith('Failed to open translation database');
+    expect(invoke).not.toHaveBeenCalledWith('task_create', expect.anything());
+    expect(wrapper.text()).not.toContain('检测到重复模组');
+
+    // Subsequent retry is not stuck by isCheckingDuplicates
+    setupInvokeMock({
+      duplicates: [],
+      hasExactFilenameConflict: false,
+    });
+    await installBtn!.trigger('click');
+    await flushPromises();
+    expect(invoke).toHaveBeenCalledWith('task_create', expect.anything());
   });
 
   it('shows duplicate dialog and hides keepBoth button when exact filename conflicts', async () => {
@@ -209,7 +238,7 @@ describe('ModsInstallTab duplicate mod detection', () => {
     expect(invoke).not.toHaveBeenCalledWith('task_create', expect.anything());
   });
 
-  it('passes keep_both: true to task_create when clicking Keep Both', async () => {
+  it('passes keep_both: true and fail_on_duplicate: false to task_create when clicking Keep Both', async () => {
     setupInvokeMock({
       duplicates: [
         {
@@ -242,11 +271,12 @@ describe('ModsInstallTab duplicate mod detection', () => {
         instance_id: 'inst-1',
         project_id: 'bEpr0Arc',
         keep_both: true,
+        fail_on_duplicate: false,
       }),
     });
   });
 
-  it('deletes each duplicate mod and passes keep_both: false when clicking Replace Old', async () => {
+  it('deletes every duplicate mod in order before calling task_create with keep_both: false and fail_on_duplicate: true', async () => {
     setupInvokeMock({
       duplicates: [
         {
@@ -259,6 +289,16 @@ describe('ModsInstallTab duplicate mod detection', () => {
           matchReason: 'modId',
           exactFilenameConflict: false,
         },
+        {
+          filename: '[投影] litematica-fabric-1.20.1-0.15.2.jar',
+          enabled: true,
+          modId: 'litematica',
+          name: 'Litematica',
+          version: '0.15.2',
+          originalFilename: 'litematica-fabric-1.20.1-0.15.2.jar',
+          matchReason: 'modId',
+          exactFilenameConflict: false,
+        },
       ],
       hasExactFilenameConflict: false,
     });
@@ -267,23 +307,42 @@ describe('ModsInstallTab duplicate mod detection', () => {
     await findButtonByText(wrapper, '安装到选中实例')!.trigger('click');
     await flushPromises();
 
+    vi.mocked(invoke).mockClear();
+
     const replaceBtn = findButtonByText(wrapper, '覆盖');
     expect(replaceBtn).toBeDefined();
     await replaceBtn!.trigger('click');
     await flushPromises();
 
-    expect(invoke).toHaveBeenCalledWith('delete_local_mod', {
-      versionId: 'inst-1',
-      filename: 'litematica-fabric-1.20.1-0.15.3.jar',
-      isEnabled: false,
-    });
-    expect(invoke).toHaveBeenCalledWith('task_create', {
-      taskType: 'install-mod',
-      payload: expect.objectContaining({
-        instance_id: 'inst-1',
-        project_id: 'bEpr0Arc',
-        keep_both: false,
-      }),
-    });
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      [
+        'delete_local_mod',
+        {
+          versionId: 'inst-1',
+          filename: 'litematica-fabric-1.20.1-0.15.3.jar',
+          isEnabled: false,
+        },
+      ],
+      [
+        'delete_local_mod',
+        {
+          versionId: 'inst-1',
+          filename: '[投影] litematica-fabric-1.20.1-0.15.2.jar',
+          isEnabled: true,
+        },
+      ],
+      [
+        'task_create',
+        {
+          taskType: 'install-mod',
+          payload: expect.objectContaining({
+            instance_id: 'inst-1',
+            project_id: 'bEpr0Arc',
+            keep_both: false,
+            fail_on_duplicate: true,
+          }),
+        },
+      ],
+    ]);
   });
 });

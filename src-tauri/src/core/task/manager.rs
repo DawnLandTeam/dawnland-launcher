@@ -1692,6 +1692,7 @@ mod tests {
             target_dir: None,
             dependencies: None,
             keep_both: None,
+            fail_on_duplicate: None,
             slug: None,
             original_filename: None,
             version_number: None,

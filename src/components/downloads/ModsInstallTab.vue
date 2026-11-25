@@ -583,7 +583,7 @@ async function checkDependenciesForSelectedFile() {
   }
 }
 
-async function startActualDownload(mod: UnifiedModProject, fileId: string, targetDir: string | null, dependenciesToInstall: UnifiedDependency[], keepBoth = false) {
+async function startActualDownload(mod: UnifiedModProject, fileId: string, targetDir: string | null, dependenciesToInstall: UnifiedDependency[], keepBoth = false, failOnDuplicate = false) {
   isDownloading.value = true;
   showInstallDialog.value = false;
   showDependencyDialog.value = false;
@@ -620,6 +620,7 @@ async function startActualDownload(mod: UnifiedModProject, fileId: string, targe
           download_url: latestFile.download_url,
           dependencies: dependenciesToInstall.length > 0 ? dependenciesToInstall : null,
           keep_both: keepBoth,
+          fail_on_duplicate: failOnDuplicate,
           slug: mod.slug,
           original_filename: latestFile.filename,
           version_number: latestFile.version_number,
@@ -680,13 +681,15 @@ async function startInstallToInstance() {
     }
   } catch (err) {
     logger.error("Failed to check duplicate mods", err);
+    toast.error(getErrorMessage(err));
+    return;
   } finally {
     isCheckingDuplicates.value = false;
   }
 
   if (shouldShowDuplicateDialog || !pendingMod.value) return;
 
-  startActualDownload(pendingMod.value, selectedFileId.value, null, deps);
+  startActualDownload(pendingMod.value, selectedFileId.value, null, deps, false, true);
 }
 
 async function handleReplaceOldMods() {
@@ -702,16 +705,18 @@ async function handleReplaceOldMods() {
     }
   } catch(err) {
     logger.error("Failed to delete old duplicate mod", err);
+    toast.error(getErrorMessage(err));
+    return;
   }
   showDuplicateWarning.value = false;
   const deps = includeDependencies.value ? pendingDependencies.value : [];
-  startActualDownload(pendingMod.value!, selectedFileId.value, null, deps, false);
+  startActualDownload(pendingMod.value!, selectedFileId.value, null, deps, false, true);
 }
 
 function handleKeepBothMods() {
   showDuplicateWarning.value = false;
   const deps = includeDependencies.value ? pendingDependencies.value : [];
-  startActualDownload(pendingMod.value!, selectedFileId.value, null, deps, true);
+  startActualDownload(pendingMod.value!, selectedFileId.value, null, deps, true, false);
 }
 
 

@@ -199,8 +199,10 @@ impl TranslationDb {
             );
             CREATE INDEX IF NOT EXISTS idx_rt_cf_pid ON resource_translations (category, cf_project_id);
             CREATE INDEX IF NOT EXISTS idx_rt_cf_slug ON resource_translations (category, cf_slug);
+            CREATE INDEX IF NOT EXISTS idx_rt_cf_slug_lower ON resource_translations (category, LOWER(cf_slug));
             CREATE INDEX IF NOT EXISTS idx_rt_mr_pid ON resource_translations (category, mr_project_id);
             CREATE INDEX IF NOT EXISTS idx_rt_mr_slug ON resource_translations (category, mr_slug);
+            CREATE INDEX IF NOT EXISTS idx_rt_mr_slug_lower ON resource_translations (category, LOWER(mr_slug));
             CREATE INDEX IF NOT EXISTS idx_rt_raw_name ON resource_translations (category, raw_name);
 
             CREATE TABLE IF NOT EXISTS file_hash_map (
@@ -421,16 +423,20 @@ impl TranslationDb {
     }
 
     /// Look up verified cross-platform identity hints for a mod (`category = 'mod'`)
-    /// using exact `project_id` or `slug` matching (`trust_level >= TRUST_VERIFIED`).
+    /// using exact `project_id` or platform-scoped `slug` matching (`trust_level >= TRUST_VERIFIED`).
     /// Never falls back to `raw_name` to avoid colliding with add-on or similarly named mods.
     pub fn lookup_mod_identity(
         &self,
         source: &str,
         project_id: &str,
         slug: &str,
-    ) -> Option<ModIdentityHints> {
-        let conn = self.connect().ok()?;
+    ) -> Result<Option<ModIdentityHints>, String> {
         let src_lower = source.trim().to_ascii_lowercase();
+        if src_lower != "curseforge" && src_lower != "modrinth" {
+            return Ok(None);
+        }
+
+        let conn = self.connect()?;
         let pid = project_id.trim();
         let sl = slug.trim();
         let min_trust = TRUST_VERIFIED as i64;
@@ -473,57 +479,65 @@ impl TranslationDb {
 
         // Step A: Exact project_id match on the specified platform
         if !pid.is_empty() {
-            let sql_opt = match src_lower.as_str() {
-                "curseforge" => Some(
+            let sql = match src_lower.as_str() {
+                "curseforge" => {
                     "SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
                      FROM resource_translations
                      WHERE category = 'mod' AND trust_level >= ?1 AND cf_project_id = ?2
-                     ORDER BY trust_level DESC LIMIT 1",
-                ),
-                "modrinth" => Some(
+                     ORDER BY trust_level DESC LIMIT 1"
+                }
+                _ => {
                     "SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
                      FROM resource_translations
                      WHERE category = 'mod' AND trust_level >= ?1 AND mr_project_id = ?2
-                     ORDER BY trust_level DESC LIMIT 1",
-                ),
-                _ => None,
+                     ORDER BY trust_level DESC LIMIT 1"
+                }
             };
-            if let Some(sql) = sql_opt {
-                if let Ok(hints) = conn.query_row(sql, params![min_trust, pid], map_row) {
-                    return Some(hints);
+            match conn.query_row(sql, params![min_trust, pid], map_row) {
+                Ok(hints) => return Ok(Some(hints)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => {}
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to query mod identity by project_id: {}",
+                        e
+                    ));
                 }
             }
         }
 
-        // Step B: Fallback to exact cf_slug / mr_slug match, rejecting conflicting same-platform project_id
+        // Step B: Fallback to exact slug match restricted to the requested platform's slug column,
+        // filtering non-conflicting same-platform project IDs inside SQL so collisions do not shadow matches.
         if !sl.is_empty() {
-            if let Ok(hints) = conn.query_row(
-                "SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
-                 FROM resource_translations
-                 WHERE category = 'mod'
-                   AND trust_level >= ?1
-                   AND (LOWER(cf_slug) = LOWER(?2) OR LOWER(mr_slug) = LOWER(?2))
-                 ORDER BY trust_level DESC LIMIT 1",
-                params![min_trust, sl],
-                map_row,
-            ) {
-                if !pid.is_empty() {
-                    let row_same_platform_pid = match src_lower.as_str() {
-                        "curseforge" => hints.cf_project_id.as_deref(),
-                        "modrinth" => hints.mr_project_id.as_deref(),
-                        _ => None,
-                    };
-                    if let Some(existing_pid) = row_same_platform_pid {
-                        if existing_pid != pid {
-                            return None;
-                        }
-                    }
+            let sql = match src_lower.as_str() {
+                "curseforge" => {
+                    "SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
+                     FROM resource_translations
+                     WHERE category = 'mod'
+                       AND LOWER(cf_slug) = LOWER(?1)
+                       AND trust_level >= ?2
+                       AND (?3 = '' OR cf_project_id IS NULL OR cf_project_id = '' OR cf_project_id = ?3)
+                     ORDER BY trust_level DESC LIMIT 1"
                 }
-                return Some(hints);
+                _ => {
+                    "SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
+                     FROM resource_translations
+                     WHERE category = 'mod'
+                       AND LOWER(mr_slug) = LOWER(?1)
+                       AND trust_level >= ?2
+                       AND (?3 = '' OR mr_project_id IS NULL OR mr_project_id = '' OR mr_project_id = ?3)
+                     ORDER BY trust_level DESC LIMIT 1"
+                }
+            };
+            match conn.query_row(sql, params![sl, min_trust, pid], map_row) {
+                Ok(hints) => return Ok(Some(hints)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => {}
+                Err(e) => {
+                    return Err(format!("Failed to query mod identity by slug: {}", e));
+                }
             }
         }
 
-        None
+        Ok(None)
     }
 
     pub fn search_candidates(
@@ -1318,9 +1332,34 @@ mod tests {
         db.upsert_entries_batch(&[verified_iris, ai_draft_mod])
             .unwrap();
 
+        // Insert two rows sharing `cf_slug = 'shared-slug'` directly (bypassing upsert_entries_batch
+        // deduplication) to simulate a slug collision in a populated translations database.
+        {
+            let conn = db.connect().unwrap();
+            conn.execute(
+                "INSERT INTO resource_translations (
+                    category, cf_project_id, cf_slug, mr_project_id, mr_slug,
+                    mod_ids, raw_name, zh_name, zh_short_name, zh_aliases,
+                    zh_summary, wiki_id, trust_level, source_tag, updated_at
+                ) VALUES ('mod', '111111', 'shared-slug', 'mrOther', 'other-mr-slug', 'other_mod', 'Other Mod', '其他模组', '其他模组', '', '', 1, ?1, 'user', 200)",
+                params![TRUST_USER as i64],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO resource_translations (
+                    category, cf_project_id, cf_slug, mr_project_id, mr_slug,
+                    mod_ids, raw_name, zh_name, zh_short_name, zh_aliases,
+                    zh_summary, wiki_id, trust_level, source_tag, updated_at
+                ) VALUES ('mod', NULL, 'shared-slug', 'mrSharedTarget', 'shared-target', 'shared_target', 'Shared Target', '目标模组', '目标模组', '', '', 2, ?1, 'consensus', 100)",
+                params![TRUST_VERIFIED as i64],
+            )
+            .unwrap();
+        }
+
         // 1. Exact project_id lookup returns full cross-platform hints
         let by_pid = db
             .lookup_mod_identity("modrinth", "YL57xq9U", "iris")
+            .unwrap()
             .expect("should resolve by exact mr_project_id");
         assert_eq!(by_pid.cf_project_id.as_deref(), Some("455508"));
         assert_eq!(by_pid.cf_slug.as_deref(), Some("irisshaders"));
@@ -1329,26 +1368,112 @@ mod tests {
         assert_eq!(by_pid.mod_ids, vec!["iris".to_string()]);
         assert_eq!(by_pid.raw_name.as_deref(), Some("Iris Shaders"));
 
-        // 2. Fallback to exact slug when project_id is absent or platform row lacked that platform's ID
+        // 2. Fallback to exact slug on the SAME platform when project_id is absent
         let by_slug = db
-            .lookup_mod_identity("curseforge", "", "irisshaders")
-            .expect("should resolve by exact cf_slug");
+            .lookup_mod_identity("curseforge", "", "IrIsShAdErS")
+            .unwrap()
+            .expect("should resolve by exact case-insensitive cf_slug");
         assert_eq!(by_slug.mr_project_id.as_deref(), Some("YL57xq9U"));
 
-        // 3. Rejects TRUST_AI_DRAFT rows
-        assert!(db
-            .lookup_mod_identity("curseforge", "999001", "ai-only-mod")
-            .is_none());
-        assert!(db
-            .lookup_mod_identity("modrinth", "", "ai-only-mod")
-            .is_none());
+        // 3. Rejects cross-column slug matches (cf_slug must NOT match a Modrinth lookup)
+        assert_eq!(
+            db.lookup_mod_identity("modrinth", "", "irisshaders")
+                .unwrap(),
+            None
+        );
 
-        // 4. Rejects slug fallback when same-platform project_id conflicts
-        assert!(db
-            .lookup_mod_identity("modrinth", "DIFFERENT_MR_ID", "iris")
-            .is_none());
-        assert!(db
-            .lookup_mod_identity("curseforge", "123456", "irisshaders")
-            .is_none());
+        // 4. Rejects unknown/unrecognized sources
+        assert_eq!(
+            db.lookup_mod_identity("unknown", "455508", "irisshaders")
+                .unwrap(),
+            None
+        );
+
+        // 5. Rejects TRUST_AI_DRAFT rows
+        assert_eq!(
+            db.lookup_mod_identity("curseforge", "999001", "ai-only-mod")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            db.lookup_mod_identity("modrinth", "", "ai-only-mod")
+                .unwrap(),
+            None
+        );
+
+        // 6. Rejects slug fallback when same-platform project_id conflicts and no compatible row exists
+        assert_eq!(
+            db.lookup_mod_identity("modrinth", "DIFFERENT_MR_ID", "iris")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            db.lookup_mod_identity("curseforge", "123456", "irisshaders")
+                .unwrap(),
+            None
+        );
+
+        // 7. On a slug collision where a higher-trust row has a conflicting cf_project_id,
+        // the SQL filter skips it and still resolves the compatible row.
+        let by_non_conflicting_slug = db
+            .lookup_mod_identity("curseforge", "222222", "shared-slug")
+            .unwrap()
+            .expect("conflicting higher-trust row must not shadow compatible row");
+        assert_eq!(
+            by_non_conflicting_slug.mr_project_id.as_deref(),
+            Some("mrSharedTarget")
+        );
+
+        // 8. Verify EXPLAIN QUERY PLAN uses the LOWER(cf_slug)/LOWER(mr_slug) expression indexes
+        let conn = db.connect().unwrap();
+        let mut cf_stmt = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
+                 FROM resource_translations
+                 WHERE category = 'mod'
+                   AND LOWER(cf_slug) = LOWER(?1)
+                   AND trust_level >= ?2
+                   AND (?3 = '' OR cf_project_id IS NULL OR cf_project_id = '' OR cf_project_id = ?3)
+                 ORDER BY trust_level DESC LIMIT 1",
+            )
+            .unwrap();
+        let cf_plan: Vec<String> = cf_stmt
+            .query_map(params!["irisshaders", TRUST_VERIFIED as i64, "455508"], |r| {
+                r.get::<_, String>(3)
+            })
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(
+            cf_plan.iter().any(|d| d.contains("idx_rt_cf_slug_lower")),
+            "expected idx_rt_cf_slug_lower in CF query plan: {:?}",
+            cf_plan
+        );
+
+        let mut mr_stmt = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT cf_project_id, cf_slug, mr_project_id, mr_slug, mod_ids, raw_name
+                 FROM resource_translations
+                 WHERE category = 'mod'
+                   AND LOWER(mr_slug) = LOWER(?1)
+                   AND trust_level >= ?2
+                   AND (?3 = '' OR mr_project_id IS NULL OR mr_project_id = '' OR mr_project_id = ?3)
+                 ORDER BY trust_level DESC LIMIT 1",
+            )
+            .unwrap();
+        let mr_plan: Vec<String> = mr_stmt
+            .query_map(params!["iris", TRUST_VERIFIED as i64, "YL57xq9U"], |r| {
+                r.get::<_, String>(3)
+            })
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(
+            mr_plan.iter().any(|d| d.contains("idx_rt_mr_slug_lower")),
+            "expected idx_rt_mr_slug_lower in MR query plan: {:?}",
+            mr_plan
+        );
     }
 }

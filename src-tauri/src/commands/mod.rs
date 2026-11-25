@@ -110,6 +110,7 @@ pub async fn install_mod_to_instance(
         file_id: options.file_id,
         dependencies: options.dependencies,
         keep_both: options.keep_both,
+        fail_on_duplicate: options.fail_on_duplicate,
         slug: options.slug,
         original_filename: options.original_filename,
         version_number: options.version_number,

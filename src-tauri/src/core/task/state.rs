@@ -57,6 +57,8 @@ pub enum TaskType {
         dependencies: Option<Vec<crate::core::modrinth::UnifiedDependency>>,
         keep_both: Option<bool>,
         #[serde(default)]
+        fail_on_duplicate: Option<bool>,
+        #[serde(default)]
         slug: Option<String>,
         #[serde(default)]
         original_filename: Option<String>,
