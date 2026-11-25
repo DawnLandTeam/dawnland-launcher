@@ -419,6 +419,7 @@ pub fn run() {
             core::manager::get_installed_datapacks,
             core::manager::delete_local_datapack,
             core::manager::get_installed_mods,
+            core::mod_duplicate::check_duplicate_mods,
             core::manager::toggle_mod_status,
             core::manager::disable_mod_by_name,
             core::manager::prelaunch_check,

@@ -150,6 +150,38 @@ export interface LocalModItem {
   trustLevel?: number | null;
 }
 
+export type DuplicateMatchReason =
+  | 'exactFilename'
+  | 'projectId'
+  | 'modId'
+  | 'slug'
+  | 'exactName';
+
+export interface CheckDuplicateModsRequest {
+  versionId: string;
+  source: string;
+  projectId: string;
+  slug: string;
+  title: string;
+  targetFilename?: string | null;
+}
+
+export interface DuplicateModMatch {
+  filename: string;
+  enabled: boolean;
+  modId?: string | null;
+  name?: string | null;
+  version?: string | null;
+  originalFilename?: string | null;
+  matchReason: DuplicateMatchReason;
+  exactFilenameConflict: boolean;
+}
+
+export interface DuplicateModCheckResult {
+  duplicates: DuplicateModMatch[];
+  hasExactFilenameConflict: boolean;
+}
+
 export interface LocalAssetItem {
   filename: string;
   isDir: boolean;
